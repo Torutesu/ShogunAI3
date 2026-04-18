@@ -205,8 +205,8 @@ function ScreenHome() {
           You spent 2h 14m in product calls with <span className="gold">Matt</span> and the <span className="gold">Toru team</span>, mostly on pricing. The Revenue-cat chat from 14:02 proposed a three-tier model you haven't written down yet.
         </div>
         <div className="row" style={{gap:8, flexWrap:'wrap'}}>
-          <button className="btn btn-sm btn-secondary" onClick={()=>runRuntimeActionA('draft.create', { source:'home_card', target:'pricing_doc' }, { successMessage:'Draft request submitted' })}>Draft the pricing doc <Icon name="arrowRight" size={14}/></button>
-          <button className="btn btn-sm btn-secondary" onClick={()=>runRuntimeActionA('schedule.create', { source:'home_card', target:'matt_followup' }, { successMessage:'Follow-up scheduled' })}>Schedule Matt follow-up</button>
+          <button className="btn btn-sm btn-secondary" onClick={()=>runRuntimeActionA('draft.create', { source:'home_card', target:'pricing_doc' }, { silentError:true })}>Draft the pricing doc <Icon name="arrowRight" size={14}/></button>
+          <button className="btn btn-sm btn-secondary" onClick={()=>runRuntimeActionA('schedule.create', { source:'home_card', target:'matt_followup' }, { silentError:true })}>Schedule Matt follow-up</button>
           <button className="btn btn-sm btn-ghost" onClick={()=>runRuntimeActionA('settings.save', { section:'home', action:'dismiss_day_card' }, { successMessage:'Card dismissed' })}>Dismiss</button>
         </div>
       </div>

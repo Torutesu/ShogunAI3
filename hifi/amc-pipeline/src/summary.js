@@ -4,6 +4,7 @@ import {
   SUMMARY_SYSTEM_PROMPT,
   buildSummaryUserPrompt,
 } from "./prompts.js";
+import { resolveSummaryModel } from "./model-defaults.js";
 
 function extractToolUse(blocks, name) {
   if (!blocks) return null;
@@ -50,11 +51,7 @@ export async function generateSummary(rankedItems, opts = {}) {
   const apiKey = opts.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY missing");
 
-  const model =
-    opts.model ||
-    process.env.ANTHROPIC_SUMMARY_MODEL ||
-    process.env.ANTHROPIC_MODEL ||
-    "claude-sonnet-4-20250514";
+  const model = resolveSummaryModel(opts);
 
   const client = new Anthropic({ apiKey });
   const tool = getEmitBriefSummaryTool();

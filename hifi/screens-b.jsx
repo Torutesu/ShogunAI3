@@ -227,7 +227,7 @@ function ScreenAgents() {
         </div>
         <div className="row">
           <button className="btn btn-secondary" onClick={()=>runRuntimeActionB('settings.save', { section:'agents', action:'open_mcp_console' }, { successMessage:'MCP console opened' })}><Icon name="terminal" size={14}/>MCP console</button>
-          <button className="btn btn-primary" onClick={()=>runRuntimeActionB('schedule.create', { source:'agents', action:'new_agent' }, { successMessage:'Agent creation started' })}><Icon name="plus" size={14}/>New agent</button>
+          <button className="btn btn-primary" onClick={()=>runRuntimeActionB('schedule.create', { source:'agents', action:'new_agent' }, { silentError:true })}><Icon name="plus" size={14}/>New agent</button>
         </div>
       </div>
 

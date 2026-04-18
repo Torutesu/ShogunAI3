@@ -1,7 +1,8 @@
 /**
  * AMC Composer + Summary prompts.
- * Rules match product spec (AMC 4 elements, tone, bans). Default locale: English for repo stability;
- * swap to Japanese strings from your CMS or copy spec §1 verbatim in deployment.
+ * **System and instruction text are English** (clearer tool-use compliance, easier iteration).
+ * User-facing field content (`what`, `why_now`, `next_action.label`, etc.) still follows product
+ * rules: terse Japanese/EN mix for a JP/EN operator, no polite desu/masu in those fields.
  */
 
 export const AMC_SYSTEM_PROMPT = `You generate SHOGUN Morning Brief items. SHOGUN is an AI-native personal OS on macOS. You behave as a quiet, capable chief of staff.

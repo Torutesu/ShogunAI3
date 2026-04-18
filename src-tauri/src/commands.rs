@@ -35,7 +35,7 @@ pub fn shogun_memory_delete(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn shogun_entity_query(payload: Value) -> Result<Value, String> {
-  Ok(json!({ "entities": [], "echo": payload, "stub": false }))
+  memory_store::entities_from_catalog(&payload)
 }
 
 #[tauri::command]
@@ -77,16 +77,58 @@ pub fn shogun_schedule_action(payload: Value) -> Result<Value, String> {
   }))
 }
 
+fn fmt_decimal_commas(mut n: u64) -> String {
+  if n == 0 {
+    return "0".to_string();
+  }
+  let mut parts: Vec<String> = Vec::new();
+  while n > 0 {
+    parts.push(format!("{}", n % 1000));
+    n /= 1000;
+  }
+  parts.reverse();
+  let mut out = parts[0].clone();
+  for p in parts.into_iter().skip(1) {
+    out.push(',');
+    out.push_str(&format!("{:0>3}", p));
+  }
+  out
+}
+
+fn fmt_disk_short(bytes: u64) -> String {
+  if bytes < 1024 {
+    return format!("{} B", bytes);
+  }
+  let kb = bytes as f64 / 1024.0;
+  if kb < 1024.0 {
+    return format!("{:.1} KB", kb);
+  }
+  let mb = kb / 1024.0;
+  format!("{:.2} MB", mb)
+}
+
+/// Maps local app-data footprint to 0–100 for UI meters (50 MiB ~= 100%).
+fn usage_percent_from_bytes(bytes: u64) -> u64 {
+  let cap = 50u64 * 1024 * 1024;
+  u64::min(100, bytes.saturating_mul(100) / cap.max(1))
+}
+
 #[tauri::command]
 pub fn shogun_stats(payload: Value) -> Result<Value, String> {
   let m = memory_store::stats()?;
   let total = m.get("memoryTotal").and_then(|x| x.as_u64()).unwrap_or(0);
   let last24 = m.get("memoriesLast24h").and_then(|x| x.as_u64()).unwrap_or(0);
+  let history_days = m.get("historyDays").and_then(|x| x.as_u64()).unwrap_or(0);
+  let bytes = paths::app_data_total_bytes().unwrap_or(0);
   Ok(json!({
     "eventsToday": format!("{}", last24),
     "memoriesToday": format!("{}", last24),
     "memoryTotal": total,
     "memoriesLast24h": last24,
+    "memories": fmt_decimal_commas(total),
+    "disk": fmt_disk_short(bytes),
+    "historyDays": format!("{} days", history_days),
+    "usagePercent": usage_percent_from_bytes(bytes),
     "appCoverage": [],
     "echo": payload,
     "stub": false,
@@ -194,38 +236,32 @@ pub fn app_llm_api_key_status(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
-  let doc = settings_store::save_patch(&json!({
-    "section": "integrations",
-    "lastConnect": payload.clone(),
-    "connected": true,
-    "localPreferenceOnly": true,
-  }))?;
+pub fn app_llm_api_key_clear(payload: Value) -> Result<Value, String> {
+  secrets::clear_llm_api_key()?;
   Ok(json!({
-    "connected": true,
-    "localPreferenceOnly": true,
-    "settings": doc,
+    "cleared": true,
+    "echo": payload,
     "stub": false,
   }))
 }
 
 #[tauri::command]
-pub fn app_integration_toggle(payload: Value) -> Result<Value, String> {
-  let enabled = payload
-    .get("enabled")
-    .and_then(|v| v.as_bool())
-    .unwrap_or(true);
-  let doc = settings_store::save_patch(&json!({
-    "section": "integrations",
-    "lastToggle": payload.clone(),
-    "enabled": enabled,
-    "localPreferenceOnly": true,
-  }))?;
+pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
   Ok(json!({
-    "enabled": enabled,
-    "localPreferenceOnly": true,
-    "settings": doc,
+    "notImplemented": true,
+    "message": "Third-party integrations (OAuth, calendar, mail) are not available in v1. This build is local-only.",
     "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub fn app_integration_toggle(payload: Value) -> Result<Value, String> {
+  Ok(json!({
+    "notImplemented": true,
+    "message": "Integration toggles are not available in v1. The UI is a preview only.",
+    "stub": false,
+    "echo": payload,
   }))
 }
 
@@ -238,7 +274,8 @@ pub fn app_capture_pause(payload: Value) -> Result<Value, String> {
   }))?;
   Ok(json!({
     "paused": true,
-    "note": "Screen capture is not implemented in v1; preference saved only.",
+    "honestPreferenceOnly": true,
+    "message": "Capture pipeline is not implemented in v1. Pause state was saved locally only.",
     "stub": false,
     "echo": payload,
   }))
@@ -253,7 +290,8 @@ pub fn app_capture_resume(payload: Value) -> Result<Value, String> {
   }))?;
   Ok(json!({
     "paused": false,
-    "note": "Screen capture is not implemented in v1; preference saved only.",
+    "honestPreferenceOnly": true,
+    "message": "Capture pipeline is not implemented in v1. Resume state was saved locally only.",
     "stub": false,
     "echo": payload,
   }))
@@ -325,8 +363,7 @@ pub fn app_delete_data_range(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn app_delete_all_data(payload: Value) -> Result<Value, String> {
-  memory_store::clear_all_items()?;
-  settings_store::reset_to_empty()?;
+  paths::clear_app_data_files()?;
   let _ = secrets::clear_llm_api_key();
   Ok(json!({
     "deleted": true,
@@ -337,8 +374,7 @@ pub fn app_delete_all_data(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn app_delete_account(payload: Value) -> Result<Value, String> {
-  memory_store::clear_all_items()?;
-  settings_store::reset_to_empty()?;
+  paths::clear_app_data_files()?;
   secrets::clear_llm_api_key()?;
   Ok(json!({
     "deleted": true,
@@ -351,8 +387,9 @@ pub fn app_delete_account(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn shogun_open_pack(payload: Value) -> Result<Value, String> {
   Ok(json!({
-    "opened": true,
-    "stub": true,
+    "notImplemented": true,
+    "message": "Opening packs / deep links is not available in v1.",
+    "stub": false,
     "echo": payload,
   }))
 }
@@ -360,8 +397,9 @@ pub fn shogun_open_pack(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn shogun_start_focus_session(payload: Value) -> Result<Value, String> {
   Ok(json!({
-    "started": true,
-    "stub": true,
+    "notImplemented": true,
+    "message": "Focus sessions are not available in v1.",
+    "stub": false,
     "echo": payload,
   }))
 }
@@ -369,8 +407,9 @@ pub fn shogun_start_focus_session(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn shogun_draft_reply(payload: Value) -> Result<Value, String> {
   Ok(json!({
-    "queued": true,
-    "stub": true,
+    "notImplemented": true,
+    "message": "Draft-from-brief actions are not available in v1. Use Chat instead.",
+    "stub": false,
     "echo": payload,
   }))
 }

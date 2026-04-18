@@ -39,6 +39,7 @@ pub fn run() {
       commands::app_settings_save,
       commands::app_llm_api_key_set,
       commands::app_llm_api_key_status,
+      commands::app_llm_api_key_clear,
       commands::app_integration_connect,
       commands::app_integration_toggle,
       commands::app_capture_pause,

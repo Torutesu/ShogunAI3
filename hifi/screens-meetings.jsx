@@ -78,8 +78,8 @@ function ScreenMeetings() {
         <div className="row" style={{gap:10}}>
           <div style={{flex:1, fontSize:14, color:'var(--text-dim)', padding:'6px 0'}}>Ask anything across 142 meetings…</div>
           <span className="t-mono" style={{fontSize:10, color:'var(--text-mute)'}}>AUTO</span>
-          <button className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onClick={()=>runRuntimeActionM('draft.create', { source:'meetings_prompt', action:'attach' }, { successMessage:'Attachment flow opened' })}><Icon name="paperclip" size={13}/></button>
-          <button className="btn btn-sm" style={{padding:'0 10px', background:'var(--gold)', color:'#151212', borderColor:'var(--gold)'}} onClick={()=>runRuntimeActionM('schedule.create', { source:'meetings_prompt', action:'record_voice_query' }, { successMessage:'Voice query started' })}>
+          <button className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onClick={()=>runRuntimeActionM('draft.create', { source:'meetings_prompt', action:'attach' }, { silentError:true })}><Icon name="paperclip" size={13}/></button>
+          <button className="btn btn-sm" style={{padding:'0 10px', background:'var(--gold)', color:'#151212', borderColor:'var(--gold)'}} onClick={()=>runRuntimeActionM('schedule.create', { source:'meetings_prompt', action:'record_voice_query' }, { silentError:true })}>
             <Icon name="mic" size={13}/>
           </button>
         </div>

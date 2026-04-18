@@ -83,6 +83,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `chat.complete`
 - `llm.save_api_key`
 - `llm.api_key_status`
+- `llm.clear_api_key`
 - `shogun.open_pack`
 - `shogun.draft_reply`
 - `shogun.start_focus_session`

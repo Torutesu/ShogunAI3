@@ -144,6 +144,7 @@ function ScreenMorningBrief() {
     }
     await runRuntimeMB(spec.key, spec.payload, {
       successMessage: item.next_action.label || "Done",
+      silentError: true,
     });
   };
 

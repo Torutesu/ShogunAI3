@@ -47,6 +47,7 @@
       settingsSave: (input) => call("app_settings_save", input, WRITE),
       llmApiKeySet: (input) => call("app_llm_api_key_set", input, WRITE),
       llmApiKeyStatus: (input) => call("app_llm_api_key_status", input, READ),
+      llmApiKeyClear: (input) => call("app_llm_api_key_clear", input, WRITE),
       integrationConnect: (input) => call("app_integration_connect", input, WRITE),
       integrationToggle: (input) => call("app_integration_toggle", input, WRITE),
       capturePause: (input) => call("app_capture_pause", input, WRITE),

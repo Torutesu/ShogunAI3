@@ -14,3 +14,30 @@ pub fn app_data_dir() -> Result<PathBuf, String> {
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   Ok(dir)
 }
+
+/// Sum byte length of every regular file directly under the app data directory (non-recursive).
+pub fn app_data_total_bytes() -> Result<u64, String> {
+  let dir = app_data_dir()?;
+  let mut sum = 0u64;
+  for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+    let entry = entry.map_err(|e| e.to_string())?;
+    let path = entry.path();
+    if path.is_file() {
+      sum += fs::metadata(&path).map_err(|e| e.to_string())?.len();
+    }
+  }
+  Ok(sum)
+}
+
+/// Remove all regular files in the app data directory (top level only). Subdirectories are left untouched.
+pub fn clear_app_data_files() -> Result<(), String> {
+  let dir = app_data_dir()?;
+  for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+    let entry = entry.map_err(|e| e.to_string())?;
+    let path = entry.path();
+    if path.is_file() {
+      fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+  }
+  Ok(())
+}

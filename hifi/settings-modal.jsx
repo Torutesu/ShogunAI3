@@ -11,6 +11,7 @@ const SETTINGS_NAV = [
   {id:'meetings',     label:'Meetings',           jp:'会議', icon:'calendar'},
   {id:'brief',        label:'Morning Brief',      jp:'朝礼', icon:'note'},
   {id:'chat',         label:'Chat',               jp:'対話', icon:'chat'},
+  {id:'llm',          label:'Model & API',        jp:'モデル', icon:'key'},
   {id:'integrations', label:'Integrations',       jp:'連携', icon:'plug'},
   {id:'shortcuts',    label:'Keyboard Shortcuts', jp:'捷径', icon:'keyboard'},
   {id:'subscription', label:'Subscription',       jp:'契約', icon:'gift'},
@@ -21,7 +22,7 @@ const SETTINGS_NAV = [
 // Alias panes from quick menu to the canonical settings panes
 const PANE_ALIAS = {
   upgrade:'subscription', feedback:'support', download:'general',
-  referral:'subscription', changelog:'general', api:'integrations',
+  referral:'subscription', changelog:'general', api:'llm',
 };
 
 function Toggle({on, onClick}) {
@@ -87,7 +88,7 @@ function useRuntimeActions() {
 }
 
 /** Sections map from `app_settings_load` → `settings.sections`; consumed by settings panes. */
-const SettingsHydrationContext = React.createContext({ sections: {} });
+const SettingsHydrationContext = React.createContext({ sections: {}, refreshSections: null });
 
 function Pane({title, jp, children, subtitle}) {
   return (
@@ -364,6 +365,49 @@ function PaneHummingbird() {
   );
 }
 
+function PaneBrief() {
+  const { run } = useRuntimeActions();
+  const { sections } = React.useContext(SettingsHydrationContext);
+  const [morningBriefVersion, setMorningBriefVersion] = useStateS('1');
+  React.useEffect(() => {
+    const b = sections.brief;
+    if (!b || typeof b !== 'object') return;
+    if (b.morningBriefVersion != null) setMorningBriefVersion(String(b.morningBriefVersion));
+  }, [sections]);
+  return (
+    <Pane title="Morning Brief" jp="朝礼">
+      <div className="s-card">
+        <Row
+          title="Brief format"
+          desc="v2 uses AMC (What, Why-now, Related context, Next action). v1 uses the legacy LLM sections layout."
+          last
+        >
+          <select
+            className="s-select"
+            value={morningBriefVersion}
+            onChange={(e) => {
+              const v = e.target.value;
+              setMorningBriefVersion(v);
+              window.__SHOGUN_SETTINGS_BRIEF__ = { morningBriefVersion: v };
+              run(
+                'settings.save',
+                { section: 'brief', morningBriefVersion: v },
+                { successMessage: v === '2' ? 'Morning Brief v2 enabled' : 'Morning Brief v1 enabled' },
+              );
+            }}
+          >
+            <option value="1">v1 — Legacy sections</option>
+            <option value="2">v2 — AMC cards</option>
+          </select>
+        </Row>
+        <div className="s-field-hint" style={{ marginTop: 12 }}>
+          Dev: append <code>?brief=v2</code> to the URL to force v2 in the browser mock.
+        </div>
+      </div>
+    </Pane>
+  );
+}
+
 function PaneMeetings() {
   const [r, setR] = useStateS(true);
   const [ex, setEx] = useStateS(true);
@@ -439,18 +483,166 @@ function PaneChat() {
   );
 }
 
+function PaneLLM() {
+  const { run, toast } = useRuntimeActions();
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
+  const [baseUrl, setBaseUrl] = useStateS('');
+  const [model, setModel] = useStateS('');
+  const [maxTokens, setMaxTokens] = useStateS('');
+  const [apiKeyDraft, setApiKeyDraft] = useStateS('');
+  const [keyConfigured, setKeyConfigured] = useStateS(false);
+
+  const refreshKeyStatus = React.useCallback(async () => {
+    const r = await run('llm.api_key_status', {}, { silentError: true });
+    if (r.ok && r.data && typeof r.data.configured === 'boolean') {
+      setKeyConfigured(r.data.configured);
+    }
+  }, [run]);
+
+  React.useEffect(() => {
+    void refreshKeyStatus();
+  }, [refreshKeyStatus]);
+
+  React.useEffect(() => {
+    const l = sections.llm;
+    if (!l || typeof l !== 'object') return;
+    if (l.baseUrl != null) setBaseUrl(String(l.baseUrl));
+    if (l.model != null) setModel(String(l.model));
+    if (l.maxTokens != null) setMaxTokens(String(l.maxTokens));
+  }, [sections]);
+
+  return (
+    <Pane
+      title="Model & API"
+      jp="モデル"
+      subtitle="OpenAI-compatible chat/completions over HTTPS. Endpoint and model are saved in local settings; the API key is stored only in the macOS Keychain."
+    >
+      <div className="s-card" style={{padding:20, marginBottom:16}}>
+        <Field label="Base URL" hint="e.g. https://api.openai.com/v1 — if the path has no /v1, it is appended automatically.">
+          <input
+            className="s-input"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="https://api.openai.com/v1"
+            autoComplete="off"
+          />
+        </Field>
+        <Field label="Model" hint="Passed as the model field in chat/completions requests.">
+          <input
+            className="s-input"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="gpt-4o-mini"
+            autoComplete="off"
+          />
+        </Field>
+        <Field label="Max output tokens" hint="Upper bound for completion tokens (default in app: 2048).">
+          <input
+            className="s-input"
+            type="number"
+            min={1}
+            value={maxTokens}
+            onChange={(e) => setMaxTokens(e.target.value)}
+            placeholder="2048"
+          />
+        </Field>
+        <div className="row" style={{marginTop:4}}>
+          <span className="s-field-hint">Saved to settings JSON (not the secret).</span>
+          <span className="spacer"/>
+          <button
+            className="btn btn-sm btn-secondary"
+            type="button"
+            onClick={async () => {
+              const mt = parseInt(String(maxTokens).trim(), 10);
+              if (!Number.isFinite(mt) || mt < 1) {
+                toast('Max output tokens must be a positive number', 'error');
+                return;
+              }
+              const r = await run(
+                'settings.save',
+                { section: 'llm', baseUrl: baseUrl.trim(), model: model.trim(), maxTokens: mt },
+                { successMessage: 'LLM endpoint settings saved' },
+              );
+              if (r.ok && refreshSections) await refreshSections();
+            }}
+          >
+            Save endpoint
+          </button>
+        </div>
+      </div>
+
+      <div className="s-card" style={{padding:20}}>
+        <Field
+          label="API key"
+          hint="Stored in the login keychain (service ai.shogun.desktop). Never written to settings files."
+        >
+          <input
+            className="s-input"
+            type="password"
+            value={apiKeyDraft}
+            onChange={(e) => setApiKeyDraft(e.target.value)}
+            placeholder={keyConfigured ? '•••••••• (replace by typing a new key)' : 'sk-…'}
+            autoComplete="off"
+          />
+          <div className="row" style={{marginTop:10}}>
+            <span className="s-field-hint" style={{marginTop:0}}>
+              Keychain: {keyConfigured ? 'configured' : 'not set'}
+            </span>
+            <span className="spacer"/>
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              disabled={!keyConfigured}
+              onClick={async () => {
+                const r = await run('llm.clear_api_key', {}, { successMessage: 'API key removed from Keychain' });
+                if (r.ok) {
+                  setApiKeyDraft('');
+                  await refreshKeyStatus();
+                }
+              }}
+            >
+              Remove
+            </button>
+            <button
+              className="btn btn-sm btn-secondary"
+              type="button"
+              onClick={async () => {
+                const k = apiKeyDraft.trim();
+                if (!k) {
+                  toast('Enter an API key to save', 'error');
+                  return;
+                }
+                const r = await run('llm.save_api_key', { apiKey: k }, { successMessage: 'API key saved to Keychain' });
+                if (r.ok) {
+                  setApiKeyDraft('');
+                  await refreshKeyStatus();
+                }
+              }}
+            >
+              Save key
+            </button>
+          </div>
+        </Field>
+      </div>
+    </Pane>
+  );
+}
+
 function PaneIntegrations() {
   const { run } = useRuntimeActions();
   return (
-    <Pane title="All Integrations" jp="連携">
+    <Pane title="All Integrations" jp="連携" subtitle="v1: OAuth and live connectors are not available. Rows below are UI preview only.">
+      <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
+        No accounts are linked. Connect shows an honest notice instead of a fake success state.
+      </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><div className="s-intg-icon" style={{background:'#1a1a1a'}}>📅</div><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
-          <button className="btn btn-sm btn-secondary" onClick={()=>run('integrations.connect', { provider:'apple_calendar' }, { successMessage:'Connection request sent' })}>Connect</button>
+          <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider:'apple_calendar' }, { silentError:true })}>Connect</button>
         </Row>
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><div className="s-intg-icon" style={{background:'#2a1a1a'}}>📋</div><div><div style={{fontSize:13, fontWeight:500}}>Apple Reminders <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your reminders and tasks in Apple Reminders</div></div></div>} last>
-          <button className="btn btn-sm btn-secondary" onClick={()=>run('integrations.connect', { provider:'apple_reminders' }, { successMessage:'Connection request sent' })}>Connect</button>
+          <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider:'apple_reminders' }, { silentError:true })}>Connect</button>
         </Row>
       </div>
       <div className="s-card" style={{marginBottom:10}}>
@@ -461,12 +653,11 @@ function PaneIntegrations() {
           <Icon name="chevronDown" size={12} className="dim"/>
         </div>
         <div style={{borderTop:'1px solid var(--border)', padding:'12px 16px', display:'flex', alignItems:'center', gap:10}}>
-          <span style={{fontSize:12}}>torubj0904@gmail.com</span>
-          <span style={{fontSize:11, color:'var(--text-dim)'}}>torubj0904@gmail.com</span>
-          <span className="label" style={{background:'color-mix(in srgb, var(--success) 20%, transparent)', color:'var(--success)', borderColor:'color-mix(in srgb, var(--success) 40%, transparent)'}}>Connected</span>
+          <span style={{fontSize:12, color:'var(--text-mute)'}}>example@gmail.com</span>
+          <span className="label" style={{background:'var(--surface-2)', color:'var(--text-dim)', borderColor:'var(--border)'}}>Not linked · v1</span>
           <span className="spacer"/>
-          <button className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'edit' }, { successMessage:'Integration action sent' })}><Icon name="edit" size={12}/></button>
-          <button className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'settings' }, { successMessage:'Integration action sent' })}><Icon name="settings" size={12}/></button>
+          <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'edit' }, { silentError:true })}><Icon name="edit" size={12}/></button>
+          <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'settings' }, { silentError:true })}><Icon name="settings" size={12}/></button>
         </div>
         <div style={{borderTop:'1px solid var(--border)', padding:'10px 16px', fontSize:12, color:'var(--text-dim)', cursor:'pointer'}}>
           <Icon name="plus" size={12} style={{marginRight:6}}/>Add another account
@@ -483,17 +674,17 @@ function PaneIntegrations() {
           <Icon name="chevronDown" size={12} className="dim"/>
         </div>
         <div style={{borderTop:'1px solid var(--border)', padding:'12px 16px', display:'flex', alignItems:'center', gap:10}}>
-          <span style={{fontSize:12}}>torubj0904@gmail.com</span>
-          <span className="label" style={{background:'color-mix(in srgb, var(--success) 20%, transparent)', color:'var(--success)', borderColor:'color-mix(in srgb, var(--success) 40%, transparent)'}}>Connected</span>
+          <span style={{fontSize:12, color:'var(--text-mute)'}}>example@gmail.com</span>
+          <span className="label" style={{background:'var(--surface-2)', color:'var(--text-dim)', borderColor:'var(--border)'}}>Not linked · v1</span>
           <span className="spacer"/>
-          <button className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'edit' }, { successMessage:'Integration action sent' })}><Icon name="edit" size={12}/></button>
-          <button className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'settings' }, { successMessage:'Integration action sent' })}><Icon name="settings" size={12}/></button>
+          <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'edit' }, { silentError:true })}><Icon name="edit" size={12}/></button>
+          <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'settings' }, { silentError:true })}><Icon name="settings" size={12}/></button>
         </div>
       </div>
       {[['Google Drive','☁'],['Outlook','✉'],['Notion','📝'],['Linear','◣'],['Slack','#']].map((s,i)=>(
         <div key={i} className="s-card" style={{marginBottom:8}}>
           <Row last title={<div className="row" style={{gap:10}}><div className="s-intg-icon">{s[1]}</div><div style={{fontSize:13, fontWeight:500}}>{s[0]}</div></div>}>
-            <button className="btn btn-sm btn-secondary" onClick={()=>run('integrations.connect', { provider:s[0].toLowerCase().replace(/\s+/g,'_') }, { successMessage:'Connection request sent' })}>Connect</button>
+            <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider:s[0].toLowerCase().replace(/\s+/g,'_') }, { silentError:true })}>Connect</button>
           </Row>
         </div>
       ))}
@@ -651,7 +842,7 @@ function PaneSupport() {
 const PANES = {
   general: PaneGeneral, system: PaneSystem, appearance: PaneAppearance,
   privacy: PanePrivacy, data: PaneData, hummingbird: PaneHummingbird,
-  meetings: PaneMeetings, chat: PaneChat, integrations: PaneIntegrations,
+  meetings: PaneMeetings, brief: PaneBrief, chat: PaneChat, llm: PaneLLM, integrations: PaneIntegrations,
   shortcuts: PaneShortcuts, subscription: PaneSubscription,
   team: PaneTeam, support: PaneSupport,
 };
@@ -660,28 +851,31 @@ function SettingsModal({pane, setPane, close}) {
   const resolved = PANE_ALIAS[pane] || pane;
   const PaneComp = PANES[resolved] || PANES.general;
   const [hydratedSections, setHydratedSections] = useStateS({});
+  const refreshSections = React.useCallback(async () => {
+    if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) {
+      setHydratedSections({});
+      return;
+    }
+    const res = await window.SHOGUN_RUNTIME.executeAction('settings.load', {}, { silentError: true });
+    const inner = res && res.data;
+    const sec = inner && inner.settings && inner.settings.sections;
+    setHydratedSections(sec && typeof sec === 'object' ? sec : {});
+  }, []);
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) {
-        setHydratedSections({});
-        return;
-      }
-      const res = await window.SHOGUN_RUNTIME.executeAction('settings.load', {}, { silentError: true });
+      await refreshSections();
       if (cancelled) return;
-      const inner = res && res.data;
-      const sec = inner && inner.settings && inner.settings.sections;
-      setHydratedSections(sec && typeof sec === 'object' ? sec : {});
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshSections]);
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   return (
-    <SettingsHydrationContext.Provider value={{ sections: hydratedSections }}>
+    <SettingsHydrationContext.Provider value={{ sections: hydratedSections, refreshSections }}>
     <>
       <div className="s-backdrop" onClick={close}/>
       <div className="s-modal">

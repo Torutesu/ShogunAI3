@@ -67,6 +67,7 @@ function ensureRuntimeDeps() {
         draftCreate: (input) => client.invoke('shogun_draft', input),
         llmApiKeySet: (input) => client.invoke('app_llm_api_key_set', input),
         llmApiKeyStatus: (input) => client.invoke('app_llm_api_key_status', input),
+        llmApiKeyClear: (input) => client.invoke('app_llm_api_key_clear', input),
         scheduleAction: (input) => client.invoke('shogun_schedule_action', input),
       }),
     };
@@ -95,6 +96,7 @@ function ensureRuntimeDeps() {
           'chat.complete': api.chatComplete,
           'llm.save_api_key': api.llmApiKeySet,
           'llm.api_key_status': api.llmApiKeyStatus,
+          'llm.clear_api_key': api.llmApiKeyClear,
           'shogun.open_pack': api.openPack,
           'shogun.start_focus_session': api.startFocusSession,
           'shogun.draft_reply': api.draftReply,
@@ -213,6 +215,10 @@ function App() {
     const res = await runtimeRef.current.registry.run(actionKey, payload);
     if (res.ok && res.data && res.data.notImplemented) {
       pushToast(res.data.message || 'Not available in this version', 'warn');
+      return res;
+    }
+    if (res.ok && res.data && res.data.honestPreferenceOnly) {
+      pushToast(res.data.message || 'Preference saved locally only.', 'info');
       return res;
     }
     if (res.ok) {

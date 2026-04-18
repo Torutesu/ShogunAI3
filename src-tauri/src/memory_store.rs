@@ -289,11 +289,6 @@ pub fn delete_items_created_since(cutoff_ms: u64) -> Result<Value, String> {
   }))
 }
 
-/// Replace catalog with an empty `items` list.
-pub fn clear_all_items() -> Result<(), String> {
-  save_catalog(&json!({ "items": [] }))
-}
-
 /// Total items and count created in the last 24h (rolling window).
 pub fn stats() -> Result<Value, String> {
   let doc = load_catalog()?;
@@ -304,15 +299,87 @@ pub fn stats() -> Result<Value, String> {
   let now = now_ms();
   let day_ago = now.saturating_sub(86_400_000);
   let mut last24 = 0u64;
+  let mut oldest: Option<u64> = None;
   for it in items {
     let ts = it.get("created_at").and_then(|x| x.as_u64()).unwrap_or(0);
+    if ts > 0 {
+      oldest = Some(match oldest {
+        None => ts,
+        Some(o) => o.min(ts),
+      });
+    }
     if ts >= day_ago {
       last24 += 1;
     }
   }
+  let history_days = oldest
+    .map(|o| now.saturating_sub(o) / 86_400_000)
+    .unwrap_or(0);
   Ok(json!({
     "memoryTotal": items.len(),
     "memoriesLast24h": last24,
+    "historyDays": history_days,
+    "stub": false,
+  }))
+}
+
+/// Roll-up "entities" from indexed memories: one row per distinct `source` (ingest origin), with mention counts.
+pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
+  use std::collections::HashMap;
+
+  let q = payload
+    .get("query")
+    .and_then(|x| x.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_lowercase();
+
+  let doc = load_catalog()?;
+  let items = doc
+    .get("items")
+    .and_then(|i| i.as_array())
+    .ok_or_else(|| "memory catalog missing items array".to_string())?;
+
+  let mut counts: HashMap<String, u64> = HashMap::new();
+  for it in items {
+    let label = it
+      .get("source")
+      .and_then(|s| s.as_str())
+      .unwrap_or("unknown")
+      .to_string();
+    *counts.entry(label).or_insert(0) += 1;
+  }
+
+  let mut rows: Vec<Value> = counts
+    .into_iter()
+    .map(|(label, count)| {
+      json!({
+        "id": format!("source:{}", label),
+        "label": label,
+        "kind": "source",
+        "mentions": count,
+      })
+    })
+    .collect();
+
+  if !q.is_empty() {
+    rows.retain(|v| {
+      v.get("label")
+        .and_then(|x| x.as_str())
+        .map(|l| l.to_lowercase().contains(&q))
+        .unwrap_or(false)
+    });
+  }
+
+  rows.sort_by(|a, b| {
+    let ca = a.get("mentions").and_then(|x| x.as_u64()).unwrap_or(0);
+    let cb = b.get("mentions").and_then(|x| x.as_u64()).unwrap_or(0);
+    cb.cmp(&ca)
+  });
+
+  Ok(json!({
+    "entities": rows,
+    "echo": payload,
     "stub": false,
   }))
 }

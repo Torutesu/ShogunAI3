@@ -19,7 +19,7 @@ function ScreenWork() {
         </div>
         <div className="row">
           <button className="btn btn-secondary" onClick={()=>runRuntimeAction('memory.search', { query:'documents and tasks', kinds:['screen','audio'], limit:20 }, { successMessage:'Work filter refreshed' })}><Icon name="filter" size={14}/>All types</button>
-          <button className="btn btn-primary" onClick={()=>runRuntimeAction('draft.create', { target:'work_document', prompt:'Create new document shell' }, { successMessage:'Draft requested' })}><Icon name="plus" size={14}/>New document</button>
+          <button className="btn btn-primary" onClick={()=>runRuntimeAction('draft.create', { target:'work_document', prompt:'Create new document shell' }, { silentError:true })}><Icon name="plus" size={14}/>New document</button>
         </div>
       </div>
 
@@ -106,16 +106,17 @@ function ScreenCapture() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>INGEST LAYER</div>
           <h1>Capture <span className="jp">捕捉</span></h1>
-          <div className="sub">SHOGUN reads your day passively via macOS Accessibility. Never screenshots. Never OCR. Local only.</div>
+          <div className="sub">Target design: passive ingest via Accessibility (no screenshots). v1 saves pause/resume preference only; no live capture pipeline.</div>
         </div>
         <div className="row">
-          <span className="label label-success"><span style={{width:6, height:6, borderRadius:'50%', background:'var(--success)', marginRight:6, boxShadow:'0 0 0 3px rgba(107,158,120,0.2)'}}/>CAPTURING</span>
+          <span className="label" style={{background:'var(--surface-2)', borderColor:'var(--border)', color:'var(--text-mute)'}}><span style={{width:6, height:6, borderRadius:'50%', background:'var(--text-dim)', marginRight:6}}/>PREVIEW · v1</span>
           <button
+            type="button"
             className="btn btn-secondary"
             onClick={async () => {
               const next = !isPaused;
               const action = next ? 'capture.pause' : 'capture.resume';
-              const res = await runRuntimeAction(action, { source:'capture_screen' }, { successMessage: next ? 'Capture paused' : 'Capture resumed' });
+              const res = await runRuntimeAction(action, { source:'capture_screen' }, { silentError:true });
               if (res.ok) setIsPaused(next);
             }}
           ><Icon name="pause" size={14}/>{isPaused ? 'Resume' : 'Pause'}</button>
@@ -224,19 +225,20 @@ function ScreenCapture() {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenIntegrations() {
   const [tools, setTools] = React.useState([
-    {name:'Gmail', cat:'Mail', jp:'メール', connected:true, ops:['read','draft','send']},
-    {name:'Google Calendar', cat:'Calendar', jp:'予定', connected:true, ops:['read','create']},
-    {name:'Slack', cat:'Chat', jp:'会話', connected:true, ops:['read','post']},
-    {name:'Notion', cat:'Docs', jp:'文書', connected:true, ops:['read','write']},
-    {name:'Linear', cat:'Tasks', jp:'課題', connected:true, ops:['read','create']},
-    {name:'GitHub', cat:'Code', jp:'コード', connected:true, ops:['read','comment']},
-    {name:'Arc Browser', cat:'Web', jp:'閲覧', connected:true, ops:['capture']},
-    {name:'Claude', cat:'LLM', jp:'対話', connected:true, ops:['chat']},
+    {name:'Gmail', cat:'Mail', jp:'メール', connected:false, ops:['read','draft','send']},
+    {name:'Google Calendar', cat:'Calendar', jp:'予定', connected:false, ops:['read','create']},
+    {name:'Slack', cat:'Chat', jp:'会話', connected:false, ops:['read','post']},
+    {name:'Notion', cat:'Docs', jp:'文書', connected:false, ops:['read','write']},
+    {name:'Linear', cat:'Tasks', jp:'課題', connected:false, ops:['read','create']},
+    {name:'GitHub', cat:'Code', jp:'コード', connected:false, ops:['read','comment']},
+    {name:'Arc Browser', cat:'Web', jp:'閲覧', connected:false, ops:['capture']},
+    {name:'Claude', cat:'LLM', jp:'対話', connected:false, ops:['chat']},
     {name:'Figma', cat:'Design', jp:'意匠', connected:false, ops:['read']},
     {name:'Raycast', cat:'Launcher', jp:'起動', connected:false, ops:['trigger']},
     {name:'Obsidian', cat:'Notes', jp:'手記', connected:false, ops:['read','write']},
     {name:'Zapier MCP', cat:'Bridge', jp:'橋梁', connected:false, ops:['any']},
   ]);
+  const nConnected = tools.filter((t) => t.connected).length;
 
   return (
     <div className="content-inner">
@@ -244,11 +246,11 @@ function ScreenIntegrations() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>CONNECTION LAYER</div>
           <h1>Integrations <span className="jp">接続</span></h1>
-          <div className="sub">20 MCP tools. Your agents use these to act on the outside world.</div>
+          <div className="sub">v1 is local-only: OAuth, MCP bridges, and remote tool calls are not active. This grid previews planned connectors.</div>
         </div>
         <div className="row">
-          <div style={{fontSize:13, color:'var(--text-mute)'}}><span className="gold" style={{fontSize:20, fontWeight:600}}>8</span> / 20 connected</div>
-          <button className="btn btn-primary" onClick={()=>runRuntimeAction('integrations.connect', { provider:'new_tool' }, { successMessage:'Tool connection flow opened' })}><Icon name="plus" size={14}/>Add tool</button>
+          <div style={{fontSize:13, color:'var(--text-mute)'}}><span className="gold" style={{fontSize:20, fontWeight:600}}>{nConnected}</span> / {tools.length} connected</div>
+          <button className="btn btn-primary" onClick={()=>runRuntimeAction('integrations.connect', { provider:'new_tool' }, { silentError:true })}><Icon name="plus" size={14}/>Add tool</button>
         </div>
       </div>
 
@@ -272,8 +274,10 @@ function ScreenIntegrations() {
                 onClick={async (e) => {
                   e.stopPropagation();
                   const next = !t.connected;
-                  const res = await runRuntimeAction('integrations.toggle', { provider:t.name, connected:next }, { successMessage:'Integration state updated' });
-                  if (res.ok) setTools(prev => prev.map(item => item.name===t.name ? { ...item, connected:next } : item));
+                  const res = await runRuntimeAction('integrations.toggle', { provider:t.name, connected:next }, { silentError:true });
+                  if (res.ok && res.data && !res.data.notImplemented) {
+                    setTools((prev) => prev.map((item) => (item.name === t.name ? { ...item, connected: next } : item)));
+                  }
                 }}
               />
             </div>
