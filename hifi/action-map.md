@@ -8,7 +8,13 @@ UIボタンと ActionRegistry / Runtime の対応表。
 
 - `integrations.connect` → cloud/OAuth providers: **`notImplemented`** (warn). Local tools **Arc / Raycast / Obsidian**: saves `connected` in settings (success path).
 - `integrations.toggle` → persists **`connected`** per provider in `settings.sections.integrations.providers` (no `notImplemented`).
-- `capture.pause` / `capture.resume` → **`honestPreferenceOnly`** (info toast). Resume sets `pipelineAvailable: true`; on **macOS** a background sampler ingests frontmost app name into memory (no screenshots).
+- `capture.pause` / `capture.resume` → **`honestPreferenceOnly`** (info toast). Resume sets `pipelineAvailable: true`; on **macOS** a background sampler ingests frontmost app name into memory (no screenshots). If `sections.capture.axRichCapture` is true and Accessibility is permitted, the sampler prefers a short **AX** snapshot (role/title/value/window) and falls back to the app name. Optional **`sections.capture.sampleIntervalSecs`** (4–600, default 8) sets the sampler sleep; **`sections.capture.axMinIntervalSecs`** (0–600, default 0) adds a minimum gap between **changed** AX ingests (hash dedup unchanged).
+- `permissions.manage` → optional **`target`**: `"accessibility"` opens **Privacy → Accessibility**; default / `"screen_capture"` opens **Screen Recording**.
+- **`app_integration_import_credentials`** (invoke) / ActionRegistry **`integrations.import_credentials`**: external agent stores per-provider JSON in Keychain (`accessToken`, optional `refreshToken`, `expiresAt`, `scopes`, **`oauthClientId`** + optional **`oauthClientSecret`** for Google token refresh). On success emits **`credentials-imported`** with `{ saved, provider, via: "invoke" }`. **`integrations.credentials_status`** returns **`configured`**, **`tokenRefreshReady`** (Google: `refreshToken` + `oauthClientId` present).
+- **Deep link** (same outcome as import, desktop): `shogun-ai://credentials/import?provider=…&access_token=…` (optional snake_case or camelCase query keys; optional `oauth_client_id` / `oauth_client_secret`). Emits Tauri event **`credentials-imported`** (`via: "deep-link"`). Prefer **invoke** over URLs for secrets.
+- **`shogun_google_calendar_sync`** / **`calendar.sync`**: lists near-future events with the imported Bearer token and **`memory.ingest`** each as a calendar memory (errors if token missing). Proactively refreshes the access token when **`expiresAt`** is near or on **401** if `oauthClientId` + `refreshToken` are stored. Background job: when **`sections.integrations.googleCalendarAutoSync`** is true and Keychain has credentials, syncs every **`googleCalendarSyncIntervalMins`** (5–1440, default 15).
+- **`app_diagnostics_report`** / **`diagnostics.report`**: writes JSON file plus returns **`summary`** (`capture`, `macosAccessibilityTrusted`, **`integrations.google_calendar`**, **`integrations.calendarAutoSync`**).
+- **`shogun_stats`** with **`stage: "capture"`** includes full **`settings`** document for Capture UI hydration.
 - `draft.create` → LLM draft via **`shogun_draft`** (requires API key in Tauri; browser mock returns Markdown).
 - `schedule.create` → append to local **`schedule_queue.json`** (no OS calendar sync).
 - `shogun.open_pack` / `shogun.draft_reply` / `shogun.start_focus_session` → **`notImplemented`**.
@@ -29,11 +35,13 @@ UIボタンと ActionRegistry / Runtime の対応表。
 ## settings-modal.jsx
 
 - Appearance changes call `settings.save(section=appearance)`; on success the modal dispatches `shogun-appearance-changed` so the shell updates `data-color-mode` / `data-font-size` without closing.
+- General **Clerk** -> `auth.status` (mount), `auth.clerk_sign_in` / `auth.clerk_sign_up`, **Sign Out** -> `auth.clerk_sign_out`
 - General `Email edit` -> `settings.save(section=general)`
 - Privacy app toggle -> `settings.save(section=privacy)`
 - Data deletion buttons -> `data.delete_range` / `data.delete_all` / `account.delete` (WRITE confirm)
 - Chat `Save` buttons -> `settings.save(section=chat.instructions|chat.notes)`
 - Integrations `Connect` -> `integrations.connect`
+- Integrations **Google Calendar** -> `integrations.credentials_status` (mount + Refresh), `calendar.sync` (**Sync to Memory**), **`settings.save`** (`section: integrations`) for **background sync** (`googleCalendarAutoSync`, `googleCalendarSyncIntervalMins`)
 - Integrations row actions -> `integrations.toggle`
 - Subscription actions -> `settings.save(section=subscription, ...)`
 - Support `Report` -> `diagnostics.report`
@@ -61,8 +69,9 @@ UIボタンと ActionRegistry / Runtime の対応表。
 
 - Work header -> `memory.search` / `draft.create`
 - Work task row more -> `settings.save(section=work)`
-- Capture pause/resume -> `capture.pause` / `capture.resume`
-- Capture permissions -> `permissions.manage`
+- Capture pause/resume -> `capture.pause` / `capture.resume`; **Sampler** card -> `settings.save` (`section: capture`, `sampleIntervalSecs`, `axMinIntervalSecs`); mount uses `stats.get` (`stage: capture`) + `settings.load`
+- Capture permissions -> `permissions.manage` (with `target: accessibility` or `screen_capture` from Capture screen)
+- Google Calendar agent card -> `integrations.credentials_status`, `calendar.sync`
 - Integrations add/toggle -> `integrations.connect` / `integrations.toggle`
 - Settings key add -> `settings.save(section=keys)`
 
@@ -80,7 +89,10 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `settings.save`
 - `settings.load`
 - `integrations.connect`
+- `integrations.import_credentials`
+- `integrations.credentials_status`
 - `integrations.toggle`
+- `calendar.sync`
 - `capture.pause`
 - `capture.resume`
 - `permissions.manage`
@@ -103,6 +115,12 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `stats.get`
 - `draft.create`
 - `schedule.create`
+- `auth.status`
+- `auth.clerk_sign_in`
+- `auth.clerk_sign_up`
+- `auth.clerk_sign_out`
+- `auth.biometric.status`
+- `auth.biometric.authenticate`
 
 ## Quick Verification
 

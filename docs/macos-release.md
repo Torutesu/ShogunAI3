@@ -36,13 +36,13 @@ Add macOS bundle settings under `bundle` in `src-tauri/tauri.conf.json`. Example
 "bundle": {
   "macOS": {
     "signingIdentity": "Developer ID Application: Your Name (TEAMID)",
-    "entitlements": "entitlements.plist",
+    "entitlements": "Entitlements.plist",
     "hardenedRuntime": true
   }
 }
 ```
 
-Author `entitlements.plist` with the minimum entitlements for sandbox (if any), network, Keychain access, etc.
+Use the repo’s `src-tauri/Entitlements.plist` (path set in `tauri.conf.json`) and extend only as needed: network, Apple Events / Automation if you script other apps, **Accessibility** if you ship AX-based capture, Keychain via standard APIs, etc.
 
 ## 4. Notarization (`notarytool`)
 
@@ -70,7 +70,10 @@ Ship the generated `.dmg` or a stapled `.app`. Document that LLM calls send the 
 
 1. First launch with default Gatekeeper; verify quarantine warnings if any.  
 2. Verify memory ingest/search, settings persistence, LLM chat (after key setup), and data deletion.  
-3. Confirm Integrations and Capture are preview-only and that toasts match backend (`notImplemented` / preference-only) behavior.  
+3. **Integrations**: Google Calendar uses agent-imported Keychain tokens; optional **background sync** (`integrations` settings) and **token refresh** when `oauthClientId` + `refreshToken` are present. Cloud **Connect** rows may still return `notImplemented` — expect warn toasts.  
+4. **Capture**: macOS sampler respects **sample interval** and optional **AX min interval**; grant **Accessibility** if using AX-rich capture.  
+5. **Clerk**: if enabled, redirect URLs must include the app’s custom scheme (see `tauri.conf.json` / env). **Hummingbird**: `app.open_hummingbird` runs `open -a Hummingbird` — app must be installed.  
+6. **Diagnostics**: Settings → Support **Report** should write a JSON file and return a **`summary`** (capture, accessibility trust, calendar integration flags).  
 
 ## CI
 

@@ -19,6 +19,12 @@ mod imp {
     ) -> AXError;
     fn CFGetTypeID(cf: CFTypeRef) -> usize;
     fn CFStringGetTypeID() -> usize;
+    /// Returns whether this process is trusted for accessibility (System Settings).
+    fn AXIsProcessTrusted() -> u8;
+  }
+
+  pub fn accessibility_trusted() -> bool {
+    unsafe { AXIsProcessTrusted() != 0 }
   }
 
   unsafe fn copy_attr(element: AXUIElementRef, key: &str) -> Option<CFTypeRef> {
@@ -124,7 +130,18 @@ mod imp {
 #[cfg(target_os = "macos")]
 pub use imp::focused_ax_snapshot;
 
+/// `Some(true/false)` on macOS (whether this app is allowed in Accessibility settings). `None` on other platforms.
+#[cfg(target_os = "macos")]
+pub fn accessibility_trust_status() -> Option<bool> {
+  Some(imp::accessibility_trusted())
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn focused_ax_snapshot() -> Option<String> {
+  None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn accessibility_trust_status() -> Option<bool> {
   None
 }

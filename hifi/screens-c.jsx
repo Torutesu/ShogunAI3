@@ -86,7 +86,22 @@ function ScreenWork() {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenCapture() {
   const [isPaused, setIsPaused] = React.useState(false);
+  const [axRich, setAxRich] = React.useState(false);
+  const [sampleIv, setSampleIv] = React.useState(8);
+  const [axMinIv, setAxMinIv] = React.useState(0);
   const [captureStats, setCaptureStats] = React.useState({ events:'1,248', memories:'23', appCoverage:[] });
+  const refreshCaptureSettings = React.useCallback(() => {
+    return runRuntimeAction('settings.load', {}, { silentError:true }).then((res) => {
+      const cap = res.ok && res.data?.settings?.sections?.capture;
+      if (!cap || typeof cap !== 'object') return res;
+      setAxRich(!!cap.axRichCapture);
+      const s = Number(cap.sampleIntervalSecs);
+      setSampleIv(Number.isFinite(s) ? Math.min(600, Math.max(4, s)) : 8);
+      const a = Number(cap.axMinIntervalSecs);
+      setAxMinIv(Number.isFinite(a) ? Math.min(600, Math.max(0, a)) : 0);
+      return res;
+    });
+  }, []);
   React.useEffect(() => {
     let mounted = true;
     runRuntimeAction('stats.get', { stage:'capture' }, { silentError:true }).then((res) => {
@@ -97,19 +112,41 @@ function ScreenCapture() {
         memories: data.memoriesToday || '23',
         appCoverage: data.appCoverage || [],
       });
+      const cap = data.settings?.sections?.capture;
+      if (cap && typeof cap === 'object') {
+        setAxRich(!!cap.axRichCapture);
+        const s = Number(cap.sampleIntervalSecs);
+        if (Number.isFinite(s)) setSampleIv(Math.min(600, Math.max(4, s)));
+        const a = Number(cap.axMinIntervalSecs);
+        if (Number.isFinite(a)) setAxMinIv(Math.min(600, Math.max(0, a)));
+      }
     });
+    refreshCaptureSettings();
     return () => { mounted = false; };
-  }, []);
+  }, [refreshCaptureSettings]);
   return (
     <div className="content-inner">
       <div className="page-head">
         <div>
           <div className="t-mono" style={{marginBottom:8}}>INGEST LAYER</div>
           <h1>Capture <span className="jp">捕捉</span></h1>
-          <div className="sub">macOS: while resumed, the app samples the frontmost app name into memory on an interval (no screenshots). Pause stops sampling; Accessibility-rich capture is a later phase.</div>
+          <div className="sub">macOS: 再開中は設定した間隔でフォーカス情報を Memory に取り込みます（スクリーンショットなし）。既定は最前面アプリ名のみ。アクセシビリティ許可と「AX リッチ取得」でフォーカス要素の短いスナップショットを試みます。AX 最小間隔で取り込みレートを抑えられます。</div>
         </div>
         <div className="row">
           <span className="label" style={{background:'var(--surface-2)', borderColor:'var(--border)', color:'var(--text-mute)'}}><span style={{width:6, height:6, borderRadius:'50%', background:'var(--text-dim)', marginRight:6}}/>PREVIEW · v1</span>
+          <button
+            type="button"
+            className={'btn btn-sm ' + (axRich ? 'btn-secondary' : 'btn-ghost')}
+            onClick={async () => {
+              const next = !axRich;
+              const res = await runRuntimeAction(
+                'settings.save',
+                { section:'capture', axRichCapture: next },
+                { silentError:true, successMessage: next ? 'AX rich capture enabled' : 'Switched to app-name only sampling' },
+              );
+              if (res.ok) setAxRich(next);
+            }}
+          ><Icon name="capture" size={14}/>{axRich ? 'AX rich ON' : 'AX rich OFF'}</button>
           <button
             type="button"
             className="btn btn-secondary"
@@ -190,13 +227,50 @@ function ScreenCapture() {
         </div>
       </div>
 
+      <div className="card" style={{padding:20, marginBottom:20, borderColor:'var(--border-hi)'}}>
+        <div className="t-mono" style={{marginBottom:10}}>SAMPLER · INTERVALS</div>
+        <div style={{fontSize:12, color:'var(--text-mute)', marginBottom:14, lineHeight:1.5}}>
+          サンプル間隔（秒・4–600）はバックグラウンドのウェイク間隔です。AX 最小間隔（0–600、0 で無効）は、内容が変わった AX 取り込みの最短間隔です（同一内容はハッシュで抑止）。
+        </div>
+        <div className="row" style={{flexWrap:'wrap', gap:14, alignItems:'center'}}>
+          <label style={{fontSize:12, display:'flex', alignItems:'center', gap:8}}>
+            Sample every
+            <input className="s-input" type="number" min={4} max={600} style={{width:72}} value={sampleIv} onChange={(e)=>setSampleIv(Number(e.target.value))}/>
+ sec
+          </label>
+          <label style={{fontSize:12, display:'flex', alignItems:'center', gap:8}}>
+            AX min gap
+            <input className="s-input" type="number" min={0} max={600} style={{width:72}} value={axMinIv} onChange={(e)=>setAxMinIv(Number(e.target.value))}/>
+            sec
+          </label>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={async () => {
+              const s = Math.min(600, Math.max(4, Math.round(sampleIv) || 8));
+              const a = Math.min(600, Math.max(0, Math.round(axMinIv) || 0));
+              const res = await runRuntimeAction(
+                'settings.save',
+                { section:'capture', sampleIntervalSecs: s, axMinIntervalSecs: a },
+                { silentError:true, successMessage:'Capture sampler settings saved' },
+              );
+              if (res.ok) {
+                setSampleIv(s);
+                setAxMinIv(a);
+              }
+            }}
+          >Apply</button>
+        </div>
+      </div>
+
       {/* Permissions card */}
       <div className="card" style={{padding:20, background:'var(--surface-2)', borderColor:'var(--border-hi)'}}>
-        <div className="row" style={{marginBottom:12}}>
+        <div className="row" style={{marginBottom:12, flexWrap:'wrap', gap:8}}>
           <Icon name="shield" size={16} className="gold"/>
           <div style={{fontSize:14, fontWeight:500}}>What SHOGUN can see</div>
           <span className="spacer"/>
-          <button className="btn btn-sm btn-ghost" onClick={()=>runRuntimeAction('permissions.manage', { source:'capture.permissions' }, { successMessage:'Permissions flow opened' })}>Manage permissions <Icon name="arrowUpRight" size={12}/></button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={()=>runRuntimeAction('permissions.manage', { target:'accessibility', source:'capture.permissions' }, { successMessage:'Opened Accessibility privacy settings' })}>Accessibility <Icon name="arrowUpRight" size={12}/></button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={()=>runRuntimeAction('permissions.manage', { target:'screen_capture', source:'capture.permissions' }, { successMessage:'Opened Screen Recording privacy settings' })}>Screen Recording <Icon name="arrowUpRight" size={12}/></button>
         </div>
         <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:12}}>
           {[
@@ -224,6 +298,25 @@ function ScreenCapture() {
 // L7 · INTEGRATIONS — MCP tools, apps
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenIntegrations() {
+  const [calCred, setCalCred] = React.useState(false);
+  const [calRefresh, setCalRefresh] = React.useState(false);
+  const refreshCalStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'google_calendar' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setCalCred(!!res.data.configured);
+        setCalRefresh(!!res.data.tokenRefreshReady);
+      }
+      return res;
+    });
+  }, []);
+  React.useEffect(() => { refreshCalStatus(); }, [refreshCalStatus]);
+  React.useEffect(() => {
+    const onCred = () => {
+      void refreshCalStatus();
+    };
+    window.addEventListener('shogun-credentials-updated', onCred);
+    return () => window.removeEventListener('shogun-credentials-updated', onCred);
+  }, [refreshCalStatus]);
   const [tools, setTools] = React.useState([
     {name:'Gmail', cat:'Mail', jp:'メール', connected:false, ops:['read','draft','send']},
     {name:'Google Calendar', cat:'Calendar', jp:'予定', connected:false, ops:['read','create']},
@@ -246,7 +339,7 @@ function ScreenIntegrations() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>CONNECTION LAYER</div>
           <h1>Integrations <span className="jp">接続</span></h1>
-          <div className="sub">v1: toggles persist locally. OAuth and remote APIs are not active except for Arc, Raycast, and Obsidian (local &quot;connect&quot; only). This grid previews additional connectors.</div>
+          <div className="sub">v1: Toggles persist locally. OAuth is not implemented in-app. Google Calendar: have an external agent import tokens into Keychain, then use the card below to sync events into Memory. Arc, Raycast, and Obsidian still use local Connect only. This grid previews additional connectors.</div>
         </div>
         <div className="row">
           <div style={{fontSize:13, color:'var(--text-mute)'}}><span className="gold" style={{fontSize:20, fontWeight:600}}>{nConnected}</span> / {tools.length} connected</div>
@@ -286,6 +379,23 @@ function ScreenIntegrations() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="card" style={{padding:20, marginTop:20, borderColor:'var(--border-hi)'}}>
+        <div className="t-mono" style={{marginBottom:8}}>EXTERNAL AGENT · GOOGLE CALENDAR</div>
+        <div style={{fontSize:13, color:'var(--text-mute)', lineHeight:1.6, marginBottom:14}}>
+          Credentials: Tauri invoke <code style={{fontSize:12}}>app_integration_import_credentials</code> with <code style={{fontSize:12}}>provider: &quot;google_calendar&quot;</code>, <code style={{fontSize:12}}>accessToken</code>, optional <code style={{fontSize:12}}>refreshToken</code>, <code style={{fontSize:12}}>expiresAt</code>, <code style={{fontSize:12}}>oauthClientId</code> (and <code style={{fontSize:12}}>oauthClientSecret</code> if required), <code style={{fontSize:12}}>scopes</code>. OAuth flow is out of scope for this app.
+        </div>
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center'}}>
+          <span className={'label ' + (calCred ? 'label-success' : '')}>{calCred ? 'Token imported' : 'No token'}</span>
+          {calCred ? (
+            <span className={'label ' + (calRefresh ? 'label-success' : '')} style={{fontSize:11}}>
+              {calRefresh ? 'Auto-refresh ready' : 'Add oauthClientId + refresh for auto-refresh'}
+            </span>
+          ) : null}
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => { refreshCalStatus(); }}>Refresh status</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => runRuntimeAction('calendar.sync', { calendarId:'primary', maxResults:25 }, { successMessage:'Calendar synced to Memory' })}>Sync to Memory</button>
+        </div>
       </div>
     </div>
   );

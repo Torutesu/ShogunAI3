@@ -19,7 +19,7 @@
         "fullscreen": false
       }
     ],
-       "security": {
+    "security": {
       "csp": "default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net https://*.clerk.accounts.dev https://*.clerk.dev; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://img.clerk.com https://*.clerk.com https://*.googleusercontent.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com https://*.clerk.accounts.dev https://*.clerk.dev https://clerk.com https://*.clerk.com https://api.clerk.com; frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.dev https://accounts.google.com https://appleid.apple.com https://challenges.cloudflare.com;"
     }
   },
@@ -33,6 +33,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist",
+      "infoPlist": "Info.plist"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -111,6 +111,7 @@ function PaneGeneral() {
   const [name, setName] = useStateS('Toru Tano');
   const [aliases, setAliases] = useStateS('torubj0904@gmail.com, @toru, toru.t');
   const [email, setEmail] = useStateS('torubj0904@gmail.com');
+  const [clerkState, setClerkState] = useStateS({ enabled: false, signedIn: false, label: '' });
   React.useEffect(() => {
     const g = sections.general;
     if (!g || typeof g !== 'object') return;
@@ -118,8 +119,73 @@ function PaneGeneral() {
     if (g.aliases != null) setAliases(String(g.aliases));
     if (g.email != null) setEmail(String(g.email));
   }, [sections]);
+  React.useEffect(() => {
+    const refresh = async () => {
+      const exec = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.executeAction;
+      const r = exec ? await exec('auth.status', {}, { silentError: true }) : { ok: false };
+      const enabled = !!(r.ok && r.data && r.data.clerk && r.data.clerk.enabled);
+      const snap = r.ok && r.data && r.data.snapshot && typeof r.data.snapshot === 'object' ? r.data.snapshot : null;
+      const auth = window.ShogunClerkAuth;
+      const u = auth && typeof auth.getClerkUser === 'function' ? auth.getClerkUser() : null;
+      const signedIn = !!(u || (auth && typeof auth.isSignedIn === 'function' && auth.isSignedIn()));
+      const emailPart =
+        (u && u.primaryEmailAddress && u.primaryEmailAddress.emailAddress) ||
+        (snap && snap.primaryEmail) ||
+        '';
+      const namePart = (u && (u.fullName || u.username)) || (snap && snap.displayName) || '';
+      const label =
+        namePart && emailPart ? `${namePart} · ${emailPart}` : emailPart || namePart || (signedIn ? 'Signed in' : '');
+      setClerkState({ enabled, signedIn, label });
+    };
+    const t = window.setTimeout(() => void refresh(), 0);
+    const onCh = () => void refresh();
+    window.addEventListener('shogun-clerk-auth-changed', onCh);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('shogun-clerk-auth-changed', onCh);
+    };
+  }, []);
   return (
     <Pane title="General" jp="一般">
+      <Field
+        label="Clerk account"
+        hint="Free tier: sign in with email, Google, etc. (in-app overlay). Add your dev URL and shogun-ai:// under Clerk → Redirect URLs if OAuth redirects fail; the app may fall back to the system browser. For Touch ID / Face ID on this device without a paid Clerk plan, use Privacy → Biometric app lock."
+      >
+        {!clerkState.enabled && (
+          <div className="s-field-hint" style={{ marginTop: 0 }}>
+            Clerk is not configured. Set CLERK_PUBLISHABLE_KEY and CLERK_FRONTEND_API in a .env file at the project root
+            (see .env.example).
+          </div>
+        )}
+        {clerkState.enabled && !clerkState.signedIn && (
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-sm btn-secondary"
+              type="button"
+              onClick={() =>
+                run('auth.clerk_sign_in', {}, { successMessage: 'サインインを表示しました' })
+              }
+            >
+              <Icon name="key" size={12} />
+              Sign in
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() =>
+                run('auth.clerk_sign_up', {}, { successMessage: 'サインアップを表示しました' })
+              }
+            >
+              Sign up
+            </button>
+          </div>
+        )}
+        {clerkState.enabled && clerkState.signedIn && (
+          <div className="s-meta" style={{ marginTop: 0 }}>
+            <div style={{ fontSize: 14, color: 'var(--text)' }}>{clerkState.label || 'Signed in'}</div>
+          </div>
+        )}
+      </Field>
       <Field label="What should SHOGUN call you?">
         <input className="s-input" value={name} onChange={e=>setName(e.target.value)}/>
       </Field>
@@ -137,7 +203,18 @@ function PaneGeneral() {
         <div className="s-field-hint" style={{marginTop:4}}>You are on the latest version · Channel: Stable</div>
         <div className="s-field-hint">Runtime: local · MLX 0.18.2 · Node 22.11</div>
       </div>
-      <button className="btn btn-secondary" style={{marginTop:20}} onClick={()=>toast('Sign out flow is queued via app runtime', 'warn')}><Icon name="logout" size={12}/>Sign Out</button>
+      <button
+        className="btn btn-secondary"
+        style={{ marginTop: 20 }}
+        type="button"
+        onClick={async () => {
+          const r = await run('auth.clerk_sign_out', {}, { successMessage: 'Signed out' });
+          if (!r.ok) toast(r.error?.message || 'Sign out failed', 'error');
+        }}
+      >
+        <Icon name="logout" size={12} />
+        Sign Out
+      </button>
     </Pane>
   );
 }
@@ -240,15 +317,73 @@ function PaneAppearance() {
 }
 
 function PanePrivacy() {
-  const { run } = useRuntimeActions();
+  const { run, toast } = useRuntimeActions();
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
+  const secSecurity = sections.security && typeof sections.security === 'object' ? sections.security : {};
   const [tab, setTab] = useStateS('apps');
   const [apps, setApps] = useStateS([
     {name:'Finder', icon:'📁', on:true},
     {name:'1Password', icon:'🔐', on:true},
     {name:'Banking', icon:'🏦', on:true},
   ]);
+  const [bioLock, setBioLock] = useStateS(!!secSecurity.biometricLockEnabled);
+  const [bioStatus, setBioStatus] = useStateS(null);
+  React.useEffect(() => {
+    setBioLock(!!secSecurity.biometricLockEnabled);
+  }, [secSecurity.biometricLockEnabled]);
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const r = await run('auth.biometric.status', {}, { silentError: true });
+      if (!cancelled && r && r.ok && r.data) setBioStatus(r.data);
+    })();
+    return () => { cancelled = true; };
+  }, [run]);
   return (
     <Pane title="Privacy Controls" jp="守秘" subtitle={<span>Control what SHOGUN can see. Excluded content won't appear in your context. <a className="s-link">Learn more <Icon name="arrowUpRight" size={10}/></a></span>}>
+      <div className="s-card" style={{marginBottom:14}}>
+        <Row
+          title={<span><span className="en-only">Biometric app lock</span><span className="jp">生体認証でロック</span></span>}
+          desc="Device-level protection (no cloud passkey): Touch ID or Face ID after launch and when returning from the background. Pair with Clerk sign-in above for account identity. Requires the Tauri desktop app on a supported Mac."
+          last
+        >
+          <Toggle
+            on={bioLock}
+            onClick={async () => {
+              const next = !bioLock;
+              if (next) {
+                const st = await run('auth.biometric.status', {}, { silentError: true });
+                const d = st && st.data;
+                if (!d || !d.supported || !d.enrolled) {
+                  toast(
+                    'この環境では生体認証が使えません（デスクトップアプリと Touch ID 等の登録が必要です）。',
+                    'warn',
+                  );
+                  return;
+                }
+              }
+              setBioLock(next);
+              const r = await run(
+                'settings.save',
+                { section: 'security', biometricLockEnabled: next },
+                { successMessage: next ? '生体ロックを有効にしました' : '生体ロックをオフにしました' },
+              );
+              if (r && r.ok && refreshSections) await refreshSections();
+            }}
+          />
+        </Row>
+        {bioStatus && (
+          <div className="s-field-hint" style={{marginTop:10, padding:'0 16px 14px'}}>
+            {bioStatus.stub
+              ? 'ブラウザプレビュー: 実際の生体認証はデスクトップアプリで有効になります。'
+              : !bioStatus.supported
+                ? 'このプラットフォームでは LocalAuthentication が利用できません。'
+                : !bioStatus.enrolled
+                  ? '端末に生体情報が登録されていません。システム設定で Touch ID を設定してから有効にしてください。'
+                  : `状態: 利用可能（${bioStatus.biometryType || 'biometry'}）`}
+          </div>
+        )}
+      </div>
       <div className="row" style={{gap:4, background:'var(--surface)', border:'1px solid var(--border)', padding:3, borderRadius:'var(--radius-md)', width:'fit-content', marginBottom:14}}>
         <button className="btn btn-sm" style={{background:tab==='apps'?'var(--surface-2)':'transparent', borderColor:'transparent'}} onClick={()=>setTab('apps')}>Exclude Apps <span style={{color:'var(--text-dim)', marginLeft:4}}>3</span></button>
         <button className="btn btn-sm btn-ghost" onClick={()=>setTab('websites')}>Exclude Websites <span style={{color:'var(--text-dim)', marginLeft:4}}>11</span></button>
@@ -630,10 +765,46 @@ function PaneLLM() {
 
 function PaneIntegrations() {
   const { run } = useRuntimeActions();
+  const [googleCalCred, setGoogleCalCred] = useStateS(false);
+  const [googleCalRefresh, setGoogleCalRefresh] = useStateS(false);
+  const [calAutoSync, setCalAutoSync] = useStateS(false);
+  const [calSyncMins, setCalSyncMins] = useStateS(15);
+
+  const refreshGoogleCalStatus = React.useCallback(async () => {
+    const r = await run('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true });
+    if (r.ok && r.data && typeof r.data.configured === 'boolean') {
+      setGoogleCalCred(r.data.configured);
+      setGoogleCalRefresh(!!r.data.tokenRefreshReady);
+    }
+  }, [run]);
+
+  React.useEffect(() => {
+    void refreshGoogleCalStatus();
+  }, [refreshGoogleCalStatus]);
+
+  React.useEffect(() => {
+    void (async () => {
+      const r = await run('settings.load', {}, { silentError: true });
+      const integ = r.ok && r.data?.settings?.sections?.integrations;
+      if (!integ || typeof integ !== 'object') return;
+      setCalAutoSync(!!integ.googleCalendarAutoSync);
+      const m = Number(integ.googleCalendarSyncIntervalMins);
+      if (Number.isFinite(m)) setCalSyncMins(Math.min(1440, Math.max(5, m)));
+    })();
+  }, [run]);
+
+  React.useEffect(() => {
+    const onCred = () => {
+      void refreshGoogleCalStatus();
+    };
+    window.addEventListener('shogun-credentials-updated', onCred);
+    return () => window.removeEventListener('shogun-credentials-updated', onCred);
+  }, [refreshGoogleCalStatus]);
+
   return (
-    <Pane title="All Integrations" jp="連携" subtitle="v1: Cloud OAuth is not wired. Connect on Apple/Gmail rows shows an honest notice; Arc, Raycast, and Obsidian can be marked local-only from the Integrations screen.">
+    <Pane title="All Integrations" jp="連携" subtitle="v1: In-app OAuth is not wired. Google Calendar tokens can be imported by an external agent (Keychain); use Refresh / Sync below. Other Connect rows show an honest notice where applicable.">
       <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
-        Toggles on the Integrations page persist locally. This pane uses Connect for providers that still need OAuth.
+        Workspace Integrations screen has the same agent contract. Tauri invoke: <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh).
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><div className="s-intg-icon" style={{background:'#1a1a1a'}}>📅</div><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
@@ -673,12 +844,46 @@ function PaneIntegrations() {
           <span className="spacer"/>
           <Icon name="chevronDown" size={12} className="dim"/>
         </div>
-        <div style={{borderTop:'1px solid var(--border)', padding:'12px 16px', display:'flex', alignItems:'center', gap:10}}>
-          <span style={{fontSize:12, color:'var(--text-mute)'}}>example@gmail.com</span>
-          <span className="label" style={{background:'var(--surface-2)', color:'var(--text-dim)', borderColor:'var(--border)'}}>Not linked · v1</span>
+        <div style={{borderTop:'1px solid var(--border)', padding:'12px 16px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:10}}>
+          <span style={{fontSize:12, color:'var(--text-mute)'}}>Agent-imported token</span>
+          <span className={'label ' + (googleCalCred ? 'label-success' : '')} style={{borderColor:'var(--border)'}}>
+            {googleCalCred ? 'Keychain · configured' : 'No token · import via agent'}
+          </span>
+          {googleCalCred ? (
+            <span className={'label ' + (googleCalRefresh ? 'label-success' : '')} style={{borderColor:'var(--border)', fontSize:11}}>
+              {googleCalRefresh ? 'Refresh: client+refresh token' : 'Refresh: add oauthClientId + refreshToken'}
+            </span>
+          ) : null}
           <span className="spacer"/>
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => { void refreshGoogleCalStatus(); }}>Refresh status</button>
+          <button className="btn btn-sm btn-primary" type="button" onClick={() => run('calendar.sync', { calendarId:'primary', maxResults:25 }, { successMessage:'Calendar synced to Memory' })}>Sync to Memory</button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'edit' }, { silentError:true })}><Icon name="edit" size={12}/></button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'settings' }, { silentError:true })}><Icon name="settings" size={12}/></button>
+        </div>
+        <div style={{borderTop:'1px solid var(--border)', padding:'12px 16px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:12}}>
+          <label style={{fontSize:12, display:'flex', alignItems:'center', gap:8, opacity: googleCalCred ? 1 : 0.45}}>
+            <input type="checkbox" checked={calAutoSync} disabled={!googleCalCred} onChange={(e) => setCalAutoSync(e.target.checked)} />
+            Background sync to Memory
+          </label>
+          <label style={{fontSize:12, display:'flex', alignItems:'center', gap:6, opacity: googleCalCred ? 1 : 0.45}}>
+            Every
+            <input className="s-input" type="number" min={5} max={1440} style={{width:64}} value={calSyncMins} disabled={!googleCalCred} onChange={(e) => setCalSyncMins(Number(e.target.value))} />
+            min (5–1440)
+          </label>
+          <button
+            className="btn btn-sm btn-secondary"
+            type="button"
+            disabled={!googleCalCred}
+            onClick={async () => {
+              const m = Math.min(1440, Math.max(5, Math.round(calSyncMins) || 15));
+              const r = await run(
+                'settings.save',
+                { section: 'integrations', googleCalendarAutoSync: calAutoSync, googleCalendarSyncIntervalMins: m },
+                { silentError: true, successMessage: 'Calendar auto-sync saved' },
+              );
+              if (r.ok) setCalSyncMins(m);
+            }}
+          >Save auto-sync</button>
         </div>
       </div>
       {[['Google Drive','☁'],['Outlook','✉'],['Notion','📝'],['Linear','◣'],['Slack','#']].map((s,i)=>(

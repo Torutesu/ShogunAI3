@@ -59,11 +59,90 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     expect(result.data).toBeTruthy();
   });
 
+  test("executeAction integrations.credentials_status and calendar.sync (mock)", async ({
+    page,
+  }) => {
+    await openHiFi(page);
+
+    const cred = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "integrations.credentials_status",
+        { provider: "google_calendar" },
+        { silentError: true }
+      );
+    });
+    expect(cred.ok).toBe(true);
+    expect(cred.data.configured).toBe(false);
+    expect(cred.data.tokenRefreshReady).toBe(false);
+
+    const sync = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "calendar.sync",
+        { calendarId: "primary", maxResults: 10 },
+        { silentError: true }
+      );
+    });
+    expect(sync.ok).toBe(true);
+    expect(sync.data.ingested).toBe(0);
+    expect(sync.data.calendarId).toBe("primary");
+  });
+
+  test("executeAction diagnostics.report returns summary (mock)", async ({ page }) => {
+    await openHiFi(page);
+    const out = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "diagnostics.report",
+        { source: "e2e" },
+        { silentError: true },
+      );
+    });
+    expect(out.ok).toBe(true);
+    expect(out.data.reportId).toBeTruthy();
+    expect(out.data.summary).toBeTruthy();
+    expect(out.data.summary.integrations.google_calendar.configured).toBe(false);
+    expect(out.data.summary.integrations.google_calendar.tokenRefreshReady).toBe(false);
+    expect(out.data.summary.integrations.calendarAutoSync.autoSyncEnabled).toBe(false);
+    expect(out.data.summary.integrations.calendarAutoSync.autoSyncIntervalMins).toBe(15);
+  });
+
+  test("stats.get with stage capture includes settings (mock)", async ({ page }) => {
+    await openHiFi(page);
+    const out = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "stats.get",
+        { stage: "capture" },
+        { silentError: true },
+      );
+    });
+    expect(out.ok).toBe(true);
+    expect(out.data.settings.sections.capture.sampleIntervalSecs).toBe(8);
+    expect(out.data.settings.sections.capture.axMinIntervalSecs).toBe(0);
+    expect(out.data.settings.sections.integrations.googleCalendarSyncIntervalMins).toBe(15);
+  });
+
   test("opens Settings from user menu and closes with X", async ({ page }) => {
     await openHiFi(page);
 
     await openSettingsModal(page);
     await expect(page.locator(".s-pane-head")).toContainText("General");
+
+    await page.locator(".s-close").click();
+    await expect(page.locator(".s-modal")).toHaveCount(0);
+  });
+
+  test("Settings General: Clerk section and auth.status mock", async ({ page }) => {
+    await openHiFi(page);
+    await openSettingsModal(page);
+
+    await expect(page.locator(".s-pane-body")).toContainText("Clerk account");
+    await expect(page.locator(".s-pane-body")).toContainText("Clerk is not configured");
+
+    const result = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction("auth.status", {}, { silentError: true });
+    });
+    expect(result.ok).toBe(true);
+    expect(result.data.clerk).toBeTruthy();
+    expect(result.data.clerk.enabled).toBe(false);
 
     await page.locator(".s-close").click();
     await expect(page.locator(".s-modal")).toHaveCount(0);
@@ -167,6 +246,22 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await expect(page.locator(".app-toast.warn")).toContainText(/not available in v1/i, {
       timeout: 8000,
     });
+    await page.locator(".s-close").click();
+    await expect(page.locator(".s-modal")).toHaveCount(0);
+  });
+
+  test("Settings Integrations: Sync to Memory shows success toast (mock)", async ({ page }) => {
+    await openHiFi(page);
+    await openSettingsModal(page);
+
+    await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
+    await expect(page.locator(".s-pane-head")).toContainText("Integrations");
+
+    await page.locator(".s-pane-body").getByRole("button", { name: "Sync to Memory" }).click();
+    await expect(page.locator(".app-toast.success")).toContainText("Calendar synced to Memory", {
+      timeout: 8000,
+    });
+
     await page.locator(".s-close").click();
     await expect(page.locator(".s-modal")).toHaveCount(0);
   });

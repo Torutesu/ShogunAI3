@@ -69,6 +69,28 @@
           stub: false,
           echo: echo,
         };
+      case "app_integration_import_credentials":
+        return {
+          saved: true,
+          provider: normalizeProvider(echo.provider),
+          stub: false,
+          echo: echo,
+        };
+      case "app_integration_credentials_status":
+        return {
+          configured: false,
+          tokenRefreshReady: false,
+          provider: normalizeProvider(echo.provider || "google_calendar"),
+          stub: false,
+          echo: echo,
+        };
+      case "shogun_google_calendar_sync":
+        return {
+          ingested: 0,
+          calendarId: echo.calendarId || "primary",
+          stub: false,
+          echo: echo,
+        };
       case "shogun_draft":
         return {
           content: "# Draft\n\n_Mock Markdown from browser transport. Tauri uses your LLM key._\n",
@@ -138,8 +160,8 @@
           echo: echo,
           stub: false,
         };
-      case "shogun_stats":
-        return {
+      case "shogun_stats": {
+        const base = {
           eventsToday: "0",
           memoriesToday: "0",
           memoryTotal: 0,
@@ -152,6 +174,25 @@
           echo: echo,
           stub: false,
         };
+        if (echo && echo.stage === "capture") {
+          base.settings = {
+            sections: {
+              capture: {
+                axRichCapture: false,
+                sampleIntervalSecs: 8,
+                axMinIntervalSecs: 0,
+                paused: false,
+                pipelineAvailable: true,
+              },
+              integrations: {
+                googleCalendarAutoSync: false,
+                googleCalendarSyncIntervalMins: 15,
+              },
+            },
+          };
+        }
+        return base;
+      }
       case "shogun_chat_complete":
         throw createError(
           "LLM_KEY",
@@ -204,6 +245,20 @@
         return {
           reportId: "diag-mock",
           path: "/mock/diagnostics.json",
+          summary: {
+            capture: {},
+            macosAccessibilityTrusted: null,
+            integrations: {
+              google_calendar: {
+                configured: false,
+                tokenRefreshReady: false,
+              },
+              calendarAutoSync: {
+                autoSyncEnabled: false,
+                autoSyncIntervalMins: 15,
+              },
+            },
+          },
           stub: false,
           echo: echo,
         };
@@ -223,6 +278,58 @@
           stub: false,
           echo: echo,
         };
+      case "auth_clerk_config":
+        return {
+          enabled: false,
+          publishableKey: "",
+          frontendApi: "",
+          clerkJsUrl: "",
+          redirectUrl: "shogun-ai://clerk-callback",
+          stub: true,
+          echo: echo,
+        };
+      case "auth_open_browser_sign_in":
+        return {
+          opened: true,
+          stub: true,
+          message: "Mock: set CLERK_* in .env and run the desktop app to open the real sign-in URL.",
+          echo: echo,
+        };
+      case "auth_open_browser_sign_up":
+        return {
+          opened: true,
+          stub: true,
+          message: "Mock: set CLERK_* in .env and run the desktop app for sign-up.",
+          echo: echo,
+        };
+      case "auth_status":
+        return {
+          clerk: {
+            enabled: false,
+            publishableKey: "",
+            frontendApi: "",
+            clerkJsUrl: "",
+            redirectUrl: "shogun-ai://clerk-callback",
+          },
+          snapshot: null,
+          stub: true,
+          echo: echo,
+        };
+      case "auth_session_save":
+        return { saved: true, stub: true, echo: echo };
+      case "auth_sign_out":
+        return { signedOut: true, stub: true, echo: echo };
+      case "auth_biometric_status":
+        return {
+          supported: false,
+          enrolled: false,
+          platform: "mock",
+          biometryType: "none",
+          stub: true,
+          echo: echo,
+        };
+      case "auth_biometric_authenticate":
+        return { ok: true, stub: true, echo: echo };
       default:
         return {
           stub: true,

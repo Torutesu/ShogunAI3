@@ -1,4 +1,4 @@
-//! Clerk sign-in URLs for system-browser OAuth (macOS Tauri).
+//! Clerk: the Hi-Fi UI loads `@clerk/clerk-js` in the main WebView and opens `Clerk.openSignIn` / `openSignUp` (embedded). This module still builds hosted sign-in URLs for **browser fallback** (`auth_open_browser_sign_in`).
 //! Set `CLERK_PUBLISHABLE_KEY` and `CLERK_FRONTEND_API` (see repo `.env.example`).
 
 use serde_json::{json, Value};

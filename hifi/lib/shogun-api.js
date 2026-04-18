@@ -49,7 +49,12 @@
       llmApiKeyStatus: (input) => call("app_llm_api_key_status", input, READ),
       llmApiKeyClear: (input) => call("app_llm_api_key_clear", input, WRITE),
       integrationConnect: (input) => call("app_integration_connect", input, WRITE),
+      integrationImportCredentials: (input) =>
+        call("app_integration_import_credentials", input, WRITE),
+      integrationCredentialsStatus: (input) =>
+        call("app_integration_credentials_status", input, READ),
       integrationToggle: (input) => call("app_integration_toggle", input, WRITE),
+      googleCalendarSync: (input) => call("shogun_google_calendar_sync", input, WRITE),
       capturePause: (input) => call("app_capture_pause", input, WRITE),
       captureResume: (input) => call("app_capture_resume", input, WRITE),
       permissionsManage: (input) => call("app_permissions_manage", input, WRITE),
@@ -57,6 +62,15 @@
       accountDeleteData: (input) => call("app_delete_data_range", input, WRITE),
       accountDeleteAll: (input) => call("app_delete_all_data", input, WRITE),
       accountDeleteSelf: (input) => call("app_delete_account", input, WRITE),
+      authClerkConfig: (input) => call("auth_clerk_config", input || {}, READ),
+      authOpenBrowserSignIn: (input) => call("auth_open_browser_sign_in", input || {}, WRITE),
+      authOpenBrowserSignUp: (input) => call("auth_open_browser_sign_up", input || {}, WRITE),
+      authStatus: (input) => call("auth_status", input || {}, READ),
+      authSessionSave: (input) => call("auth_session_save", input, WRITE),
+      authSignOut: (input) => call("auth_sign_out", input || {}, WRITE),
+      authBiometricStatus: (input) => call("auth_biometric_status", input || {}, READ),
+      authBiometricAuthenticate: (input) =>
+        call("auth_biometric_authenticate", input || {}, WRITE),
     };
   }
 

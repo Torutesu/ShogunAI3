@@ -29,6 +29,15 @@ fn ensure_shape(mut v: Value) -> Value {
       obj.insert("sections".to_string(), json!({}));
     }
   }
+  if let Some(sections) = v.get_mut("sections").and_then(|s| s.as_object_mut()) {
+    let sec = sections
+      .entry("security".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = sec.as_object_mut() {
+      o.entry("biometricLockEnabled".to_string())
+        .or_insert(json!(false));
+    }
+  }
   v
 }
 

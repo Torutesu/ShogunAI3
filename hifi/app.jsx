@@ -64,6 +64,37 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'app_integration_import_credentials':
+      return {
+        ok: true,
+        data: {
+          saved: true,
+          provider: normalizeProvider(echo.provider),
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_integration_credentials_status':
+      return {
+        ok: true,
+        data: {
+          configured: false,
+          tokenRefreshReady: false,
+          provider: normalizeProvider(echo.provider || 'google_calendar'),
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_google_calendar_sync':
+      return {
+        ok: true,
+        data: {
+          ingested: 0,
+          calendarId: echo.calendarId || 'primary',
+          stub: false,
+          echo,
+        },
+      };
     case 'shogun_draft':
       return {
         ok: true,
@@ -108,6 +139,64 @@ function mockIpcInvoke(command, payload) {
       };
     case 'shogun_entity_query':
       return { ok: true, data: { entities: [], echo, stub: false } };
+    case 'auth_clerk_config':
+      return {
+        ok: true,
+        data: {
+          enabled: false,
+          publishableKey: '',
+          frontendApi: '',
+          clerkJsUrl: '',
+          redirectUrl: 'shogun-ai://clerk-callback',
+          stub: true,
+          echo,
+        },
+      };
+    case 'auth_open_browser_sign_in':
+    case 'auth_open_browser_sign_up':
+      return {
+        ok: true,
+        data: {
+          opened: true,
+          stub: true,
+          message: 'Browser sign-in requires the Tauri desktop app with CLERK_* env set.',
+          echo,
+        },
+      };
+    case 'auth_status':
+      return {
+        ok: true,
+        data: {
+          clerk: {
+            enabled: false,
+            publishableKey: '',
+            frontendApi: '',
+            clerkJsUrl: '',
+            redirectUrl: 'shogun-ai://clerk-callback',
+          },
+          snapshot: null,
+          stub: true,
+          echo,
+        },
+      };
+    case 'auth_session_save':
+      return { ok: true, data: { saved: true, stub: true, echo } };
+    case 'auth_sign_out':
+      return { ok: true, data: { signedOut: true, stub: true, echo } };
+    case 'auth_biometric_status':
+      return {
+        ok: true,
+        data: {
+          supported: false,
+          enrolled: false,
+          platform: 'mock',
+          biometryType: 'none',
+          stub: true,
+          echo,
+        },
+      };
+    case 'auth_biometric_authenticate':
+      return { ok: true, data: { ok: true, stub: true, echo } };
     default:
       return { ok: true, data: { command, payload: echo, mock: true } };
   }
@@ -130,7 +219,12 @@ function ensureRuntimeDeps() {
         settingsLoad: (input) => client.invoke('app_settings_load', input),
         settingsSave: (input) => client.invoke('app_settings_save', input),
         integrationConnect: (input) => client.invoke('app_integration_connect', input),
+        integrationImportCredentials: (input) =>
+          client.invoke('app_integration_import_credentials', input),
+        integrationCredentialsStatus: (input) =>
+          client.invoke('app_integration_credentials_status', input),
         integrationToggle: (input) => client.invoke('app_integration_toggle', input),
+        googleCalendarSync: (input) => client.invoke('shogun_google_calendar_sync', input),
         capturePause: (input) => client.invoke('app_capture_pause', input),
         captureResume: (input) => client.invoke('app_capture_resume', input),
         permissionsManage: (input) => client.invoke('app_permissions_manage', input),
@@ -165,7 +259,10 @@ function ensureRuntimeDeps() {
           'settings.save': api.settingsSave,
           'settings.load': api.settingsLoad,
           'integrations.connect': api.integrationConnect,
+          'integrations.import_credentials': api.integrationImportCredentials,
+          'integrations.credentials_status': api.integrationCredentialsStatus,
           'integrations.toggle': api.integrationToggle,
+          'calendar.sync': api.googleCalendarSync,
           'capture.pause': api.capturePause,
           'capture.resume': api.captureResume,
           'permissions.manage': api.permissionsManage,
@@ -264,6 +361,8 @@ function App() {
   const [writePending, setWritePending] = useState(false);
   const runtimeRef = useRef(null);
   const toastTimerRef = useRef(null);
+  const bioWantLockRef = useRef(false);
+  const [bioGate, setBioGate] = useState({ ready: false, open: false });
 
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
@@ -281,6 +380,40 @@ function App() {
     setToast({ message, kind });
     toastTimerRef.current = window.setTimeout(() => setToast(null), 2200);
   };
+  const pushToastRef = useRef(pushToast);
+  pushToastRef.current = pushToast;
+
+  useEffect(() => {
+    let unlisten;
+    const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') return undefined;
+    (async () => {
+      try {
+        unlisten = await listen('credentials-imported', (e) => {
+          const p = (e && e.payload) || {};
+          if (p.saved) {
+            try {
+              window.dispatchEvent(new CustomEvent('shogun-credentials-updated', { detail: p }));
+            } catch (_) {
+              /* ignore */
+            }
+            const who = p.provider ? `（${p.provider}）` : '';
+            const via = p.via === 'invoke' ? 'Invoke' : 'Deep link';
+            pushToastRef.current(`${via}: 連携資格情報を保存しました${who}`, 'success');
+          } else {
+            const err = typeof p.error === 'string' ? p.error : '不明なエラー';
+            const via = p.via === 'deep-link' ? 'Deep link' : '';
+            pushToastRef.current(`${via ? `${via}: ` : ''}取り込み失敗 — ${err}`, 'error');
+          }
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      if (typeof unlisten === 'function') unlisten();
+    };
+  }, []);
 
   if (!runtimeRef.current && ShogunIpcClient && ShogunAPI && ShogunActionRegistry) {
     const client = ShogunIpcClient.createIpcClient();
@@ -297,7 +430,14 @@ function App() {
       pushToast('IPC runtime unavailable', 'error');
       return { ok:false };
     }
-    const res = await runtimeRef.current.registry.run(actionKey, payload);
+    let res;
+    try {
+      res = await runtimeRef.current.registry.run(actionKey, payload);
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : 'Action failed unexpectedly';
+      if (!options.silentError) pushToast(msg, 'error');
+      return { ok: false, error: { code: 'RUNTIME_EXCEPTION', message: msg } };
+    }
     if (res.ok && res.data && res.data.notImplemented) {
       pushToast(res.data.message || 'Not available in this version', 'warn');
       return res;
@@ -382,6 +522,51 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (!runtimeRef.current?.client?.hasTauriInvoke?.()) {
+        if (!cancelled) setBioGate({ ready: true, open: false });
+        return;
+      }
+      const settingsRes = await executeAction('settings.load', {}, { silentError: true });
+      const wantLock = !!(settingsRes.data?.settings?.sections?.security?.biometricLockEnabled);
+      if (!wantLock) {
+        bioWantLockRef.current = false;
+        if (!cancelled) setBioGate({ ready: true, open: false });
+        return;
+      }
+      const st = await executeAction('auth.biometric.status', {}, { silentError: true });
+      const d = st?.data || {};
+      const can = d.supported && d.enrolled;
+      if (!can) {
+        bioWantLockRef.current = false;
+        if (!cancelled) {
+          setBioGate({ ready: true, open: false });
+          pushToast(
+            '生体ロックが有効ですが、この端末では認証できません。設定の守秘でオフにするか、Touch ID 等を登録してください。',
+            'warn',
+          );
+        }
+        return;
+      }
+      bioWantLockRef.current = true;
+      if (!cancelled) setBioGate({ ready: true, open: true });
+    })();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.hidden) return;
+      if (!bioWantLockRef.current) return;
+      if (!runtimeRef.current?.client?.hasTauriInvoke?.()) return;
+      setBioGate((g) => (g.ready ? { ...g, open: true } : g));
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       const r = await executeAction('settings.load', {}, { silentError: true });
       if (cancelled || !r.ok || !r.data?.settings?.sections) return;
       const sec = r.data.settings.sections;
@@ -393,6 +578,12 @@ function App() {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (window.ShogunClerkAuth && typeof window.ShogunClerkAuth.init === 'function') {
+      void window.ShogunClerkAuth.init();
+    }
   }, []);
 
   useEffect(() => {
@@ -449,6 +640,54 @@ function App() {
 
   return (
     <div className="app" data-screen-label={active}>
+      {bioGate.ready && bioGate.open && (
+        <div
+          className="bio-lock-overlay"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 200,
+            background: 'rgba(10,9,8,0.92)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 20,
+          }}
+        >
+          <Kamon size={56} color="var(--gold)" />
+          <div style={{ fontSize: 18, fontWeight: 600 }} className="en-only">
+            Unlock SHOGUN
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 600 }} className="jp">
+            SHOGUN を解除
+          </div>
+          <div className="s-field-hint" style={{ textAlign: 'center', maxWidth: 320, padding: '0 20px' }}>
+            <span className="en-only">Continue with Touch ID or Face ID.</span>
+            <span className="jp">Touch ID または Face ID で続行してください。</span>
+          </div>
+          <button
+            className="btn btn-secondary"
+            type="button"
+            onClick={async () => {
+              const r = await executeAction(
+                'auth.biometric.authenticate',
+                { reason: 'Unlock SHOGUN' },
+                { silentError: true },
+              );
+              if (r.ok && r.data?.ok) {
+                setBioGate((g) => ({ ...g, open: false }));
+              } else {
+                pushToast(r.data?.message || '認証に失敗しました', 'error');
+              }
+            }}
+          >
+            <span className="en-only">Unlock with biometrics</span>
+            <span className="jp">生体認証で解除</span>
+          </button>
+        </div>
+      )}
       {/* Topbar */}
       <div className="topbar">
         <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Home · 起動">

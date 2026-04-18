@@ -14,6 +14,24 @@ Static **SHOGUN** hi-fi prototype: React via Babel in the browser, optional Taur
 | `screens-a.jsx` | Home screen including **Morning Brief (AMC)** card |
 | `action-map.md` | Action inventory; keep in sync with `scripts/check-actions.py` |
 
+## External agent · credentials (no in-app OAuth)
+
+See **`action-map.md`** for the full UI ↔ command matrix. Summary:
+
+- **Invoke** `app_integration_import_credentials` with `provider`, `accessToken`, optional `refreshToken`, `expiresAt`, `scopes`, **`oauthClientId`**, optional **`oauthClientSecret`** (Keychain). Success emits **`credentials-imported`** (`via: "invoke"`).
+- **Deep link** `shogun-ai://credentials/import?…` (same fields as query params where applicable). Emits **`credentials-imported`** (`via: "deep-link"`). **Prefer invoke** for secrets (URLs leak to logs/history).
+- **Status**: `integrations.credentials_status` → `configured`, **`tokenRefreshReady`** (Google refresh possible when `refreshToken` + `oauthClientId` exist).
+- **Calendar → Memory**: `calendar.sync`. Token refresh on expiry/401 when OAuth client + refresh token are stored.
+- **Background calendar**: `settings.save` on section **`integrations`** with **`googleCalendarAutoSync`** and **`googleCalendarSyncIntervalMins`** (5–1440); requires Keychain credentials.
+
+## Capture (macOS desktop)
+
+- Settings section **`capture`**: **`sampleIntervalSecs`** (4–600), **`axMinIntervalSecs`** (0–600), **`axRichCapture`**, pause/resume flags. See `action-map.md`.
+
+## macOS distribution (Hardened Runtime)
+
+- `src-tauri/Entitlements.plist` is wired via `bundle.macOS.entitlements` with `hardenedRuntime: true` in `tauri.conf.json` for release signing / notarization prep. See also **`docs/macos-release.md`** in the repo root.
+
 ## Morning Brief (AMC)
 
 - On Home mount, calls `brief.get` and renders `data.brief` when present.
@@ -36,4 +54,4 @@ Details: [amc-pipeline/README.md](./amc-pipeline/README.md).
 python3 scripts/check-actions.py
 ```
 
-If the repo root defines Playwright E2E, follow that README for full UI smoke tests.
+Playwright E2E (repo root): `npm run test:e2e` — includes `diagnostics.report` **summary** and **`stats.get`** (`stage: "capture"`) mocks.

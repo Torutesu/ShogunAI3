@@ -1,7 +1,10 @@
 mod auth;
+mod biometric;
 mod brief;
+mod calendar_sync;
 mod capture_sampler;
 mod commands;
+mod deep_link_credentials;
 mod google_calendar;
 mod integration_secrets;
 mod integrations;
@@ -16,9 +19,22 @@ mod settings_store;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let _ = dotenvy::dotenv();
-  tauri::Builder::default()
+  let _ = dotenvy::from_filename("../.env");
+  let mut builder = tauri::Builder::default();
+
+  #[cfg(desktop)]
+  {
+    use tauri::Manager;
+    builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+      if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+      }
+    }));
+  }
+
+  builder
     .plugin(tauri_plugin_deep_link::init())
-    .plugin(tauri_plugin_shell::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -27,7 +43,27 @@ pub fn run() {
             .build(),
         )?;
       }
+      #[cfg(desktop)]
+      {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        let handle = app.handle().clone();
+        app.deep_link().on_open_url(move |event| {
+          deep_link_credentials::handle_urls(&handle, &event.urls());
+        });
+        if let Ok(Some(urls)) = app.deep_link().get_current() {
+          if !urls.is_empty() {
+            deep_link_credentials::handle_urls(app.handle(), &urls);
+          }
+        }
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+          if let Err(e) = app.deep_link().register_all() {
+            log::warn!("deep-link register_all failed (dev or unpackaged build?): {}", e);
+          }
+        }
+      }
       capture_sampler::start_background_sampler();
+      calendar_sync::spawn_background_calendar_sync();
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -69,6 +105,8 @@ pub fn run() {
       commands::auth_status,
       commands::auth_session_save,
       commands::auth_sign_out,
+      commands::auth_biometric_status,
+      commands::auth_biometric_authenticate,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

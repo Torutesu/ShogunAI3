@@ -28,10 +28,19 @@ tauri-plugin-log = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 keyring = "3"
 tauri-plugin-deep-link = "2"
-tauri-plugin-shell = "2"
 dotenvy = "0.15"
 urlencoding = "2"
+url = "2"
+open = "5"
+tokio = { version = "1", features = ["time"] }
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rfd = "0.15"
 core-foundation = "0.10"
+block2 = "0.6.2"
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-local-authentication = "0.3.2"

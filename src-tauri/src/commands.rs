@@ -1,12 +1,15 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
-use crate::{auth, brief, integrations, llm, memory_store, secrets, settings_store};
+use crate::{
+  auth, biometric, brief, google_calendar, integration_secrets, integrations, llm, macos_ax,
+  memory_store, secrets, settings_store,
+};
 use crate::paths;
 use crate::schedule_queue;
 use serde_json::{json, Value};
-use tauri_plugin_shell::ShellExt;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
 
 fn ts() -> u64 {
   SystemTime::now()
@@ -112,7 +115,7 @@ pub fn shogun_stats(payload: Value) -> Result<Value, String> {
   let last24 = m.get("memoriesLast24h").and_then(|x| x.as_u64()).unwrap_or(0);
   let history_days = m.get("historyDays").and_then(|x| x.as_u64()).unwrap_or(0);
   let bytes = paths::app_data_total_bytes().unwrap_or(0);
-  Ok(json!({
+  let mut out = json!({
     "eventsToday": format!("{}", last24),
     "memoriesToday": format!("{}", last24),
     "memoryTotal": total,
@@ -124,7 +127,16 @@ pub fn shogun_stats(payload: Value) -> Result<Value, String> {
     "appCoverage": [],
     "echo": payload,
     "stub": false,
-  }))
+  });
+  if payload
+    .get("stage")
+    .and_then(|s| s.as_str())
+    .is_some_and(|s| s == "capture")
+  {
+    let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+    out["settings"] = settings;
+  }
+  Ok(out)
 }
 
 #[tauri::command]
@@ -264,6 +276,112 @@ pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
   }))
 }
 
+/// Shared by [`app_integration_import_credentials`] and the `shogun-ai://credentials/import` deep link handler.
+pub(crate) fn persist_integration_credentials_inner(payload: &Value) -> Result<String, String> {
+  let raw = payload
+    .get("provider")
+    .and_then(|p| p.as_str())
+    .ok_or_else(|| "provider is required".to_string())?;
+  let slug = integrations::normalize_provider(raw);
+  let token = payload
+    .get("accessToken")
+    .and_then(|t| t.as_str())
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "accessToken is required".to_string())?;
+
+  let mut doc = json!({ "accessToken": token });
+  if let Some(r) = payload.get("refreshToken").and_then(|x| x.as_str()) {
+    if !r.trim().is_empty() {
+      doc["refreshToken"] = json!(r);
+    }
+  }
+  if let Some(exp) = payload.get("expiresAt") {
+    doc["expiresAt"] = exp.clone();
+  }
+  if let Some(sc) = payload.get("scopes") {
+    doc["scopes"] = sc.clone();
+  }
+  if let Some(cid) = payload
+    .get("oauthClientId")
+    .or_else(|| payload.get("oauth_client_id"))
+    .and_then(|x| x.as_str())
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+  {
+    doc["oauthClientId"] = json!(cid);
+  }
+  if let Some(cs) = payload
+    .get("oauthClientSecret")
+    .or_else(|| payload.get("oauth_client_secret"))
+    .and_then(|x| x.as_str())
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+  {
+    doc["oauthClientSecret"] = json!(cs);
+  }
+
+  integration_secrets::set_credentials(&slug, &doc)?;
+  if slug == "google_calendar" {
+    settings_store::upsert_integration_provider(
+      &slug,
+      &json!({ "connected": true, "mode": "oauth_via_agent" }),
+    )?;
+  }
+  Ok(slug)
+}
+
+#[tauri::command]
+pub fn app_integration_import_credentials(app: AppHandle, payload: Value) -> Result<Value, String> {
+  let slug = persist_integration_credentials_inner(&payload)?;
+  let _ = app.emit(
+    "credentials-imported",
+    json!({ "saved": true, "provider": slug, "via": "invoke" }),
+  );
+  Ok(json!({
+    "saved": true,
+    "provider": slug,
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub fn app_integration_credentials_status(payload: Value) -> Result<Value, String> {
+  let raw = payload
+    .get("provider")
+    .and_then(|p| p.as_str())
+    .unwrap_or("google_calendar");
+  let slug = integrations::normalize_provider(raw);
+  let creds = integration_secrets::get_credentials(&slug)?;
+  let configured = creds.is_some();
+  let token_refresh_ready = match creds.as_ref() {
+    Some(doc) if slug == "google_calendar" => google_calendar::credentials_can_refresh(doc),
+    _ => false,
+  };
+  Ok(json!({
+    "configured": configured,
+    "tokenRefreshReady": token_refresh_ready,
+    "provider": slug,
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub async fn shogun_google_calendar_sync(payload: Value) -> Result<Value, String> {
+  let cal = payload
+    .get("calendarId")
+    .and_then(|c| c.as_str())
+    .unwrap_or("primary");
+  let max = payload
+    .get("maxResults")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(25)
+    .clamp(1, 50) as usize;
+  google_calendar::sync_events_to_memory(cal, max).await
+}
+
 #[tauri::command]
 pub fn app_integration_toggle(payload: Value) -> Result<Value, String> {
   let raw = payload
@@ -324,13 +442,21 @@ pub fn app_capture_resume(payload: Value) -> Result<Value, String> {
 pub fn app_permissions_manage(payload: Value) -> Result<Value, String> {
   #[cfg(target_os = "macos")]
   {
-    let _ = Command::new("open")
-      .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-      .spawn();
+    let target = payload
+      .get("target")
+      .and_then(|t| t.as_str())
+      .unwrap_or("screen_capture");
+    let url = match target {
+      "accessibility" => {
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+      }
+      _ => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    };
+    let _ = Command::new("open").arg(url).spawn();
   }
   Ok(json!({
     "opened": true,
-    "note": "Opened System Settings (Screen Recording) when supported.",
+    "note": "Opened System Settings for the requested privacy pane when supported.",
     "stub": false,
     "echo": payload,
   }))
@@ -341,10 +467,52 @@ pub fn app_diagnostics_report(payload: Value) -> Result<Value, String> {
   let dir = paths::app_data_dir()?;
   let id = format!("diag-{}", ts());
   let path = dir.join(format!("{}.json", id));
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  let capture = settings
+    .pointer("/sections/capture")
+    .cloned()
+    .unwrap_or(json!({}));
+  let ax_trusted = macos_ax::accessibility_trust_status();
+  let google_cal = integration_secrets::get_credentials("google_calendar").ok().flatten();
+  let google_calendar_summary = match google_cal.as_ref() {
+    Some(doc) => json!({
+      "configured": true,
+      "tokenRefreshReady": google_calendar::credentials_can_refresh(doc),
+    }),
+    None => json!({
+      "configured": false,
+      "tokenRefreshReady": false,
+    }),
+  };
+  let calendar_auto = json!({
+    "autoSyncEnabled": settings
+      .pointer("/sections/integrations/googleCalendarAutoSync")
+      .and_then(|v| v.as_bool())
+      .unwrap_or(false),
+    "autoSyncIntervalMins": settings
+      .pointer("/sections/integrations/googleCalendarSyncIntervalMins")
+      .and_then(|v| v.as_u64())
+      .unwrap_or(15)
+      .clamp(5, 1440),
+  });
+  let summary = json!({
+    "capture": capture,
+    "macosAccessibilityTrusted": ax_trusted,
+    "integrations": {
+      "google_calendar": google_calendar_summary,
+      "calendarAutoSync": calendar_auto,
+    },
+  });
   let report = json!({
     "id": id,
     "generatedAt": ts(),
     "platform": std::env::consts::OS,
+    "capture": capture,
+    "macosAccessibilityTrusted": ax_trusted,
+    "integrations": {
+      "google_calendar": google_calendar_summary,
+      "calendarAutoSync": calendar_auto,
+    },
     "echo": payload,
   });
   std::fs::write(
@@ -355,6 +523,7 @@ pub fn app_diagnostics_report(payload: Value) -> Result<Value, String> {
   Ok(json!({
     "reportId": id,
     "path": path.display().to_string(),
+    "summary": summary,
     "stub": false,
     "echo": payload,
   }))
@@ -389,6 +558,7 @@ pub fn app_delete_all_data(payload: Value) -> Result<Value, String> {
   paths::clear_app_data_files()?;
   let _ = secrets::clear_llm_api_key();
   let _ = secrets::clear_clerk_snapshot();
+  integration_secrets::clear_all_known();
   Ok(json!({
     "deleted": true,
     "stub": false,
@@ -401,6 +571,7 @@ pub fn app_delete_account(payload: Value) -> Result<Value, String> {
   paths::clear_app_data_files()?;
   secrets::clear_llm_api_key()?;
   let _ = secrets::clear_clerk_snapshot();
+  integration_secrets::clear_all_known();
   Ok(json!({
     "deleted": true,
     "note": "Local data cleared. No cloud account is associated with this build.",
@@ -445,22 +616,16 @@ pub fn auth_clerk_config() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn auth_open_browser_sign_in(app: tauri::AppHandle) -> Result<Value, String> {
+pub fn auth_open_browser_sign_in() -> Result<Value, String> {
   let url = auth::sign_in_url()?;
-  app
-    .shell()
-    .open(url, None)
-    .map_err(|e| e.to_string())?;
+  open::that(&url).map_err(|e| e.to_string())?;
   Ok(json!({ "opened": true }))
 }
 
 #[tauri::command]
-pub async fn auth_open_browser_sign_up(app: tauri::AppHandle) -> Result<Value, String> {
+pub fn auth_open_browser_sign_up() -> Result<Value, String> {
   let url = auth::sign_up_url()?;
-  app
-    .shell()
-    .open(url, None)
-    .map_err(|e| e.to_string())?;
+  open::that(&url).map_err(|e| e.to_string())?;
   Ok(json!({ "opened": true }))
 }
 
@@ -489,4 +654,35 @@ pub fn auth_session_save(payload: Value) -> Result<Value, String> {
 pub fn auth_sign_out() -> Result<Value, String> {
   secrets::clear_clerk_snapshot()?;
   Ok(json!({ "signedOut": true }))
+}
+
+#[tauri::command]
+pub fn auth_biometric_status(payload: Value) -> Result<Value, String> {
+  let mut v = biometric::status_json();
+  if let Some(m) = v.as_object_mut() {
+    m.insert("echo".to_string(), payload);
+    m.insert("stub".to_string(), json!(false));
+  }
+  Ok(v)
+}
+
+#[tauri::command]
+pub fn auth_biometric_authenticate(payload: Value) -> Result<Value, String> {
+  let reason = payload
+    .get("reason")
+    .and_then(|r| r.as_str())
+    .unwrap_or("Unlock SHOGUN");
+  match biometric::authenticate(reason) {
+    Ok(()) => Ok(json!({
+      "ok": true,
+      "stub": false,
+      "echo": payload,
+    })),
+    Err(msg) => Ok(json!({
+      "ok": false,
+      "message": msg,
+      "stub": false,
+      "echo": payload,
+    })),
+  }
 }

@@ -36,13 +36,6 @@ pub fn clear_credentials(provider: &str) -> Result<(), String> {
   }
 }
 
-pub fn access_token(provider: &str) -> Result<Option<String>, String> {
-  Ok(
-    get_credentials(provider)?
-      .and_then(|v| v.get("accessToken").and_then(|t| t.as_str()).map(|s| s.to_string())),
-  )
-}
-
 /// Clears known integration credential entries (extend when adding providers).
 pub fn clear_all_known() {
   for p in ["google_calendar"] {

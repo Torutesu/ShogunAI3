@@ -29,7 +29,14 @@
     register("settings.save", (payload) => api.settingsSave(payload));
     register("settings.load", (payload) => api.settingsLoad(payload));
     register("integrations.connect", (payload) => api.integrationConnect(payload));
+    register("integrations.import_credentials", (payload) =>
+      api.integrationImportCredentials(payload),
+    );
+    register("integrations.credentials_status", (payload) =>
+      api.integrationCredentialsStatus(payload),
+    );
     register("integrations.toggle", (payload) => api.integrationToggle(payload));
+    register("calendar.sync", (payload) => api.googleCalendarSync(payload));
     register("capture.pause", () => api.capturePause({ reason: "user_request" }));
     register("capture.resume", () => api.captureResume({ reason: "user_request" }));
     register("permissions.manage", (payload) => api.permissionsManage(payload));
@@ -52,6 +59,27 @@
     register("stats.get", (payload) => api.statsGet(payload));
     register("draft.create", (payload) => api.draftCreate(payload));
     register("schedule.create", (payload) => api.scheduleAction(payload));
+    register("auth.status", (payload) => api.authStatus(payload));
+    register("auth.clerk_sign_in", async () => {
+      if (global.ShogunClerkAuth && typeof global.ShogunClerkAuth.openSignIn === "function") {
+        return global.ShogunClerkAuth.openSignIn();
+      }
+      return api.authOpenBrowserSignIn({});
+    });
+    register("auth.clerk_sign_up", async () => {
+      if (global.ShogunClerkAuth && typeof global.ShogunClerkAuth.openSignUp === "function") {
+        return global.ShogunClerkAuth.openSignUp();
+      }
+      return api.authOpenBrowserSignUp({});
+    });
+    register("auth.clerk_sign_out", () => {
+      if (global.ShogunClerkAuth && typeof global.ShogunClerkAuth.signOut === "function") {
+        return global.ShogunClerkAuth.signOut();
+      }
+      return api.authSignOut({});
+    });
+    register("auth.biometric.status", (payload) => api.authBiometricStatus(payload));
+    register("auth.biometric.authenticate", (payload) => api.authBiometricAuthenticate(payload));
 
     return {
       run: run,
