@@ -41,6 +41,12 @@
     register("memory.ingest", (payload) => api.memoryIngest(payload));
     register("memory.delete", (payload) => api.memoryDelete(payload));
     register("brief.get", (payload) => api.briefGet(payload));
+    register("chat.complete", (payload) => api.chatComplete(payload));
+    register("llm.save_api_key", (payload) => api.llmApiKeySet(payload));
+    register("llm.api_key_status", (payload) => api.llmApiKeyStatus(payload));
+    register("shogun.open_pack", (payload) => api.openPack(payload));
+    register("shogun.draft_reply", (payload) => api.draftReply(payload));
+    register("shogun.start_focus_session", (payload) => api.startFocusSession(payload));
     register("stats.get", (payload) => api.statsGet(payload));
     register("draft.create", (payload) => api.draftCreate(payload));
     register("schedule.create", (payload) => api.scheduleAction(payload));

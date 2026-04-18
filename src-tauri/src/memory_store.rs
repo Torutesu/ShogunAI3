@@ -11,50 +11,7 @@ fn memory_path() -> Result<std::path::PathBuf, String> {
 }
 
 fn default_catalog() -> Value {
-  json!({
-    "items": [
-      {
-        "id": "m_seed_1",
-        "title": "Filters · timeline",
-        "snippet": "Memory river filters for screen, audio, and input capture.",
-        "kinds": ["screen", "input"],
-        "source": "capture",
-        "created_at": 1713398400000u64
-      },
-      {
-        "id": "m_seed_2",
-        "title": "Meeting notes · standup",
-        "snippet": "Audio transcript summary from team sync.",
-        "kinds": ["audio"],
-        "source": "meetings",
-        "created_at": 1713484800000u64
-      },
-      {
-        "id": "m_seed_3",
-        "title": "Work documents and tasks",
-        "snippet": "Links to Linear issues and Notion pages for the sprint.",
-        "kinds": ["screen"],
-        "source": "work",
-        "created_at": 1713571200000u64
-      },
-      {
-        "id": "m_seed_4",
-        "title": "Chat composer memory",
-        "snippet": "Context loaded from memory.search for reply drafting.",
-        "kinds": ["input", "screen"],
-        "source": "chat",
-        "created_at": 1713657600000u64
-      },
-      {
-        "id": "m_seed_5",
-        "title": "Creativity briefing",
-        "snippet": "Notes from article on creative process and deep work.",
-        "kinds": ["screen"],
-        "source": "reading",
-        "created_at": 1713744000000u64
-      }
-    ]
-  })
+  json!({ "items": [] })
 }
 
 fn save_catalog(doc: &Value) -> Result<(), String> {
@@ -304,6 +261,58 @@ pub fn delete_items(payload: &Value) -> Result<Value, String> {
     "removed": removed,
     "requested": id_list,
     "echo": payload,
+    "stub": false,
+  }))
+}
+
+/// Remove items created on or after `cutoff_ms` (e.g. "last hour" purge).
+pub fn delete_items_created_since(cutoff_ms: u64) -> Result<Value, String> {
+  let mut doc = load_catalog()?;
+  let arr = doc
+    .get_mut("items")
+    .and_then(|i| i.as_array_mut())
+    .ok_or_else(|| "memory catalog missing items array".to_string())?;
+  let before = arr.len();
+  arr.retain(|it| {
+    let ts = it
+      .get("created_at")
+      .and_then(|x| x.as_u64())
+      .unwrap_or(0);
+    ts < cutoff_ms
+  });
+  let removed = before - arr.len();
+  save_catalog(&doc)?;
+  Ok(json!({
+    "removed": removed,
+    "cutoff_ms": cutoff_ms,
+    "stub": false,
+  }))
+}
+
+/// Replace catalog with an empty `items` list.
+pub fn clear_all_items() -> Result<(), String> {
+  save_catalog(&json!({ "items": [] }))
+}
+
+/// Total items and count created in the last 24h (rolling window).
+pub fn stats() -> Result<Value, String> {
+  let doc = load_catalog()?;
+  let items = doc
+    .get("items")
+    .and_then(|i| i.as_array())
+    .ok_or_else(|| "memory catalog missing items array".to_string())?;
+  let now = now_ms();
+  let day_ago = now.saturating_sub(86_400_000);
+  let mut last24 = 0u64;
+  for it in items {
+    let ts = it.get("created_at").and_then(|x| x.as_u64()).unwrap_or(0);
+    if ts >= day_ago {
+      last24 += 1;
+    }
+  }
+  Ok(json!({
+    "memoryTotal": items.len(),
+    "memoriesLast24h": last24,
     "stub": false,
   }))
 }

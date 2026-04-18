@@ -9,6 +9,7 @@ const SETTINGS_NAV = [
   {id:'data',         label:'Data Controls',      jp:'資料', icon:'memory'},
   {id:'hummingbird',  label:'Hummingbird',        jp:'鳥',   icon:'zap'},
   {id:'meetings',     label:'Meetings',           jp:'会議', icon:'calendar'},
+  {id:'brief',        label:'Morning Brief',      jp:'朝礼', icon:'note'},
   {id:'chat',         label:'Chat',               jp:'対話', icon:'chat'},
   {id:'integrations', label:'Integrations',       jp:'連携', icon:'plug'},
   {id:'shortcuts',    label:'Keyboard Shortcuts', jp:'捷径', icon:'keyboard'},

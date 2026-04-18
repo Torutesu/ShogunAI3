@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenCapture, ScreenIntegrations, ScreenSettings, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry */
+/* global Icon, Kamon, React, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMorningBrief, ScreenCapture, ScreenIntegrations, ScreenSettings, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry */
 const { useState, useEffect, useRef } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -15,6 +15,7 @@ const NAV = [
   {id:'agents',    label:'Agents',       jp:'家臣',   icon:'agents',    section:'main'},
   {id:'work',      label:'Work',         jp:'任務',   icon:'work',      section:'workspace'},
   {id:'meetings',  label:'Meetings',     jp:'会議',   icon:'calendar',  section:'workspace'},
+  {id:'morning_brief', label:'Brief',    jp:'朝礼',   icon:'note',      section:'workspace'},
   {id:'capture',   label:'Capture',      jp:'捕捉',   icon:'capture',   section:'workspace'},
   {id:'integrations', label:'Integrations', jp:'接続', icon:'plug',   section:'workspace'},
   {id:'settings',  label:'Settings',     jp:'設定',   icon:'settings',  section:'workspace'},
@@ -58,8 +59,14 @@ function ensureRuntimeDeps() {
         memoryIngest: (input) => client.invoke('shogun_memory_ingest', input),
         memoryDelete: (input) => client.invoke('shogun_memory_delete', input),
         briefGet: (input) => client.invoke('shogun_brief_get', input),
+        openPack: (input) => client.invoke('shogun_open_pack', input),
+        startFocusSession: (input) => client.invoke('shogun_start_focus_session', input),
+        draftReply: (input) => client.invoke('shogun_draft_reply', input),
+        chatComplete: (input) => client.invoke('shogun_chat_complete', input),
         statsGet: (input) => client.invoke('shogun_stats', input),
         draftCreate: (input) => client.invoke('shogun_draft', input),
+        llmApiKeySet: (input) => client.invoke('app_llm_api_key_set', input),
+        llmApiKeyStatus: (input) => client.invoke('app_llm_api_key_status', input),
         scheduleAction: (input) => client.invoke('shogun_schedule_action', input),
       }),
     };
@@ -85,6 +92,12 @@ function ensureRuntimeDeps() {
           'memory.ingest': api.memoryIngest,
           'memory.delete': api.memoryDelete,
           'brief.get': api.briefGet,
+          'chat.complete': api.chatComplete,
+          'llm.save_api_key': api.llmApiKeySet,
+          'llm.api_key_status': api.llmApiKeyStatus,
+          'shogun.open_pack': api.openPack,
+          'shogun.start_focus_session': api.startFocusSession,
+          'shogun.draft_reply': api.draftReply,
           'stats.get': api.statsGet,
           'draft.create': api.draftCreate,
           'schedule.create': api.scheduleAction,
@@ -198,6 +211,10 @@ function App() {
       return { ok:false };
     }
     const res = await runtimeRef.current.registry.run(actionKey, payload);
+    if (res.ok && res.data && res.data.notImplemented) {
+      pushToast(res.data.message || 'Not available in this version', 'warn');
+      return res;
+    }
     if (res.ok) {
       if (options.successMessage) pushToast(options.successMessage, 'success');
     } else if (!options.silentError) {
@@ -216,6 +233,7 @@ function App() {
       requestWriteAction,
       pushToast,
       getActiveChat: () => chats.find(c => c.id === activeChat) || null,
+      openSettingsPane: (paneId) => setSettingsOpen(paneId || 'general'),
     };
     return () => { delete window.SHOGUN_RUNTIME; };
   }, [activeChat, chats]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -275,7 +293,13 @@ function App() {
     (async () => {
       const r = await executeAction('settings.load', {}, { silentError: true });
       if (cancelled || !r.ok || !r.data?.settings?.sections) return;
-      applySavedAppearance(r.data.settings.sections);
+      const sec = r.data.settings.sections;
+      applySavedAppearance(sec);
+      if (sec.brief && typeof sec.brief === 'object') {
+        window.__SHOGUN_SETTINGS_BRIEF__ = sec.brief;
+      } else {
+        window.__SHOGUN_SETTINGS_BRIEF__ = {};
+      }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -326,6 +350,7 @@ function App() {
     agents: ScreenAgents,
     work: ScreenWork,
     meetings: ScreenMeetings,
+    morning_brief: ScreenMorningBrief,
     capture: ScreenCapture,
     integrations: ScreenIntegrations,
     settings: ScreenSettings,
@@ -544,15 +569,17 @@ function App() {
               className="btn"
               style={{width:'100%', marginTop:18, background:'var(--gold-bg, #EFE5D3)', color:'#151212', borderColor:'var(--gold-dim)', height:44, fontSize:14}}
               onClick={async () => {
+                const chatTitle = chats.find(c => c.id === activeChat)?.title || 'Untitled chat';
                 const res = await executeAction('app.create_share_link', {
                   mode: shareMode,
                   chatId: activeChat,
-                  title: chats.find(c => c.id === activeChat)?.title || 'Untitled chat',
-                }, { successMessage:'Share link prepared' });
-                if (res.ok) setShareOpen(false);
+                  title: chatTitle,
+                  markdown: `Shared chat: **${chatTitle}**\n\n(Transcript is not attached in this export; use Chat on desktop for full history.)`,
+                }, { successMessage:'Chat exported to file' });
+                if (res.ok && !res.data?.cancelled) setShareOpen(false);
               }}
             >
-              <Icon name="link" size={14}/> Create share link
+              <Icon name="link" size={14}/> Export to file…
             </button>
           </div>
         </>

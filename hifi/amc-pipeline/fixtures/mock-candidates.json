@@ -1,0 +1,103 @@
+[
+  {
+    "candidate_id": "cand_001",
+    "trigger_source": "calendar",
+    "raw_data": {
+      "calendar_event": {
+        "id": "cal_1",
+        "title": "投資家MTG - 田中氏",
+        "start": "2026-04-18T10:00:00+09:00",
+        "end": "2026-04-18T11:00:00+09:00",
+        "attendees": ["田中太郎 <tanaka@example.vc>"],
+        "description": "Q1レビュー"
+      }
+    },
+    "related_kioku_hits": [
+      {
+        "doc_id": "kioku_83a7",
+        "title": "投資家MTG議事録 (Apr 4)",
+        "snippet": "次回までに収益モデルv2を作成すると約束した。",
+        "last_touched": "2026-04-04",
+        "relevance_score": 0.91
+      },
+      {
+        "doc_id": "kioku_91c2",
+        "title": "revenue_model_v2.xlsx",
+        "snippet": "収益モデル v2 最新版",
+        "last_touched": "2026-04-17",
+        "relevance_score": 0.88
+      },
+      {
+        "doc_id": "kioku_55f1",
+        "title": "Competitor comparison deck",
+        "snippet": "Littlebird / Limitless / Screenpipe comparison",
+        "last_touched": "2026-04-15",
+        "relevance_score": 0.72
+      }
+    ],
+    "decision_graph_hits": [
+      {
+        "decision_id": "dec_20260404_002",
+        "summary": "次回MTGまでに収益モデルv2を持参すると約束",
+        "follow_ups_pending": 1
+      }
+    ],
+    "available_mcp_tools": [
+      "shogun.open_pack",
+      "shogun.draft_reply",
+      "shogun.start_focus_session"
+    ]
+  },
+  {
+    "candidate_id": "cand_002",
+    "trigger_source": "focus_block",
+    "raw_data": {
+      "focus_block": {
+        "start": "2026-04-18T13:00:00+09:00",
+        "end": "2026-04-18T15:15:00+09:00"
+      },
+      "weekly_brief": { "stuck_label": "LP v2 コピー差し替え", "stuck_days": 4 }
+    },
+    "stuck_days": 4,
+    "related_kioku_hits": [
+      {
+        "doc_id": "kioku_lp1",
+        "title": "LP v1",
+        "last_touched": "2026-04-10",
+        "relevance_score": 0.62
+      },
+      {
+        "doc_id": "kioku_copy",
+        "title": "Copy options memo",
+        "last_touched": "2026-04-14",
+        "relevance_score": 0.58
+      }
+    ],
+    "decision_graph_hits": [],
+    "available_mcp_tools": ["shogun.start_focus_session", "shogun.open_pack"]
+  },
+  {
+    "candidate_id": "cand_003",
+    "trigger_source": "email",
+    "raw_data": {
+      "email_thread": { "subject": "投資家A — term sheet", "stuck_days": 6 }
+    },
+    "stuck_days": 6,
+    "related_kioku_hits": [
+      {
+        "doc_id": "kioku_draft",
+        "title": "返信ドラフト",
+        "last_touched": "2026-04-17",
+        "relevance_score": 0.77
+      }
+    ],
+    "decision_graph_hits": [
+      {
+        "decision_id": "dec_mail_1",
+        "summary": "Reply by next week — committed",
+        "follow_ups_pending": 1
+      }
+    ],
+    "available_mcp_tools": ["shogun.draft_reply", "shogun.open_pack"]
+  }
+]

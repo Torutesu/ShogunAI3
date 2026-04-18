@@ -72,6 +72,69 @@ function mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx) {
 // L1 · HOME — the launch pad
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenHome() {
+  const [morningBrief, setMorningBrief] = useState(null);
+  const [briefErr, setBriefErr] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await runRuntimeActionA(
+        "brief.get",
+        { span: "today", source: "home" },
+        { silentError: true }
+      );
+      if (cancelled) return;
+      if (!res.ok || !res.data) {
+        setBriefErr("brief unavailable");
+        return;
+      }
+      const inner = res.data;
+      if (inner.skipped || !inner.brief) {
+        setMorningBrief(null);
+        return;
+      }
+      setMorningBrief(inner.brief);
+      if (window.BriefTelemetry) {
+        window.BriefTelemetry.log(window.BriefTelemetry.EVENTS.BRIEF_RENDERED, {
+          itemCount: inner.brief.items?.length || 0,
+        });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const runBriefMcp = (item, tool) => {
+    if (!tool?.tool_name) return;
+    const key = tool.tool_name;
+    runRuntimeActionA(key, tool.arguments || {}, { successMessage: item.next_action?.label || "Done" });
+    if (window.BriefTelemetry) {
+      window.BriefTelemetry.log(window.BriefTelemetry.EVENTS.NEXT_ACTION_CLICK, {
+        itemId: item.id,
+        tool: key,
+      });
+    }
+  };
+
+  const dismissBriefItem = (item) => {
+    setMorningBrief((prev) => {
+      if (!prev?.items) return prev;
+      return {
+        ...prev,
+        items: prev.items.filter((i) => i.id !== item.id),
+      };
+    });
+    if (window.BriefTelemetry) {
+      window.BriefTelemetry.log(window.BriefTelemetry.EVENTS.ITEM_DISMISS, { itemId: item.id });
+    }
+  };
+
+  const submitBriefRating = (n) => {
+    if (window.BriefTelemetry) {
+      window.BriefTelemetry.log(window.BriefTelemetry.EVENTS.RATING, { score: n });
+    }
+    runRuntimeActionA("settings.save", { section: "brief", rating: n }, { successMessage: "Thanks — saved locally" });
+  };
+
   return (
     <div className="content-inner" style={{maxWidth:880, margin:'0 auto', padding:'80px 40px 64px'}}>
       <div style={{marginBottom:48}}>
@@ -79,6 +142,61 @@ function ScreenHome() {
         <h1 style={{fontSize:40, fontWeight:600, letterSpacing:'-0.02em', margin:'0 0 10px'}}>Good afternoon, Kenshin.</h1>
         <div style={{color:'var(--text-mute)', fontSize:16}}>23 memories captured today.</div>
       </div>
+
+      {morningBrief && (
+        <div className="card" style={{padding:28, borderColor:'var(--gold-dim)', marginBottom:20, background:'var(--surface)'}}>
+          <div className="row" style={{marginBottom:14, alignItems:'baseline', gap:12}}>
+            <div className="t-mono gold">MORNING BRIEF · AMC</div>
+            <span className="pill" style={{fontSize:10}}>{morningBrief.posture}</span>
+            <span className="spacer"/>
+            <span className="t-mono xsmall muted">{morningBrief.generated_at?.slice(11,16)} JST</span>
+          </div>
+          <div style={{fontSize:20, fontWeight:600, marginBottom:18, lineHeight:1.35}}>{morningBrief.headline}</div>
+          <div style={{display:'flex', flexDirection:'column', gap:12}}>
+            {(morningBrief.items || []).map((item) => (
+              <div key={item.id} style={{border:'1px solid var(--border)', borderRadius:'var(--radius-md)', padding:14}}>
+                <div className="row" style={{gap:8, marginBottom:6, flexWrap:'wrap'}}>
+                  <span className="t-mono xsmall" style={{color:'var(--gold)'}}>P{item.priority}</span>
+                  <span className="t-mono xsmall muted">{item.category}</span>
+                  {item.time_hint && <span className="t-mono xsmall">{item.time_hint}</span>}
+                  <span className="spacer"/>
+                  <button type="button" className="btn btn-sm btn-ghost" style={{fontSize:10, height:24}} onClick={()=>dismissBriefItem(item)}>見送る</button>
+                </div>
+                <div style={{fontSize:15, fontWeight:600, marginBottom:4}}>{item.what}</div>
+                <div style={{fontSize:12, color:'var(--text-dim)', marginBottom:10, lineHeight:1.5}}>{item.why_now}</div>
+                {(item.related_context || []).length > 0 && (
+                  <div style={{fontSize:11, color:'var(--text-mute)', marginBottom:10}}>
+                    {(item.related_context || []).map((r) => (
+                      <span key={r.uri} style={{marginRight:10}}>{r.title} · {r.last_touched}</span>
+                    ))}
+                  </div>
+                )}
+                <div className="row" style={{gap:8, flexWrap:'wrap'}}>
+                  {item.next_action?.mcp_tool ? (
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={()=>runBriefMcp(item, item.next_action.mcp_tool)}>
+                      {item.next_action.label} <Icon name="arrowRight" size={14}/>
+                    </button>
+                  ) : (
+                    <span className="xsmall muted">No MCP action</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {morningBrief.deferred_count > 0 && (
+            <div className="xsmall muted" style={{marginTop:14}}>+ {morningBrief.deferred_count} deferred</div>
+          )}
+          <div className="row" style={{marginTop:16, gap:6, alignItems:'center'}}>
+            <span className="xsmall muted">今日の品質 (1–5)</span>
+            {[1,2,3,4,5].map((n) => (
+              <button key={n} type="button" className="btn btn-sm btn-ghost" style={{minWidth:32, height:28, fontSize:11}} onClick={()=>submitBriefRating(n)}>{n}</button>
+            ))}
+          </div>
+        </div>
+      )}
+      {briefErr && (
+        <div className="xsmall muted" style={{marginBottom:16}}>{briefErr}</div>
+      )}
 
       {/* Synthesized day — single focal card */}
       <div className="card" style={{padding:40, borderColor:'var(--border-hi)', marginBottom:20}}>

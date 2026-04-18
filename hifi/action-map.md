@@ -29,6 +29,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 
 ## screens-a.jsx
 
+- Home Morning Brief card -> `brief.get` (mount); item CTAs -> `shogun.open_pack` / `shogun.draft_reply` / `shogun.start_focus_session`; dismiss / rating -> local state + `BriefTelemetry` + `settings.save(section=brief)`
 - Home CTA buttons -> `draft.create` / `schedule.create` / `settings.save`
 - Memory filter button -> `memory.search`
 - Memory `Save test` -> `memory.ingest` then `memory.search` refresh
@@ -79,6 +80,12 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.ingest`
 - `memory.delete`
 - `brief.get`
+- `chat.complete`
+- `llm.save_api_key`
+- `llm.api_key_status`
+- `shogun.open_pack`
+- `shogun.draft_reply`
+- `shogun.start_focus_session`
 - `stats.get`
 - `draft.create`
 - `schedule.create`

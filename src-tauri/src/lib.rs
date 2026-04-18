@@ -1,6 +1,9 @@
+mod brief;
 mod commands;
+mod llm;
 mod memory_store;
 mod paths;
+mod secrets;
 mod settings_store;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -23,6 +26,10 @@ pub fn run() {
       commands::shogun_memory_delete,
       commands::shogun_entity_query,
       commands::shogun_brief_get,
+      commands::shogun_open_pack,
+      commands::shogun_start_focus_session,
+      commands::shogun_draft_reply,
+      commands::shogun_chat_complete,
       commands::shogun_draft,
       commands::shogun_schedule_action,
       commands::shogun_stats,
@@ -30,6 +37,8 @@ pub fn run() {
       commands::app_create_share_link,
       commands::app_settings_load,
       commands::app_settings_save,
+      commands::app_llm_api_key_set,
+      commands::app_llm_api_key_status,
       commands::app_integration_connect,
       commands::app_integration_toggle,
       commands::app_capture_pause,

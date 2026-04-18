@@ -89,3 +89,15 @@ fn now_ms() -> u64 {
     .map(|d| d.as_millis() as u64)
     .unwrap_or(0)
 }
+
+/// Overwrite settings with an empty document (keeps file).
+pub fn reset_to_empty() -> Result<Value, String> {
+  let path = settings_path()?;
+  let doc = empty_doc();
+  fs::write(
+    &path,
+    serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?,
+  )
+  .map_err(|e| e.to_string())?;
+  Ok(doc)
+}

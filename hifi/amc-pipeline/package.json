@@ -1,0 +1,17 @@
+{
+  "name": "@shogun/amc-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AMC Composer: KIOKU candidates → BriefItem JSON (Anthropic tool_use)",
+  "scripts": {
+    "brief:dry": "node src/cli.js --dry",
+    "brief:run": "node src/cli.js",
+    "validate": "node src/cli.js --validate-only"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "zod": "^3.24.2",
+    "zod-to-json-schema": "^3.24.5"
+  }
+}

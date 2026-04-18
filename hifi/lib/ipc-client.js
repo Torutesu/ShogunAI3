@@ -21,6 +21,22 @@
   }
 
   async function mockTransport(command, payload) {
+    if (command === "shogun_brief_get" && global.ShogunMorningBrief) {
+      return global.ShogunMorningBrief.mockBriefGetResponse(payload || {});
+    }
+    if (
+      command === "shogun_open_pack" ||
+      command === "shogun_draft_reply" ||
+      command === "shogun_start_focus_session"
+    ) {
+      return {
+        ok: true,
+        command: command,
+        payload: payload || {},
+        mock: true,
+        ts: new Date().toISOString(),
+      };
+    }
     return {
       ok: true,
       command: command,
