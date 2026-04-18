@@ -233,6 +233,16 @@ function ScreenMemory() {
   const [periodIdx, setPeriodIdx] = useState(0); // offset within current zoom
   const [events, setEvents] = useState(() => MEMORY_DEMO_EVENTS.slice());
   const [scrubIdx, setScrubIdx] = useState(13);
+  const [sourceEntities, setSourceEntities] = useState([]);
+  const refreshSourceEntities = () => {
+    runRuntimeActionA('entity.query', { query: '' }, { silentError: true }).then((res) => {
+      if (!res || !res.ok || !res.data || !Array.isArray(res.data.entities)) return;
+      setSourceEntities(res.data.entities);
+    });
+  };
+  useEffect(() => {
+    refreshSourceEntities();
+  }, []);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -246,6 +256,7 @@ function ScreenMemory() {
     const onIndexChanged = async () => {
       const r = await runRuntimeActionA('memory.search', { query: '', limit: 40 }, { silentError: true });
       mergeIndexHitsIntoRiver(r, setEvents, setScrubIdx);
+      refreshSourceEntities();
     };
     window.addEventListener('shogun-memory-index-changed', onIndexChanged);
     return () => window.removeEventListener('shogun-memory-index-changed', onIndexChanged);
@@ -294,7 +305,28 @@ function ScreenMemory() {
             await runRuntimeActionA('memory.ingest', { title:'Quick capture · '+new Date().toLocaleTimeString(), snippet:'Saved from Memory screen.', source:'capture', kinds:['input'] }, { successMessage:'Memory indexed' });
             const r = await runRuntimeActionA('memory.search', { query:'', limit:40 }, { silentError:true });
             mergeIndexHitsIntoRiver(r, setEvents, setScrubIdx);
+            refreshSourceEntities();
           }}>Save test</button>
+        </div>
+      </div>
+
+      <div
+        className="memory-entity-sources"
+        data-testid="memory-entity-sources"
+        style={{padding:'8px 40px 4px', borderBottom:'1px solid var(--border)'}}
+      >
+        <div className="t-mono" style={{fontSize:10, color:'var(--text-mute)', marginBottom:6}}>SOURCES IN INDEX · カタログ別件数</div>
+        <div style={{display:'flex', flexWrap:'wrap', gap:8, alignItems:'center'}}>
+          {sourceEntities.length === 0 ? (
+            <span style={{fontSize:12, color:'var(--text-dim)'}}>No indexed sources yet — ingest or sync to populate.</span>
+          ) : (
+            sourceEntities.map((row) => (
+              <span key={row.id || row.label} className="label" style={{fontSize:11}}>
+                {row.label || 'unknown'} · {row.mentions != null ? row.mentions : '—'}
+              </span>
+            ))
+          )}
+          <button type="button" className="btn btn-sm btn-ghost" style={{marginLeft:'auto', fontSize:11}} onClick={() => refreshSourceEntities()}>Refresh</button>
         </div>
       </div>
 

@@ -631,9 +631,9 @@ function PaneLLM() {
 function PaneIntegrations() {
   const { run } = useRuntimeActions();
   return (
-    <Pane title="All Integrations" jp="連携" subtitle="v1: OAuth and live connectors are not available. Rows below are UI preview only.">
+    <Pane title="All Integrations" jp="連携" subtitle="v1: Cloud OAuth is not wired. Connect on Apple/Gmail rows shows an honest notice; Arc, Raycast, and Obsidian can be marked local-only from the Integrations screen.">
       <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
-        No accounts are linked. Connect shows an honest notice instead of a fake success state.
+        Toggles on the Integrations page persist locally. This pane uses Connect for providers that still need OAuth.
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><div className="s-intg-icon" style={{background:'#1a1a1a'}}>📅</div><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>

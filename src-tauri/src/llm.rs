@@ -116,6 +116,52 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
   }))
 }
 
+/// One-shot Markdown draft from UI payload (`target`, `prompt`, `source`, …).
+pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
+  let target = payload
+    .get("target")
+    .and_then(|t| t.as_str())
+    .unwrap_or("document");
+  let prompt = payload
+    .get("prompt")
+    .and_then(|p| p.as_str())
+    .unwrap_or("");
+  let source = payload
+    .get("source")
+    .and_then(|s| s.as_str())
+    .unwrap_or("");
+  let user = format!(
+    "Produce a concise Markdown draft for this request.\nTarget: {}\nIntent / prompt: {}\nContext source: {}\n\nOutput only Markdown (headings and bullets allowed). No preamble or closing remarks.",
+    target, prompt, source
+  );
+  let wrapped = json!({
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are SHOGUN's drafting assistant. Reply with Markdown only."
+      },
+      { "role": "user", "content": user }
+    ]
+  });
+  let out = chat_complete(&wrapped).await?;
+  let content = out
+    .get("message")
+    .and_then(|m| m.as_str())
+    .unwrap_or("")
+    .to_string();
+  let title = payload
+    .get("title")
+    .and_then(|t| t.as_str())
+    .map(|s| s.to_string())
+    .unwrap_or_else(|| format!("Draft · {}", target));
+  Ok(json!({
+    "content": content,
+    "title": title,
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
 pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
   let search_payload = json!({ "query": "", "limit": 15 });
   let mem = memory_store::search(&search_payload)?;

@@ -90,3 +90,60 @@ fn now_ms() -> u64 {
     .unwrap_or(0)
 }
 
+/// Merge keys into `sections.integrations.providers[slug]` and persist the full document.
+pub fn upsert_integration_provider(slug: &str, patch: &Value) -> Result<Value, String> {
+  let path = settings_path()?;
+  let mut doc = if path.exists() {
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    ensure_shape(serde_json::from_str(&raw).unwrap_or_else(|_| empty_doc()))
+  } else {
+    empty_doc()
+  };
+
+  let sections = doc
+    .as_object_mut()
+    .and_then(|o| o.get_mut("sections"))
+    .and_then(|s| s.as_object_mut())
+    .ok_or_else(|| "invalid settings document".to_string())?;
+
+  let integ = sections
+    .entry("integrations".to_string())
+    .or_insert_with(|| json!({}));
+  let integ_obj = integ
+    .as_object_mut()
+    .ok_or_else(|| "integrations must be an object".to_string())?;
+
+  let prov = integ_obj
+    .entry("providers".to_string())
+    .or_insert_with(|| json!({}));
+  let prov_obj = prov
+    .as_object_mut()
+    .ok_or_else(|| "integrations.providers must be an object".to_string())?;
+
+  let cur = prov_obj
+    .entry(slug.to_string())
+    .or_insert_with(|| json!({}));
+  let cur_obj = cur
+    .as_object_mut()
+    .ok_or_else(|| "provider entry must be an object".to_string())?;
+
+  if let Some(p) = patch.as_object() {
+    for (k, v) in p {
+      cur_obj.insert(k.clone(), v.clone());
+    }
+  }
+  cur_obj.insert("updatedAt".to_string(), json!(now_ms()));
+
+  if let Some(obj) = doc.as_object_mut() {
+    obj.insert("updatedAt".to_string(), json!(now_ms()));
+  }
+
+  fs::write(
+    &path,
+    serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?,
+  )
+  .map_err(|e| e.to_string())?;
+
+  Ok(doc)
+}
+

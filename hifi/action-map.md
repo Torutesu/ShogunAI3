@@ -3,6 +3,17 @@
 UIボタンと ActionRegistry / Runtime の対応表。
 未接続導線の回帰チェックに使う。
 
+
+## v1 backend behavior (matches toasts)
+
+- `integrations.connect` → cloud/OAuth providers: **`notImplemented`** (warn). Local tools **Arc / Raycast / Obsidian**: saves `connected` in settings (success path).
+- `integrations.toggle` → persists **`connected`** per provider in `settings.sections.integrations.providers` (no `notImplemented`).
+- `capture.pause` / `capture.resume` → **`honestPreferenceOnly`** (info toast). Resume sets `pipelineAvailable: true`; on **macOS** a background sampler ingests frontmost app name into memory (no screenshots).
+- `draft.create` → LLM draft via **`shogun_draft`** (requires API key in Tauri; browser mock returns Markdown).
+- `schedule.create` → append to local **`schedule_queue.json`** (no OS calendar sync).
+- `shogun.open_pack` / `shogun.draft_reply` / `shogun.start_focus_session` → **`notImplemented`**.
+- Many call sites use **`silentError: true`** to avoid duplicate error toasts.
+
 ## Runtime Entry Points
 
 - `window.SHOGUN_RUNTIME.executeAction(actionKey, payload, options)`
@@ -12,7 +23,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 ## app.jsx
 
 - Topbar `Open in Hummingbird` -> `app.open_hummingbird` (WRITE confirm)
-- Share modal `Create share link` -> `app.create_share_link`
+- Share modal **Export to file…** -> `app.create_share_link`
 - Chat sub-nav `New conversation` -> local chat state update
 
 ## settings-modal.jsx
@@ -32,6 +43,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - Home Morning Brief card -> `brief.get` (mount); item CTAs -> `shogun.open_pack` / `shogun.draft_reply` / `shogun.start_focus_session`; dismiss / rating -> local state + `BriefTelemetry` + `settings.save(section=brief)`
 - Home CTA buttons -> `draft.create` / `schedule.create` / `settings.save`
 - Memory filter button -> `memory.search`
+- Memory **Sources in index** strip -> `entity.query` (mount, Refresh, and after `memory.ingest` on Save test)
 - Memory `Save test` -> `memory.ingest` then `memory.search` refresh
 - River actions (`Open in Chat`, `Open source`) -> `memory.search`
 - River `Remove from index` (indexed row only) -> `memory.delete` (WRITE confirm); app dispatches `shogun-memory-index-changed` on success for list refresh
@@ -79,6 +91,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.search`
 - `memory.ingest`
 - `memory.delete`
+- `entity.query`
 - `brief.get`
 - `chat.complete`
 - `llm.save_api_key`
@@ -116,4 +129,4 @@ npm run test:e2e
 `playwright.config.js` が `python3 -m http.server` で静的配信し、`SHOGUN Hi-Fi UI.html` を開いてマウントと `executeAction` を検証します。
 
 `tests/e2e/hifi-smoke.spec.js` の追加ケース: ユーザーメニューから Settings を開いて閉じる、トップバー先頭の Hummingbird で WRITE 確認を開き Cancel または Confirm（成功トースト）。
-Also: Settings > Data Controls > first Delete (WRITE confirm, Cancel); Share modal (backdrop close + Create share link toast).
+Also: Settings > Data Controls > first Delete (WRITE confirm, Cancel); Share modal (backdrop close + Export to file toast); Memory entity sources panel; Work draft success (mock).

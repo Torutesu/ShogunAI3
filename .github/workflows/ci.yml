@@ -36,3 +36,18 @@ jobs:
 
       - name: Sync web-dist bundle
         run: npm run build:web-dist
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: E2E (Playwright)
+        run: npm run test:e2e
+
+      - name: Tauri production build (bundle)
+        run: npm run build:desktop
+        timeout-minutes: 45

@@ -1,8 +1,10 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
-use crate::{brief, llm, memory_store, secrets, settings_store};
+use crate::{auth, brief, integrations, llm, memory_store, secrets, settings_store};
 use crate::paths;
+use crate::schedule_queue;
 use serde_json::{json, Value};
+use tauri_plugin_shell::ShellExt;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -58,23 +60,13 @@ pub async fn shogun_chat_complete(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn shogun_draft(payload: Value) -> Result<Value, String> {
-  Ok(json!({
-    "notImplemented": true,
-    "message": "This action is not available in v1. Use Chat to message the model.",
-    "stub": false,
-    "echo": payload,
-  }))
+pub async fn shogun_draft(payload: Value) -> Result<Value, String> {
+  llm::draft_from_payload(&payload).await
 }
 
 #[tauri::command]
 pub fn shogun_schedule_action(payload: Value) -> Result<Value, String> {
-  Ok(json!({
-    "notImplemented": true,
-    "message": "Scheduling is not available in v1.",
-    "stub": false,
-    "echo": payload,
-  }))
+  schedule_queue::append(&payload)
 }
 
 fn fmt_decimal_commas(mut n: u64) -> String {
@@ -247,9 +239,26 @@ pub fn app_llm_api_key_clear(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
+  let raw = payload
+    .get("provider")
+    .and_then(|p| p.as_str())
+    .unwrap_or("");
+  let slug = integrations::normalize_provider(raw);
+  if integrations::allows_local_connect(&slug) {
+    settings_store::upsert_integration_provider(
+      &slug,
+      &json!({ "connected": true, "mode": "local_tool" }),
+    )?;
+    return Ok(json!({
+      "connected": true,
+      "provider": slug,
+      "stub": false,
+      "echo": payload,
+    }));
+  }
   Ok(json!({
     "notImplemented": true,
-    "message": "Third-party integrations (OAuth, calendar, mail) are not available in v1. This build is local-only.",
+    "message": "Third-party integrations (OAuth, calendar, mail) are not available in v1. This build is local-only; connect Arc, Raycast, or Obsidian for local-only toggles.",
     "stub": false,
     "echo": payload,
   }))
@@ -257,9 +266,23 @@ pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn app_integration_toggle(payload: Value) -> Result<Value, String> {
+  let raw = payload
+    .get("provider")
+    .and_then(|p| p.as_str())
+    .unwrap_or("");
+  let slug = integrations::normalize_provider(raw);
+  let connected = payload
+    .get("connected")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  settings_store::upsert_integration_provider(
+    &slug,
+    &json!({ "connected": connected, "mode": "ui_toggle" }),
+  )?;
   Ok(json!({
-    "notImplemented": true,
-    "message": "Integration toggles are not available in v1. The UI is a preview only.",
+    "saved": true,
+    "connected": connected,
+    "provider": slug,
     "stub": false,
     "echo": payload,
   }))
@@ -275,7 +298,7 @@ pub fn app_capture_pause(payload: Value) -> Result<Value, String> {
   Ok(json!({
     "paused": true,
     "honestPreferenceOnly": true,
-    "message": "Capture pipeline is not implemented in v1. Pause state was saved locally only.",
+    "message": "Capture sampling paused. No new focus events will be recorded until you resume.",
     "stub": false,
     "echo": payload,
   }))
@@ -286,12 +309,12 @@ pub fn app_capture_resume(payload: Value) -> Result<Value, String> {
   let _ = settings_store::save_patch(&json!({
     "section": "capture",
     "paused": false,
-    "pipelineAvailable": false,
+    "pipelineAvailable": true,
   }))?;
   Ok(json!({
     "paused": false,
     "honestPreferenceOnly": true,
-    "message": "Capture pipeline is not implemented in v1. Resume state was saved locally only.",
+    "message": "Capture sampling resumed. On macOS, frontmost app is sampled periodically into memory (no screenshots).",
     "stub": false,
     "echo": payload,
   }))
@@ -365,6 +388,7 @@ pub fn app_delete_data_range(payload: Value) -> Result<Value, String> {
 pub fn app_delete_all_data(payload: Value) -> Result<Value, String> {
   paths::clear_app_data_files()?;
   let _ = secrets::clear_llm_api_key();
+  let _ = secrets::clear_clerk_snapshot();
   Ok(json!({
     "deleted": true,
     "stub": false,
@@ -376,6 +400,7 @@ pub fn app_delete_all_data(payload: Value) -> Result<Value, String> {
 pub fn app_delete_account(payload: Value) -> Result<Value, String> {
   paths::clear_app_data_files()?;
   secrets::clear_llm_api_key()?;
+  let _ = secrets::clear_clerk_snapshot();
   Ok(json!({
     "deleted": true,
     "note": "Local data cleared. No cloud account is associated with this build.",
@@ -412,4 +437,56 @@ pub fn shogun_draft_reply(payload: Value) -> Result<Value, String> {
     "stub": false,
     "echo": payload,
   }))
+}
+
+#[tauri::command]
+pub fn auth_clerk_config() -> Result<Value, String> {
+  Ok(auth::clerk_config())
+}
+
+#[tauri::command]
+pub async fn auth_open_browser_sign_in(app: tauri::AppHandle) -> Result<Value, String> {
+  let url = auth::sign_in_url()?;
+  app
+    .shell()
+    .open(url, None)
+    .map_err(|e| e.to_string())?;
+  Ok(json!({ "opened": true }))
+}
+
+#[tauri::command]
+pub async fn auth_open_browser_sign_up(app: tauri::AppHandle) -> Result<Value, String> {
+  let url = auth::sign_up_url()?;
+  app
+    .shell()
+    .open(url, None)
+    .map_err(|e| e.to_string())?;
+  Ok(json!({ "opened": true }))
+}
+
+#[tauri::command]
+pub fn auth_status() -> Result<Value, String> {
+  let cfg = auth::clerk_config();
+  let snap_raw = secrets::get_clerk_snapshot()?;
+  let snapshot: Value = match snap_raw {
+    Some(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or(json!(null)),
+    _ => json!(null),
+  };
+  Ok(json!({
+    "clerk": cfg,
+    "snapshot": snapshot,
+  }))
+}
+
+#[tauri::command]
+pub fn auth_session_save(payload: Value) -> Result<Value, String> {
+  let body = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+  secrets::set_clerk_snapshot(&body)?;
+  Ok(json!({ "saved": true }))
+}
+
+#[tauri::command]
+pub fn auth_sign_out() -> Result<Value, String> {
+  secrets::clear_clerk_snapshot()?;
+  Ok(json!({ "signedOut": true }))
 }

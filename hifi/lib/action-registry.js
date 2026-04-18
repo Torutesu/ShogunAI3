@@ -40,6 +40,7 @@
     register("memory.search", (payload) => api.memorySearch(payload));
     register("memory.ingest", (payload) => api.memoryIngest(payload));
     register("memory.delete", (payload) => api.memoryDelete(payload));
+    register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));
     register("llm.save_api_key", (payload) => api.llmApiKeySet(payload));

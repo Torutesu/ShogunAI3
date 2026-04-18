@@ -19,7 +19,7 @@ function ScreenWork() {
         </div>
         <div className="row">
           <button className="btn btn-secondary" onClick={()=>runRuntimeAction('memory.search', { query:'documents and tasks', kinds:['screen','audio'], limit:20 }, { successMessage:'Work filter refreshed' })}><Icon name="filter" size={14}/>All types</button>
-          <button className="btn btn-primary" onClick={()=>runRuntimeAction('draft.create', { target:'work_document', prompt:'Create new document shell' }, { silentError:true })}><Icon name="plus" size={14}/>New document</button>
+          <button className="btn btn-primary" onClick={()=>runRuntimeAction('draft.create', { target:'work_document', prompt:'Create new document shell' }, { successMessage:'Draft ready' })}><Icon name="plus" size={14}/>New document</button>
         </div>
       </div>
 
@@ -106,7 +106,7 @@ function ScreenCapture() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>INGEST LAYER</div>
           <h1>Capture <span className="jp">捕捉</span></h1>
-          <div className="sub">Target design: passive ingest via Accessibility (no screenshots). v1 saves pause/resume preference only; no live capture pipeline.</div>
+          <div className="sub">macOS: while resumed, the app samples the frontmost app name into memory on an interval (no screenshots). Pause stops sampling; Accessibility-rich capture is a later phase.</div>
         </div>
         <div className="row">
           <span className="label" style={{background:'var(--surface-2)', borderColor:'var(--border)', color:'var(--text-mute)'}}><span style={{width:6, height:6, borderRadius:'50%', background:'var(--text-dim)', marginRight:6}}/>PREVIEW · v1</span>
@@ -246,7 +246,7 @@ function ScreenIntegrations() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>CONNECTION LAYER</div>
           <h1>Integrations <span className="jp">接続</span></h1>
-          <div className="sub">v1 is local-only: OAuth, MCP bridges, and remote tool calls are not active. This grid previews planned connectors.</div>
+          <div className="sub">v1: toggles persist locally. OAuth and remote APIs are not active except for Arc, Raycast, and Obsidian (local &quot;connect&quot; only). This grid previews additional connectors.</div>
         </div>
         <div className="row">
           <div style={{fontSize:13, color:'var(--text-mute)'}}><span className="gold" style={{fontSize:20, fontWeight:600}}>{nConnected}</span> / {tools.length} connected</div>

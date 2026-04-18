@@ -143,15 +143,54 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await expect(page.locator(".share-modal")).toHaveCount(0);
   });
 
-  test("Share modal Create share link shows success toast", async ({ page }) => {
+  test("Share modal Export to file shows success toast", async ({ page }) => {
     await openHiFi(page);
 
     await page.locator(".page-actions .page-action").nth(2).click();
     await expect(page.locator(".share-modal")).toBeVisible();
 
-    await page.locator(".share-modal").getByRole("button", { name: /Create share link/i }).click();
+    await page.locator(".share-modal").getByRole("button", { name: /Export to file/i }).click();
     await expect(page.locator(".share-modal")).toHaveCount(0);
-    await expect(page.locator(".app-toast.success")).toContainText("Share link prepared", {
+    await expect(page.locator(".app-toast.success")).toContainText("Chat exported to file", {
+      timeout: 8000,
+    });
+  });
+
+  test("Settings Integrations: Connect shows v1 not-implemented warn toast", async ({ page }) => {
+    await openHiFi(page);
+    await openSettingsModal(page);
+
+    await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
+    await expect(page.locator(".s-pane-head")).toContainText("Integrations");
+
+    await page.locator(".s-pane-body").getByRole("button", { name: "Connect" }).first().click();
+    await expect(page.locator(".app-toast.warn")).toContainText(/not available in v1/i, {
+      timeout: 8000,
+    });
+    await page.locator(".s-close").click();
+    await expect(page.locator(".s-modal")).toHaveCount(0);
+  });
+
+  test("Memory: entity sources panel mounts (empty catalog ok)", async ({ page }) => {
+    await openHiFi(page);
+
+    await page.locator(".sidebar .nav-item").filter({ hasText: "Memory" }).first().click();
+    await expect(page.locator("h1")).toContainText("April 17");
+
+    const panel = page.getByTestId("memory-entity-sources");
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText(/SOURCES IN INDEX/i);
+ await expect(panel).toContainText(/No indexed sources yet/i);
+  });
+
+  test("Work: New document shows draft success toast (mock IPC)", async ({ page }) => {
+    await openHiFi(page);
+
+    await page.locator(".sidebar .nav-item").filter({ hasText: "Work" }).first().click();
+    await expect(page.locator(".page-head h1")).toContainText("Work");
+
+    await page.getByRole("button", { name: /New document/i }).click();
+    await expect(page.locator(".app-toast.success")).toContainText("Draft ready", {
       timeout: 8000,
     });
   });

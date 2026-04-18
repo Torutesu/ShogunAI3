@@ -30,12 +30,95 @@ const INITIAL_CHAT_HISTORY = [
   {id:'c6', title:'Rust error handling', time:'', when:'YESTERDAY', jp:'昨日', favorite:false},
 ];
 
+/** Fallback when `ipc-client.js` is absent — keep in sync with `hifi/lib/ipc-client.js` mockTransport. */
+function mockIpcInvoke(command, payload) {
+  const echo = payload || {};
+  const notImpl = (message) => ({
+    ok: true,
+    data: { notImplemented: true, message, stub: false, echo },
+  });
+  const normalizeProvider = (raw) =>
+    String(raw || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_');
+  const localConnectSlugs = new Set(['arc_browser', 'raycast', 'obsidian']);
+  switch (command) {
+    case 'app_integration_connect': {
+      const slug = normalizeProvider(echo.provider);
+      if (localConnectSlugs.has(slug)) {
+        return { ok: true, data: { connected: true, provider: slug, stub: false, echo } };
+      }
+      return notImpl(
+        'Third-party integrations (OAuth, calendar, mail) are not available in v1. This build is local-only; connect Arc, Raycast, or Obsidian for local-only toggles.',
+      );
+    }
+    case 'app_integration_toggle':
+      return {
+        ok: true,
+        data: {
+          saved: true,
+          connected: echo.connected === true,
+          provider: normalizeProvider(echo.provider),
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_draft':
+      return {
+        ok: true,
+        data: {
+          content: '# Draft\n\n_Mock Markdown (fallback mock)._',
+          title: echo.target ? `Draft · ${echo.target}` : 'Draft',
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_schedule_action':
+      return { ok: true, data: { scheduled: true, id: 'sch-mock', stub: false, echo } };
+    case 'shogun_open_pack':
+      return notImpl('Opening packs / deep links is not available in v1.');
+    case 'shogun_start_focus_session':
+      return notImpl('Focus sessions are not available in v1.');
+    case 'shogun_draft_reply':
+      return notImpl('Draft-from-brief actions are not available in v1. Use Chat instead.');
+    case 'app_capture_pause':
+      return {
+        ok: true,
+        data: {
+          paused: true,
+          honestPreferenceOnly: true,
+          message:
+            'Capture sampling paused. No new focus events will be recorded until you resume.',
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_capture_resume':
+      return {
+        ok: true,
+        data: {
+          paused: false,
+          honestPreferenceOnly: true,
+          message:
+            'Capture sampling resumed. On macOS, frontmost app is sampled periodically into memory (no screenshots).',
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_entity_query':
+      return { ok: true, data: { entities: [], echo, stub: false } };
+    default:
+      return { ok: true, data: { command, payload: echo, mock: true } };
+  }
+}
+
 function ensureRuntimeDeps() {
   if (!window.ShogunIpcClient) {
     window.ShogunIpcClient = {
       createIpcClient: () => ({
         transport: 'mock',
-        invoke: async (command, payload) => ({ ok:true, data:{ command, payload, mock:true } }),
+        invoke: async (command, payload) => mockIpcInvoke(command, payload),
       }),
     };
   }
@@ -58,6 +141,7 @@ function ensureRuntimeDeps() {
         memorySearch: (input) => client.invoke('shogun_memory_search', input),
         memoryIngest: (input) => client.invoke('shogun_memory_ingest', input),
         memoryDelete: (input) => client.invoke('shogun_memory_delete', input),
+        entityQuery: (input) => client.invoke('shogun_entity_query', input),
         briefGet: (input) => client.invoke('shogun_brief_get', input),
         openPack: (input) => client.invoke('shogun_open_pack', input),
         startFocusSession: (input) => client.invoke('shogun_start_focus_session', input),
@@ -92,6 +176,7 @@ function ensureRuntimeDeps() {
           'memory.search': api.memorySearch,
           'memory.ingest': api.memoryIngest,
           'memory.delete': api.memoryDelete,
+          'entity.query': api.entityQuery,
           'brief.get': api.briefGet,
           'chat.complete': api.chatComplete,
           'llm.save_api_key': api.llmApiKeySet,

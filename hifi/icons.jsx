@@ -64,14 +64,20 @@ const Icon = ({name, size=16, className=""}) => {
   );
 };
 
-// Kamon logo — circular crest
-const Kamon = ({size=28, color="currentColor"}) => (
-  <svg width={size} height={size} viewBox="0 0 32 32" fill="none" stroke={color} strokeWidth="1.25">
-    <circle cx="16" cy="16" r="14"/>
-    <circle cx="16" cy="16" r="9"/>
-    <path d="M16 2v28M2 16h28" strokeWidth="0.75"/>
-    <path d="M16 7 L19 16 L16 25 L13 16 Z" fill={color} stroke="none"/>
-  </svg>
+// Brand mark (gold / black) — path is relative to `SHOGUN Hi-Fi UI.html`
+const KAMON_SRC = 'hifi/assets/mark-512-dark.png';
+
+/** App logo. `color` is accepted for API compatibility with existing call sites; the raster mark uses fixed brand colors. */
+const Kamon = ({size=28, color: _color, className=""}) => (
+  <img
+    className={`kamon-img${className ? ` ${className}` : ''}`}
+    src={KAMON_SRC}
+    width={size}
+    height={size}
+    alt=""
+    draggable={false}
+    decoding="async"
+  />
 );
 
 window.Icon = Icon;
