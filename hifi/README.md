@@ -2,6 +2,8 @@
 
 Static **SHOGUN** hi-fi prototype: React via Babel in the browser, optional Tauri IPC, mock transport when Tauri is absent. Open `SHOGUN Hi-Fi UI.html` from the parent folder.
 
+**Memory (local-first):** The Memory index is **`memory.db`** (SQLite + **FTS5**). Rows may store an **`embedding` BLOB** (f32, L2-normalized) from OpenAI-compatible **`/v1/embeddings`** using the same API key as chat; model defaults to **`text-embedding-3-small`** (`settings.sections.llm.embeddingModel`). After ingest, embeddings run in the background except for **`capture_sampler`** / **`capture_ax`** sources (noise/cost control). **`memory.search`** accepts **`semantic: true`**: widen lexical hits, embed the query once, re-rank by cosine similarity (requires key). Legacy **`memory_items.json`** migrates once, then **`memory_items.json.migrated`**. No SHOGUN-hosted Memory sync; Chat / LLM, Clerk, OAuth still send data per their terms when used.
+
 ## Key paths
 
 | Path | Purpose |
@@ -13,6 +15,7 @@ Static **SHOGUN** hi-fi prototype: React via Babel in the browser, optional Taur
 | `lib/brief-telemetry.js` | Eval hooks: next-action click, dismiss, rating (`shogunBriefTelemetrySink`) |
 | `screens-a.jsx` | Home screen including **Morning Brief (AMC)** card |
 | `action-map.md` | Action inventory; keep in sync with `scripts/check-actions.py` |
+| [`../docs/END_USER_SETUP.md`](../docs/END_USER_SETUP.md) | Short **end-user** steps: Tauri app, API key, Memory embeddings & semantic search |
 
 ## External agent · credentials (no in-app OAuth)
 
@@ -53,5 +56,7 @@ Details: [amc-pipeline/README.md](./amc-pipeline/README.md).
 ```bash
 python3 scripts/check-actions.py
 ```
+
+Repo root: `npm run check:ipc-mock` — ensures `lib/ipc-client.js` mock `switch` cases stay aligned with `app.jsx` `mockIpcInvoke` (plus `if (command === "…")` hooks in the IPC mock).
 
 Playwright E2E (repo root): `npm run test:e2e` — includes `diagnostics.report` **summary** and **`stats.get`** (`stage: "capture"`) mocks.

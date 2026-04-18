@@ -1,10 +1,24 @@
 /* App-chrome specific styles */
 .app {
-  display:grid;
-  grid-template-columns: 240px 1fr;
-  grid-template-rows: 56px 1fr;
-  height:100vh;
-  overflow:hidden;
+  display: grid;
+  grid-template-columns: minmax(220px, 240px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* Sidebar toggle (Cmd+S) — wins over responsive .app column rules */
+.app.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) !important;
+}
+.app.sidebar-collapsed .sidebar {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  border-right: 0;
+  padding: 0;
 }
 
 .topbar {
@@ -17,8 +31,8 @@
   background:var(--bg);
   z-index:2;
 }
-.topbar .brand { display:flex; align-items:center; gap:10px; width:220px; }
-.topbar .brand-title { font-size:15px; font-weight:600; letter-spacing:0.12em; }
+.topbar .brand { display:flex; align-items:center; gap:10px; min-width:220px; max-width:280px; }
+.topbar .brand-title { font-size:15px; font-weight:600; letter-spacing:-0.02em; }
 .topbar .brand-jp { font-family:var(--font-jp); font-weight:300; color:var(--text-mute); font-size:12px; }
 .topbar .cmdk { flex:1; max-width:600px; display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); color:var(--text-dim); cursor:pointer; font-size:13px; transition:border-color var(--dur-base); }
 .topbar .cmdk:hover { border-color:var(--border-hi); }
@@ -29,6 +43,8 @@
 
 /* Sidebar */
 .sidebar {
+  position: relative;
+  z-index: 3;
   border-right:1px solid var(--border);
   background:var(--bg);
   padding: 16px 12px;
@@ -48,7 +64,79 @@
 .sidebar .nav-item .jp { font-family:var(--font-jp); font-weight:300; font-size:11px; color:var(--text-dim); margin-left:4px; white-space:nowrap; flex-shrink:0; }
 
 /* Content area */
-.content { overflow-y:auto; background:var(--bg); }
+.content { overflow-y:auto; background:var(--bg); min-height:0; }
+/* Chat (L3): fill grid row so message list + composer partition the viewport */
+.content.content-chat {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.content.content-chat > * {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+/* Meetings: fill main column so in-pane overlays (Granola) do not cover the sidebar */
+.content.content-meetings {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.content.content-meetings > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.screen-meetings-root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+.screen-meetings-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  width: 100%;
+}
+.screen-meetings-inner {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 40px 80px;
+  position: relative;
+  box-sizing: border-box;
+}
+.granola-shell {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 -1px 0 var(--border);
+  /* Keep full-bleed note UI inside the main column (with sidebar column, not viewport) */
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.granola-shell .granola-float {
+  position: absolute;
+  z-index: 2;
+}
+.granola-shell .granola-back-btn {
+  position: absolute;
+  top: 20px;
+  left: 24px;
+  z-index: 5;
+}
 .content-inner { padding: 32px 40px 64px; max-width:1440px; }
 .content-inner.wide { max-width:none; }
 
@@ -208,4 +296,282 @@
 .morning-brief-root .mb-cta.btn-secondary:hover {
   border-color: var(--gold);
   color: var(--gold);
+}
+
+/* Responsive shell — macOS window resize (MacBook + external displays) */
+
+.topbar {
+  flex-wrap: wrap;
+  row-gap: 8px;
+  padding: 8px clamp(12px, 2.2vw, 20px);
+  min-height: 56px;
+}
+
+.topbar .brand {
+  width: auto;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.topbar .cmdk {
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: min(600px, 100%);
+}
+
+.topbar .right {
+  flex-shrink: 0;
+}
+
+.sidebar {
+  min-width: 0;
+}
+
+.content {
+  min-width: 0;
+}
+
+.content-inner {
+  padding: clamp(20px, 3vw, 32px) clamp(18px, 3.5vw, 40px) clamp(40px, 5vw, 64px);
+  max-width: min(1440px, 100%);
+}
+
+.page-head {
+  flex-wrap: wrap;
+  gap: clamp(12px, 2vw, 20px);
+}
+
+.page-head h1 {
+  font-size: clamp(24px, 3.2vw, 32px);
+}
+
+.page-head .sub {
+  font-size: clamp(13px, 1.4vw, 14px);
+}
+
+#tweaks-panel {
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  width: min(260px, calc(100vw - 24px));
+}
+
+/* Chat (L3) — main column + memory context */
+.shogun-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  height: 100%;
+  min-height: 0;
+  align-self: stretch;
+}
+
+.shogun-chat-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+}
+
+.shogun-chat-header {
+  padding: clamp(10px, 1.8vw, 14px) clamp(16px, 3vw, 32px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.shogun-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: clamp(16px, 2.5vw, 24px) clamp(16px, 3vw, 32px);
+  min-height: 0;
+}
+
+.shogun-chat-context {
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: clamp(14px, 2vw, 20px);
+  background: var(--surface);
+  min-height: 0;
+  min-width: 0;
+}
+
+.shogun-chat-layout.shogun-chat-max {
+  grid-template-columns: 1fr;
+}
+.shogun-chat-layout.shogun-chat-max .shogun-chat-context {
+  display: none;
+}
+
+.shogun-chat-layout .composer-wrap {
+  padding: clamp(12px, 2vw, 16px) clamp(14px, 3vw, 32px) clamp(16px, 2.5vw, 24px);
+}
+
+/* Work: memory cards */
+.shogun-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+/* Capture / integrations-style splits */
+.shogun-grid-split-wide {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: clamp(14px, 2vw, 20px);
+  margin-bottom: 32px;
+}
+
+.shogun-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.shogun-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(12px, 1.5vw, 16px);
+}
+
+.shogun-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.shogun-settings-2col {
+  display: grid;
+  grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
+  gap: clamp(20px, 4vw, 40px);
+}
+
+.shogun-settings-body {
+  max-width: 680px;
+}
+
+@media (max-width: 1280px) {
+  .app {
+    grid-template-columns: minmax(200px, 228px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1100px) {
+  .shogun-chat-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .shogun-chat-context {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: min(38vh, 320px);
+  }
+}
+
+@media (max-width: 980px) {
+  .app {
+    grid-template-columns: minmax(180px, 210px) minmax(0, 1fr);
+  }
+
+  .topbar {
+    gap: 12px;
+  }
+
+  .page-actions {
+    flex-wrap: wrap;
+  }
+
+  .shogun-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shogun-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shogun-grid-split-wide {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Hide Cmd+K label only on fairly narrow windows — keeps top bar readable on laptops */
+@media (max-width: 720px) {
+  .topbar .cmdk .cmdk-label {
+    display: none;
+  }
+
+  .topbar .cmdk {
+    flex: 0 1 auto;
+  }
+}
+
+@media (max-width: 680px) {
+  .shogun-grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .shogun-settings-2col {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Icon-only rail only on very small widths (demo recordings usually stay wider) */
+@media (max-width: 560px) {
+  .app {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    padding: 12px 8px;
+    align-items: center;
+  }
+
+  .sidebar .section-label {
+    display: none;
+  }
+
+  .sidebar .nav-item {
+    justify-content: center;
+    padding: 10px 8px;
+  }
+
+  .sidebar .nav-item .nav-label,
+  .sidebar .nav-item .jp,
+  .sidebar .nav-item .count {
+    display: none;
+  }
+
+  .sidebar .nav-item.active::before {
+    left: -8px;
+  }
+
+  .chat-subnav {
+    max-height: 42vh;
+    overflow-y: auto;
+    margin-left: 0;
+    padding-left: 4px;
+    font-size: 11px;
+  }
+
+  .user-cluster .user-row:first-of-type {
+    display: none;
+  }
+
+  .user-cluster {
+    padding: 8px 4px;
+    border-top: none;
+    margin-top: 4px;
+  }
+
+  .user-cluster .user-pill {
+    justify-content: center;
+    padding: 8px;
+  }
+
+  .user-cluster .user-pill > div:not(.avatar) {
+    display: none;
+  }
 }

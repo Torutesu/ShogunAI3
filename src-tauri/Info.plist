@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSFaceIDUsageDescription</key>
-  <string>SHOGUN uses Face ID or Touch ID to unlock the app on this device.</string>
+  <string>Shogun AI uses Face ID or Touch ID to unlock the app on this device.</string>
 </dict>
 </plist>

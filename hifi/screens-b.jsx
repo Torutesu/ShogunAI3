@@ -16,6 +16,8 @@ function ScreenChat() {
   const [loading, setLoading] = useStateB(false);
   const [memoryTotal, setMemoryTotal] = useStateB(0);
   const [modelHint, setModelHint] = useStateB('');
+  const [chatMax, setChatMax] = useStateB(false);
+  const [voiceRecording, setVoiceRecording] = useStateB(false);
 
   useEffectB(() => {
     let cancelled = false;
@@ -43,6 +45,54 @@ function ScreenChat() {
       window.SHOGUN_RUNTIME.pushToast(msg, kind || 'info');
     }
   };
+
+  useEffectB(() => {
+    const syncFromShell = () => {
+      const seed = window.SHOGUN_DEMO_SEED;
+      const rt = window.SHOGUN_RUNTIME;
+      const id =
+        (typeof window !== 'undefined' && window.__SHOGUN_SHELL_ACTIVE_CHAT__) ||
+        (rt && rt.__activeChatId) ||
+        (rt && typeof rt.getActiveChat === 'function' && rt.getActiveChat() && rt.getActiveChat().id) ||
+        null;
+      if (!id || !seed || !seed.chatThreads || !seed.chatThreads[id]) {
+        setMessages([]);
+        setMemoryContext('');
+        return;
+      }
+      setMessages(seed.chatThreads[id].map((m) => ({ ...m })));
+      const ctx = seed.chatMemoryContext && seed.chatMemoryContext[id];
+      setMemoryContext(ctx ? String(ctx) : '');
+    };
+    syncFromShell();
+    window.addEventListener('shogun-active-chat-changed', syncFromShell);
+    return () => window.removeEventListener('shogun-active-chat-changed', syncFromShell);
+  }, []);
+
+  useEffectB(() => {
+    const onMax = () => setChatMax((v) => !v);
+    const onVoiceToggle = () => {
+      setVoiceRecording((v) => {
+        const next = !v;
+        toast(next ? 'Voice recording started (preview — no audio in browser)' : 'Voice recording stopped', 'info');
+        return next;
+      });
+    };
+    const onVoiceCancel = () => {
+      setVoiceRecording((was) => {
+        if (was) toast('Voice recording cancelled', 'info');
+        return false;
+      });
+    };
+    window.addEventListener('shogun-chat-toggle-max', onMax);
+    window.addEventListener('shogun-voice-toggle', onVoiceToggle);
+    window.addEventListener('shogun-voice-cancel', onVoiceCancel);
+    return () => {
+      window.removeEventListener('shogun-chat-toggle-max', onMax);
+      window.removeEventListener('shogun-voice-toggle', onVoiceToggle);
+      window.removeEventListener('shogun-voice-cancel', onVoiceCancel);
+    };
+  }, []);
 
   const attachMemory = async () => {
     const r = await runRuntimeActionB('memory.search', { query: '', limit: 12 }, { silentError: true });
@@ -97,9 +147,9 @@ function ScreenChat() {
   };
 
   return (
-    <div style={{display:'grid', gridTemplateColumns:'1fr 300px', height:'100%'}}>
-      <div style={{display:'flex', flexDirection:'column', overflow:'hidden'}}>
-        <div style={{padding:'14px 32px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', gap:12}}>
+    <div className={'shogun-chat-layout' + (chatMax ? ' shogun-chat-max' : '')}>
+      <div className="shogun-chat-main">
+        <div className="shogun-chat-header">
           <button className="btn btn-sm btn-ghost" onClick={newChat} style={{padding:'0 8px'}}><Icon name="plus" size={13}/>New</button>
           <div style={{width:1, height:20, background:'var(--border)'}}/>
           <div>
@@ -112,8 +162,11 @@ function ScreenChat() {
           <button className="btn btn-sm btn-ghost" type="button" onClick={openLlmSettings}>Model & API</button>
         </div>
 
-        <div style={{flex:1, overflowY:'auto', padding:'24px 32px'}}>
-          <div style={{maxWidth:720, margin:'0 auto', display:'flex', flexDirection:'column', gap:20}}>
+        <div className="shogun-chat-scroll">
+          <div
+            className={'shogun-chat-thread' + (messages.length === 0 && !loading ? ' shogun-chat-thread--empty' : '')}
+            style={{maxWidth:720, margin:'0 auto', display:'flex', flexDirection:'column', gap:20, width:'100%'}}
+          >
             {messages.length === 0 && (
               <div style={{textAlign:'center', color:'var(--text-mute)', fontSize:14, marginBottom:8}}>
                 Ask anything. Attach local memory with <strong>Memory</strong>, then send. API key: Settings → Model & API.
@@ -159,6 +212,11 @@ function ScreenChat() {
                 value={composerText}
                 onChange={(e) => setComposerText(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChat();
+                    return;
+                  }
                   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
                     sendChat();
@@ -167,21 +225,24 @@ function ScreenChat() {
               />
               <div className="row" style={{gap:8, marginTop:8}}>
                 <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => toast('Agents are not available in v1', 'warn')}><Icon name="agents" size={13}/>Agent</button>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => toast('Tool picker is not available in v1', 'warn')}><Icon name="plug" size={13}/>Tool</button>
+                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
+                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
                 <span className="spacer"/>
                 <button className="btn btn-sm btn-primary" type="button" disabled={loading} onClick={sendChat}><Icon name="arrowRight" size={13}/>Send</button>
               </div>
             </div>
             <div className="t-mono" style={{fontSize:9, marginTop:8, textAlign:'center', color:'var(--text-dim)'}}>
               {memoryTotal} MEMORIES INDEXED · LOCAL
-              <span className="jp" style={{marginLeft:10}}>⌘ + Enter で送信</span>
+              <span style={{marginLeft:10}}>Return sends · Shift+Return new line · Cmd+Return also sends</span>
+              {voiceRecording && (
+                <span style={{marginLeft:10, color:'var(--gold)'}}>● voice</span>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      <div style={{borderLeft:'1px solid var(--border)', overflowY:'auto', padding:'20px 20px', background:'var(--surface)'}}>
+      <div className="shogun-chat-context">
         <div className="row" style={{marginBottom:14}}>
           <span className="t-mono">MEMORY CONTEXT</span>
           <span className="jp dim" style={{fontSize:10, marginLeft:6}}>文脈</span>
@@ -202,13 +263,14 @@ function ScreenChat() {
           border-radius:var(--radius-lg);
           box-shadow:0 2px 0 rgba(0,0,0,0.2), 0 20px 40px -20px rgba(0,0,0,0.35);
         }
-        .composer-wrap { padding:16px 32px 24px; border-top:1px solid var(--border); background:var(--bg); }
+        .shogun-chat-layout .composer-wrap { border-top:1px solid var(--border); background:var(--bg); }
         .composer {
           border:1px solid var(--border-hi); border-radius:var(--radius-lg);
           padding:12px 14px; background:var(--surface);
           box-shadow:0 1px 0 rgba(0,0,0,0.2);
         }
         .composer:focus-within { border-color:var(--gold-dim); }
+        .shogun-chat-thread--empty { min-height:100%; justify-content:center; box-sizing:border-box; padding-block:12px; }
       `}</style>
     </div>
   );
@@ -223,84 +285,21 @@ function ScreenAgents() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>EXECUTION LAYER</div>
           <h1>Agents <span className="jp">家臣</span></h1>
-          <div className="sub">Agents that read your memory and act. 20 MCP tools available.</div>
-        </div>
-        <div className="row">
-          <button className="btn btn-secondary" onClick={()=>runRuntimeActionB('settings.save', { section:'agents', action:'open_mcp_console' }, { successMessage:'MCP console opened' })}><Icon name="terminal" size={14}/>MCP console</button>
-          <button className="btn btn-primary" onClick={()=>runRuntimeActionB('schedule.create', { source:'agents', action:'new_agent' }, { silentError:true })}><Icon name="plus" size={14}/>New agent</button>
+          <div className="sub">Automations and MCP-backed agents are not listed in this preview. Use the desktop app to register and run them.</div>
         </div>
       </div>
-
-      {/* Status overview */}
-      <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:16, marginBottom:32}}>
-        {[
-          ['Running','4','var(--success)'],
-          ['Scheduled','7','var(--gold)'],
-          ['Paused','2','var(--text-dim)'],
-          ['Tools connected','20','var(--text)'],
-        ].map((s,i)=>(
-          <div key={i} className="card" style={{padding:20}}>
-            <div className="t-mono" style={{marginBottom:10}}>{s[0]}</div>
-            <div style={{fontSize:36, fontWeight:600, color: s[2], letterSpacing:'-0.02em'}}>{s[1]}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Agent grid */}
-      <div style={{fontSize:13, fontWeight:500, marginBottom:14, color:'var(--text-mute)'}}>Your agents</div>
-      <div style={{display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:16, marginBottom:32}}>
-        {[
-          {name:'Inbox triage', jp:'受信整理', desc:'Sorts Gmail by memory-derived priority. Drafts replies for you to approve.', status:'running', schedule:'every 2 hours', tools:['mail','memory'], runs:142, icon:'mail'},
-          {name:'Meeting notes', jp:'議事録', desc:'Captures calendar events, extracts decisions into memory, links to entities.', status:'idle', schedule:'trigger: cal event', tools:['calendar','memory'], runs:87, icon:'calendar'},
-          {name:'Daily digest', jp:'日報', desc:'Synthesizes the day at 21:00. Writes a morning brief for tomorrow at 07:00.', status:'scheduled', schedule:'21:00 daily', tools:['memory','note'], runs:38, icon:'note'},
-          {name:'Weekly review', jp:'週次', desc:'Sunday morning. What moved this week? What needs decisions. Drafts a retro.', status:'scheduled', schedule:'Sun 10:00', tools:['memory','note','calendar'], runs:5, icon:'clock'},
-        ].map((a,i)=>(
-          <div key={i} className="card card-hover" style={{padding:0, overflow:'hidden'}}>
-            <div style={{padding:'18px 20px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', gap:12}}>
-              <div style={{width:36, height:36, border:'1px solid var(--border)', borderRadius:'var(--radius-md)', display:'flex', alignItems:'center', justifyContent:'center', background:'var(--surface-2)'}}>
-                <Icon name={a.icon} size={16} className="gold"/>
-              </div>
-              <div style={{flex:1}}>
-                <div className="row" style={{gap:8}}>
-                  <span style={{fontSize:14, fontWeight:500}}>{a.name}</span>
-                  <span className="jp muted" style={{fontSize:11}}>{a.jp}</span>
-                </div>
-                <div className="row" style={{gap:6, marginTop:4}}>
-                  <span className="dot" style={{width:6, height:6, borderRadius:'50%', background: a.status==='running'?'var(--success)':a.status==='idle'?'var(--text-dim)':'var(--gold)'}}/>
-                  <span className="t-mono" style={{fontSize:10, textTransform:'none', letterSpacing:'0.05em', color:'var(--text-mute)'}}>{a.status} · {a.schedule}</span>
-                </div>
-              </div>
-              <button className="btn btn-sm btn-ghost" onClick={()=>runRuntimeActionB('settings.save', { section:'agents', action:'agent_row_menu', agent:a.name }, { successMessage:'Agent menu opened' })}><Icon name="more" size={14}/></button>
-            </div>
-            <div style={{padding:'16px 20px', fontSize:13, color:'var(--text-mute)', lineHeight:1.5}}>
-              {a.desc}
-            </div>
-            <div style={{padding:'12px 20px', borderTop:'1px solid var(--border)', background:'var(--surface-2)', display:'flex', alignItems:'center', gap:8}}>
-              <span className="t-mono" style={{fontSize:10}}>{a.runs} RUNS</span>
-              <span className="spacer"/>
-              {a.tools.map(t => <span key={t} className="label"><Icon name={t} size={10} style={{marginRight:4}}/>{t}</span>)}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Live activity log */}
-      <div style={{fontSize:13, fontWeight:500, marginBottom:14, color:'var(--text-mute)'}}>Live activity</div>
-      <div className="card" style={{padding:0, fontFamily:'var(--font-mono)', fontSize:12, background:'var(--bg)'}}>
-        {[
-          ['14:31:08', 'inbox-triage', 'Read 3 emails · drafted 1 reply', 'success'],
-          ['14:18:42', 'meeting-notes', 'Processed "All PJ" meeting · 6 decisions extracted', 'success'],
-          ['14:02:15', 'memory', 'Indexed conversation · 42 messages · 3 entities linked', 'info'],
-          ['13:58:00', 'meeting-notes', 'Triggered by cal event: All PJ', 'info'],
-          ['13:22:44', 'inbox-triage', 'Skipped · no new emails since 11:00', 'muted'],
-        ].map((r,i) => (
-          <div key={i} className="row" style={{padding:'10px 20px', borderBottom:i<4?'1px solid var(--border)':'none', gap:14}}>
-            <span style={{color:'var(--text-dim)', fontSize:11}}>{r[0]}</span>
-            <span className="gold" style={{minWidth:120}}>{r[1]}</span>
-            <span style={{flex:1, color: r[3]==='muted'?'var(--text-dim)':'var(--text)'}}>{r[2]}</span>
-            <span className="label" style={{background:'transparent', color: r[3]==='success'?'var(--success)':r[3]==='info'?'var(--text-mute)':'var(--text-dim)', borderColor: r[3]==='success'?'color-mix(in srgb, var(--success) 40%, transparent)':'var(--border)'}}>{r[3].toUpperCase()}</span>
-          </div>
-        ))}
+      <div className="card" style={{padding:32, maxWidth:560}}>
+        <p style={{fontSize:14, color:'var(--text-mute)', lineHeight:1.65, margin:0}}>
+          No agents are connected here. For tools and OAuth, open Settings → Integrations from the user menu, or use Chat for one-off tasks.
+        </p>
+        <div className="row" style={{gap:10, marginTop:22, flexWrap:'wrap'}}>
+          <button className="btn btn-secondary" type="button" onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}>
+            <Icon name="plug" size={14}/> Integrations
+          </button>
+          <button className="btn btn-ghost" type="button" onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('chat')}>
+            <Icon name="chat" size={14}/> Chat
+          </button>
+        </div>
       </div>
     </div>
   );

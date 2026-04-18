@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Shogun AI">
+  <defs>
+    <linearGradient id="shogun-gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f0e6c8"/>
+      <stop offset="45%" stop-color="#c9a962"/>
+      <stop offset="100%" stop-color="#8f7339"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="#0a0908"/>
+  <circle cx="256" cy="256" r="156" fill="none" stroke="url(#shogun-gold)" stroke-width="22" opacity="0.95"/>
+  <circle cx="256" cy="256" r="84" fill="none" stroke="url(#shogun-gold)" stroke-width="15" opacity="0.9"/>
+  <path d="M256 96 L256 416" stroke="url(#shogun-gold)" stroke-width="17" stroke-linecap="round"/>
+  <circle cx="256" cy="256" r="18" fill="url(#shogun-gold)"/>
+</svg>

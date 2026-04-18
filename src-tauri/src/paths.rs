@@ -29,7 +29,7 @@ pub fn app_data_total_bytes() -> Result<u64, String> {
   Ok(sum)
 }
 
-/// Remove all regular files in the app data directory (top level only). Subdirectories are left untouched.
+/// Remove top-level files and the `packs/` directory (material packs & focus notes).
 pub fn clear_app_data_files() -> Result<(), String> {
   let dir = app_data_dir()?;
   for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
@@ -37,6 +37,10 @@ pub fn clear_app_data_files() -> Result<(), String> {
     let path = entry.path();
     if path.is_file() {
       fs::remove_file(&path).map_err(|e| e.to_string())?;
+    } else if path.is_dir() {
+      if path.file_name().and_then(|n| n.to_str()) == Some("packs") {
+        fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+      }
     }
   }
   Ok(())

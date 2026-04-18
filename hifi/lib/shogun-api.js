@@ -12,8 +12,8 @@
       throw new Error("ShogunIpcClient is required");
     }
 
-    async function call(command, payload, kind) {
-      const res = await ipc.invoke(command, payload);
+    async function call(command, payload, kind, invokeOpts) {
+      const res = await ipc.invoke(command, payload, invokeOpts);
       return {
         ok: res.ok,
         kind: kind,
@@ -32,6 +32,10 @@
       memoryFetch: (input) => call("shogun_memory_fetch", input, READ),
       memoryIngest: (input) => call("shogun_memory_ingest", input, WRITE),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
+      memoryEmbedBackfill: (input) =>
+        call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),
+      memoryEmbedBackfillCancel: (input) =>
+        call("shogun_memory_embed_backfill_cancel", input || {}, WRITE),
       entityQuery: (input) => call("shogun_entity_query", input, READ),
       briefGet: (input) => call("shogun_brief_get", input, READ),
       openPack: (input) => call("shogun_open_pack", input, WRITE),

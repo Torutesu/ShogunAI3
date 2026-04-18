@@ -56,6 +56,8 @@ const Icon = ({name, size=16, className=""}) => {
     eye: <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></>,
     info: <><circle cx="12" cy="12" r="9"/><path d="M12 8v.01M11 12h1v5h1"/></>,
     grip: <><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></>,
+    folder: <><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></>,
+    chevronUp: <><path d="m18 15-6-6-6 6"/></>,
   };
   return (
     <svg className={`ico ${className}`} width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -64,17 +66,17 @@ const Icon = ({name, size=16, className=""}) => {
   );
 };
 
-// Brand mark (gold / black) — path is relative to `SHOGUN Hi-Fi UI.html`
-const KAMON_SRC = 'hifi/assets/mark-512-dark.png';
+// Brand mark — path is relative to `SHOGUN Hi-Fi UI.html` (query busts stale cache)
+const KAMON_SRC = 'hifi/assets/mark.png?v=2';
 
-/** App logo. `color` is accepted for API compatibility with existing call sites; the raster mark uses fixed brand colors. */
+/** App logo. `color` is accepted for API compatibility with existing call sites; asset is the official raster mark. */
 const Kamon = ({size=28, color: _color, className=""}) => (
   <img
     className={`kamon-img${className ? ` ${className}` : ''}`}
     src={KAMON_SRC}
     width={size}
     height={size}
-    alt=""
+    alt="Shogun AI"
     draggable={false}
     decoding="async"
   />

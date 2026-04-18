@@ -4,6 +4,8 @@ UIボタンと ActionRegistry / Runtime の対応表。
 未接続導線の回帰チェックに使う。
 
 
+**Memory（ローカルファースト）:** **`memory.db`**（**SQLite + FTS5**）、行は任意で **`embedding` BLOB**（OpenAI 互換 **`/v1/embeddings`**）。`capture_sampler` / `capture_ax` 以外の **`memory.ingest`** 後にバックグラウンドで埋め込み。**`memory.search`** で **`semantic: true`** と API キーがあれば再ランク。旧 JSON は初回のみ移行後 **`memory_items.json.migrated`**。SHOGUN Memory クラウド同期はなし。Chat・LLM / Clerk / OAuth は利用時に送信。
+
 ## v1 backend behavior (matches toasts)
 
 - `integrations.connect` → cloud/OAuth providers: **`notImplemented`** (warn). Local tools **Arc / Raycast / Obsidian**: saves `connected` in settings (success path).
@@ -15,9 +17,15 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - **`shogun_google_calendar_sync`** / **`calendar.sync`**: lists near-future events with the imported Bearer token and **`memory.ingest`** each as a calendar memory (errors if token missing). Proactively refreshes the access token when **`expiresAt`** is near or on **401** if `oauthClientId` + `refreshToken` are stored. Background job: when **`sections.integrations.googleCalendarAutoSync`** is true and Keychain has credentials, syncs every **`googleCalendarSyncIntervalMins`** (5–1440, default 15).
 - **`app_diagnostics_report`** / **`diagnostics.report`**: writes JSON file plus returns **`summary`** (`capture`, `macosAccessibilityTrusted`, **`integrations.google_calendar`**, **`integrations.calendarAutoSync`**).
 - **`shogun_stats`** with **`stage: "capture"`** includes full **`settings`** document for Capture UI hydration.
+- **`shogun_memory_search`** / **`memory.search`**: **async**. Lexical **FTS5** by default. Payload **`semantic: true`** + non-empty **`query`** + LLM API key → fetch a wider lexical candidate set, **`/v1/embeddings`** on the query, re-rank by cosine vs stored **`embedding` BLOB**; response may include **`semanticRerank: true`**. Without a key (or `semantic: false`) → lexical only.
+- **`shogun_memory_ingest`**: inserts row; **background embedding** for `title`+`snippet` except when **`source`** is **`capture_sampler`** or **`capture_ax`** (cost/noise). Embedding model: **`settings.sections.llm.embeddingModel`**, default **`text-embedding-3-small`** (same **`baseUrl`** / key as chat).
+- **`shogun_memory_embed_backfill`** / **`memory.embed_backfill`**: **async**; embeds up to **`limit`** rows (default 40, max 200) where **`embedding` IS NULL** and source not capture noise. Optional **`delayMs`** (0–3000) sleeps between rows to ease API rate limits. Transient API / network errors retry with **exponential backoff** (up to 5 attempts per row); response **`firstError`** is still the **first** failure message only. Emits Tauri event **`memory-embed-backfill-progress`** with **`{ index, total, embedded, failed }`** after each row when running in the desktop app. Returns **`embedded`**, **`failed`**, **`remaining`**, **`attempted`**, optional **`firstError`**, **`cancelled`** (true if the user cancelled mid-run). Long invoke: frontend uses an extended IPC timeout for this command.
+- **`shogun_memory_embed_backfill_cancel`** / **`memory.embed_backfill_cancel`**: sets a **shared cancel flag** so the current backfill loop stops between rows; idempotent. Returns **`requested`: true**.
 - `draft.create` → LLM draft via **`shogun_draft`** (requires API key in Tauri; browser mock returns Markdown).
 - `schedule.create` → append to local **`schedule_queue.json`** (no OS calendar sync).
-- `shogun.open_pack` / `shogun.draft_reply` / `shogun.start_focus_session` → **`notImplemented`**.
+- `shogun.open_pack` → builds a **`packs/{pack_id}_{ts}/`** folder under app data (`README.md`, `memory_hits.md` from local **FTS** search), reveals in Finder (macOS) or opens README elsewhere.
+- `shogun.draft_reply` → **async** LLM Markdown reply from **`brief_item`** + top Memory hits (requires API key); browser mock returns placeholder Markdown.
+- `shogun.start_focus_session` → writes **`active_focus.json`**, creates **`packs/focus_{task}_{ts}/FOCUS.md`**, **`memory.ingest`** start note, opens the Markdown file.
 - Many call sites use **`silentError: true`** to avoid duplicate error toasts.
 
 ## Runtime Entry Points
@@ -45,12 +53,13 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - Integrations row actions -> `integrations.toggle`
 - Subscription actions -> `settings.save(section=subscription, ...)`
 - Support `Report` -> `diagnostics.report`
+- **Model & API** pane -> `settings.save(section=llm)` includes **`embeddingModel`**, **`embedBackfillBatch`** (20|40|80|120|200), **`embedBackfillDelayMs`** (0|250|500|1000); batch/pause persist on change and with **Save endpoint**. **`memory.embed_backfill`** (requires key) uses the on-screen batch + pause; UI shows **N / M** progress (event + initial `0 / limit`), **Cancel** calls **`memory.embed_backfill_cancel`**; toasts include **`remaining`** / **`firstError`** / cancellation. **`Memory: semantic search default`** toggle -> `settings.save(section=memory, semanticRerank)` (same as Memory screen checkbox).
 
 ## screens-a.jsx
 
 - Home Morning Brief card -> `brief.get` (mount); item CTAs -> `shogun.open_pack` / `shogun.draft_reply` / `shogun.start_focus_session`; dismiss / rating -> local state + `BriefTelemetry` + `settings.save(section=brief)`
 - Home CTA buttons -> `draft.create` / `schedule.create` / `settings.save`
-- Memory filter button -> `memory.search`
+- Memory filter / title / source searches -> `memory.search` (optional UI **`semantic: true`** for embedding re-rank when query non-empty). Memory screen checkbox persists **`settings.sections.memory.semanticRerank`** (boolean) via **`settings.save(section=memory)`** on toggle; hydrated on load before the first timeline fetch.
 - Memory **Sources in index** strip -> `entity.query` (mount, Refresh, and after `memory.ingest` on Save test)
 - Memory `Save test` -> `memory.ingest` then `memory.search` refresh
 - River actions (`Open in Chat`, `Open source`) -> `memory.search`
@@ -103,6 +112,8 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.search`
 - `memory.ingest`
 - `memory.delete`
+- `memory.embed_backfill`
+- `memory.embed_backfill_cancel`
 - `entity.query`
 - `brief.get`
 - `chat.complete`

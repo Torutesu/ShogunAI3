@@ -134,7 +134,7 @@ function ScreenMorningBrief() {
 
   const onAction = async (item) => {
     if (!SB || !item || !item.next_action) return;
-    const spec = SB.resolveNextAction(item.next_action);
+    const spec = SB.resolveNextAction(item.next_action, item);
     if (spec.skip) return;
     if (window.BriefTelemetry) {
       window.BriefTelemetry.log(window.BriefTelemetry.EVENTS.NEXT_ACTION_CLICK, {

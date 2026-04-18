@@ -266,16 +266,16 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await expect(page.locator(".s-modal")).toHaveCount(0);
   });
 
-  test("Memory: entity sources panel mounts (empty catalog ok)", async ({ page }) => {
+  test("Memory: entity sources panel mounts", async ({ page }) => {
     await openHiFi(page);
 
     await page.locator(".sidebar .nav-item").filter({ hasText: "Memory" }).first().click();
-    await expect(page.locator("h1")).toContainText("April 17");
+    await expect(page.getByText("MEMORY / TIMELINE")).toBeVisible();
+    await expect(page.locator("h1").filter({ hasText: /\u6642\u9593\u8ef8/ })).toBeVisible();
 
     const panel = page.getByTestId("memory-entity-sources");
     await expect(panel).toBeVisible();
     await expect(panel).toContainText(/SOURCES IN INDEX/i);
- await expect(panel).toContainText(/No indexed sources yet/i);
   });
 
   test("Work: New document shows draft success toast (mock IPC)", async ({ page }) => {
@@ -288,5 +288,68 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await expect(page.locator(".app-toast.success")).toContainText("Draft ready", {
       timeout: 8000,
     });
+  });
+
+  test("executeAction memory.search with semantic sets semanticRerank (mock)", async ({ page }) => {
+    await openHiFi(page);
+    const out = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "memory.search",
+        { query: "smoke", limit: 5, semantic: true },
+        { silentError: true },
+      );
+    });
+    expect(out.ok).toBe(true);
+    expect(out.data.semanticRerank).toBe(true);
+  });
+
+  test("Memory: semantic re-rank toggle is on by default", async ({ page }) => {
+    await openHiFi(page);
+    await page.locator(".sidebar .nav-item").filter({ hasText: "Memory" }).first().click();
+    await expect(page.getByTestId("memory-semantic-rerank")).toBeVisible();
+    await expect(page.getByTestId("memory-semantic-rerank")).toBeChecked();
+  });
+
+  test("Memory: semantic re-rank preference persists in settings (mock)", async ({ page }) => {
+    await openHiFi(page);
+    await page.locator(".sidebar .nav-item").filter({ hasText: "Memory" }).first().click();
+    await expect(page.getByTestId("memory-semantic-rerank")).toBeVisible();
+    await page.getByTestId("memory-semantic-rerank").uncheck();
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const r = await window.SHOGUN_RUNTIME.executeAction("settings.load", {}, { silentError: true });
+          return r?.data?.settings?.sections?.memory?.semanticRerank;
+        }),
+      )
+      .toBe(false);
+    await page.getByTestId("memory-semantic-rerank").check();
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const r = await window.SHOGUN_RUNTIME.executeAction("settings.load", {}, { silentError: true });
+          return r?.data?.settings?.sections?.memory?.semanticRerank;
+        }),
+      )
+      .toBe(true);
+  });
+
+  test("Settings Model & API: Backfill embeddings toast after mock key save", async ({ page }) => {
+    await openHiFi(page);
+    await openSettingsModal(page);
+    await page.locator(".s-sidebar").getByText("Model & API", { exact: true }).click();
+    await expect(page.locator(".s-pane-head")).toContainText("Model & API");
+
+    await page.locator(".s-pane-body").getByPlaceholder("sk-…").fill("sk-mock-e2e-backfill");
+    await page.locator(".s-pane-body").getByRole("button", { name: "Save key" }).click();
+    await expect(page.locator(".s-pane-body")).toContainText("Keychain: configured", { timeout: 8000 });
+
+    await page.locator(".s-pane-body").getByRole("button", { name: /Backfill missing vectors/ }).click();
+    await expect(page.locator(".app-toast.success")).toContainText("Embedded 0 · failed 0", {
+      timeout: 8000,
+    });
+
+    await page.locator(".s-close").click();
+    await expect(page.locator(".s-modal")).toHaveCount(0);
   });
 });

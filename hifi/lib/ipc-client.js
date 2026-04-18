@@ -26,6 +26,46 @@
    */
   async function mockTransport(command, payload) {
     const echo = payload || {};
+    const DEMO = global.SHOGUN_DEMO_SEED || null;
+
+    const MOCK_SETTINGS_LS = "shogun.hifi.mock.settings.sections.v1";
+    function readMockSettingsSections() {
+      try {
+        if (!global.localStorage) return {};
+        const raw = global.localStorage.getItem(MOCK_SETTINGS_LS);
+        if (!raw) return {};
+        const o = JSON.parse(raw);
+        return o && typeof o === "object" ? o : {};
+      } catch (_) {
+        return {};
+      }
+    }
+    function mergeMockSettingsSection(section, patch) {
+      if (!global.localStorage || !section || typeof patch !== "object") return;
+      const sections = readMockSettingsSections();
+      const prev = sections[section] && typeof sections[section] === "object" ? sections[section] : {};
+      sections[section] = { ...prev, ...patch };
+      global.localStorage.setItem(MOCK_SETTINGS_LS, JSON.stringify(sections));
+    }
+
+    const MOCK_LLM_KEY_LS = "shogun.hifi.mock.llm.keyConfigured.v1";
+    function readMockLlmKeyConfigured() {
+      try {
+        if (!global.localStorage) return false;
+        return global.localStorage.getItem(MOCK_LLM_KEY_LS) === "1";
+      } catch (_) {
+        return false;
+      }
+    }
+    function writeMockLlmKeyConfigured(on) {
+      try {
+        if (!global.localStorage) return;
+        if (on) global.localStorage.setItem(MOCK_LLM_KEY_LS, "1");
+        else global.localStorage.removeItem(MOCK_LLM_KEY_LS);
+      } catch (_) {
+        /* ignore */
+      }
+    }
 
     if (command === "shogun_brief_get" && global.ShogunMorningBrief) {
       return global.ShogunMorningBrief.mockBriefGetResponse(echo);
@@ -106,11 +146,38 @@
           echo: echo,
         };
       case "shogun_open_pack":
-        return notImpl("Opening packs / deep links is not available in v1.");
+        return {
+          ok: true,
+          data: {
+            opened: true,
+            path: "(browser mock) packs/example",
+            stub: false,
+            echo: echo,
+          },
+        };
       case "shogun_start_focus_session":
-        return notImpl("Focus sessions are not available in v1.");
+        return {
+          ok: true,
+          data: {
+            started: true,
+            ends_at_ms: Date.now() + 25 * 60 * 1000,
+            state_path: "(browser mock) active_focus.json",
+            focus_markdown: "(browser mock) FOCUS.md",
+            stub: false,
+            echo: echo,
+          },
+        };
       case "shogun_draft_reply":
-        return notImpl("Draft-from-brief actions are not available in v1. Use Chat instead.");
+        return {
+          ok: true,
+          data: {
+            content:
+              "# Draft reply (browser mock)\n\nUse Tauri + LLM key for Brief-aware drafts.\n",
+            title: "Reply draft · mock",
+            stub: false,
+            echo: echo,
+          },
+        };
       case "app_capture_pause":
         return {
           paused: true,
@@ -129,13 +196,28 @@
           stub: false,
           echo: echo,
         };
-      case "shogun_memory_search":
+      case "shogun_memory_search": {
+        if (!DEMO || !Array.isArray(DEMO.memoryHits)) {
+          return { hits: [], total: 0, echo: echo, stub: false };
+        }
+        let hits = DEMO.memoryHits.slice();
+        const q = String((echo && echo.query) || "")
+          .trim()
+          .toLowerCase();
+        if (q) {
+          hits = hits.filter((h) =>
+            `${h.title || ""} ${h.snippet || ""}`.toLowerCase().includes(q),
+          );
+        }
+        const limit = Math.min(80, Math.max(1, Number(echo.limit) || 40));
         return {
-          hits: [],
-          total: 0,
+          hits: hits.slice(0, limit),
+          total: hits.length,
+          semanticRerank: !!(echo && echo.semantic),
           echo: echo,
           stub: false,
         };
+      }
       case "shogun_memory_fetch":
         return {
           items: [],
@@ -154,14 +236,33 @@
           echo: echo,
           stub: false,
         };
+      case "shogun_memory_embed_backfill": {
+        const lim = echo && echo.limit != null ? Number(echo.limit) : 40;
+        const clamped = Number.isFinite(lim) ? Math.min(200, Math.max(1, Math.floor(lim))) : 40;
+        return {
+          embedded: 0,
+          failed: 0,
+          remaining: 0,
+          attempted: clamped,
+          cancelled: false,
+          echo: echo,
+          stub: false,
+        };
+      }
+      case "shogun_memory_embed_backfill_cancel":
+        return {
+          requested: true,
+          echo: echo,
+          stub: false,
+        };
       case "shogun_entity_query":
         return {
-          entities: [],
+          entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],
           echo: echo,
           stub: false,
         };
       case "shogun_stats": {
-        const base = {
+        const empty = {
           eventsToday: "0",
           memoriesToday: "0",
           memoryTotal: 0,
@@ -174,6 +275,10 @@
           echo: echo,
           stub: false,
         };
+        const base =
+          DEMO && DEMO.stats && typeof DEMO.stats === "object"
+            ? Object.assign({}, DEMO.stats, { echo: echo, stub: false })
+            : empty;
         if (echo && echo.stage === "capture") {
           base.settings = {
             sections: {
@@ -191,13 +296,26 @@
             },
           };
         }
+        if (echo && echo.section === "storage") {
+          base.memories = base.memories || String(base.memoryTotal || 0);
+        }
         return base;
       }
-      case "shogun_chat_complete":
-        throw createError(
-          "LLM_KEY",
-          "LLM API key is not set. Open Settings → Model & API and save your key.",
-        );
+      case "shogun_chat_complete": {
+        const msgs = (echo && echo.messages) || [];
+        const last = msgs[msgs.length - 1];
+        const userText =
+          last && last.role === "user" ? String(last.content || "") : "";
+        const preview = userText.length > 120 ? userText.slice(0, 120) + "…" : userText;
+        return {
+          message:
+            "[Demo — set an API key in the desktop app for real completions.]\n\nYou asked: " +
+            (preview || "(empty)") +
+            "\n\nFor **Kitazawa / Aurora**, a sensible next step is to pin the beta scope (DPIA + onboarding) and keep investor slides to three proof points until metrics land.",
+          stub: false,
+          echo: echo,
+        };
+      }
       case "app_open_hummingbird":
         return {
           opened: true,
@@ -213,26 +331,35 @@
         };
       case "app_settings_load":
         return {
-          settings: { sections: {} },
+          settings: { sections: readMockSettingsSections() },
           echo: echo,
           stub: false,
         };
-      case "app_settings_save":
+      case "app_settings_save": {
+        if (echo && echo.section) {
+          const section = echo.section;
+          const { section: _s, ...rest } = echo;
+          mergeMockSettingsSection(section, rest);
+        }
         return {
           saved: true,
-          settings: echo,
-          echo: echo,
           stub: false,
+          echo: echo,
         };
-      case "app_llm_api_key_set":
-        return { saved: true, stub: false };
+      }
+      case "app_llm_api_key_set": {
+        const hasKey = String((echo && echo.apiKey) || "").trim().length > 0;
+        writeMockLlmKeyConfigured(hasKey);
+        return { saved: true, stub: false, echo: echo };
+      }
       case "app_llm_api_key_status":
         return {
-          configured: false,
+          configured: readMockLlmKeyConfigured(),
           echo: echo,
           stub: false,
         };
       case "app_llm_api_key_clear":
+        writeMockLlmKeyConfigured(false);
         return { cleared: true, echo: echo, stub: false };
       case "app_permissions_manage":
         return {
@@ -355,7 +482,7 @@
     const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
     const transport = opts.transport || (hasTauriInvoke() ? "tauri" : "mock");
 
-    async function invoke(command, payload) {
+    async function invoke(command, payload, invokeOpts) {
       if (!command) {
         throw createError("INVALID_COMMAND", "command is required");
       }
@@ -365,10 +492,15 @@
         payload: payload || {},
       };
 
+      const perTimeoutMs =
+        invokeOpts && typeof invokeOpts.timeoutMs === "number"
+          ? invokeOpts.timeoutMs
+          : timeoutMs;
+
       try {
         const raw = transport === "tauri"
-          ? await withTimeout(tauriTransport(command, payload), timeoutMs)
-          : await withTimeout(mockTransport(command, payload), timeoutMs);
+          ? await withTimeout(tauriTransport(command, payload), perTimeoutMs)
+          : await withTimeout(mockTransport(command, payload), perTimeoutMs);
         return { ok: true, data: raw, request: request };
       } catch (error) {
         return {

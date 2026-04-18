@@ -202,3 +202,83 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
     "stub": false,
   }))
 }
+
+/// Draft a paste-ready reply from a Morning Brief item + local Memory (requires LLM API key).
+pub async fn draft_reply_for_brief(payload: &Value) -> Result<Value, String> {
+  let item = payload.get("brief_item");
+  let what = item
+    .and_then(|i| i.get("what"))
+    .and_then(|x| x.as_str())
+    .unwrap_or("");
+  let why = item
+    .and_then(|i| i.get("why_now"))
+    .and_then(|x| x.as_str())
+    .unwrap_or("");
+  let mut linked = String::new();
+  if let Some(rc) = item
+    .and_then(|i| i.get("related_context"))
+    .and_then(|x| x.as_array())
+  {
+    for x in rc {
+      let t = x.get("title").and_then(|v| v.as_str()).unwrap_or("");
+      linked.push_str(&format!("- {}\n", t));
+    }
+  }
+  let q: String = what.chars().take(160).collect();
+  let mem = match memory_store::search_with_semantics(&json!({
+    "query": q,
+    "limit": 12,
+    "semantic": true,
+  }))
+  .await
+  {
+    Ok(v) => v,
+    Err(_) => json!({ "hits": [] }),
+  };
+  let mut mem_block = String::new();
+  if let Some(hits) = mem.get("hits").and_then(|h| h.as_array()) {
+    for h in hits {
+      let t = h.get("title").and_then(|x| x.as_str()).unwrap_or("");
+      let s = h.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
+      mem_block.push_str(&format!("- {} — {}\n", t, s));
+    }
+  }
+  let user = format!(
+    "Prepare the operator's **next concrete message** (email, chat, or meeting talking points — infer from context).\n\n\
+## Brief\n**What:** {}\n**Why now:** {}\n**Linked:**\n{}\n\n## Local memory (top FTS hits)\n{}\n\n\
+Reply with **Markdown only**: tight bullets or one short paragraph they can paste. No preamble.\n",
+    what,
+    why,
+    if linked.is_empty() { "—\n".to_string() } else { linked },
+    if mem_block.is_empty() {
+      "—\n".to_string()
+    } else {
+      mem_block
+    }
+  );
+  let wrapped = json!({
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are SHOGUN's reply-drafting assistant. Output Markdown only; concise and professional."
+      },
+      { "role": "user", "content": user }
+    ]
+  });
+  let out = chat_complete(&wrapped).await?;
+  let content = out
+    .get("message")
+    .and_then(|m| m.as_str())
+    .unwrap_or("")
+    .to_string();
+  let title = format!(
+    "Reply draft · {}",
+    what.chars().take(40).collect::<String>()
+  );
+  Ok(json!({
+    "content": content,
+    "title": title,
+    "stub": false,
+    "echo": payload,
+  }))
+}

@@ -1,8 +1,8 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
 use crate::{
-  auth, biometric, brief, google_calendar, integration_secrets, integrations, llm, macos_ax,
-  memory_store, secrets, settings_store,
+  auth, biometric, brief, brief_actions, embed_backfill, google_calendar, integration_secrets,
+  integrations, llm, macos_ax, memory_store, secrets, settings_store,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -19,8 +19,8 @@ fn ts() -> u64 {
 }
 
 #[tauri::command]
-pub fn shogun_memory_search(payload: Value) -> Result<Value, String> {
-  memory_store::search(&payload)
+pub async fn shogun_memory_search(payload: Value) -> Result<Value, String> {
+  memory_store::search_with_semantics(&payload).await
 }
 
 #[tauri::command]
@@ -36,6 +36,31 @@ pub fn shogun_memory_ingest(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn shogun_memory_delete(payload: Value) -> Result<Value, String> {
   memory_store::delete_items(&payload)
+}
+
+#[tauri::command]
+pub async fn shogun_memory_embed_backfill(
+  app: AppHandle,
+  state: tauri::State<'_, embed_backfill::EmbedBackfillState>,
+  payload: Value,
+) -> Result<Value, String> {
+  state.begin_run();
+  memory_store::backfill_embeddings(
+    &payload,
+    memory_store::BackfillEmitContext {
+      app: Some(app),
+      cancel: Some(state.cancel_flag()),
+    },
+  )
+  .await
+}
+
+#[tauri::command]
+pub fn shogun_memory_embed_backfill_cancel(
+  state: tauri::State<'_, embed_backfill::EmbedBackfillState>,
+) -> Result<Value, String> {
+  state.request_cancel();
+  Ok(json!({ "requested": true }))
 }
 
 #[tauri::command]
@@ -582,32 +607,17 @@ pub fn app_delete_account(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn shogun_open_pack(payload: Value) -> Result<Value, String> {
-  Ok(json!({
-    "notImplemented": true,
-    "message": "Opening packs / deep links is not available in v1.",
-    "stub": false,
-    "echo": payload,
-  }))
+  brief_actions::open_pack(&payload)
 }
 
 #[tauri::command]
 pub fn shogun_start_focus_session(payload: Value) -> Result<Value, String> {
-  Ok(json!({
-    "notImplemented": true,
-    "message": "Focus sessions are not available in v1.",
-    "stub": false,
-    "echo": payload,
-  }))
+  brief_actions::start_focus_session(&payload)
 }
 
 #[tauri::command]
-pub fn shogun_draft_reply(payload: Value) -> Result<Value, String> {
-  Ok(json!({
-    "notImplemented": true,
-    "message": "Draft-from-brief actions are not available in v1. Use Chat instead.",
-    "stub": false,
-    "echo": payload,
-  }))
+pub async fn shogun_draft_reply(payload: Value) -> Result<Value, String> {
+  llm::draft_reply_for_brief(&payload).await
 }
 
 #[tauri::command]
@@ -656,11 +666,16 @@ pub fn auth_sign_out() -> Result<Value, String> {
   Ok(json!({ "signedOut": true }))
 }
 
+/// Runs LocalAuthentication work on the blocking pool so the async runtime thread is not wedged
+/// (which can freeze the WebView when opening Settings → Privacy).
 #[tauri::command]
-pub fn auth_biometric_status(payload: Value) -> Result<Value, String> {
-  let mut v = biometric::status_json();
+pub async fn auth_biometric_status(payload: Value) -> Result<Value, String> {
+  let echo = payload;
+  let mut v = tokio::task::spawn_blocking(biometric::status_json)
+    .await
+    .map_err(|e| format!("biometric status task failed: {e}"))?;
   if let Some(m) = v.as_object_mut() {
-    m.insert("echo".to_string(), payload);
+    m.insert("echo".to_string(), echo);
     m.insert("stub".to_string(), json!(false));
   }
   Ok(v)

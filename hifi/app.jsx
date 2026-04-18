@@ -1,5 +1,5 @@
-/* global Icon, Kamon, React, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMorningBrief, ScreenCapture, ScreenIntegrations, ScreenSettings, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry */
-const { useState, useEffect, useRef } = React;
+/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
+const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "language": "en",
@@ -15,24 +15,61 @@ const NAV = [
   {id:'agents',    label:'Agents',       jp:'家臣',   icon:'agents',    section:'main'},
   {id:'work',      label:'Work',         jp:'任務',   icon:'work',      section:'workspace'},
   {id:'meetings',  label:'Meetings',     jp:'会議',   icon:'calendar',  section:'workspace'},
-  {id:'morning_brief', label:'Brief',    jp:'朝礼',   icon:'note',      section:'workspace'},
-  {id:'capture',   label:'Capture',      jp:'捕捉',   icon:'capture',   section:'workspace'},
-  {id:'integrations', label:'Integrations', jp:'接続', icon:'plug',   section:'workspace'},
-  {id:'settings',  label:'Settings',     jp:'設定',   icon:'settings',  section:'workspace'},
 ];
 
-const INITIAL_CHAT_HISTORY = [
-  {id:'c1', title:'Revenue-cat pricing tiers', time:'14:02', when:'TODAY', jp:'今日', favorite:true},
-  {id:'c2', title:'Speak · pronunciation angles', time:'10:49', when:'TODAY', jp:'今日', favorite:false},
-  {id:'c3', title:'Morning brief summary', time:'07:12', when:'TODAY', jp:'今日', favorite:false},
-  {id:'c4', title:'SHOGUN IA draft', time:'', when:'YESTERDAY', jp:'昨日', favorite:true},
-  {id:'c5', title:'Matt 1-on-1 prep', time:'', when:'YESTERDAY', jp:'昨日', favorite:false},
-  {id:'c6', title:'Rust error handling', time:'', when:'YESTERDAY', jp:'昨日', favorite:false},
-];
+const REMOVED_NAV_IDS = new Set(['morning_brief', 'capture', 'integrations', 'settings']);
+
+const INITIAL_CHAT_HISTORY =
+  typeof window !== 'undefined' &&
+  window.SHOGUN_DEMO_SEED &&
+  Array.isArray(window.SHOGUN_DEMO_SEED.chats)
+    ? window.SHOGUN_DEMO_SEED.chats
+    : [];
 
 /** Fallback when `ipc-client.js` is absent — keep in sync with `hifi/lib/ipc-client.js` mockTransport. */
 function mockIpcInvoke(command, payload) {
   const echo = payload || {};
+  const MOCK_SETTINGS_LS = 'shogun.hifi.mock.settings.sections.v1';
+  const MOCK_LLM_KEY_LS = 'shogun.hifi.mock.llm.keyConfigured.v1';
+  function readMockSettingsSections() {
+    try {
+      if (typeof localStorage === 'undefined') return {};
+      const raw = localStorage.getItem(MOCK_SETTINGS_LS);
+      if (!raw) return {};
+      const o = JSON.parse(raw);
+      return o && typeof o === 'object' ? o : {};
+    } catch (_) {
+      return {};
+    }
+  }
+  function mergeMockSettingsSection(section, patch) {
+    try {
+      if (typeof localStorage === 'undefined' || !section || typeof patch !== 'object') return;
+      const sections = readMockSettingsSections();
+      const prev = sections[section] && typeof sections[section] === 'object' ? sections[section] : {};
+      sections[section] = { ...prev, ...patch };
+      localStorage.setItem(MOCK_SETTINGS_LS, JSON.stringify(sections));
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  function readMockLlmKeyConfigured() {
+    try {
+      if (typeof localStorage === 'undefined') return false;
+      return localStorage.getItem(MOCK_LLM_KEY_LS) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+  function writeMockLlmKeyConfigured(on) {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      if (on) localStorage.setItem(MOCK_LLM_KEY_LS, '1');
+      else localStorage.removeItem(MOCK_LLM_KEY_LS);
+    } catch (_) {
+      /* ignore */
+    }
+  }
   const notImpl = (message) => ({
     ok: true,
     data: { notImplemented: true, message, stub: false, echo },
@@ -108,11 +145,38 @@ function mockIpcInvoke(command, payload) {
     case 'shogun_schedule_action':
       return { ok: true, data: { scheduled: true, id: 'sch-mock', stub: false, echo } };
     case 'shogun_open_pack':
-      return notImpl('Opening packs / deep links is not available in v1.');
+      return {
+        ok: true,
+        data: {
+          opened: true,
+          path: '(browser mock) ~/Library/Application Support/.../packs/example',
+          stub: false,
+          echo,
+        },
+      };
     case 'shogun_start_focus_session':
-      return notImpl('Focus sessions are not available in v1.');
+      return {
+        ok: true,
+        data: {
+          started: true,
+          ends_at_ms: Date.now() + 25 * 60 * 1000,
+          state_path: '(browser mock) active_focus.json',
+          focus_markdown: '(browser mock) FOCUS.md',
+          stub: false,
+          echo,
+        },
+      };
     case 'shogun_draft_reply':
-      return notImpl('Draft-from-brief actions are not available in v1. Use Chat instead.');
+      return {
+        ok: true,
+        data: {
+          content:
+            '# Draft reply (browser mock)\n\n_Use the desktop app with an LLM API key for a real draft from your Brief + Memory._\n',
+          title: 'Reply draft · mock',
+          stub: false,
+          echo,
+        },
+      };
     case 'app_capture_pause':
       return {
         ok: true,
@@ -137,8 +201,221 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
-    case 'shogun_entity_query':
-      return { ok: true, data: { entities: [], echo, stub: false } };
+    case 'app_settings_load':
+      return {
+        ok: true,
+        data: {
+          settings: { sections: readMockSettingsSections() },
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_settings_save': {
+      if (echo && echo.section) {
+        const section = echo.section;
+        const { section: _sec, ...rest } = echo;
+        mergeMockSettingsSection(section, rest);
+      }
+      return { ok: true, data: { saved: true, stub: false, echo } };
+    }
+    case 'shogun_memory_search': {
+      const DEMO = typeof window !== 'undefined' ? window.SHOGUN_DEMO_SEED : null;
+      if (!DEMO || !Array.isArray(DEMO.memoryHits)) {
+        return { ok: true, data: { hits: [], total: 0, echo, stub: false } };
+      }
+      let hits = DEMO.memoryHits.slice();
+      const q = String((echo && echo.query) || '')
+        .trim()
+        .toLowerCase();
+      if (q) {
+        hits = hits.filter((h) =>
+          `${h.title || ''} ${h.snippet || ''}`.toLowerCase().includes(q),
+        );
+      }
+      const limit = Math.min(80, Math.max(1, Number(echo.limit) || 40));
+      return {
+        ok: true,
+        data: {
+          hits: hits.slice(0, limit),
+          total: hits.length,
+          semanticRerank: !!(echo && echo.semantic),
+          stub: false,
+          echo,
+        },
+      };
+    }
+    case 'shogun_memory_ingest':
+      return { ok: true, data: { ingested: true, stub: false, echo } };
+    case 'shogun_memory_delete':
+      return { ok: true, data: { deleted: true, stub: false, echo } };
+    case 'shogun_memory_fetch':
+      return {
+        ok: true,
+        data: {
+          items: [],
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_stats': {
+      const DEMO = typeof window !== 'undefined' ? window.SHOGUN_DEMO_SEED : null;
+      const empty = {
+        eventsToday: '0',
+        memoriesToday: '0',
+        memoryTotal: 0,
+        memoriesLast24h: 0,
+        memories: '0',
+        disk: '0 B',
+        historyDays: '0 days',
+        usagePercent: 0,
+        appCoverage: [],
+        echo,
+        stub: false,
+      };
+      const base =
+        DEMO && DEMO.stats && typeof DEMO.stats === 'object'
+          ? Object.assign({}, DEMO.stats, { echo, stub: false })
+          : empty;
+      if (echo && echo.stage === 'capture') {
+        base.settings = {
+          sections: {
+            capture: {
+              axRichCapture: false,
+              sampleIntervalSecs: 8,
+              axMinIntervalSecs: 0,
+              paused: false,
+              pipelineAvailable: true,
+            },
+            integrations: {
+              googleCalendarAutoSync: false,
+              googleCalendarSyncIntervalMins: 15,
+            },
+          },
+        };
+      }
+      if (echo && echo.section === 'storage') {
+        base.memories = base.memories || String(base.memoryTotal || 0);
+      }
+      return { ok: true, data: base };
+    }
+    case 'shogun_chat_complete': {
+      const msgs = (echo && echo.messages) || [];
+      const last = msgs[msgs.length - 1];
+      const userText = last && last.role === 'user' ? String(last.content || '') : '';
+      const preview = userText.length > 120 ? userText.slice(0, 120) + '…' : userText;
+      return {
+        ok: true,
+        data: {
+          message:
+            '[Demo — set an API key in the desktop app for real completions.]\n\nYou asked: ' +
+            (preview || '(empty)') +
+            '\n\n_Mock reply (fallback transport)._',
+          stub: false,
+          echo,
+        },
+      };
+    }
+    case 'shogun_brief_get':
+      return {
+        ok: true,
+        data: {
+          skipped: true,
+          brief: null,
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_open_hummingbird':
+      return { ok: true, data: { opened: true, stub: false, echo } };
+    case 'app_create_share_link':
+      return {
+        ok: true,
+        data: {
+          exported: true,
+          path: '/mock/shogun-share-export.md',
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_permissions_manage':
+      return {
+        ok: true,
+        data: {
+          opened: true,
+          note: 'Opened System Settings (Screen Recording) when supported.',
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_diagnostics_report':
+      return {
+        ok: true,
+        data: {
+          reportId: 'diag-mock',
+          path: '/mock/diagnostics.json',
+          summary: {
+            capture: {},
+            macosAccessibilityTrusted: null,
+            integrations: {
+              google_calendar: {
+                configured: false,
+                tokenRefreshReady: false,
+              },
+              calendarAutoSync: {
+                autoSyncEnabled: false,
+                autoSyncIntervalMins: 15,
+              },
+            },
+          },
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_delete_data_range':
+      return {
+        ok: true,
+        data: { deleted: true, range: echo.range || '', stub: false, echo },
+      };
+    case 'app_delete_all_data':
+      return { ok: true, data: { deleted: true, stub: false, echo } };
+    case 'app_delete_account':
+      return {
+        ok: true,
+        data: {
+          deleted: true,
+          note: 'Local data cleared. No cloud account is associated with this build.',
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_llm_api_key_set': {
+      const hasKey = String((echo && echo.apiKey) || '').trim().length > 0;
+      writeMockLlmKeyConfigured(hasKey);
+      return { ok: true, data: { saved: true, stub: false, echo } };
+    }
+    case 'app_llm_api_key_status':
+      return {
+        ok: true,
+        data: {
+          configured: readMockLlmKeyConfigured(),
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_llm_api_key_clear':
+      writeMockLlmKeyConfigured(false);
+      return { ok: true, data: { cleared: true, echo, stub: false } };
+    case 'shogun_entity_query': {
+      const DEMO = typeof window !== 'undefined' ? window.SHOGUN_DEMO_SEED : null;
+      return {
+        ok: true,
+        data: {
+          entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],
+          echo,
+          stub: false,
+        },
+      };
+    }
     case 'auth_clerk_config':
       return {
         ok: true,
@@ -197,6 +474,31 @@ function mockIpcInvoke(command, payload) {
       };
     case 'auth_biometric_authenticate':
       return { ok: true, data: { ok: true, stub: true, echo } };
+    case 'shogun_memory_embed_backfill': {
+      const lim = echo && echo.limit != null ? Number(echo.limit) : 40;
+      const clamped = Number.isFinite(lim) ? Math.min(200, Math.max(1, Math.floor(lim))) : 40;
+      return {
+        ok: true,
+        data: {
+          embedded: 0,
+          failed: 0,
+          remaining: 0,
+          attempted: clamped,
+          cancelled: false,
+          stub: false,
+          echo,
+        },
+      };
+    }
+    case 'shogun_memory_embed_backfill_cancel':
+      return {
+        ok: true,
+        data: {
+          requested: true,
+          stub: false,
+          echo,
+        },
+      };
     default:
       return { ok: true, data: { command, payload: echo, mock: true } };
   }
@@ -235,6 +537,10 @@ function ensureRuntimeDeps() {
         memorySearch: (input) => client.invoke('shogun_memory_search', input),
         memoryIngest: (input) => client.invoke('shogun_memory_ingest', input),
         memoryDelete: (input) => client.invoke('shogun_memory_delete', input),
+        memoryEmbedBackfill: (input) =>
+          client.invoke('shogun_memory_embed_backfill', input, { timeoutMs: 600000 }),
+        memoryEmbedBackfillCancel: (input) =>
+          client.invoke('shogun_memory_embed_backfill_cancel', input || {}),
         entityQuery: (input) => client.invoke('shogun_entity_query', input),
         briefGet: (input) => client.invoke('shogun_brief_get', input),
         openPack: (input) => client.invoke('shogun_open_pack', input),
@@ -273,6 +579,8 @@ function ensureRuntimeDeps() {
           'memory.search': api.memorySearch,
           'memory.ingest': api.memoryIngest,
           'memory.delete': api.memoryDelete,
+          'memory.embed_backfill': api.memoryEmbedBackfill,
+          'memory.embed_backfill_cancel': api.memoryEmbedBackfillCancel,
           'entity.query': api.entityQuery,
           'brief.get': api.briefGet,
           'chat.complete': api.chatComplete,
@@ -326,26 +634,60 @@ function App() {
   ensureRuntimeDeps();
   const WriteModal = ConfirmWriteModal || function FallbackWriteModal(props) {
     if (!props.open) return null;
-    return (
+    return ReactDOM.createPortal(
       <>
-        <div style={{position:'fixed', inset:0, zIndex:150, background:'rgba(10,9,8,0.55)'}} onClick={props.onCancel}/>
-        <div style={{position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)', zIndex:151, width:'min(520px,92vw)', background:'var(--surface)', border:'1px solid var(--border-hi)', borderRadius:'var(--radius-lg)', padding:16}}>
-          <div style={{fontSize:15, fontWeight:600, marginBottom:4}}>{props.title || 'Confirm action'}</div>
-          <div style={{fontSize:12, color:'var(--text-dim)', marginBottom:10}}>{props.description || 'This action may change local state.'}</div>
-          <pre style={{maxHeight:180, overflow:'auto', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', padding:10, margin:0, fontSize:11, fontFamily:'var(--font-mono)'}}>{JSON.stringify(props.payload || {}, null, 2)}</pre>
-          <div style={{display:'flex', justifyContent:'flex-end', gap:8, marginTop:12}}>
-            <button className="btn btn-sm btn-ghost" onClick={props.onCancel}>Cancel</button>
-            <button className="btn btn-sm btn-secondary" onClick={props.onConfirm}>{props.pending ? 'Running...' : 'Confirm'}</button>
+        <div
+          role="presentation"
+          style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(10,9,8,0.55)' }}
+          onMouseDown={(e) => {
+            if (props.pending) return;
+            e.preventDefault();
+            props.onCancel();
+          }}
+        />
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%,-50%)',
+            zIndex: 1151,
+            boxSizing: 'border-box',
+            width: 'min(520px, calc(100vw - 32px))',
+            maxHeight: 'calc(100vh - 32px)',
+            overflow: 'auto',
+            background: 'var(--surface)',
+            border: '1px solid var(--border-hi)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 16,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{props.title || 'Confirm action'}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>{props.description || 'This action may change local state.'}</div>
+          <pre style={{ maxHeight: 180, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 10, margin: 0, fontSize: 11, fontFamily: 'var(--font-mono)' }}>{JSON.stringify(props.payload || {}, null, 2)}</pre>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={props.onCancel}>Cancel</button>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={props.onConfirm}>{props.pending ? 'Running...' : 'Confirm'}</button>
           </div>
         </div>
-      </>
+      </>,
+      document.body,
     );
   };
-  const [active, setActive] = useState(() => localStorage.getItem('shogun-active') || 'home');
-  const [activeChat, setActiveChat] = useState('c1');
+  const [active, setActive] = useState(() => {
+    const saved = localStorage.getItem('shogun-active') || 'home';
+    return REMOVED_NAV_IDS.has(saved) ? 'home' : saved;
+  });
+  const [activeChat, setActiveChat] = useState(() => (INITIAL_CHAT_HISTORY[0] ? INITIAL_CHAT_HISTORY[0].id : null));
   const [chats, setChats] = useState(INITIAL_CHAT_HISTORY);
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null); // {id, pos:'before'|'after'|'fav'|'chats'}
+  const dragIdRef = useRef(null);
+  const dragOverRef = useRef(null);
+  const suppressChatRowClickRef = useRef(false);
   const [tweaks, setTweaks] = useState(TWEAK_DEFAULTS);
   const [editMode, setEditMode] = useState(false);
   const [favorited, setFavorited] = useState(false);
@@ -363,6 +705,14 @@ function App() {
   const toastTimerRef = useRef(null);
   const bioWantLockRef = useRef(false);
   const [bioGate, setBioGate] = useState({ ready: false, open: false });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const navHistRef = useRef(null);
+  const skipNavHistRef = useRef(false);
+  const shortcutBindingsRef = useRef(
+    typeof window !== 'undefined' && window.ShogunKeyboardShortcuts
+      ? window.ShogunKeyboardShortcuts.mergeShortcutBindings()
+      : {},
+  );
 
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
@@ -371,6 +721,16 @@ function App() {
   };
 
   useEffect(() => { localStorage.setItem('shogun-active', active); }, [active]);
+
+  useEffect(() => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('shogun-active-chat-changed', { detail: { id: activeChat } }),
+      );
+    } catch (_) {
+      /* ignore */
+    }
+  }, [activeChat]);
   useEffect(() => () => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
   }, []);
@@ -464,43 +824,151 @@ function App() {
       requestWriteAction,
       pushToast,
       getActiveChat: () => chats.find(c => c.id === activeChat) || null,
+      __activeChatId: activeChat,
       openSettingsPane: (paneId) => setSettingsOpen(paneId || 'general'),
+      setActiveScreen: (id) => {
+        if (id && typeof id === 'string') setActive(id);
+      },
+      applyShortcutBindings: (raw) => {
+        if (window.ShogunKeyboardShortcuts) {
+          shortcutBindingsRef.current = window.ShogunKeyboardShortcuts.mergeShortcutBindings(raw);
+        }
+      },
     };
     return () => { delete window.SHOGUN_RUNTIME; };
   }, [activeChat, chats]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const createNewChat = useCallback(() => {
+    const id = `c${Date.now()}`;
+    const item = { id, title: 'New conversation', time: '', when: 'TODAY', jp: '今日', favorite: false };
+    setChats((prev) => [item, ...prev]);
+    setActiveChat(id);
+    setActive('chat');
+    pushToast('New conversation created', 'success');
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!navHistRef.current) {
+      navHistRef.current = { entries: [active], cursor: 0 };
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const h = navHistRef.current;
+    if (!h) return;
+    if (skipNavHistRef.current) {
+      skipNavHistRef.current = false;
+      return;
+    }
+    if (h.entries[h.cursor] === active) return;
+    const next = h.entries.slice(0, h.cursor + 1);
+    next.push(active);
+    navHistRef.current = { entries: next, cursor: next.length - 1 };
+  }, [active]);
+
   const toggleFav = (id) => setChats(cs => cs.map(c => c.id===id ? {...c, favorite: !c.favorite} : c));
-  const onDragStart = (id) => (e) => { setDragId(id); e.dataTransfer.effectAllowed = 'move'; };
-  const onDragOverItem = (id) => (e) => {
-    e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pos = (e.clientY - rect.top) < rect.height/2 ? 'before' : 'after';
-    setDragOver({id, pos});
+  const clearChatDrag = () => {
+    dragIdRef.current = null;
+    dragOverRef.current = null;
+    setDragId(null);
+    setDragOver(null);
   };
-  const onDragOverBucket = (bucket) => (e) => { e.preventDefault(); setDragOver({id:null, pos:bucket}); };
-  const onDrop = () => {
-    if (!dragId || !dragOver) { setDragId(null); setDragOver(null); return; }
-    setChats(cs => {
-      const src = cs.find(c => c.id===dragId);
+  /** HTML5 drag/drop is unreliable in Tauri/WKWebView; reorder uses pointer events instead. */
+  const applyChatDragReorder = useCallback(() => {
+    const did = dragIdRef.current;
+    const over = dragOverRef.current;
+    if (!did || !over) return;
+    setChats((cs) => {
+      const src = cs.find((c) => c.id === did);
       if (!src) return cs;
-      const rest = cs.filter(c => c.id!==dragId);
-      // bucket drop (empty area)
-      if (dragOver.id===null) {
-        const moved = {...src, favorite: dragOver.pos==='fav'};
+      const rest = cs.filter((c) => c.id !== did);
+      if (over.id === null) {
+        const moved = { ...src, favorite: over.pos === 'fav' };
         return [...rest, moved];
       }
-      // reorder relative to another item — also join that bucket
-      const target = rest.find(c => c.id===dragOver.id);
+      const target = rest.find((c) => c.id === over.id);
       if (!target) return cs;
-      const moved = {...src, favorite: target.favorite};
-      const idx = rest.findIndex(c => c.id===dragOver.id);
-      const insertAt = dragOver.pos==='before' ? idx : idx+1;
+      const moved = { ...src, favorite: target.favorite };
+      const idx = rest.findIndex((c) => c.id === over.id);
+      const insertAt = over.pos === 'before' ? idx : idx + 1;
       const out = [...rest];
       out.splice(insertAt, 0, moved);
       return out;
     });
-    setDragId(null); setDragOver(null);
-  };
+  }, []);
+  const updateDragOverFromPoint = useCallback((clientX, clientY) => {
+    const did = dragIdRef.current;
+    let root;
+    try {
+      root = document.elementFromPoint(clientX, clientY);
+    } catch (_) {
+      return;
+    }
+    if (!root) return;
+    const row = root.closest?.('[data-chat-row]');
+    if (row) {
+      const rid = row.getAttribute('data-chat-row');
+      if (rid === did) {
+        dragOverRef.current = null;
+        setDragOver(null);
+        return;
+      }
+      if (rid) {
+        const rect = row.getBoundingClientRect();
+        const pos = clientY - rect.top < rect.height / 2 ? 'before' : 'after';
+        const next = { id: rid, pos };
+        dragOverRef.current = next;
+        setDragOver(next);
+        return;
+      }
+    }
+    const bucket = root.closest?.('[data-chat-bucket]');
+    if (bucket) {
+      const b = bucket.getAttribute('data-chat-bucket');
+      if (b === 'fav' || b === 'chats') {
+        const next = { id: null, pos: b };
+        dragOverRef.current = next;
+        setDragOver(next);
+      }
+    }
+  }, []);
+  const CHAT_DRAG_THRESHOLD_PX = 6;
+  const onChatRowPointerDown = useCallback(
+    (id) => (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest?.('button')) return;
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let armed = false;
+      const move = (ev) => {
+        if (!armed) {
+          if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < CHAT_DRAG_THRESHOLD_PX) return;
+          armed = true;
+          dragIdRef.current = id;
+          setDragId(id);
+          dragOverRef.current = null;
+          setDragOver(null);
+          document.body.classList.add('chat-reorder-active');
+        }
+        updateDragOverFromPoint(ev.clientX, ev.clientY);
+      };
+      const finish = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+        document.body.classList.remove('chat-reorder-active');
+        if (armed) {
+          applyChatDragReorder();
+          suppressChatRowClickRef.current = true;
+        }
+        clearChatDrag();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+    },
+    [applyChatDragReorder, updateDragOverFromPoint],
+  );
 
   useEffect(() => {
     document.body.classList.toggle('dot-grid', tweaks.dotGrid);
@@ -571,6 +1039,11 @@ function App() {
       if (cancelled || !r.ok || !r.data?.settings?.sections) return;
       const sec = r.data.settings.sections;
       applySavedAppearance(sec);
+      if (window.ShogunKeyboardShortcuts) {
+        shortcutBindingsRef.current = window.ShogunKeyboardShortcuts.mergeShortcutBindings(
+          sec.shortcuts && sec.shortcuts.bindings,
+        );
+      }
       if (sec.brief && typeof sec.brief === 'object') {
         window.__SHOGUN_SETTINGS_BRIEF__ = sec.brief;
       } else {
@@ -595,6 +1068,100 @@ function App() {
     window.addEventListener('shogun-appearance-changed', onAppearance);
     return () => window.removeEventListener('shogun-appearance-changed', onAppearance);
   }, []);
+
+  const executeActionRef = useRef(executeAction);
+  executeActionRef.current = executeAction;
+
+  useEffect(() => {
+    if (bioGate.ready && bioGate.open) return undefined;
+    const onKey = (e) => {
+      const Kbd = window.ShogunKeyboardShortcuts;
+      const t = e.target;
+      const tag = t && t.tagName;
+      const editable = t && t.isContentEditable;
+      const inField =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || editable;
+
+      const goBack = () => {
+        const h = navHistRef.current;
+        if (!h || h.cursor <= 0) return;
+        skipNavHistRef.current = true;
+        h.cursor -= 1;
+        setActive(h.entries[h.cursor]);
+      };
+      const goForward = () => {
+        const h = navHistRef.current;
+        if (!h || h.cursor >= h.entries.length - 1) return;
+        skipNavHistRef.current = true;
+        h.cursor += 1;
+        setActive(h.entries[h.cursor]);
+      };
+
+      if (!Kbd) {
+        if (inField) return;
+        return;
+      }
+
+      const actionId = Kbd.findMatchingAction(e, shortcutBindingsRef.current, active);
+      if (actionId) {
+        e.preventDefault();
+        const A = Kbd.ACTION_IDS;
+        switch (actionId) {
+          case A.MEMORY_CAPTURE:
+            void executeActionRef.current(
+              'memory.ingest',
+              {
+                title: `Capture moment · ${new Date().toLocaleTimeString()}`,
+                snippet: 'Saved from keyboard shortcut.',
+                source: 'shortcut',
+                kinds: ['input'],
+              },
+              { silentError: true, successMessage: 'Moment captured' },
+            );
+            window.dispatchEvent(new CustomEvent('shogun-memory-index-changed'));
+            break;
+          case A.MEMORY_JUMP_TIMELINE:
+            setActive('memory');
+            window.dispatchEvent(new CustomEvent('shogun-jump-memory-timeline'));
+            break;
+          case A.OPEN_SETTINGS:
+            setSettingsOpen('general');
+            break;
+          case A.OPEN_CHAT_SEARCH:
+            setActive('chat');
+            break;
+          case A.NEW_CHAT:
+            createNewChat();
+            break;
+          case A.TOGGLE_SIDEBAR:
+            setSidebarCollapsed((v) => !v);
+            break;
+          case A.NAVIGATE_BACK:
+            goBack();
+            break;
+          case A.NAVIGATE_FORWARD:
+            goForward();
+            break;
+          case A.CHAT_TOGGLE_MAX:
+            window.dispatchEvent(new CustomEvent('shogun-chat-toggle-max'));
+            break;
+          case A.CHAT_VOICE_TOGGLE:
+            window.dispatchEvent(new CustomEvent('shogun-voice-toggle'));
+            break;
+          case A.CHAT_VOICE_CANCEL:
+            window.dispatchEvent(new CustomEvent('shogun-voice-cancel'));
+            break;
+          default:
+            break;
+        }
+        return;
+      }
+
+      if (inField) return;
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [bioGate.ready, bioGate.open, active, createNewChat]);
 
   const cycleLang = () => {
     const order = ['en','jp','bi'];
@@ -632,21 +1199,21 @@ function App() {
     agents: ScreenAgents,
     work: ScreenWork,
     meetings: ScreenMeetings,
-    morning_brief: ScreenMorningBrief,
-    capture: ScreenCapture,
-    integrations: ScreenIntegrations,
-    settings: ScreenSettings,
   }[active] || ScreenHome;
 
+  if (typeof window !== 'undefined') {
+    window.__SHOGUN_SHELL_ACTIVE_CHAT__ = activeChat;
+  }
+
   return (
-    <div className="app" data-screen-label={active}>
+    <div className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')} data-screen-label={active}>
       {bioGate.ready && bioGate.open && (
         <div
           className="bio-lock-overlay"
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 200,
+            zIndex: 2000,
             background: 'rgba(10,9,8,0.92)',
             backdropFilter: 'blur(8px)',
             display: 'flex',
@@ -690,16 +1257,28 @@ function App() {
       )}
       {/* Topbar */}
       <div className="topbar">
-        <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Home · 起動">
-          <Kamon size={24} color="var(--text)"/>
+        <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Shogun AI · Home">
+          <Kamon size={26} color="var(--text)"/>
           <div>
-            <div className="brand-title en-only">SHOGUN</div>
-            <div className="brand-jp jp">将軍</div>
+            <div className="brand-title en-only">Shogun AI</div>
+            <div className="brand-jp jp">Shogun AI</div>
           </div>
         </div>
-        <div className="cmdk">
+        <div
+          className="cmdk"
+          role="button"
+          tabIndex={0}
+          style={{ cursor: 'pointer' }}
+          onClick={() => setActive('chat')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setActive('chat');
+            }
+          }}
+        >
           <Icon name="search" size={14}/>
-          <span>Ask your memory or run a command…</span>
+          <span className="cmdk-label">Open Chat…</span>
           <span className="kbd">⌘K</span>
         </div>
         <div className="right">
@@ -751,21 +1330,13 @@ function App() {
                     <button
                       className="btn btn-sm btn-secondary"
                       style={{width:'calc(100% - 14px)', margin:'6px 7px 10px', justifyContent:'flex-start'}}
-                      onClick={() => {
-                        const id = `c${Date.now()}`;
-                        const item = { id, title:'New conversation', time:'', when:'TODAY', jp:'今日', favorite:false };
-                        setChats(prev => [item, ...prev]);
-                        setActiveChat(id);
-                        setActive('chat');
-                        pushToast('New conversation created', 'success');
-                      }}
+                      onClick={createNewChat}
                     ><Icon name="plus" size={12}/>New conversation</button>
 
                     {/* Favorites bucket */}
                     <div
                       className={'chat-bucket '+(dragOver?.pos==='fav'?'drop':'')}
-                      onDragOver={onDragOverBucket('fav')}
-                      onDrop={onDrop}
+                      data-chat-bucket="fav"
                     >
                       <div className="chat-subgroup t-mono">
                         <span className="gold" style={{fontSize:9, marginRight:4}}>★</span>
@@ -783,18 +1354,22 @@ function App() {
                       {favChats.map(it => (
                         <div
                           key={it.id}
-                          draggable
-                          onDragStart={onDragStart(it.id)}
-                          onDragOver={onDragOverItem(it.id)}
-                          onDrop={onDrop}
+                          data-chat-row={it.id}
+                          onPointerDown={onChatRowPointerDown(it.id)}
                           className={'chat-sub-item '+(activeChat===it.id?'active':'')+(dragId===it.id?' dragging':'')+(dragOver?.id===it.id?(' dz-'+dragOver.pos):'')}
-                          onClick={()=>setActiveChat(it.id)}
+                          onClick={() => {
+                            if (suppressChatRowClickRef.current) {
+                              suppressChatRowClickRef.current = false;
+                              return;
+                            }
+                            setActiveChat(it.id);
+                          }}
                           title={it.title}
                         >
                           <Icon name="grip" size={10} className="grip"/>
                           <span className="gold dot-fav">★</span>
                           <span className="chat-sub-title">{it.title}</span>
-                          <button className="chat-fav-btn" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Unfavorite">★</button>
+                          <button type="button" draggable={false} className="chat-fav-btn" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Unfavorite">★</button>
                         </div>
                       ))}
                     </div>
@@ -802,8 +1377,7 @@ function App() {
                     {/* All chats bucket */}
                     <div
                       className={'chat-bucket '+(dragOver?.pos==='chats'?'drop':'')}
-                      onDragOver={onDragOverBucket('chats')}
-                      onDrop={onDrop}
+                      data-chat-bucket="chats"
                     >
                       <div className="chat-subgroup t-mono">
                         <span className="en-only">CHATS</span>
@@ -811,22 +1385,32 @@ function App() {
                         <span className="spacer"/>
                         <span style={{fontSize:9, color:'var(--text-dim)'}}>{restChats.length}</span>
                       </div>
+                      {restChats.length === 0 && (
+                        <div className="chat-empty" style={{padding:'6px 10px 10px'}}>
+                          <span className="en-only">New conversation to start</span>
+                          <span className="jp">新しい対話</span>
+                        </div>
+                      )}
                       {restChats.map(it => (
                         <div
                           key={it.id}
-                          draggable
-                          onDragStart={onDragStart(it.id)}
-                          onDragOver={onDragOverItem(it.id)}
-                          onDrop={onDrop}
+                          data-chat-row={it.id}
+                          onPointerDown={onChatRowPointerDown(it.id)}
                           className={'chat-sub-item '+(activeChat===it.id?'active':'')+(dragId===it.id?' dragging':'')+(dragOver?.id===it.id?(' dz-'+dragOver.pos):'')}
-                          onClick={()=>setActiveChat(it.id)}
+                          onClick={() => {
+                            if (suppressChatRowClickRef.current) {
+                              suppressChatRowClickRef.current = false;
+                              return;
+                            }
+                            setActiveChat(it.id);
+                          }}
                           title={it.title}
                         >
                           <Icon name="grip" size={10} className="grip"/>
                           <span className="dot"/>
                           <span className="chat-sub-title">{it.title}</span>
                           {it.time && <span className="t-mono chat-sub-time">{it.time}</span>}
-                          <button className="chat-fav-btn fav-hover" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Favorite">☆</button>
+                          <button type="button" draggable={false} className="chat-fav-btn fav-hover" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Favorite">☆</button>
                         </div>
                       ))}
                     </div>
@@ -840,32 +1424,45 @@ function App() {
         {/* System section removed — items live under Workspace */}
         <div className="spacer" style={{flex:1}}/>
 
-        {/* User cluster — capturing / avatar */}
+        {/* User cluster */}
         <div className="user-cluster">
-          <div className="user-row">
-            <span className="capturing-pill"><span className="pulse"/><span className="en-only">CAPTURING</span><span className="jp" style={{marginLeft:4}}>記録中</span></span>
+          <div className="user-row" style={{padding:'0 8px 6px'}}>
+            <span className="s-field-hint" style={{fontSize:10}}><span className="en-only">Local preview</span><span className="jp">ローカル</span></span>
           </div>
           <div ref={userBtnRef} className="user-row user-pill" onClick={openUser}>
-            <div className="avatar" style={{width:26, height:26, fontSize:11}}>K</div>
+            <div className="avatar" style={{width:26, height:26, fontSize:11}}>Y</div>
             <div style={{flex:1, minWidth:0}}>
-              <div style={{fontSize:12, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>Kazu Tano</div>
-              <div className="t-mono" style={{fontSize:9, color:'var(--text-dim)'}}>LOCAL · PRO</div>
+              <div style={{fontSize:12, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}><span className="en-only">You</span><span className="jp">ユーザー</span></div>
+              <div className="t-mono" style={{fontSize:9, color:'var(--text-dim)'}}>LOCAL</div>
             </div>
             <Icon name={userOpen?'chevronDown':'chevronRight'} size={11} className="dim"/>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="content">
+      {/* Content — chat needs a flex column parent so L3 fills the viewport */}
+      <div
+        className={
+          'content' +
+          (active === 'chat' ? ' content-chat' : '') +
+          (active === 'meetings' ? ' content-meetings' : '')
+        }
+      >
         <Screen/>
       </div>
 
-      {/* Share modal — anchored to upload button in topbar */}
-      {shareOpen && (
+      {/* Share modal — portaled so it is not clipped by .app overflow */}
+      {shareOpen && ReactDOM.createPortal(
         <>
-          <div style={{position:'fixed', inset:0, zIndex:80}} onClick={()=>setShareOpen(false)}/>
-          <div className="share-modal">
+          <div
+            role="presentation"
+            style={{ position: 'fixed', inset: 0, zIndex: 1120 }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setShareOpen(false);
+            }}
+          />
+          <div className="share-modal" onMouseDown={(e) => e.stopPropagation()}>
             <div style={{fontSize:18, fontWeight:600, marginBottom:4}}>
               <span className="en-only">Share chat</span>
               <span className="jp" style={{marginLeft:8, fontSize:14, color:'var(--text-mute)'}}>共有</span>
@@ -896,6 +1493,7 @@ function App() {
               </div>
             </div>
             <button
+              type="button"
               className="btn"
               style={{width:'100%', marginTop:18, background:'var(--gold-bg, #EFE5D3)', color:'#151212', borderColor:'var(--gold-dim)', height:44, fontSize:14}}
               onClick={async () => {
@@ -912,14 +1510,23 @@ function App() {
               <Icon name="link" size={14}/> Export to file…
             </button>
           </div>
-        </>
+        </>,
+        document.body,
       )}
 
-      {/* User floating menu — slides up above the user button, sized to sidebar */}
-      {userOpen && (
+      {/* User floating menu — portaled for correct hit-testing over the shell */}
+      {userOpen && ReactDOM.createPortal(
         <>
-          <div style={{position:'fixed', inset:0, zIndex:80}} onClick={()=>setUserOpen(false)}/>
-          <div className="user-float" style={{left: userAnchor.left, bottom: userAnchor.bottom, width: userAnchor.width}}>
+          <div
+            role="presentation"
+            style={{ position: 'fixed', inset: 0, zIndex: 1080 }}
+            onMouseDown={() => setUserOpen(false)}
+          />
+          <div
+            className="user-float"
+            style={{ left: userAnchor.left, bottom: userAnchor.bottom, width: userAnchor.width }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <div className="user-float-head">
               <div style={{fontSize:12, color:'var(--text-dim)'}}>kazu@shogun.local</div>
             </div>
@@ -963,7 +1570,8 @@ function App() {
               </div>
             </div>
           </div>
-        </>
+        </>,
+        document.body,
       )}
 
       {/* Settings modal — floating with semi-transparent backdrop */}
@@ -1056,11 +1664,13 @@ function App() {
         /* Chat sub-nav under Chat */
         .chat-subnav { margin:2px 0 8px 8px; padding-left:10px; border-left:1px solid var(--border); }
         .chat-subgroup { padding:10px 0 4px 8px; font-size:9px; display:flex; align-items:center; }
+        body.chat-reorder-active { user-select:none; -webkit-user-select:none; cursor:grabbing; }
+        body.chat-reorder-active .chat-sub-item { cursor:grabbing; }
         .chat-bucket { border-radius:var(--radius-sm); padding:2px 0 6px; transition:background 120ms; }
         .chat-bucket.drop { background:color-mix(in srgb, var(--gold) 8%, transparent); outline:1px dashed var(--gold-dim); }
         .chat-empty { padding:10px 10px; font-size:11px; color:var(--text-dim); font-style:italic; }
         .chat-empty .jp { margin-left:6px; font-size:10px; }
-        .chat-sub-item { position:relative; }
+        .chat-sub-item { position:relative; -webkit-user-drag:none; }
         .chat-sub-item .grip { opacity:0; color:var(--text-dim); cursor:grab; margin-right:-2px; transition:opacity 120ms; }
         .chat-sub-item:hover .grip { opacity:0.5; }
         .chat-sub-item.dragging { opacity:0.4; }
@@ -1149,7 +1759,7 @@ function App() {
 
         /* User floating menu */
         .user-float {
-          position:fixed; z-index:90;
+          position:fixed; z-index:1081;
           background:var(--surface); border:1px solid var(--border-hi);
           border-radius:var(--radius-lg);
           box-shadow:0 24px 48px -12px rgba(0,0,0,0.6), 0 2px 0 rgba(0,0,0,0.3);
@@ -1189,7 +1799,11 @@ function App() {
         /* Share modal */
         .share-modal {
           position:fixed; top:56px; right:16px;
-          width:440px; z-index:90;
+          width:min(440px, calc(100vw - 32px)); z-index:1121;
+          max-height:calc(100vh - 72px);
+          max-height:calc(100dvh - 72px);
+          overflow-y:auto;
+          box-sizing:border-box;
           background:var(--surface); border:1px solid var(--border-hi);
           border-radius:var(--radius-lg);
           box-shadow:0 30px 70px -12px rgba(0,0,0,0.7), 0 4px 12px rgba(0,0,0,0.4);
@@ -1209,7 +1823,7 @@ function App() {
         .share-choice:hover { background:var(--surface-2); }
         .share-choice.on { background:color-mix(in srgb, var(--gold) 6%, var(--surface)); }
         .app-toast {
-          position:fixed; right:16px; bottom:16px; z-index:180;
+          position:fixed; right:16px; bottom:16px; z-index:1180;
           padding:10px 12px; border-radius:var(--radius-sm);
           border:1px solid var(--border-hi); background:var(--surface);
           color:var(--text); font-size:12px; box-shadow:0 10px 24px rgba(0,0,0,0.4);
@@ -1217,6 +1831,16 @@ function App() {
         .app-toast.success { border-color:color-mix(in srgb, var(--success) 40%, var(--border)); }
         .app-toast.warn { border-color:color-mix(in srgb, #d9a85a 45%, var(--border)); }
         .app-toast.error { border-color:color-mix(in srgb, #d96b5a 45%, var(--border)); }
+
+        @media (max-width: 720px) {
+          .share-modal {
+            left: 12px;
+            right: 12px;
+            top: 52px;
+            width: auto;
+            max-width: none;
+          }
+        }
       `}</style>
     </div>
   );

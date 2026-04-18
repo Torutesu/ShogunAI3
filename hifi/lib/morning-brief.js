@@ -28,7 +28,7 @@
       date: date,
       summary: {
         headline:
-          "\u6295\u8cc7\u5bb6MTG2\u4ef6\u3001\u30d7\u30ed\u30c0\u30af\u30c8\u30ed\u30fc\u30f3\u30c1\u6e96\u5099\u65e5",
+          "Kitazawa Tech · Aurora beta prep + 2 investor touchpoints (sample brief)",
         posture: "meeting-heavy",
         total_meeting_minutes: 120,
         focus_blocks: [{ start: "13:00", end: "15:00", duration_minutes: 120 }],
@@ -39,9 +39,9 @@
           priority: 1,
           category: "meeting",
           what:
-            "10:00 \u6295\u8cc7\u5bb6MTG\uff08\u7530\u4e2d\u6c0f / \u25cb\u25cbCapital\uff09",
+            "10:00 Investor sync — Jordan Blake / Northline Partners (fictive)",
           why_now:
-            "\u524d\u56de\u300c\u53ce\u76ca\u30e2\u30c7\u30ebv2\u3092\u6301\u53c2\u300d\u3068\u7d04\u675f\u6e08\u307f\u3002\u958b\u59cb\u304c\u8fd1\u3044\u3002",
+            "Last week you promised the adoption slide and DPIA one-pager before this call.",
           related_context: [
             {
               type: "document",
@@ -150,16 +150,31 @@
     return { ok: true, brief: x };
   }
 
-  function resolveNextAction(nextAction) {
+  function resolveNextAction(nextAction, briefItem) {
     if (!nextAction || nextAction.type === "ignore") {
       return { skip: true };
     }
     const tool = nextAction.mcp_tool;
     if (tool && tool.tool_name) {
+      const base =
+        tool.arguments && typeof tool.arguments === "object"
+          ? { ...tool.arguments }
+          : {};
+      if (briefItem && typeof briefItem === "object") {
+        base.brief_item = {
+          id: briefItem.id,
+          what: briefItem.what,
+          why_now: briefItem.why_now,
+          related_context: briefItem.related_context,
+          category: briefItem.category,
+          priority: briefItem.priority,
+          time_hint: briefItem.time_hint,
+        };
+      }
       return {
         skip: false,
         key: tool.tool_name,
-        payload: tool.arguments && typeof tool.arguments === "object" ? tool.arguments : {},
+        payload: base,
       };
     }
     switch (nextAction.type) {

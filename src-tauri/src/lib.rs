@@ -1,10 +1,13 @@
 mod auth;
 mod biometric;
 mod brief;
+mod brief_actions;
 mod calendar_sync;
 mod capture_sampler;
 mod commands;
 mod deep_link_credentials;
+mod embed_backfill;
+mod embeddings;
 mod google_calendar;
 mod integration_secrets;
 mod integrations;
@@ -16,10 +19,17 @@ mod schedule_queue;
 mod secrets;
 mod settings_store;
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+fn load_dotenv() {
   let _ = dotenvy::dotenv();
   let _ = dotenvy::from_filename("../.env");
+  // Always load repo-root `.env` next to `package.json` (parent of `src-tauri/`), regardless of process cwd.
+  let root_env = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.env");
+  let _ = dotenvy::from_path(root_env);
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+  load_dotenv();
   let mut builder = tauri::Builder::default();
 
   #[cfg(desktop)]
@@ -34,6 +44,7 @@ pub fn run() {
   }
 
   builder
+    .manage(embed_backfill::EmbedBackfillState::default())
     .plugin(tauri_plugin_deep_link::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -71,6 +82,8 @@ pub fn run() {
       commands::shogun_memory_fetch,
       commands::shogun_memory_ingest,
       commands::shogun_memory_delete,
+      commands::shogun_memory_embed_backfill,
+      commands::shogun_memory_embed_backfill_cancel,
       commands::shogun_entity_query,
       commands::shogun_brief_get,
       commands::shogun_open_pack,

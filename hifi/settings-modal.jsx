@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React */
+/* global Icon, Kamon, React, ReactDOM, ShogunKeyboardShortcuts */
 const { useState: useStateS } = React;
 
 const SETTINGS_NAV = [
@@ -24,6 +24,9 @@ const PANE_ALIAS = {
   upgrade:'subscription', feedback:'support', download:'general',
   referral:'subscription', changelog:'general', api:'llm',
 };
+
+/** Stable fallback so `sections.security` missing does not allocate a new `{}` every render. */
+const EMPTY_SETTINGS_SECURITY = {};
 
 function Toggle({on, onClick}) {
   return (
@@ -55,6 +58,22 @@ function Field({label, children, hint}) {
   );
 }
 
+const EMBED_BACKFILL_BATCH_OPTS = [20, 40, 80, 120, 200];
+const EMBED_BACKFILL_DELAY_OPTS = [0, 250, 500, 1000];
+
+function normalizeEmbedBackfillBatch(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 40;
+  const r = Math.min(200, Math.max(20, Math.round(n)));
+  return EMBED_BACKFILL_BATCH_OPTS.includes(r) ? r : 40;
+}
+
+function normalizeEmbedBackfillDelayMs(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return EMBED_BACKFILL_DELAY_OPTS.includes(n) ? n : 0;
+}
+
 /** After a successful appearance save, live-apply tokens in `app.jsx` without closing the modal. */
 function scheduleAppearanceLive(run, appearance) {
   void run(
@@ -71,19 +90,19 @@ function scheduleAppearanceLive(run, appearance) {
 }
 
 function useRuntimeActions() {
-  const run = async (key, payload, options) => {
+  const run = React.useCallback(async (key, payload, options) => {
     if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return { ok:false };
     return window.SHOGUN_RUNTIME.executeAction(key, payload, options || {});
-  };
-  const confirmWrite = (key, payload, title, description) => {
+  }, []);
+  const confirmWrite = React.useCallback((key, payload, title, description) => {
     if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.requestWriteAction) return;
     window.SHOGUN_RUNTIME.requestWriteAction(key, payload, title, description);
-  };
-  const toast = (message, kind) => {
+  }, []);
+  const toast = React.useCallback((message, kind) => {
     if (window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.pushToast) {
       window.SHOGUN_RUNTIME.pushToast(message, kind || 'info');
     }
-  };
+  }, []);
   return { run, confirmWrite, toast };
 }
 
@@ -94,9 +113,9 @@ function Pane({title, jp, children, subtitle}) {
   return (
     <div className="s-pane">
       <div className="s-pane-head">
-        <h2 style={{margin:0, fontSize:22, fontWeight:500, letterSpacing:'-0.01em'}}>
+        <h2 style={{margin:0, fontSize:19, fontWeight:500, letterSpacing:'-0.01em'}}>
           {title}
-          <span className="jp" style={{fontSize:14, marginLeft:10, color:'var(--text-dim)', fontWeight:300}}>{jp}</span>
+          <span className="jp" style={{fontSize:12.5, marginLeft:8, color:'var(--text-dim)', fontWeight:300}}>{jp}</span>
         </h2>
         {subtitle && <div className="s-pane-sub">{subtitle}</div>}
       </div>
@@ -285,7 +304,7 @@ function PaneAppearance() {
   return (
     <Pane title="Appearance" jp="外観">
       <div className="s-field-label" style={{marginBottom:10}}>Color Mode</div>
-      <div style={{display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:14, marginBottom:24}}>
+      <div className="s-appearance-grid">
         {[['light','Light'],['dark','Dark'],['auto','Match System']].map(([k,l])=>(
           <div key={k} onClick={()=>{ setMode(k); scheduleAppearanceLive(run, { colorMode: k, extraWideChat: wide, codeBlockWrap: wrap, fontSize }); }} className={'s-color-card '+(mode===k?'active':'')}>
             <div className="s-color-preview" data-mode={k}>
@@ -319,7 +338,10 @@ function PaneAppearance() {
 function PanePrivacy() {
   const { run, toast } = useRuntimeActions();
   const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
-  const secSecurity = sections.security && typeof sections.security === 'object' ? sections.security : {};
+  const secSecurity =
+    sections.security && typeof sections.security === 'object'
+      ? sections.security
+      : EMPTY_SETTINGS_SECURITY;
   const [tab, setTab] = useStateS('apps');
   const [apps, setApps] = useStateS([
     {name:'Finder', icon:'📁', on:true},
@@ -333,14 +355,45 @@ function PanePrivacy() {
   }, [secSecurity.biometricLockEnabled]);
   React.useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      const r = await run('auth.biometric.status', {}, { silentError: true });
-      if (!cancelled && r && r.ok && r.data) setBioStatus(r.data);
-    })();
-    return () => { cancelled = true; };
+    const defer = window.setTimeout(() => {
+      void (async () => {
+        const fallback = {
+          supported: false,
+          enrolled: false,
+          stub: true,
+          biometryType: 'none',
+          platform: 'timeout',
+        };
+        try {
+          const r = await Promise.race([
+            run('auth.biometric.status', {}, { silentError: true }),
+            new Promise((resolve) =>
+              window.setTimeout(() => resolve({ __bioStatusTimeout: true }), 15000),
+            ),
+          ]);
+          if (cancelled) return;
+          if (r && r.__bioStatusTimeout) {
+            setBioStatus(fallback);
+            return;
+          }
+          if (r && r.ok && r.data) setBioStatus(r.data);
+        } catch (_) {
+          if (!cancelled) setBioStatus(fallback);
+        }
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(defer);
+    };
   }, [run]);
   return (
     <Pane title="Privacy Controls" jp="守秘" subtitle={<span>Control what SHOGUN can see. Excluded content won't appear in your context. <a className="s-link">Learn more <Icon name="arrowUpRight" size={10}/></a></span>}>
+      <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', lineHeight:1.55, fontSize:12}}>
+        <div style={{fontWeight:600, marginBottom:6}}>Local-first · ローカルファースト</div>
+        <div>Memory and ingested context stay in this app&apos;s data on this Mac. There is no SHOGUN cloud sync for the Memory index in this build. Chat / LLM and Clerk still send data to those services when you use them.</div>
+        <div className="jp" style={{marginTop:8, fontSize:11, color:'var(--text-dim)'}}>Memory と取り込んだコンテキストはこの Mac のアプリデータにのみ保存されます。Memory本体の SHOGUN クラウド同期はありません。Chat・LLM や Clerk 利用時は各サービスへ送信されます。</div>
+      </div>
       <div className="s-card" style={{marginBottom:14}}>
         <Row
           title={<span><span className="en-only">Biometric app lock</span><span className="jp">生体認証でロック</span></span>}
@@ -374,7 +427,9 @@ function PanePrivacy() {
         </Row>
         {bioStatus && (
           <div className="s-field-hint" style={{marginTop:10, padding:'0 16px 14px'}}>
-            {bioStatus.stub
+            {bioStatus.platform === 'timeout'
+              ? '生体認証の状態を取得できませんでした（タイムアウト）。アプリを再起動するか、しばらくしてから再度お試しください。'
+              : bioStatus.stub
               ? 'ブラウザプレビュー: 実際の生体認証はデスクトップアプリで有効になります。'
               : !bioStatus.supported
                 ? 'このプラットフォームでは LocalAuthentication が利用できません。'
@@ -417,7 +472,18 @@ function PanePrivacy() {
 function PaneData() {
   const { confirmWrite } = useRuntimeActions();
   return (
-    <Pane title="Data Controls" jp="資料">
+    <Pane
+      title="Data Controls"
+      jp="資料"
+      subtitle={
+        <span style={{ display: 'block', lineHeight: 1.45 }}>
+          All actions below apply to local data on this Mac.
+          <span className="jp" style={{ display: 'block', fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+            以下はこの Mac に保存されたローカルデータに対する操作です。
+          </span>
+        </span>
+      }
+    >
       <div className="s-field-label">Manage Context Collected</div>
       <div className="s-card">
         <Row title="Delete Last Hour of Context" desc="Remove all context collected in the last hour">
@@ -623,9 +689,38 @@ function PaneLLM() {
   const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
   const [baseUrl, setBaseUrl] = useStateS('');
   const [model, setModel] = useStateS('');
+  const [embeddingModel, setEmbeddingModel] = useStateS('');
   const [maxTokens, setMaxTokens] = useStateS('');
   const [apiKeyDraft, setApiKeyDraft] = useStateS('');
   const [keyConfigured, setKeyConfigured] = useStateS(false);
+  const [backfillLimit, setBackfillLimit] = useStateS(40);
+  const [backfillDelayMs, setBackfillDelayMs] = useStateS(0);
+  const [backfillBusy, setBackfillBusy] = useStateS(false);
+  const [backfillProgress, setBackfillProgress] = useStateS(null);
+  const [memorySemanticDefault, setMemorySemanticDefault] = useStateS(true);
+
+  React.useEffect(() => {
+    const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') return undefined;
+    let un;
+    void (async () => {
+      try {
+        un = await listen('memory-embed-backfill-progress', (ev) => {
+          const p = (ev && ev.payload) || {};
+          const index = Number(p.index);
+          const total = Number(p.total);
+          if (Number.isFinite(index) && Number.isFinite(total)) {
+            setBackfillProgress({ index, total });
+          }
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      if (typeof un === 'function') un();
+    };
+  }, []);
 
   const refreshKeyStatus = React.useCallback(async () => {
     const r = await run('llm.api_key_status', {}, { silentError: true });
@@ -638,19 +733,37 @@ function PaneLLM() {
     void refreshKeyStatus();
   }, [refreshKeyStatus]);
 
+  const persistEmbedBackfillPrefs = React.useCallback(
+    async (patch) => {
+      const r = await run('settings.save', { section: 'llm', ...patch }, { silentError: true });
+      if (r.ok && refreshSections) await refreshSections();
+    },
+    [run, refreshSections],
+  );
+
   React.useEffect(() => {
     const l = sections.llm;
     if (!l || typeof l !== 'object') return;
     if (l.baseUrl != null) setBaseUrl(String(l.baseUrl));
     if (l.model != null) setModel(String(l.model));
+    if (l.embeddingModel != null) setEmbeddingModel(String(l.embeddingModel));
     if (l.maxTokens != null) setMaxTokens(String(l.maxTokens));
+    if (l.embedBackfillBatch != null) setBackfillLimit(normalizeEmbedBackfillBatch(l.embedBackfillBatch));
+    if (l.embedBackfillDelayMs != null) setBackfillDelayMs(normalizeEmbedBackfillDelayMs(l.embedBackfillDelayMs));
+  }, [sections]);
+
+  React.useEffect(() => {
+    const m = sections.memory;
+    if (m && typeof m === 'object' && typeof m.semanticRerank === 'boolean') {
+      setMemorySemanticDefault(m.semanticRerank);
+    }
   }, [sections]);
 
   return (
     <Pane
       title="Model & API"
       jp="モデル"
-      subtitle="OpenAI-compatible chat/completions over HTTPS. Endpoint and model are saved in local settings; the API key is stored only in the macOS Keychain."
+      subtitle="OpenAI-compatible chat/completions and /v1/embeddings (Memory semantic search). Endpoint and models are saved locally; the API key stays in the macOS Keychain."
     >
       <div className="s-card" style={{padding:20, marginBottom:16}}>
         <Field label="Base URL" hint="e.g. https://api.openai.com/v1 — if the path has no /v1, it is appended automatically.">
@@ -662,12 +775,24 @@ function PaneLLM() {
             autoComplete="off"
           />
         </Field>
-        <Field label="Model" hint="Passed as the model field in chat/completions requests.">
+        <Field label="Chat model" hint="Passed as the model field in chat/completions requests.">
           <input
             className="s-input"
             value={model}
             onChange={(e) => setModel(e.target.value)}
             placeholder="gpt-4o-mini"
+            autoComplete="off"
+          />
+        </Field>
+        <Field
+          label="Embedding model"
+          hint="Used for /v1/embeddings (Memory ingest + semantic re-rank). Same API key and base URL."
+        >
+          <input
+            className="s-input"
+            value={embeddingModel}
+            onChange={(e) => setEmbeddingModel(e.target.value)}
+            placeholder="text-embedding-3-small"
             autoComplete="off"
           />
         </Field>
@@ -695,7 +820,15 @@ function PaneLLM() {
               }
               const r = await run(
                 'settings.save',
-                { section: 'llm', baseUrl: baseUrl.trim(), model: model.trim(), maxTokens: mt },
+                {
+                  section: 'llm',
+                  baseUrl: baseUrl.trim(),
+                  model: model.trim(),
+                  embeddingModel: embeddingModel.trim() || 'text-embedding-3-small',
+                  maxTokens: mt,
+                  embedBackfillBatch: backfillLimit,
+                  embedBackfillDelayMs: backfillDelayMs,
+                },
                 { successMessage: 'LLM endpoint settings saved' },
               );
               if (r.ok && refreshSections) await refreshSections();
@@ -758,6 +891,130 @@ function PaneLLM() {
             </button>
           </div>
         </Field>
+      </div>
+
+      <div className="s-card" style={{padding:20}}>
+        <Field
+          label="Memory embeddings"
+          hint="Writes missing vectors for indexed memories (skips capture_sampler / capture_ax noise). Uses /v1/embeddings and your key. Large batches can take a while; add a pause between rows if the API rate-limits. Batch and pause are saved to settings when you change them (and with Save endpoint). Transient API errors retry with exponential backoff; only the first error message is kept for the summary toast."
+        >
+          <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+            <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--text-dim)' }}>
+              <span>Batch</span>
+              <select
+                className="s-select"
+                style={{ minWidth: 72 }}
+                value={String(backfillLimit)}
+                disabled={backfillBusy}
+                onChange={async (e) => {
+                  const n = normalizeEmbedBackfillBatch(e.target.value);
+                  setBackfillLimit(n);
+                  await persistEmbedBackfillPrefs({ embedBackfillBatch: n });
+                }}
+              >
+                {EMBED_BACKFILL_BATCH_OPTS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+            <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--text-dim)' }}>
+              <span>Pause</span>
+              <select
+                className="s-select"
+                style={{ minWidth: 88 }}
+                value={String(backfillDelayMs)}
+                disabled={backfillBusy}
+                onChange={async (e) => {
+                  const ms = normalizeEmbedBackfillDelayMs(e.target.value);
+                  setBackfillDelayMs(ms);
+                  await persistEmbedBackfillPrefs({ embedBackfillDelayMs: ms });
+                }}
+              >
+                <option value={0}>Off</option>
+                <option value={250}>250 ms</option>
+                <option value={500}>500 ms</option>
+                <option value={1000}>1 s</option>
+              </select>
+            </label>
+            {backfillBusy ? (
+              <span className="t-mono" style={{ fontSize: 11, color: 'var(--gold)' }}>
+                {backfillProgress
+                  ? `${backfillProgress.index} / ${backfillProgress.total}`
+                  : `0 / ${backfillLimit}`}
+              </span>
+            ) : null}
+            {backfillBusy ? (
+              <button
+                className="btn btn-sm btn-ghost"
+                type="button"
+                onClick={() =>
+                  void run('memory.embed_backfill_cancel', {}, { silentError: true })
+                }
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+          <button
+            className="btn btn-sm btn-secondary"
+            type="button"
+            disabled={!keyConfigured || backfillBusy}
+            onClick={async () => {
+              setBackfillBusy(true);
+              setBackfillProgress({ index: 0, total: backfillLimit });
+              try {
+                const r = await run(
+                  'memory.embed_backfill',
+                  { limit: backfillLimit, delayMs: backfillDelayMs },
+                  { silentError: true },
+                );
+                if (!r.ok) {
+                  toast(r.error?.message || 'Backfill failed', 'error');
+                  return;
+                }
+                const cancelled = r.data && r.data.cancelled === true;
+                if (cancelled) {
+                  toast('Backfill cancelled', 'info');
+                  return;
+                }
+                const em = r.data && typeof r.data.embedded === 'number' ? r.data.embedded : 0;
+                const fl = r.data && typeof r.data.failed === 'number' ? r.data.failed : 0;
+                const rem = r.data && typeof r.data.remaining === 'number' ? r.data.remaining : null;
+                const fe = r.data && typeof r.data.firstError === 'string' ? r.data.firstError : '';
+                let msg = `Embedded ${em} · failed ${fl}`;
+                if (rem != null && rem > 0) msg += ` · ~${rem} still missing`;
+                toast(msg, fl ? 'warn' : 'success');
+                if (fl > 0 && fe) toast(fe.length > 200 ? `${fe.slice(0, 200)}…` : fe, 'warn');
+              } finally {
+                setBackfillBusy(false);
+                setBackfillProgress(null);
+              }
+            }}
+          >
+            Backfill missing vectors
+          </button>
+        </Field>
+      </div>
+
+      <div className="s-card" style={{ padding: 20, marginTop: 16 }}>
+        <Row
+          title="Memory: semantic search default"
+          desc="When enabled, Memory searches that include query text ask the embeddings API once per search to re-rank lexical hits (same setting as the checkbox on the Memory timeline). Stored under settings → memory."
+          last
+        >
+          <Toggle
+            on={memorySemanticDefault}
+            onClick={() => {
+              const next = !memorySemanticDefault;
+              setMemorySemanticDefault(next);
+              void run(
+                'settings.save',
+                { section: 'memory', semanticRerank: next },
+                { successMessage: 'Memory search preference saved' },
+              );
+            }}
+          />
+        </Row>
       </div>
     </Pane>
   );
@@ -898,46 +1155,125 @@ function PaneIntegrations() {
 }
 
 function PaneShortcuts() {
-  const groups = [
-    {name:'General', items:[
-      ['New chat', ['⌘','N']],
-      ['Search', ['⌘','K']],
-      ['Open settings', ['⌘',',']],
-      ['Toggle sidebar', ['⌘','S']],
-    ]},
-    {name:'Navigation', items:[
-      ['Go back', ['⌘','[']],
-      ['Go forward', ['⌘',']']],
-    ]},
-    {name:'Chat', items:[
-      ['Send message', ['↵']],
-      ['New line', ['⇧','↵']],
-      ['Toggle Max', ['⌃','T']],
-      ['Start voice recording (press again to stop)', ['⌥','↵']],
-      ['Cancel voice recording', ['⌥','↺']],
-    ]},
-    {name:'Memory', items:[
-      ['Capture moment', ['⌘','⇧','C']],
-      ['Jump to timeline', ['⌘','⇧','T']],
-    ]},
-  ];
+  const { run, toast } = useRuntimeActions();
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
+  const Kbd = typeof window !== 'undefined' ? window.ShogunKeyboardShortcuts : null;
+  const merged = React.useMemo(() => {
+    if (!Kbd) return null;
+    return Kbd.mergeShortcutBindings(sections.shortcuts && sections.shortcuts.bindings);
+  }, [sections.shortcuts, Kbd]);
+
+  const groups = React.useMemo(() => {
+    if (!Kbd || !merged) return [];
+    return Kbd.SHORTCUT_UI_GROUPS.map((g) => ({
+      name: g.name,
+      rows: g.items.map(({ label, actionId }) => ({
+        label,
+        keys: Kbd.bindingToDisplayParts(merged[actionId]),
+      })),
+    }));
+  }, [Kbd, merged]);
+
+  const [jsonText, setJsonText] = useStateS('{}');
+  React.useEffect(() => {
+    const raw = sections.shortcuts && sections.shortcuts.bindings;
+    setJsonText(JSON.stringify(raw && typeof raw === 'object' ? raw : {}, null, 2));
+  }, [sections.shortcuts]);
+
+  const applyFromRuntime = React.useCallback((bindings) => {
+    if (window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.applyShortcutBindings) {
+      window.SHOGUN_RUNTIME.applyShortcutBindings(bindings);
+    }
+  }, []);
+
+  const saveJson = async () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        toast('JSON must be an object: action id -> { key, super, ctrl, alt, shift }', 'error');
+        return;
+      }
+    } catch (_err) {
+      toast('Invalid JSON', 'error');
+      return;
+    }
+    const res = await run(
+      'settings.save',
+      { section: 'shortcuts', bindings: parsed },
+      { silentError: true, successMessage: 'Shortcuts saved' },
+    );
+    if (res && res.ok) {
+      applyFromRuntime(parsed);
+      await refreshSections();
+    }
+  };
+
+  const resetDefaults = async () => {
+    const res = await run(
+      'settings.save',
+      { section: 'shortcuts', bindings: {} },
+      { silentError: true, successMessage: 'Shortcuts reset to defaults' },
+    );
+    if (res && res.ok) {
+      applyFromRuntime({});
+      setJsonText('{}');
+      await refreshSections();
+    }
+  };
+
+  if (!Kbd || !merged) {
+    return (
+      <Pane title="Keyboard Shortcuts" jp="捷径">
+        <div className="s-field-hint">Shortcut module not loaded. Ensure keyboard-shortcuts.js is included before app.jsx.</div>
+      </Pane>
+    );
+  }
+
+  const actionIds = Object.keys(Kbd.DEFAULT_BINDINGS).join(', ');
+
   return (
     <Pane title="Keyboard Shortcuts" jp="捷径">
-      {groups.map(g=>(
-        <div key={g.name} style={{marginBottom:18}}>
-          <div className="s-field-label" style={{marginBottom:8}}>{g.name}</div>
+      {groups.map((g) => (
+        <div key={g.name} style={{ marginBottom: 18 }}>
+          <div className="s-field-label" style={{ marginBottom: 8 }}>{g.name}</div>
           <div className="s-card">
-            {g.items.map((it, i, arr)=>(
-              <div key={i} className={'s-row'+(i===arr.length-1?' last':'')}>
-                <div style={{flex:1, fontSize:13}}>{it[0]}</div>
-                <div className="row" style={{gap:4}}>
-                  {it[1].map((k,j)=><span key={j} className="s-kbd">{k}</span>)}
+            {g.rows.map((row, i, arr) => (
+              <div key={row.label} className={'s-row' + (i === arr.length - 1 ? ' last' : '')}>
+                <div style={{ flex: 1, fontSize: 13 }}>{row.label}</div>
+                <div className="row" style={{ gap: 4 }}>
+                  {row.keys.map((k, j) => (
+                    <span key={j} className="s-kbd">{k}</span>
+                  ))}
                 </div>
               </div>
             ))}
           </div>
         </div>
       ))}
+      <div style={{ marginTop: 22 }}>
+        <div className="s-field-label" style={{ marginBottom: 8 }}>Overrides (JSON)</div>
+        <div className="s-field-hint" style={{ marginBottom: 8 }}>
+          Only list keys you want to change. Booleans: super (Cmd/Ctrl chord), ctrl (Control), alt, shift. Example:
+          {' '}
+          <span className="t-mono" style={{ fontSize: 11 }}>{'{"shortcut.new_chat":{"key":"e","super":true,"ctrl":false,"alt":false,"shift":false}}'}</span>
+        </div>
+        <textarea
+          className="s-input"
+          value={jsonText}
+          onChange={(e) => setJsonText(e.target.value)}
+          rows={12}
+          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.45 }}
+          spellCheck={false}
+        />
+        <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => void saveJson()}>Save</button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => void resetDefaults()}>Reset to defaults</button>
+        </div>
+        <div className="s-field-hint" style={{ marginTop: 10, fontSize: 11, lineHeight: 1.5 }}>
+          Action ids: <span className="t-mono">{actionIds}</span>
+        </div>
+      </div>
     </Pane>
   );
 }
@@ -952,7 +1288,7 @@ function PaneSubscription() {
   }, [sections]);
   return (
     <Pane title="Subscription" jp="契約">
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}}>
+      <div className="s-subscription-grid">
         <div className="s-card" style={{padding:20}}>
           <div className="row">
             <div style={{fontSize:16, fontWeight:500}}>Plus</div>
@@ -1075,20 +1411,26 @@ function SettingsModal({pane, setPane, close}) {
     return () => { cancelled = true; };
   }, [refreshSections]);
   React.useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
-  return (
-    <SettingsHydrationContext.Provider value={{ sections: hydratedSections, refreshSections }}>
+  }, [close]);
+  const hydrationCtxValue = React.useMemo(
+    () => ({ sections: hydratedSections, refreshSections }),
+    [hydratedSections, refreshSections],
+  );
+  const tree = (
+    <SettingsHydrationContext.Provider value={hydrationCtxValue}>
     <>
-      <div className="s-backdrop" onClick={close}/>
-      <div className="s-modal">
+      <div className="s-backdrop" role="presentation" tabIndex={-1} onMouseDown={(e) => { e.preventDefault(); close(); }}/>
+      <div className="s-modal" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <div className="s-sidebar">
-          <div className="t-mono" style={{padding:'18px 18px 20px', fontSize:10, color:'var(--text-dim)', letterSpacing:'0.2em'}}>
+          <div className="t-mono" style={{padding:'14px 14px 16px', fontSize:10, color:'var(--text-dim)', letterSpacing:'0.2em'}}>
             SETTINGS · 設定
           </div>
-          <div style={{flex:1, overflowY:'auto', padding:'0 8px'}}>
+          <div className="s-nav-list">
             {SETTINGS_NAV.map(n => (
               <div key={n.id} className={'s-nav '+(resolved===n.id?'active':'')} onClick={()=>setPane(n.id)}>
                 <Icon name={n.icon} size={13}/>
@@ -1097,29 +1439,44 @@ function SettingsModal({pane, setPane, close}) {
               </div>
             ))}
           </div>
-          <div style={{padding:'12px 18px', borderTop:'1px solid var(--border)', display:'flex', alignItems:'center', gap:8}}>
+          <div style={{padding:'10px 14px', borderTop:'1px solid var(--border)', display:'flex', alignItems:'center', gap:8}}>
             <Kamon size={11} color="var(--gold)"/>
             <span className="t-mono" style={{fontSize:9, color:'var(--text-dim)'}}>SHOGUN v0.4.1</span>
           </div>
         </div>
         <div className="s-content">
-          <button className="s-close" onClick={close}><Icon name="x" size={14}/></button>
+          <button type="button" className="s-close" aria-label="Close settings" onClick={(e) => { e.stopPropagation(); close(); }}><Icon name="x" size={14}/></button>
           <PaneComp/>
         </div>
       </div>
 
       <style>{`
         .s-backdrop {
-          position:fixed; inset:0; z-index:95;
+          position:fixed; inset:0; z-index:1100;
           background:rgba(10,9,8,0.55);
           backdrop-filter: blur(6px);
           animation: sBackIn 160ms var(--ease-out);
         }
         @keyframes sBackIn { from {opacity:0;} to {opacity:1;} }
         .s-modal {
-          position:fixed; z-index:96;
+          position:fixed; z-index:1101;
           top:50%; left:50%; transform:translate(-50%, -50%);
-          width:min(1020px, 94vw); height:min(720px, 90vh);
+          box-sizing:border-box;
+          /*
+ Compact centered dialog (~50–60% width, ~60–70% height on typical screens), similar to Littlebird-style settings.
+          */
+          --s-edge: max(20px, min(40px, 4.5vmin));
+          --s-safe-x: calc(env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px));
+          --s-safe-y: calc(env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+          --s-max-view-w: calc(100vw - 2 * var(--s-edge) - var(--s-safe-x));
+          --s-max-view-h: calc(100dvh - 2 * var(--s-edge) - var(--s-safe-y));
+          --s-pref-w: min(720px, 56vw);
+          --s-pref-h: clamp(320px, 65dvh, 540px);
+          width:min(var(--s-pref-w), var(--s-max-view-w));
+          height:min(var(--s-pref-h), var(--s-max-view-h));
+          max-width:var(--s-max-view-w);
+          max-height:var(--s-max-view-h);
+          min-height:min(320px, var(--s-max-view-h));
           background:var(--bg);
           border:1px solid var(--border-hi);
           border-radius:var(--radius-lg);
@@ -1128,19 +1485,34 @@ function SettingsModal({pane, setPane, close}) {
           animation: sModalIn 220ms var(--ease-out);
         }
         @keyframes sModalIn {
-          from { opacity:0; transform:translate(-50%, -48%) scale(0.98); }
-          to { opacity:1; transform:translate(-50%, -50%) scale(1); }
+          from { opacity:0; }
+          to { opacity:1; }
+        }
+        .s-nav-list {
+          flex:1; min-height:0; overflow-y:auto;
+          padding:0 8px;
         }
         .s-sidebar {
-          width:220px; flex-shrink:0;
+          width:200px; flex-shrink:0; min-height:0;
           border-right:1px solid var(--border);
           background:var(--surface);
           display:flex; flex-direction:column;
         }
+        .s-appearance-grid {
+          display:grid;
+          grid-template-columns:repeat(3, minmax(0, 1fr));
+          gap:14px;
+          margin-bottom:24px;
+        }
+        .s-subscription-grid {
+          display:grid;
+          grid-template-columns:repeat(2, minmax(0, 1fr));
+          gap:14px;
+        }
         .s-nav {
-          display:flex; align-items:center; gap:10px;
-          padding:8px 12px; border-radius:var(--radius-sm);
-          color:var(--text-mute); font-size:13px; cursor:pointer;
+          display:flex; align-items:center; gap:8px;
+          padding:7px 10px; border-radius:var(--radius-sm);
+          color:var(--text-mute); font-size:12px; cursor:pointer;
           margin-bottom:1px;
         }
         .s-nav:hover { background:var(--surface-2); color:var(--text); }
@@ -1151,11 +1523,11 @@ function SettingsModal({pane, setPane, close}) {
         .s-nav .jp { font-family:var(--font-jp); font-weight:300; font-size:10.5px; color:var(--text-dim); margin-left:-4px; }
 
         .s-content {
-          flex:1; overflow-y:auto; position:relative;
-          padding:30px 40px 50px;
+          flex:1; min-width:0; min-height:0; overflow-y:auto; position:relative;
+          padding:22px 28px 36px;
         }
         .s-close {
-          position:absolute; top:16px; right:16px;
+          position:absolute; top:12px; right:12px;
           width:28px; height:28px; border-radius:6px;
           background:transparent; border:1px solid transparent;
           color:var(--text-mute); cursor:pointer;
@@ -1164,9 +1536,9 @@ function SettingsModal({pane, setPane, close}) {
         }
         .s-close:hover { background:var(--surface); border-color:var(--border); color:var(--text); }
 
-        .s-pane-head { margin-bottom:22px; }
-        .s-pane-sub { margin-top:8px; font-size:12.5px; color:var(--text-mute); line-height:1.55; max-width:560px; }
-        .s-pane-body { max-width:640px; }
+        .s-pane-head { margin-bottom:18px; }
+        .s-pane-sub { margin-top:6px; font-size:12px; color:var(--text-mute); line-height:1.55; max-width:min(640px, 100%); }
+        .s-pane-body { max-width:min(640px, 100%); }
 
         .s-card {
           background:var(--surface);
@@ -1281,10 +1653,121 @@ function SettingsModal({pane, setPane, close}) {
           font-size:13px; color:var(--text); cursor:pointer;
         }
         .s-tier-btn:hover { border-color:var(--gold-dim); }
+
+        @media (max-width: 1024px) {
+          .s-modal {
+            width:min(1440px, calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+            height:calc(100vh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            height:calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            max-width:calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+            max-height:calc(100vh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            max-height:calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+          }
+          .s-sidebar { width:200px; }
+          .s-content { padding:24px 28px 40px; }
+        }
+
+        @media (max-width: 768px) {
+          .s-modal {
+            flex-direction:column;
+            width:calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+            height:calc(100vh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            height:calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            max-width:calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+            max-height:calc(100vh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            max-height:calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+          }
+          .s-sidebar {
+            width:100%;
+            max-height:min(40vh, 280px);
+            border-right:none;
+            border-bottom:1px solid var(--border);
+            flex-shrink:0;
+          }
+          .s-nav-list {
+            flex:1 1 auto;
+            overflow-x:auto;
+            overflow-y:hidden;
+            -webkit-overflow-scrolling:touch;
+            display:flex;
+            flex-direction:row;
+            flex-wrap:nowrap;
+            gap:6px;
+            padding:4px 10px 10px;
+            scrollbar-width:thin;
+          }
+          .s-nav {
+            flex-shrink:0;
+            margin-bottom:0;
+            padding:10px 14px;
+          }
+          .s-content {
+            flex:1;
+            min-height:0;
+            padding:20px 18px 32px;
+            padding-top:max(20px, env(safe-area-inset-top, 0px));
+          }
+          .s-close {
+            top:max(12px, env(safe-area-inset-top, 0px));
+            right:max(12px, env(safe-area-inset-right, 0px));
+            width:40px;
+            height:40px;
+            min-width:44px;
+            min-height:44px;
+          }
+          .s-appearance-grid {
+            grid-template-columns:1fr;
+            gap:12px;
+          }
+          .s-subscription-grid {
+            grid-template-columns:1fr;
+          }
+        }
+
+        @media (max-width: 520px) {
+          .s-modal {
+            width:100%;
+            max-width:100%;
+            height:100%;
+            max-height:100%;
+            top:0;
+            left:0;
+            transform:none;
+            border-radius:0;
+            border-left:none;
+            border-right:none;
+            height:100dvh;
+            max-height:100dvh;
+            padding-top:env(safe-area-inset-top, 0px);
+            padding-bottom:env(safe-area-inset-bottom, 0px);
+            padding-left:env(safe-area-inset-left, 0px);
+            padding-right:env(safe-area-inset-right, 0px);
+          }
+          .s-content { padding:16px 14px 28px; }
+          .s-pane-head h2 { font-size:18px !important; }
+          .s-row {
+            flex-wrap:wrap;
+            align-items:flex-start;
+            gap:12px;
+          }
+          .s-row > div:last-child {
+            width:100%;
+            display:flex;
+            justify-content:flex-end;
+          }
+          .s-select { max-width:100%; }
+        }
+
+        @media (max-width: 768px) and (min-width: 521px) {
+          .s-appearance-grid {
+            grid-template-columns:repeat(2, minmax(0, 1fr));
+          }
+        }
       `}</style>
     </>
     </SettingsHydrationContext.Provider>
   );
+  return ReactDOM.createPortal(tree, document.body);
 }
 
 window.SettingsModal = SettingsModal;

@@ -1,4 +1,4 @@
-/* global React, Icon */
+/* global React, ReactDOM, Icon */
 (function initConfirmWriteModal(global) {
   function ConfirmWriteModal(props) {
     const open = Boolean(props && props.open);
@@ -12,10 +12,14 @@
     const onConfirm = props.onConfirm || function noop() {};
     const pending = Boolean(props.pending);
 
-    return (
+    const tree = (
       <>
-        <div className="swm-backdrop" onClick={pending ? undefined : onCancel}/>
-        <div className="swm-modal">
+        <div
+          className="swm-backdrop"
+          role="presentation"
+          onMouseDown={pending ? undefined : function (e) { e.preventDefault(); onCancel(); }}
+        />
+        <div className="swm-modal" role="dialog" aria-modal="true" onMouseDown={function (e) { e.stopPropagation(); }}>
           <div className="swm-header">
             <div className="row" style={{ gap: 8 }}>
               <Icon name="shield" size={14}/>
@@ -33,21 +37,26 @@
             </div>
           </div>
           <div className="swm-footer">
-            <button className="btn btn-sm btn-ghost" onClick={onCancel} disabled={pending}>Cancel</button>
-            <button className="btn btn-sm btn-secondary" onClick={onConfirm} disabled={pending}>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={onCancel} disabled={pending}>Cancel</button>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={onConfirm} disabled={pending}>
               {pending ? "Running..." : "Confirm"}
             </button>
           </div>
         </div>
         <style>{`
           .swm-backdrop {
-            position: fixed; inset: 0; z-index: 150;
+            position: fixed; inset: 0; z-index: 1150;
             background: rgba(10, 9, 8, 0.55);
           }
           .swm-modal {
-            position: fixed; z-index: 151;
+            position: fixed; z-index: 1151;
             top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: min(560px, 92vw);
+            box-sizing: border-box;
+            width: min(560px, calc(100vw - 32px));
+            max-width: calc(100vw - 32px);
+            max-height: calc(100vh - 32px);
+            max-height: calc(100dvh - 32px);
+            overflow: auto;
             background: var(--surface); border: 1px solid var(--border-hi);
             border-radius: var(--radius-lg);
             box-shadow: 0 24px 48px -12px rgba(0,0,0,0.6);
@@ -73,6 +82,7 @@
         `}</style>
       </>
     );
+    return ReactDOM.createPortal(tree, document.body);
   }
 
   global.ConfirmWriteModal = ConfirmWriteModal;
