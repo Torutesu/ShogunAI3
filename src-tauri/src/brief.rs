@@ -1,16 +1,36 @@
 //! Morning Brief v2 fixture and version gating. v2 JSON matches `hifi/schemas/morning-brief-v2.schema.json`.
 //! Stub copy is English to keep the source ASCII-safe; localized AMC text comes from the composer pipeline.
 
+use crate::meeting_store;
+use crate::memory_store;
 use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
 
-pub fn morning_brief_v2_stub(generated_ms: u64, user_tz: &str, payload: &Value) -> Value {
+pub fn morning_brief_v2_stub(_generated_ms: u64, user_tz: &str, payload: &Value) -> Value {
   let now = Utc::now();
   let generated_at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
   let date = now.format("%Y-%m-%d").to_string();
-  let _ = generated_ms;
 
-  json!({
+  let from_ms = memory_store::now_ms().saturating_sub(86_400_000);
+  let meetings_recent = meeting_store::list_meetings(Some(from_ms), None, 8).unwrap_or_default();
+  let meeting_bullets: Vec<Value> = meetings_recent
+    .iter()
+    .filter_map(|m| {
+      let title = m.get("title").and_then(|t| t.as_str()).unwrap_or("Meeting");
+      let id = m.get("id").and_then(|t| t.as_str()).unwrap_or("");
+      let started = m.get("started_at").and_then(|t| t.as_u64()).unwrap_or(0);
+      Some(json!({
+        "meeting_id": id,
+        "title": title,
+        "started_at": started,
+        "bullets": [
+          "Open SHOGUN → Meetings for full transcript and notes.",
+        ],
+      }))
+    })
+    .collect();
+
+  let mut out = json!({
     "version": "2.0",
     "generated_at": generated_at,
     "user_tz": user_tz,
@@ -83,7 +103,12 @@ pub fn morning_brief_v2_stub(generated_ms: u64, user_tz: &str, payload: &Value) 
     ],
     "stub": true,
     "echo": payload
-  })
+  });
+
+  if !meeting_bullets.is_empty() {
+    out["meetings_recent"] = json!(meeting_bullets);
+  }
+  out
 }
 
 fn payload_wants_v2(payload: &Value) -> bool {

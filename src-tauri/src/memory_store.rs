@@ -26,7 +26,7 @@ pub(crate) fn now_ms() -> u64 {
     .unwrap_or(0)
 }
 
-fn open_conn() -> Result<Connection, String> {
+pub(crate) fn open_conn() -> Result<Connection, String> {
   let path = db_path()?;
   let conn = Connection::open(path).map_err(|e| e.to_string())?;
   conn
@@ -226,6 +226,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
       )
       .map_err(|e| e.to_string())?;
   }
+  crate::meeting_store::ensure_meeting_schema(conn)?;
   Ok(())
 }
 
@@ -566,6 +567,31 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
 
 /// Lexical / FTS search only (`query`, `kinds`, `limit`).
 pub fn search(payload: &Value) -> Result<Value, String> {
+  let scope = payload
+    .get("scope")
+    .and_then(|s| s.as_str())
+    .unwrap_or("all");
+  if scope.eq_ignore_ascii_case("meetings_only") || scope.eq_ignore_ascii_case("meetingsonly") {
+    let query = payload
+      .get("query")
+      .and_then(|q| q.as_str())
+      .unwrap_or("")
+      .trim();
+    let limit = payload
+      .get("limit")
+      .and_then(|l| l.as_u64())
+      .unwrap_or(20)
+      .clamp(1, 200) as usize;
+    let hits = crate::meeting_store::search_meeting_memory_hits(query, limit)?;
+    let total = hits.len();
+    return Ok(json!({
+      "hits": hits,
+      "total": total,
+      "echo": payload,
+      "stub": false,
+    }));
+  }
+
   let conn = open_conn()?;
   let query = payload
     .get("query")

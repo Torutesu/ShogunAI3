@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React */
+/* global Icon, Kamon, IntegrationLogo, React, ShogunIntegrationConnectors */
 
 function runRuntimeAction(key, payload, options) {
   if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok:false });
@@ -274,6 +274,24 @@ function ScreenCapture() {
 function ScreenIntegrations() {
   const [calCred, setCalCred] = React.useState(false);
   const [calRefresh, setCalRefresh] = React.useState(false);
+  const [tools, setTools] = React.useState(() => {
+    const C = typeof window !== 'undefined' ? window.ShogunIntegrationConnectors : null;
+    const base = C && C.hydrateTools ? C.hydrateTools(C.DEFAULT_GRID_TOOLS) : [
+      { slug: 'gmail', name: 'Gmail', cat: 'Mail', jp: 'メール', connected: false, ops: ['read', 'draft', 'send'] },
+      { slug: 'google_calendar', name: 'Google Calendar', cat: 'Calendar', jp: '予定', connected: false, ops: ['read', 'create'] },
+      { slug: 'slack', name: 'Slack', cat: 'Chat', jp: '会話', connected: false, ops: ['read', 'post'] },
+      { slug: 'notion', name: 'Notion', cat: 'Docs', jp: '文書', connected: false, ops: ['read', 'write'] },
+      { slug: 'linear', name: 'Linear', cat: 'Tasks', jp: '課題', connected: false, ops: ['read', 'create'] },
+      { slug: 'github', name: 'GitHub', cat: 'Code', jp: 'コード', connected: false, ops: ['read', 'comment'] },
+      { slug: 'arc_browser', name: 'Arc Browser', cat: 'Web', jp: '閲覧', connected: false, ops: ['capture'] },
+      { slug: 'claude', name: 'Claude', cat: 'LLM', jp: '対話', connected: false, ops: ['chat'] },
+      { slug: 'figma', name: 'Figma', cat: 'Design', jp: '意匠', connected: false, ops: ['read'] },
+      { slug: 'raycast', name: 'Raycast', cat: 'Launcher', jp: '起動', connected: false, ops: ['trigger'] },
+      { slug: 'obsidian', name: 'Obsidian', cat: 'Notes', jp: '手記', connected: false, ops: ['read', 'write'] },
+      { slug: 'zapier_mcp', name: 'Zapier MCP', cat: 'Bridge', jp: '橋梁', connected: false, ops: ['any'] },
+    ];
+    return base;
+  });
   const refreshCalStatus = React.useCallback(() => {
     return runRuntimeAction('integrations.credentials_status', { provider:'google_calendar' }, { silentError:true }).then((res) => {
       if (res.ok && res.data) {
@@ -287,24 +305,14 @@ function ScreenIntegrations() {
   React.useEffect(() => {
     const onCred = () => {
       void refreshCalStatus();
+      const C = window.ShogunIntegrationConnectors;
+      if (C && typeof C.hydrateTools === 'function') {
+        setTools(C.hydrateTools(C.DEFAULT_GRID_TOOLS));
+      }
     };
     window.addEventListener('shogun-credentials-updated', onCred);
     return () => window.removeEventListener('shogun-credentials-updated', onCred);
   }, [refreshCalStatus]);
-  const [tools, setTools] = React.useState([
-    {name:'Gmail', cat:'Mail', jp:'メール', connected:false, ops:['read','draft','send']},
-    {name:'Google Calendar', cat:'Calendar', jp:'予定', connected:true, ops:['read','create']},
-    {name:'Slack', cat:'Chat', jp:'会話', connected:true, ops:['read','post']},
-    {name:'Notion', cat:'Docs', jp:'文書', connected:false, ops:['read','write']},
-    {name:'Linear', cat:'Tasks', jp:'課題', connected:false, ops:['read','create']},
-    {name:'GitHub', cat:'Code', jp:'コード', connected:true, ops:['read','comment']},
-    {name:'Arc Browser', cat:'Web', jp:'閲覧', connected:true, ops:['capture']},
-    {name:'Claude', cat:'LLM', jp:'対話', connected:true, ops:['chat']},
-    {name:'Figma', cat:'Design', jp:'意匠', connected:true, ops:['read']},
-    {name:'Raycast', cat:'Launcher', jp:'起動', connected:true, ops:['trigger']},
-    {name:'Obsidian', cat:'Notes', jp:'手記', connected:true, ops:['read','write']},
-    {name:'Zapier MCP', cat:'Bridge', jp:'橋梁', connected:false, ops:['any']},
-  ]);
   const nConnected = tools.filter((t) => t.connected).length;
 
   return (
@@ -313,7 +321,7 @@ function ScreenIntegrations() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>CONNECTION LAYER</div>
           <h1>Integrations <span className="jp">接続</span></h1>
-          <div className="sub">v1: Toggles persist locally. OAuth is not implemented in-app. Google Calendar: have an external agent import tokens into Keychain, then use the card below to sync events into Memory. Arc, Raycast, and Obsidian still use local Connect only. This grid previews additional connectors.</div>
+          <div className="sub">Browser mock: Connect / toggles persist per connector in localStorage. OAuth is not implemented in-app. Google Calendar: have an external agent import tokens into Keychain, then use the card below to sync events into Memory.</div>
         </div>
         <div className="row">
           <div style={{fontSize:13, color:'var(--text-mute)'}}><span className="gold" style={{fontSize:20, fontWeight:600}}>{nConnected}</span> / {tools.length} connected</div>
@@ -325,9 +333,7 @@ function ScreenIntegrations() {
         {tools.map((t,i)=>(
           <div key={i} className="card card-hover" style={{padding:20, opacity: t.connected?1:0.6}}>
             <div className="row" style={{marginBottom:14, gap:12}}>
-              <div style={{width:40, height:40, border:'1px solid var(--border)', borderRadius:'var(--radius-md)', background:'var(--surface-2)', display:'flex', alignItems:'center', justifyContent:'center'}}>
-                <Icon name="plug" size={16} className={t.connected?'gold':'dim'}/>
-              </div>
+              <IntegrationLogo slug={t.slug} size={40} title={t.name} className={t.connected ? 's-intg-logo-on' : 's-intg-logo-off'} />
               <div style={{flex:1}}>
                 <div style={{fontSize:14, fontWeight:500}}>{t.name}</div>
                 <div className="row" style={{gap:6, marginTop:2}}>
@@ -341,9 +347,9 @@ function ScreenIntegrations() {
                 onClick={async (e) => {
                   e.stopPropagation();
                   const next = !t.connected;
-                  const res = await runRuntimeAction('integrations.toggle', { provider:t.name, connected:next }, { silentError:true });
+                  const res = await runRuntimeAction('integrations.toggle', { provider: t.slug || t.name, connected: next }, { silentError: true });
                   if (res.ok && res.data && !res.data.notImplemented) {
-                    setTools((prev) => prev.map((item) => (item.name === t.name ? { ...item, connected: next } : item)));
+                    setTools((prev) => prev.map((item) => (item.slug === t.slug ? { ...item, connected: next } : item)));
                   }
                 }}
               />

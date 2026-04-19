@@ -1,0 +1,160 @@
+//! Builtin recipes (LLM prompts over meeting transcript ± memory).
+
+use crate::{llm, meeting_store, memory_store};
+use serde_json::{json, Value};
+
+#[derive(Clone, Copy)]
+pub enum RecipeId {
+  CoachMe,
+  FollowUpEmail,
+  ActionItems,
+  FeatureDigest,
+  PrdDraft,
+  DecisionLog,
+}
+
+impl RecipeId {
+  fn slug(self) -> &'static str {
+    match self {
+      RecipeId::CoachMe => "rec-coach-me",
+      RecipeId::FollowUpEmail => "rec-follow-up-email",
+      RecipeId::ActionItems => "rec-action-items",
+      RecipeId::FeatureDigest => "rec-feature-digest",
+      RecipeId::PrdDraft => "rec-prd-draft",
+      RecipeId::DecisionLog => "rec-decision-log",
+    }
+  }
+}
+
+fn resolve_recipe_id(raw: &str) -> Option<RecipeId> {
+  match raw {
+    "rec-coach-me" | "coach" | "Coach Me" => Some(RecipeId::CoachMe),
+    "rec-follow-up-email" | "follow_up" => Some(RecipeId::FollowUpEmail),
+    "rec-action-items" | "actions" => Some(RecipeId::ActionItems),
+    "rec-feature-digest" | "features" => Some(RecipeId::FeatureDigest),
+    "rec-prd-draft" | "prd" => Some(RecipeId::PrdDraft),
+    "rec-decision-log" | "decisions" => Some(RecipeId::DecisionLog),
+    _ => None,
+  }
+}
+
+pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
+  let recipe_raw = payload
+    .get("recipe_id")
+    .and_then(|x| x.as_str())
+    .unwrap_or("");
+  let meeting_id = payload
+    .get("meeting_id")
+    .and_then(|x| x.as_str())
+    .ok_or_else(|| "meeting_id is required".to_string())?;
+  let rid = resolve_recipe_id(recipe_raw).ok_or_else(|| "unknown recipe_id".to_string())?;
+
+  let transcript = meeting_store::list_transcript_final(meeting_id)?;
+  let tr_text: String = transcript
+    .iter()
+    .filter_map(|s| {
+      let t = s.get("text").and_then(|x| x.as_str())?;
+      Some(t.to_string())
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+
+  let notes = meeting_store::list_note_blocks(meeting_id)?;
+  let notes_text: String = notes
+    .iter()
+    .filter_map(|b| b.get("content").and_then(|x| x.as_str()))
+    .collect::<Vec<_>>()
+    .join("\n---\n");
+
+  let mut memory_ctx = String::new();
+  if matches!(
+    rid,
+    RecipeId::FollowUpEmail | RecipeId::FeatureDigest | RecipeId::PrdDraft
+  ) {
+    let q: String = tr_text.chars().take(120).collect();
+    if !q.is_empty() {
+      if let Ok(mem) = memory_store::search(&json!({ "query": q, "limit": 8 })) {
+        if let Some(hits) = mem.get("hits").and_then(|h| h.as_array()) {
+          for h in hits {
+            let t = h.get("title").and_then(|x| x.as_str()).unwrap_or("");
+            let s = h.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
+            memory_ctx.push_str(&format!("- {} — {}\n", t, s));
+          }
+        }
+      }
+    }
+  }
+
+  let (system, user) = match rid {
+    RecipeId::CoachMe => (
+      "You are a meeting coach. Output concise Markdown.",
+      format!(
+        "## Transcript\n{}\n\n## Notes\n{}\n\nList: estimated talk balance hints, open questions count, filler words to reduce. Markdown bullets only.",
+        tr_text.chars().take(16_000).collect::<String>(),
+        notes_text.chars().take(8000).collect::<String>()
+      ),
+    ),
+    RecipeId::FollowUpEmail => (
+      "You draft professional follow-up emails. Markdown only.",
+      format!(
+        "## Transcript\n{}\n\n## Notes\n{}\n\n## Related memory\n{}\n\nDraft a short follow-up email (greeting, thanks, commitments, next step).",
+        tr_text.chars().take(14_000).collect::<String>(),
+        notes_text.chars().take(6000).collect::<String>(),
+        memory_ctx.chars().take(6000).collect::<String>()
+      ),
+    ),
+    RecipeId::ActionItems => (
+      "Extract actionable items. Markdown checklist.",
+      format!(
+        "## Transcript\n{}\n\n## Notes\n{}\n\nOutput `- [ ] owner — task — due` lines only.",
+        tr_text.chars().take(16_000).collect::<String>(),
+        notes_text.chars().take(8000).collect::<String>()
+      ),
+    ),
+    RecipeId::FeatureDigest => (
+      "Summarize product feedback. Markdown.",
+      format!(
+        "## Transcript\n{}\n\n## Memory\n{}\n\nSummarize feature requests as bullets with customer pain.",
+        tr_text.chars().take(14_000).collect::<String>(),
+        memory_ctx.chars().take(8000).collect::<String>()
+      ),
+    ),
+    RecipeId::PrdDraft => (
+      "You write PRD sections from evidence. Markdown.",
+      format!(
+        "## Transcript\n{}\n\n## Notes\n{}\n\n## Memory\n{}\n\nDraft Problem, Goals, Non-goals, Success metrics — cite transcript only.",
+        tr_text.chars().take(12_000).collect::<String>(),
+        notes_text.chars().take(6000).collect::<String>(),
+        memory_ctx.chars().take(6000).collect::<String>()
+      ),
+    ),
+    RecipeId::DecisionLog => (
+      "Decision log. Markdown table or bullets.",
+      format!(
+        "## Transcript\n{}\n\n## Notes\n{}\n\nList decisions with owner and date if stated; mark open questions.",
+        tr_text.chars().take(16_000).collect::<String>(),
+        notes_text.chars().take(8000).collect::<String>()
+      ),
+    ),
+  };
+
+  let wrapped = json!({
+    "messages": [
+      { "role": "system", "content": system },
+      { "role": "user", "content": user }
+    ]
+  });
+  let out = llm::chat_complete(&wrapped).await?;
+  let text = out
+    .get("message")
+    .and_then(|m| m.as_str())
+    .unwrap_or("")
+    .to_string();
+  Ok(json!({
+    "recipe_id": rid.slug(),
+    "meeting_id": meeting_id,
+    "text": text,
+    "stub": false,
+    "echo": payload,
+  }))
+}

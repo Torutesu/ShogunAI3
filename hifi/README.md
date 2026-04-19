@@ -16,6 +16,8 @@ Static **SHOGUN** hi-fi prototype: React via Babel in the browser, optional Taur
 | `screens-a.jsx` | Home screen including **Morning Brief (AMC)** card |
 | `action-map.md` | Action inventory; keep in sync with `scripts/check-actions.py` |
 | [`../docs/END_USER_SETUP.md`](../docs/END_USER_SETUP.md) | Short **end-user** steps: Tauri app, API key, Memory embeddings & semantic search |
+| [`../PRIVACY.md`](../PRIVACY.md) | Desktop v1 **privacy summary** (local data, Keychain, LLM/network) — ship or link with distribution |
+| [`../docs/TERMS_OF_SERVICE.md`](../docs/TERMS_OF_SERVICE.md) | **利用規約（ベータ）** — サブスク UI の範囲、第三者サービス、免責 |
 
 ## External agent · credentials (no in-app OAuth)
 
@@ -34,6 +36,7 @@ See **`action-map.md`** for the full UI ↔ command matrix. Summary:
 ## macOS distribution (Hardened Runtime)
 
 - `src-tauri/Entitlements.plist` is wired via `bundle.macOS.entitlements` with `hardenedRuntime: true` in `tauri.conf.json` for release signing / notarization prep. See also **`docs/macos-release.md`** in the repo root.
+- **Local signed build:** copy `src-tauri/tauri.signing.local.example.json` → `src-tauri/tauri.signing.local.json`, set `signingIdentity`, then from repo root run `npm run build:desktop:signed`. **CI signed build:** `docs/macos-release.md` §7 and `.github/workflows/release-macos.yml`.
 
 ## Morning Brief (AMC)
 

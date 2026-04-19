@@ -90,6 +90,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - Prompt actions -> `draft.create` / `schedule.create`
 - Recipe chips -> `brief.get`
 - `All recipes` -> `brief.get(span=week)`
+- Meeting lifecycle / transcript / notes / audio / MCP -> `meetings.*` (see Core Registry Keys)
 
 ## Core Registry Keys
 
@@ -132,6 +133,29 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `auth.clerk_sign_out`
 - `auth.biometric.status`
 - `auth.biometric.authenticate`
+- `meetings.start`
+- `meetings.stop`
+- `meetings.list`
+- `meetings.get`
+- `meetings.purge`
+- `meetings.transcript.get`
+- `meetings.transcript.live`
+- `meetings.transcript.push`
+- `meetings.transcript.for_block`
+- `meetings.notes.get`
+- `meetings.note.append_block`
+- `meetings.note.edit_block`
+- `meetings.note.delete_block`
+- `meetings.enhance`
+- `meetings.re_enhance`
+- `meetings.search`
+- `meetings.recipe.run`
+- `meetings.templates.list`
+- `meetings.audio.status`
+- `meetings.mic.start`
+- `meetings.mic.stop`
+- `meetings.transcribe.pcm`
+- `meetings.mcp.tools`
 
 ## Quick Verification
 

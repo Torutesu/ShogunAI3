@@ -18,6 +18,8 @@ const Icon = ({name, size=16, className=""}) => {
     arrowUpRight: <><path d="M7 17 17 7M7 7h10v10"/></>,
     check: <><path d="M20 6 9 17l-5-5"/></>,
     clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+    history: <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v6h6"/></>,
+    arrowUp: <><path d="M12 19V5M5 12l7-7 7 7"/></>,
     zap: <><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></>,
     bot: <><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M9 14h0M15 14h0"/><path d="M10 20v2M14 20v2"/></>,
     mail: <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></>,
@@ -33,6 +35,7 @@ const Icon = ({name, size=16, className=""}) => {
     key: <><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3"/></>,
     play: <><polygon points="6 4 20 12 6 20 6 4"/></>,
     pause: <><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></>,
+    stop: <><rect x="7" y="7" width="10" height="10" rx="2"/></>,
     filter: <><path d="M3 4h18l-7 9v7l-4-2v-5z"/></>,
     link: <><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></>,
     terminal: <><path d="m4 17 6-6-6-6M12 19h8"/></>,
@@ -58,6 +61,16 @@ const Icon = ({name, size=16, className=""}) => {
     grip: <><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></>,
     folder: <><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></>,
     chevronUp: <><path d="m18 15-6-6-6 6"/></>,
+    copy: <><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
+    thumbsUp: <><path d="M7 10v12"/><path d="M15.5 5H18a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2.5"/><path d="M15.5 5V2A2 2 0 0 0 14 0H9.5A2 2 0 0 0 7.6 1.5L7 10"/></>,
+    thumbsDown: <><path d="M17 14V2"/><path d="M9 14v12"/><path d="M15.5 19H18a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2h-2.5"/><path d="m15.5 5-1.5-6a1 1 0 0 0-1-1H9.5A2 2 0 0 0 8.5 1.5L9 14"/></>,
+    layers: <><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="m2 12 10 4 10-4"/><path d="m2 17 10 4 10-4"/></>,
+    coffee: <><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><path d="M6 1v3M10 1v3M14 1v3"/></>,
+    graduation: <><path d="M2 10 12 5l10 5-10 5L2 10z"/><path d="M6 12v6s3 2 6 2 6-2 6-2v-6"/></>,
+    github: <><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/></>,
+    sparkles: <><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3z"/></>,
+    audioBars: <><rect x="5" y="14" width="3" height="6" rx="1"/><rect x="10.5" y="10" width="3" height="10" rx="1"/><rect x="16" y="6" width="3" height="14" rx="1"/></>,
+    slash: <><path d="M7 21 17 3"/></>,
   };
   return (
     <svg className={`ico ${className}`} width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

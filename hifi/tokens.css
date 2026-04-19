@@ -1,14 +1,15 @@
 /* SHOGUN Design Tokens — from design system */
 :root {
-  --bg:          #080808;
-  --surface:     #141414;
-  --surface-2:   #1C1C1C;
-  --border:      #2A2A2A;
-  --border-hi:   #3A3A3A;
+  /* Lifted from near-pure black for legibility on common displays */
+  --bg:          #0f0f0f;
+  --surface:     #171717;
+  --surface-2:   #212121;
+  --border:      #2e2e2e;
+  --border-hi:   #404040;
 
-  --text:        #FFFFFF;
-  --text-mute:   #999999;
-  --text-dim:    #666666;
+  --text:        #f7f7f7;
+  --text-mute:   #a8a8a8;
+  --text-dim:    #787878;
 
   --gold:        #C8A96E;
   --gold-hover:  #D4B57A;
@@ -17,6 +18,9 @@
   --success:     #6B9E78;
   --warning:     #C8A96E;
   --danger:      #A65D5D;
+
+  /* Calendar / “Coming up” rail — gold + success from palette (no ad-hoc hex) */
+  --accent-schedule: color-mix(in srgb, var(--gold) 78%, var(--success) 22%);
 
   --font-en:   "Helvetica Neue", "Inter", system-ui, sans-serif;
   --font-jp:   "Noto Sans JP", "Hiragino Sans", sans-serif;
@@ -64,6 +68,8 @@ html[data-color-mode="light"] {
   --success:     #4a7a58;
   --warning:     #8a6b3a;
   --danger:      #8a4545;
+
+  --accent-schedule: color-mix(in srgb, var(--gold) 75%, var(--success) 25%);
 }
 html[data-font-size="compact"] { font-size: 13px; }
 html[data-font-size="comfortable"] { font-size: 15px; }

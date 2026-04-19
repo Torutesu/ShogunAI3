@@ -5,3 +5,6 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+# Local-only Tauri signing overlay (see src-tauri/tauri.signing.local.example.json)
+src-tauri/tauri.signing.local.json

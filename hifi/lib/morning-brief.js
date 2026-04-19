@@ -11,15 +11,34 @@
     return String(n).padStart(2, "0");
   }
 
+  function resolveUserTz(payload) {
+    if (payload && payload.user_tz && String(payload.user_tz).trim()) {
+      return String(payload.user_tz).trim();
+    }
+    const U = global.ShogunUserTimezone;
+    if (U && typeof U.getTimeZone === "function") {
+      try {
+        const t = U.getTimeZone();
+        if (t && String(t).trim()) return String(t).trim();
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+    try {
+      const t = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (t && String(t).trim()) return String(t).trim();
+    } catch (_e2) {
+      /* ignore */
+    }
+    return "UTC";
+  }
+
   /** Browser mock aligned with `src-tauri/src/brief.rs` (Unicode escapes = Rust source). */
   function morningBriefV2Mock(payload) {
     const now = new Date();
     const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
     const generated_at = now.toISOString();
-    const user_tz =
-      (payload && payload.user_tz) ||
-      Intl.DateTimeFormat().resolvedOptions().timeZone ||
-      "Asia/Tokyo";
+    const user_tz = resolveUserTz(payload);
 
     return {
       version: "2.0",

@@ -17,7 +17,6 @@ function ScreenChat() {
   const [memoryTotal, setMemoryTotal] = useStateB(0);
   const [modelHint, setModelHint] = useStateB('');
   const [chatMax, setChatMax] = useStateB(false);
-  const [voiceRecording, setVoiceRecording] = useStateB(false);
 
   useEffectB(() => {
     let cancelled = false;
@@ -71,26 +70,15 @@ function ScreenChat() {
 
   useEffectB(() => {
     const onMax = () => setChatMax((v) => !v);
-    const onVoiceToggle = () => {
-      setVoiceRecording((v) => {
-        const next = !v;
-        toast(next ? 'Voice recording started (preview — no audio in browser)' : 'Voice recording stopped', 'info');
-        return next;
-      });
-    };
-    const onVoiceCancel = () => {
-      setVoiceRecording((was) => {
-        if (was) toast('Voice recording cancelled', 'info');
-        return false;
-      });
+    const onComposerSeed = (ev) => {
+      const t = ev && ev.detail && ev.detail.text != null ? String(ev.detail.text) : '';
+      if (t) setComposerText(t);
     };
     window.addEventListener('shogun-chat-toggle-max', onMax);
-    window.addEventListener('shogun-voice-toggle', onVoiceToggle);
-    window.addEventListener('shogun-voice-cancel', onVoiceCancel);
+    window.addEventListener('shogun-chat-composer-seed', onComposerSeed);
     return () => {
       window.removeEventListener('shogun-chat-toggle-max', onMax);
-      window.removeEventListener('shogun-voice-toggle', onVoiceToggle);
-      window.removeEventListener('shogun-voice-cancel', onVoiceCancel);
+      window.removeEventListener('shogun-chat-composer-seed', onComposerSeed);
     };
   }, []);
 
@@ -234,27 +222,64 @@ function ScreenChat() {
             <div className="t-mono" style={{fontSize:9, marginTop:8, textAlign:'center', color:'var(--text-dim)'}}>
               {memoryTotal} MEMORIES INDEXED · LOCAL
               <span style={{marginLeft:10}}>Return sends · Shift+Return new line · Cmd+Return also sends</span>
-              {voiceRecording && (
-                <span style={{marginLeft:10, color:'var(--gold)'}}>● voice</span>
-              )}
             </div>
           </div>
         </div>
       </div>
 
       <div className="shogun-chat-context">
-        <div className="row" style={{marginBottom:14}}>
-          <span className="t-mono">MEMORY CONTEXT</span>
-          <span className="jp dim" style={{fontSize:10, marginLeft:6}}>文脈</span>
-          <span className="spacer"/>
-          <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={() => setMemoryContext('')}>Clear</button>
+        <div className="memory-context-head">
+          <div className="memory-context-head-main">
+            <div className="memory-context-icon" aria-hidden>
+              <Icon name="memory" size={15} />
+            </div>
+            <div>
+              <div className="memory-context-title">
+                <span className="en-only">Memory context</span>
+                <span className="jp">記憶コンテキスト</span>
+              </div>
+              <div className="memory-context-sub dim">
+                <span className="en-only">Snippets attached to this thread</span>
+                <span className="jp">このスレッドに載せる記憶スニペット</span>
+              </div>
+            </div>
+          </div>
+          <button
+            className="memory-context-clear"
+            type="button"
+            disabled={!memoryContext}
+            onClick={() => setMemoryContext('')}
+          >
+            Clear
+          </button>
         </div>
-        <pre style={{fontSize:11, lineHeight:1.5, color:'var(--text-mute)', whiteSpace:'pre-wrap', wordBreak:'break-word', maxHeight:280, overflow:'auto', margin:0, padding:10, background:'var(--bg)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
-          {memoryContext || '— Use Memory in the composer to load snippets from your index —'}
-        </pre>
-        <div style={{marginTop:16, fontSize:11, color:'var(--text-dim)'}}>
-          v1: integrations, scheduling, and share-from-here use honest stubs or export only.
-        </div>
+        {memoryContext ? (
+          <div className="memory-context-body memory-context-body--filled">
+            {memoryContext}
+          </div>
+        ) : (
+          <div className="memory-context-body memory-context-body--empty">
+            <div className="memory-context-empty-icon" aria-hidden>
+              <Icon name="memory" size={22} />
+            </div>
+            <div className="memory-context-empty-title">
+              <span className="en-only">No context yet</span>
+              <span className="jp">まだ文脈はありません</span>
+            </div>
+            <div className="memory-context-empty-desc">
+              <span className="en-only">
+                Use <strong>Memory</strong> in the composer below to pull snippets from your index — they appear here.
+              </span>
+              <span className="jp">
+                下のコンポーザーで <strong>Memory</strong> から取り込んだスニペットがここに表示されます。
+              </span>
+            </div>
+          </div>
+        )}
+        <p className="memory-context-foot">
+          <span className="en-only">From your local Memory index on this device only.</span>
+          <span className="jp">ローカルの Memory インデックス由来 · この端末に保存された範囲のみ</span>
+        </p>
       </div>
 
       <style>{`

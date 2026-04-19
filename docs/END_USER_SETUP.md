@@ -1,6 +1,6 @@
 # SHOGUN デスクトップ（Tauri）— かんたんセットアップ
 
-このガイドは **エンドユーザー向け** の最短手順です。開発者向けの詳細はリポジトリ直下の `README.md` および `hifi/action-map.md` を参照してください。
+このガイドは **エンドユーザー向け** の最短手順です。開発者向けの詳細はリポジトリ直下の **[`README.md`](../README.md)**、UI・IPC は **[`hifi/README.md`](../hifi/README.md)** および **`hifi/action-map.md`** を参照してください。利用条件は **[`docs/TERMS_OF_SERVICE.md`](TERMS_OF_SERVICE.md)** を参照してください。
 
 ## 1. アプリを起動
 

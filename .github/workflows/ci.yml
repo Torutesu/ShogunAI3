@@ -31,6 +31,9 @@ jobs:
       - name: Action wiring check
         run: npm run check:actions
 
+      - name: IPC mock sync check
+        run: npm run check:ipc-mock
+
       - name: Cargo check (Tauri / Rust)
         run: npm run check:rust
 

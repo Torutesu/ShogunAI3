@@ -13,6 +13,14 @@ mod integration_secrets;
 mod integrations;
 mod llm;
 mod macos_ax;
+mod meeting_commands;
+mod meeting_enhance;
+mod meeting_mic;
+mod meeting_mcp;
+mod meeting_recipes;
+mod meeting_session;
+mod meeting_store;
+mod meeting_stt;
 mod memory_store;
 mod paths;
 mod schedule_queue;
@@ -45,6 +53,8 @@ pub fn run() {
 
   builder
     .manage(embed_backfill::EmbedBackfillState::default())
+    .manage(meeting_session::MeetingSessionState::default())
+    .manage(meeting_mic::MeetingMicController::default())
     .plugin(tauri_plugin_deep_link::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -120,6 +130,29 @@ pub fn run() {
       commands::auth_sign_out,
       commands::auth_biometric_status,
       commands::auth_biometric_authenticate,
+      meeting_commands::shogun_meeting_start,
+      meeting_commands::shogun_meeting_stop,
+      meeting_commands::shogun_meeting_note_append_block,
+      meeting_commands::shogun_meeting_note_edit_block,
+      meeting_commands::shogun_meeting_note_delete_block,
+      meeting_commands::shogun_meeting_enhance,
+      meeting_commands::shogun_meeting_re_enhance,
+      meeting_commands::shogun_meeting_transcript_for_block,
+      meeting_commands::shogun_meeting_transcript_live,
+      meeting_commands::shogun_meeting_purge,
+      meeting_commands::shogun_meeting_list,
+      meeting_commands::shogun_meeting_get,
+      meeting_commands::shogun_meeting_transcript_get,
+      meeting_commands::shogun_meeting_notes_get,
+      meeting_commands::shogun_meetings_search,
+      meeting_commands::shogun_meeting_recipe_run,
+      meeting_commands::shogun_meeting_templates_list,
+      meeting_commands::shogun_meeting_transcript_push,
+      meeting_commands::shogun_meeting_audio_status,
+      meeting_commands::shogun_meeting_mic_start,
+      meeting_commands::shogun_meeting_mic_stop,
+      meeting_commands::shogun_meeting_transcribe_pcm,
+      meeting_commands::shogun_meeting_mcp_tools,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

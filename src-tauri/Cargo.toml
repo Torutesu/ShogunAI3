@@ -3,8 +3,7 @@ name = "app"
 version = "0.4.1"
 description = "A Tauri App"
 authors = ["you"]
-license = ""
-repository = "https://github.com/Torutesu/ShogunAI3"
+license-file = "../LICENSE"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -32,8 +31,11 @@ dotenvy = "0.15"
 urlencoding = "2"
 url = "2"
 open = "5"
-tokio = { version = "1", features = ["time", "rt"] }
+tokio = { version = "1", features = ["time", "rt", "sync"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+cpal = "0.15.3"
+base64 = "0.22"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

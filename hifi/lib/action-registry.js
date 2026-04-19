@@ -82,6 +82,29 @@
     });
     register("auth.biometric.status", (payload) => api.authBiometricStatus(payload));
     register("auth.biometric.authenticate", (payload) => api.authBiometricAuthenticate(payload));
+    register("meetings.start", (payload) => api.meetingStart(payload));
+    register("meetings.stop", (payload) => api.meetingStop(payload));
+    register("meetings.note.append_block", (payload) => api.meetingNoteAppendBlock(payload));
+    register("meetings.note.edit_block", (payload) => api.meetingNoteEditBlock(payload));
+    register("meetings.note.delete_block", (payload) => api.meetingNoteDeleteBlock(payload));
+    register("meetings.enhance", (payload) => api.meetingEnhance(payload));
+    register("meetings.re_enhance", (payload) => api.meetingReEnhance(payload));
+    register("meetings.transcript.for_block", (payload) => api.meetingTranscriptForBlock(payload));
+    register("meetings.transcript.live", (payload) => api.meetingTranscriptLive(payload));
+    register("meetings.purge", (payload) => api.meetingPurge(payload));
+    register("meetings.list", (payload) => api.meetingList(payload));
+    register("meetings.get", (payload) => api.meetingGet(payload));
+    register("meetings.transcript.get", (payload) => api.meetingTranscriptGet(payload));
+    register("meetings.notes.get", (payload) => api.meetingNotesGet(payload));
+    register("meetings.search", (payload) => api.meetingsSearch(payload));
+    register("meetings.recipe.run", (payload) => api.meetingRecipeRun(payload));
+    register("meetings.templates.list", (payload) => api.meetingTemplatesList(payload));
+    register("meetings.transcript.push", (payload) => api.meetingTranscriptPush(payload));
+    register("meetings.audio.status", (payload) => api.meetingAudioStatus(payload));
+    register("meetings.mic.start", (payload) => api.meetingMicStart(payload));
+    register("meetings.mic.stop", (payload) => api.meetingMicStop(payload));
+    register("meetings.transcribe.pcm", (payload) => api.meetingTranscribePcm(payload));
+    register("meetings.mcp.tools", (payload) => api.meetingMcpTools(payload));
 
     return {
       run: run,

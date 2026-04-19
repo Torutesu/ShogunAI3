@@ -19,6 +19,29 @@ const NAV = [
 
 const REMOVED_NAV_IDS = new Set(['morning_brief', 'capture', 'integrations', 'settings']);
 
+function profileStateFromSections(sections) {
+  const g = sections && sections.general;
+  const name = g && g.name != null ? String(g.name).trim() : '';
+  const avatarGlyph = g && g.avatarGlyph != null ? String(g.avatarGlyph).trim() : '';
+  return { name, avatarGlyph };
+}
+
+/** One grapheme for sidebar / menu avatar: optional override, else first letter of display name. */
+function shellAvatarChar(avatarGlyph, displayName) {
+  const g = avatarGlyph != null ? String(avatarGlyph).trim() : '';
+  if (g) {
+    const ch = Array.from(g)[0];
+    return ch || '?';
+  }
+  const n = String(displayName || '').trim();
+  if (n) {
+    const c = Array.from(n)[0];
+    if (/^[a-z]$/i.test(c)) return c.toUpperCase();
+    return c;
+  }
+  return '?';
+}
+
 const INITIAL_CHAT_HISTORY =
   typeof window !== 'undefined' &&
   window.SHOGUN_DEMO_SEED &&
@@ -74,64 +97,19 @@ function mockIpcInvoke(command, payload) {
     ok: true,
     data: { notImplemented: true, message, stub: false, echo },
   });
-  const normalizeProvider = (raw) =>
-    String(raw || '')
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, '_');
-  const localConnectSlugs = new Set(['arc_browser', 'raycast', 'obsidian']);
   switch (command) {
-    case 'app_integration_connect': {
-      const slug = normalizeProvider(echo.provider);
-      if (localConnectSlugs.has(slug)) {
-        return { ok: true, data: { connected: true, provider: slug, stub: false, echo } };
-      }
-      return notImpl(
-        'Third-party integrations (OAuth, calendar, mail) are not available in v1. This build is local-only; connect Arc, Raycast, or Obsidian for local-only toggles.',
-      );
-    }
+    case 'app_integration_connect':
     case 'app_integration_toggle':
-      return {
-        ok: true,
-        data: {
-          saved: true,
-          connected: echo.connected === true,
-          provider: normalizeProvider(echo.provider),
-          stub: false,
-          echo,
-        },
-      };
     case 'app_integration_import_credentials':
-      return {
-        ok: true,
-        data: {
-          saved: true,
-          provider: normalizeProvider(echo.provider),
-          stub: false,
-          echo,
-        },
-      };
     case 'app_integration_credentials_status':
-      return {
-        ok: true,
-        data: {
-          configured: false,
-          tokenRefreshReady: false,
-          provider: normalizeProvider(echo.provider || 'google_calendar'),
-          stub: false,
-          echo,
-        },
-      };
-    case 'shogun_google_calendar_sync':
-      return {
-        ok: true,
-        data: {
-          ingested: 0,
-          calendarId: echo.calendarId || 'primary',
-          stub: false,
-          echo,
-        },
-      };
+    case 'shogun_google_calendar_sync': {
+      const C = typeof window !== 'undefined' && window.ShogunIntegrationConnectors;
+      if (C && typeof C.mockIntegrationPayload === 'function') {
+        const payload = C.mockIntegrationPayload(command, echo);
+        if (payload) return { ok: true, data: payload };
+      }
+      return notImpl('Integration mock unavailable.');
+    }
     case 'shogun_draft':
       return {
         ok: true,
@@ -553,6 +531,29 @@ function ensureRuntimeDeps() {
         llmApiKeyStatus: (input) => client.invoke('app_llm_api_key_status', input),
         llmApiKeyClear: (input) => client.invoke('app_llm_api_key_clear', input),
         scheduleAction: (input) => client.invoke('shogun_schedule_action', input),
+        meetingStart: (input) => client.invoke('shogun_meeting_start', input),
+        meetingStop: (input) => client.invoke('shogun_meeting_stop', input),
+        meetingNoteAppendBlock: (input) => client.invoke('shogun_meeting_note_append_block', input),
+        meetingNoteEditBlock: (input) => client.invoke('shogun_meeting_note_edit_block', input),
+        meetingNoteDeleteBlock: (input) => client.invoke('shogun_meeting_note_delete_block', input),
+        meetingEnhance: (input) => client.invoke('shogun_meeting_enhance', input),
+        meetingReEnhance: (input) => client.invoke('shogun_meeting_re_enhance', input),
+        meetingTranscriptForBlock: (input) => client.invoke('shogun_meeting_transcript_for_block', input),
+        meetingTranscriptLive: (input) => client.invoke('shogun_meeting_transcript_live', input),
+        meetingPurge: (input) => client.invoke('shogun_meeting_purge', input),
+        meetingList: (input) => client.invoke('shogun_meeting_list', input),
+        meetingGet: (input) => client.invoke('shogun_meeting_get', input),
+        meetingTranscriptGet: (input) => client.invoke('shogun_meeting_transcript_get', input),
+        meetingNotesGet: (input) => client.invoke('shogun_meeting_notes_get', input),
+        meetingsSearch: (input) => client.invoke('shogun_meetings_search', input),
+        meetingRecipeRun: (input) => client.invoke('shogun_meeting_recipe_run', input),
+        meetingTemplatesList: (input) => client.invoke('shogun_meeting_templates_list', input),
+        meetingTranscriptPush: (input) => client.invoke('shogun_meeting_transcript_push', input),
+        meetingAudioStatus: (input) => client.invoke('shogun_meeting_audio_status', input),
+        meetingMicStart: (input) => client.invoke('shogun_meeting_mic_start', input),
+        meetingMicStop: (input) => client.invoke('shogun_meeting_mic_stop', input),
+        meetingTranscribePcm: (input) => client.invoke('shogun_meeting_transcribe_pcm', input),
+        meetingMcpTools: (input) => client.invoke('shogun_meeting_mcp_tools', input),
       }),
     };
   }
@@ -593,6 +594,29 @@ function ensureRuntimeDeps() {
           'stats.get': api.statsGet,
           'draft.create': api.draftCreate,
           'schedule.create': api.scheduleAction,
+          'meetings.start': api.meetingStart,
+          'meetings.stop': api.meetingStop,
+          'meetings.note.append_block': api.meetingNoteAppendBlock,
+          'meetings.note.edit_block': api.meetingNoteEditBlock,
+          'meetings.note.delete_block': api.meetingNoteDeleteBlock,
+          'meetings.enhance': api.meetingEnhance,
+          'meetings.re_enhance': api.meetingReEnhance,
+          'meetings.transcript.for_block': api.meetingTranscriptForBlock,
+          'meetings.transcript.live': api.meetingTranscriptLive,
+          'meetings.purge': api.meetingPurge,
+          'meetings.list': api.meetingList,
+          'meetings.get': api.meetingGet,
+          'meetings.transcript.get': api.meetingTranscriptGet,
+          'meetings.notes.get': api.meetingNotesGet,
+          'meetings.search': api.meetingsSearch,
+          'meetings.recipe.run': api.meetingRecipeRun,
+          'meetings.templates.list': api.meetingTemplatesList,
+          'meetings.transcript.push': api.meetingTranscriptPush,
+          'meetings.audio.status': api.meetingAudioStatus,
+          'meetings.mic.start': api.meetingMicStart,
+          'meetings.mic.stop': api.meetingMicStop,
+          'meetings.transcribe.pcm': api.meetingTranscribePcm,
+          'meetings.mcp.tools': api.meetingMcpTools,
         };
         return {
           run: async (key, payload) => {
@@ -694,9 +718,13 @@ function App() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareMode, setShareMode] = useState('private');
   const [shareTip, setShareTip] = useState(null); // 'popout' | 'star' | 'share' | null
+  const [hummingbirdOpen, setHummingbirdOpen] = useState(false);
+  const [hummingbirdInput, setHummingbirdInput] = useState('');
   const [userOpen, setUserOpen] = useState(false);
   const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220});
   const userBtnRef = React.useRef(null);
+  const [profileDisplayName, setProfileDisplayName] = useState('Toru Tano');
+  const [profileAvatarGlyph, setProfileAvatarGlyph] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(null); // null | 'general' | 'system' | 'appearance' | 'privacy' | 'data' | 'hummingbird' | 'meetings' | 'chat' | 'integrations' | 'shortcuts' | 'subscription' | 'team' | 'support' | 'api' | 'upgrade' | 'changelog' | 'feedback'
   const [toast, setToast] = useState(null);
   const [writeConfirm, setWriteConfirm] = useState({ open:false, actionKey:null, payload:null, title:null, description:null });
@@ -706,6 +734,8 @@ function App() {
   const bioWantLockRef = useRef(false);
   const [bioGate, setBioGate] = useState({ ready: false, open: false });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [meetingHud, setMeetingHud] = useState(null);
+  const [meetingHudTick, setMeetingHudTick] = useState(0);
   const navHistRef = useRef(null);
   const skipNavHistRef = useRef(false);
   const shortcutBindingsRef = useRef(
@@ -723,6 +753,44 @@ function App() {
   useEffect(() => { localStorage.setItem('shogun-active', active); }, [active]);
 
   useEffect(() => {
+    const onHud = (e) => {
+      const d = (e && e.detail) || {};
+      if (!d.active) {
+        setMeetingHud(null);
+        return;
+      }
+      setMeetingHud({
+        title: d.title || 'Untitled',
+        startedAt: d.startedAt || Date.now(),
+      });
+      setActive('meetings');
+      window.setTimeout(() => {
+        try {
+          window.dispatchEvent(
+            new CustomEvent('shogun-auto-open-meeting-minutes', {
+              detail: {
+                title: d.title || 'Untitled',
+                startedAt: d.startedAt || Date.now(),
+                storageKey: d.storageKey != null ? d.storageKey : null,
+              },
+            }),
+          );
+        } catch (_) {
+          /* ignore */
+        }
+      }, 0);
+    };
+    window.addEventListener('shogun-meeting-hud', onHud);
+    return () => window.removeEventListener('shogun-meeting-hud', onHud);
+  }, [setActive]);
+
+  useEffect(() => {
+    if (!meetingHud) return undefined;
+    const id = window.setInterval(() => setMeetingHudTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [meetingHud]);
+
+  useEffect(() => {
     try {
       window.dispatchEvent(
         new CustomEvent('shogun-active-chat-changed', { detail: { id: activeChat } }),
@@ -734,6 +802,15 @@ function App() {
   useEffect(() => () => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!hummingbirdOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setHummingbirdOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hummingbirdOpen]);
 
   const pushToast = (message, kind='info') => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -774,6 +851,48 @@ function App() {
       if (typeof unlisten === 'function') unlisten();
     };
   }, []);
+
+  /** Desktop: Rust emits when Meet/Zoom (or browser with those URLs) is detected — opens Meetings + Granola via `shogun-meeting-detected`. */
+  useEffect(() => {
+    const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') return undefined;
+    let unlistenVideo;
+    (async () => {
+      try {
+        unlistenVideo = await listen('video-meeting-started', (e) => {
+          const p = (e && e.payload) || {};
+          const url = String(p.url || p.meetingUrl || '').toLowerCase();
+          const raw = String(p.provider || p.app || '').toLowerCase();
+          let provider = 'google_meet';
+          if (url.indexOf('zoom.us') !== -1 || url.indexOf('zoomgov.com') !== -1) provider = 'zoom';
+          else if (url.indexOf('meet.google') !== -1) provider = 'google_meet';
+          else if (raw === 'zoom' || raw.indexOf('zoom') !== -1) provider = 'zoom';
+          else if (raw.indexOf('meet') !== -1 || raw.indexOf('google') !== -1) provider = 'google_meet';
+          try {
+            window.dispatchEvent(
+              new CustomEvent('shogun-meeting-detected', {
+                detail: {
+                  title: p.title || p.summary || 'Meeting',
+                  eventId: p.eventId || p.id || 'video-' + String(Date.now()),
+                  provider,
+                  source: 'native',
+                  url: p.url || p.meetingUrl || null,
+                },
+              }),
+            );
+          } catch (_) {
+            /* ignore */
+          }
+          setActive('meetings');
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      if (typeof unlistenVideo === 'function') unlistenVideo();
+    };
+  }, [setActive]);
 
   if (!runtimeRef.current && ShogunIpcClient && ShogunAPI && ShogunActionRegistry) {
     const client = ShogunIpcClient.createIpcClient();
@@ -1039,6 +1158,9 @@ function App() {
       if (cancelled || !r.ok || !r.data?.settings?.sections) return;
       const sec = r.data.settings.sections;
       applySavedAppearance(sec);
+      const p = profileStateFromSections(sec);
+      setProfileDisplayName(p.name || 'Toru Tano');
+      setProfileAvatarGlyph(p.avatarGlyph);
       if (window.ShogunKeyboardShortcuts) {
         shortcutBindingsRef.current = window.ShogunKeyboardShortcuts.mergeShortcutBindings(
           sec.shortcuts && sec.shortcuts.bindings,
@@ -1051,6 +1173,19 @@ function App() {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const onProfile = (e) => {
+      const d = e && e.detail;
+      if (d && typeof d === 'object') {
+        if (d.name != null) setProfileDisplayName(String(d.name).trim() || 'Toru Tano');
+        if (d.avatarGlyph != null) setProfileAvatarGlyph(String(d.avatarGlyph).trim());
+        return;
+      }
+    };
+    window.addEventListener('shogun-profile-changed', onProfile);
+    return () => window.removeEventListener('shogun-profile-changed', onProfile);
   }, []);
 
   useEffect(() => {
@@ -1145,12 +1280,6 @@ function App() {
           case A.CHAT_TOGGLE_MAX:
             window.dispatchEvent(new CustomEvent('shogun-chat-toggle-max'));
             break;
-          case A.CHAT_VOICE_TOGGLE:
-            window.dispatchEvent(new CustomEvent('shogun-voice-toggle'));
-            break;
-          case A.CHAT_VOICE_CANCEL:
-            window.dispatchEvent(new CustomEvent('shogun-voice-cancel'));
-            break;
           default:
             break;
         }
@@ -1205,6 +1334,32 @@ function App() {
     window.__SHOGUN_SHELL_ACTIVE_CHAT__ = activeChat;
   }
 
+  const fmtHudElapsed = (startedAt) => {
+    void meetingHudTick;
+    if (!startedAt) return '';
+    const ms = Date.now() - startedAt;
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    return `${m}:${String(sec).padStart(2, '0')}`;
+  };
+
+  const dismissMeetingHud = () => {
+    const M = typeof window !== 'undefined' && window.MeetingMediaRecording;
+    if (!M || typeof M.stop !== 'function') {
+      pushToast('録音モジュールが読み込まれていません', 'warn');
+      setMeetingHud(null);
+      return;
+    }
+    if (M.isRecording && M.isRecording()) {
+      M.stop();
+    } else {
+      setMeetingHud(null);
+    }
+  };
+
   return (
     <div className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')} data-screen-label={active}>
       {bioGate.ready && bioGate.open && (
@@ -1255,6 +1410,82 @@ function App() {
           </button>
         </div>
       )}
+      {meetingHud && (
+        <div className="shogun-meeting-hud-host" role="status" aria-live="polite">
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '7px 6px 7px 14px',
+              borderRadius: 999,
+              border: '1px solid var(--border-hi)',
+              background: 'color-mix(in srgb, var(--surface) 92%, #0a0a0a)',
+              boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
+              maxWidth: '100%',
+              width: '100%',
+              justifyContent: 'center',
+              boxSizing: 'border-box',
+            }}
+          >
+            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexShrink: 0 }} aria-hidden="true">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  style={{
+                    width: 5,
+                    height: 5,
+                    borderRadius: 999,
+                    background: 'var(--success)',
+                    animation: 'mtgStripDotPulse 1.25s ease-in-out infinite',
+                    animationDelay: `${i * 0.2}s`,
+                  }}
+                />
+              ))}
+            </span>
+            <span
+              style={{
+                fontSize: 14,
+                fontWeight: 500,
+                letterSpacing: '-0.02em',
+                color: 'var(--text)',
+                minWidth: 0,
+                flex: '1 1 auto',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                fontFamily: 'var(--font-sans, system-ui, sans-serif)',
+              }}
+            >
+              {meetingHud.title || 'Untitled'}
+            </span>
+            <span className="t-mono" style={{ fontSize: 11, color: 'var(--text-mute)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+              {fmtHudElapsed(meetingHud.startedAt)}
+            </span>
+            <button
+              type="button"
+              onClick={dismissMeetingHud}
+              aria-label="Stop recording"
+              title="録音を終了"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 30,
+                height: 30,
+                borderRadius: 999,
+                border: 'none',
+                background: 'transparent',
+                color: 'var(--text-mute)',
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        </div>
+      )}
       {/* Topbar */}
       <div className="topbar">
         <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Shogun AI · Home">
@@ -1282,7 +1513,8 @@ function App() {
           <span className="kbd">⌘K</span>
         </div>
         <div className="right">
-          {/* 3 page actions: Hummingbird · favorite · share */}
+          {/* Hummingbird · favorite · share — chat screen only */}
+          {active === 'chat' && (
           <div className="page-actions">
             <button
               className="page-action"
@@ -1298,15 +1530,33 @@ function App() {
               <Icon name="popout" size={15}/>
               {shareTip==='popout' && <span className="tip">Open in Hummingbird</span>}
             </button>
-            <button className={'page-action'+(favorited?' on':'')} onMouseEnter={()=>setShareTip('star')} onMouseLeave={()=>setShareTip(null)} onClick={()=>setFavorited(v=>!v)}>
+            <button
+              type="button"
+              className={'page-action'+(favorited?' on':'')}
+              onMouseEnter={()=>setShareTip('star')}
+              onMouseLeave={()=>setShareTip(null)}
+              onClick={(e) => {
+                if (e.shiftKey) {
+                  setFavorited((v) => !v);
+                  return;
+                }
+                setHummingbirdOpen(true);
+              }}
+            >
               <Icon name="star" size={15}/>
-              {shareTip==='star' && <span className="tip">{favorited?'Unfavorite':'Favorite chat'}</span>}
+              {shareTip==='star' && (
+                <span className="tip">
+                  <span className="en-only">Hummingbird · Shift+click to favorite</span>
+                  <span className="jp">Hummingbird（Shift+お気に入り）</span>
+                </span>
+              )}
             </button>
             <button className={'page-action'+(shareOpen?' active':'')} onMouseEnter={()=>setShareTip('share')} onMouseLeave={()=>setShareTip(null)} onClick={()=>setShareOpen(v=>!v)}>
               <Icon name="upload" size={15}/>
               {shareTip==='share' && !shareOpen && <span className="tip">Share chat</span>}
             </button>
           </div>
+          )}
         </div>
       </div>
 
@@ -1430,9 +1680,13 @@ function App() {
             <span className="s-field-hint" style={{fontSize:10}}><span className="en-only">Local preview</span><span className="jp">ローカル</span></span>
           </div>
           <div ref={userBtnRef} className="user-row user-pill" onClick={openUser}>
-            <div className="avatar" style={{width:26, height:26, fontSize:11}}>Y</div>
+            <div className="avatar" style={{width:26, height:26, fontSize:11}}>
+              {shellAvatarChar(profileAvatarGlyph, profileDisplayName)}
+            </div>
             <div style={{flex:1, minWidth:0}}>
-              <div style={{fontSize:12, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}><span className="en-only">You</span><span className="jp">ユーザー</span></div>
+              <div style={{fontSize:12, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                {profileDisplayName.trim() || 'You'}
+              </div>
               <div className="t-mono" style={{fontSize:9, color:'var(--text-dim)'}}>LOCAL</div>
             </div>
             <Icon name={userOpen?'chevronDown':'chevronRight'} size={11} className="dim"/>
@@ -1514,6 +1768,175 @@ function App() {
         document.body,
       )}
 
+      {hummingbirdOpen && ReactDOM.createPortal(
+        <div
+          role="presentation"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1130,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            background: 'rgba(10, 9, 8, 0.58)',
+            boxSizing: 'border-box',
+          }}
+          onMouseDown={() => setHummingbirdOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="hummingbird-title"
+            className="hummingbird-panel"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="hummingbird-panel-head">
+              <button
+                type="button"
+                className="hummingbird-close"
+                aria-label="Close"
+                onClick={() => setHummingbirdOpen(false)}
+              >
+                <Icon name="x" size={16} />
+              </button>
+              <h2 id="hummingbird-title" className="hummingbird-title">
+                <span className="en-only">Today&apos;s Priorities</span>
+                <span className="jp">今日の優先</span>
+              </h2>
+              <span className="hummingbird-actions-hint t-mono">
+                <span className="en-only">Actions</span>
+                <span className="jp">操作</span>
+                {' '}
+                <span className="kbd">⌘K</span>
+              </span>
+            </div>
+            <div className="hummingbird-scroll">
+              <p className="hummingbird-p">
+                <span className="en-only">
+                  Data backup deadlines and plan reviews are coming up—block time on your calendar so nothing slips.
+                </span>
+                <span className="jp">
+                  データバックアップの期限やプラン確認が近づいています。カレンダーに時間を確保して取りこぼしを防ぎましょう。
+                </span>
+              </p>
+              <ul className="hummingbird-ul">
+                <li>
+                  <strong>求人・案件情報:</strong>{' '}
+                  <span className="en-only">
+                    AI lead engineer roles and executive positions surfaced on LinkedIn and YOUTRUST—worth a skim.
+                  </span>
+                  <span className="jp">
+                    LinkedIn や YOUTRUST で AI リードエンジニアや役員クラスの求人が目立ちます。ざっと確認する価値ありです。
+                  </span>
+                </li>
+              </ul>
+              <hr className="hummingbird-rule" />
+              <p className="hummingbird-p">
+                <strong>Hummingbirdからの提案:</strong>
+              </p>
+              <p className="hummingbird-p">
+                <span className="en-only">
+                  From your calendar, the <strong>15:00</strong> slot lines up with a match—consider pairing it with light technical
+                  research into <strong>Lovable</strong> or <strong>Railway</strong> for the <strong>SHOGUN</strong> build.
+                </span>
+                <span className="jp">
+                  カレンダーでは <strong>15時</strong> 前後が空いています。{' '}
+                  <strong>SHOGUN</strong> 向けに <strong>Lovable</strong> や <strong>Railway</strong> の技術調査を軽く挟むのはどうでしょう。
+                </span>
+              </p>
+              <p className="hummingbird-p hummingbird-muted">
+                <span className="en-only">Are there any specific tasks you want to proceed with first?</span>
+                <span className="jp">まず手を付けたいタスクはありますか？</span>
+              </p>
+            </div>
+            <div className="hummingbird-feedback">
+              <button
+                type="button"
+                className="hummingbird-icon-btn"
+                title="Copy"
+                aria-label="Copy"
+                onClick={() => {
+                  const ja = tweaks.language === 'jp';
+                  const text = ja
+                    ? [
+                        'データバックアップの期限やプラン確認が近づいています。',
+                        '',
+                        '求人・案件情報: LinkedIn や YOUTRUST で AI リードエンジニアや役員クラスの求人が目立ちます。',
+                        '',
+                        'Hummingbirdからの提案: カレンダーでは 15時 前後が空いています。SHOGUN 向けに Lovable や Railway の技術調査を軽く挟むのはどうでしょう。',
+                        '',
+                        'まず手を付けたいタスクはありますか？',
+                      ].join('\n')
+                    : [
+                        'Data backup deadlines and plan reviews are coming up.',
+                        '',
+                        'Job leads: AI lead engineer and executive roles on LinkedIn and YOUTRUST.',
+                        '',
+                        'Hummingbird proposal: the 15:00 slot fits—consider research into Lovable or Railway for SHOGUN.',
+                        '',
+                        'Any specific tasks you want to proceed with first?',
+                      ].join('\n');
+                  if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(
+                      () => pushToastRef.current(ja ? 'コピーしました' : 'Copied', 'success'),
+                      () => pushToastRef.current(ja ? 'コピーに失敗しました' : 'Copy failed', 'error'),
+                    );
+                  }
+                }}
+              >
+                <Icon name="copy" size={15} />
+              </button>
+              <button type="button" className="hummingbird-icon-btn" title="Good response" aria-label="Good response">
+                <Icon name="thumbsUp" size={15} />
+              </button>
+              <button type="button" className="hummingbird-icon-btn" title="Bad response" aria-label="Bad response">
+                <Icon name="thumbsDown" size={15} />
+              </button>
+            </div>
+            <div className="hummingbird-composer">
+              <input
+                type="text"
+                className="hummingbird-input"
+                placeholder="Ask anything…"
+                value={hummingbirdInput}
+                onChange={(e) => setHummingbirdInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if ((hummingbirdInput || '').trim()) {
+                      pushToastRef.current(
+                        tweaks.language === 'jp' ? '送信（プレビュー）' : 'Send (preview)',
+                        'info',
+                      );
+                      setHummingbirdInput('');
+                    }
+                  }
+                }}
+                aria-label="Ask Hummingbird"
+              />
+              <button
+                type="button"
+                className="hummingbird-send"
+                aria-label="Send"
+                onClick={() => {
+                  if ((hummingbirdInput || '').trim()) {
+                    pushToastRef.current(
+                      tweaks.language === 'jp' ? '送信（プレビュー）' : 'Send (preview)',
+                      'info',
+                    );
+                    setHummingbirdInput('');
+                  }
+                }}
+              >
+                <Icon name="arrowUp" size={16} />
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
       {/* User floating menu — portaled for correct hit-testing over the shell */}
       {userOpen && ReactDOM.createPortal(
         <>
@@ -1563,9 +1986,11 @@ function App() {
             </div>
             {/* Profile chip at bottom, like reference */}
             <div className="user-float-profile">
-              <div className="avatar">T</div>
+              <div className="avatar">
+                {shellAvatarChar(profileAvatarGlyph, profileDisplayName)}
+              </div>
               <div style={{flex:1, minWidth:0}}>
-                <div style={{fontSize:12, fontWeight:500}}>Toru Tano</div>
+                <div style={{fontSize:12, fontWeight:500}}>{profileDisplayName.trim() || 'You'}</div>
                 <div style={{fontSize:10, color:'var(--text-dim)'}}>Pro · Local</div>
               </div>
             </div>
@@ -1583,7 +2008,13 @@ function App() {
             setSettingsOpen(null);
             (async () => {
               const r = await executeAction('settings.load', {}, { silentError: true });
-              if (r.ok && r.data?.settings?.sections) applySavedAppearance(r.data.settings.sections);
+              if (r.ok && r.data?.settings?.sections) {
+                const sec = r.data.settings.sections;
+                applySavedAppearance(sec);
+                const p = profileStateFromSections(sec);
+                setProfileDisplayName(p.name || 'Toru Tano');
+                setProfileAvatarGlyph(p.avatarGlyph);
+              }
             })();
           }}
         />
@@ -1657,7 +2088,9 @@ function App() {
         body[data-lang=jp] .en-only { display:none !important; }
         body[data-gold=muted] { --gold:#A88F5F; --gold-hover:#B89C6A; }
         body[data-gold=bright] { --gold:#D9BC7F; --gold-hover:#E5C88C; }
-        body[data-density=minimal] .sidebar .nav-item .nav-label { display:none; }
+        /* Minimal: hide redundant EN label only when JP line is visible (EN+minimal would hide both). */
+        body[data-density=minimal][data-lang=jp] .sidebar .nav-item .nav-label { display:none; }
+        body[data-density=minimal][data-lang=bi] .sidebar .nav-item .nav-label { display:none; }
         body[data-density=rich] .nav-item { padding:10px 12px; }
         .lang-pill { min-width:44px; font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; padding:0 10px; }
 
@@ -1831,6 +2264,140 @@ function App() {
         .app-toast.success { border-color:color-mix(in srgb, var(--success) 40%, var(--border)); }
         .app-toast.warn { border-color:color-mix(in srgb, #d9a85a 45%, var(--border)); }
         .app-toast.error { border-color:color-mix(in srgb, #d96b5a 45%, var(--border)); }
+
+        /* Hummingbird assistant (chat topbar 2nd action) */
+        .hummingbird-panel {
+          width: min(520px, calc(100vw - 40px));
+          max-height: min(640px, calc(100dvh - 48px));
+          display: flex;
+          flex-direction: column;
+          background: #1e1e1e;
+          border: 1px solid color-mix(in srgb, var(--border-hi) 70%, #2a2a2a);
+          border-radius: 14px;
+          box-shadow: 0 32px 80px -16px rgba(0,0,0,0.75);
+          overflow: hidden;
+          animation: sysFloatIn 160ms var(--ease-out);
+        }
+        .hummingbird-panel-head {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 14px 10px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          flex-shrink: 0;
+        }
+        .hummingbird-close {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          border: 0;
+          border-radius: var(--radius-sm);
+          background: transparent;
+          color: var(--text-mute);
+          cursor: pointer;
+        }
+        .hummingbird-close:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+        .hummingbird-title {
+          flex: 1;
+          margin: 0;
+          font-size: 14px;
+          font-weight: 500;
+          letter-spacing: -0.02em;
+          color: rgba(255,255,255,0.72);
+        }
+        .hummingbird-actions-hint {
+          font-size: 11px;
+          color: var(--text-dim);
+        }
+        .hummingbird-scroll {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          padding: 16px 18px 8px;
+          font-size: 13px;
+          line-height: 1.55;
+          color: rgba(255,255,255,0.78);
+        }
+        .hummingbird-p { margin: 0 0 12px; }
+        .hummingbird-p strong { color: #fff; font-weight: 600; }
+        .hummingbird-ul { margin: 0 0 14px 1rem; padding: 0; }
+        .hummingbird-ul li { margin-bottom: 6px; }
+        .hummingbird-rule {
+          border: 0;
+          border-top: 1px solid rgba(255,255,255,0.08);
+          margin: 14px 0 16px;
+        }
+        .hummingbird-muted { color: rgba(255,255,255,0.5); font-size: 12.5px; }
+        .hummingbird-feedback {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 0 14px 10px;
+        }
+        .hummingbird-icon-btn {
+          width: 32px;
+          height: 32px;
+          border: 0;
+          border-radius: var(--radius-sm);
+          background: transparent;
+          color: rgba(255,255,255,0.35);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .hummingbird-icon-btn:hover { color: rgba(255,255,255,0.65); background: rgba(255,255,255,0.05); }
+        .hummingbird-composer {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 12px 14px;
+          border-top: 1px solid rgba(255,255,255,0.06);
+          flex-shrink: 0;
+        }
+        .hummingbird-input {
+          flex: 1;
+          min-width: 0;
+          height: 40px;
+          border-radius: 10px;
+          border: 1px solid rgba(255,255,255,0.1);
+          background: rgba(0,0,0,0.35);
+          color: rgba(255,255,255,0.92);
+          font-size: 13px;
+          padding: 0 14px;
+          outline: none;
+          font-family: inherit;
+        }
+        .hummingbird-input::placeholder { color: rgba(255,255,255,0.35); }
+        .hummingbird-input:focus { border-color: rgba(255,255,255,0.22); }
+        .hummingbird-mic {
+          width: 38px;
+          height: 38px;
+          border: 0;
+          border-radius: 10px;
+          background: transparent;
+          color: rgba(255,255,255,0.45);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .hummingbird-mic:hover { color: rgba(255,255,255,0.75); }
+        .hummingbird-send {
+          width: 40px;
+          height: 40px;
+          border-radius: 999px;
+          border: 0;
+          background: rgba(255,255,255,0.12);
+          color: rgba(255,255,255,0.92);
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .hummingbird-send:hover { background: rgba(255,255,255,0.2); }
 
         @media (max-width: 720px) {
           .share-modal {

@@ -2,6 +2,8 @@
  * Rule-based priority ranker (spec §4).
  */
 
+import { defaultPipelineTimeZone } from "./timezone.js";
+
 const CATEGORY_SCORES = {
   meeting: 25,
   commitment: 30,
@@ -87,7 +89,7 @@ function itemHasPendingDecisionFollowup(item) {
  * @param {{ timeZone?: string, now?: Date }} [ctx]
  */
 export function calculateScore(item, ctx = {}) {
-  const timeZone = ctx.timeZone || "Asia/Tokyo";
+  const timeZone = ctx.timeZone || defaultPipelineTimeZone();
   const now = ctx.now || new Date();
   let score = 0;
 

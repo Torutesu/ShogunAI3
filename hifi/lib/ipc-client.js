@@ -78,59 +78,19 @@
       echo: echo,
     });
 
-    function normalizeProvider(raw) {
-      return String(raw || "")
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "_");
-    }
-    const localConnectSlugs = new Set(["arc_browser", "raycast", "obsidian"]);
-
     switch (command) {
-      case "app_integration_connect": {
-        const slug = normalizeProvider(echo.provider);
-        if (localConnectSlugs.has(slug)) {
-          return {
-            connected: true,
-            provider: slug,
-            stub: false,
-            echo: echo,
-          };
-        }
-        return notImpl(
-          "Third-party integrations (OAuth, calendar, mail) are not available in v1. This build is local-only; connect Arc, Raycast, or Obsidian for local-only toggles.",
-        );
-      }
+      case "app_integration_connect":
       case "app_integration_toggle":
-        return {
-          saved: true,
-          connected: echo.connected === true,
-          provider: normalizeProvider(echo.provider),
-          stub: false,
-          echo: echo,
-        };
       case "app_integration_import_credentials":
-        return {
-          saved: true,
-          provider: normalizeProvider(echo.provider),
-          stub: false,
-          echo: echo,
-        };
       case "app_integration_credentials_status":
-        return {
-          configured: false,
-          tokenRefreshReady: false,
-          provider: normalizeProvider(echo.provider || "google_calendar"),
-          stub: false,
-          echo: echo,
-        };
-      case "shogun_google_calendar_sync":
-        return {
-          ingested: 0,
-          calendarId: echo.calendarId || "primary",
-          stub: false,
-          echo: echo,
-        };
+      case "shogun_google_calendar_sync": {
+        const C = global.ShogunIntegrationConnectors;
+        if (C && typeof C.mockIntegrationPayload === "function") {
+          const payload = C.mockIntegrationPayload(command, echo);
+          if (payload) return payload;
+        }
+        return notImpl("Integration mock unavailable.", echo);
+      }
       case "shogun_draft":
         return {
           content: "# Draft\n\n_Mock Markdown from browser transport. Tauri uses your LLM key._\n",

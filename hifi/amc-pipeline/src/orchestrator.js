@@ -5,6 +5,7 @@ import { rankAndCap } from "./ranker.js";
 import { generateSummary } from "./summary.js";
 import { MorningBriefJsonSchema } from "./schemas.js";
 import { composeBriefItemHeuristic } from "./heuristic.js";
+import { defaultPipelineTimeZone } from "./timezone.js";
 
 /**
  * @param {unknown[]} rawCandidates
@@ -12,7 +13,7 @@ import { composeBriefItemHeuristic } from "./heuristic.js";
  */
 export async function runMorningBriefPipeline(rawCandidates, opts = {}) {
   const dryRun = Boolean(opts.dryRun);
-  const timeZone = opts.timeZone || "Asia/Tokyo";
+  const timeZone = opts.timeZone || defaultPipelineTimeZone();
   const mergeDuplicates = opts.mergeDuplicates !== false;
 
   let cleaned = rawCandidates.map((r) => preprocessCandidate(r));

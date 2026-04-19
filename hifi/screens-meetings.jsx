@@ -22,6 +22,40 @@ const RECIPE_LOCAL_BODIES = {
   'Draft follow-ups': '## \u30d5\u30a9\u30ed\u30fc\u30a2\u30c3\u30d7\n\n- [ ] \n- [ ] \n\n### \u9001\u4fe1\u6e08\u307f\n- \n',
 };
 
+var MEETINGS_COMING_UP_STORAGE = 'shogun.hifi.meetingsComingUp.v1';
+
+/** Dock slash menu + "All recipes" browser (labels must match RECIPE_LOCAL_BODIES / Granola recipes). */
+var MEETINGS_DOCK_SLASH_CATALOG = [
+  { id: 'todos', label: 'List recent todos', desc: 'Surface every unchecked line and TODO marker across notes—in one pass.', jpHint: '\u30ce\u30fc\u30c8\u6a2a\u65ad\u3067\u672a\u5b8c\u4e86\u3092\u96c6\u7d04', kind: 'action', accent: 'mint' },
+  { id: 'coach', label: 'Coach me: Matt 1:1', desc: 'Spin up a structured 1:1—agenda, follow-ups, and next actions.', jpHint: '1:1 \u7528\u306e\u30c6\u30f3\u30d7\u3092\u958b\u304f', kind: 'recipe', recipeLabel: 'Coach me: Matt 1:1', recipeJp: '\u5bfe\u8bdd', accent: 'amber' },
+  { id: 'weekly', label: 'Write weekly recap', desc: 'Ship a crisp weekly narrative: wins, risks, and what changed.', jpHint: '\u9031\u6b21\u30ec\u30d3\u30e5\u30fc\u306e\u9aa8\u5b50\u3092\u4f5c\u6210', kind: 'recipe', recipeLabel: 'Write weekly recap', recipeJp: '\u9031\u5831', accent: 'violet' },
+  { id: 'decisions', label: 'List open decisions', desc: 'Draft a decision log—what is open, who owns it, and by when.', jpHint: '\u672a\u6c7a\u5b9a\u3068\u30aa\u30fc\u30ca\u30fc\u3092\u4e00\u89a7', kind: 'recipe', recipeLabel: 'List open decisions', recipeJp: '\u6c7a\u5b9a', accent: 'rose' },
+  { id: 'followups', label: 'Draft follow-ups', desc: 'Turn threads into a send-ready checklist your team can act on.', jpHint: '\u30d5\u30a9\u30ed\u30fc\u7528\u30c1\u30a7\u30c3\u30af\u30ea\u30b9\u30c8', kind: 'recipe', recipeLabel: 'Draft follow-ups', recipeJp: '\u8ffd\u8de1', accent: 'cyan' },
+];
+
+function buildComingUpDemo() {
+  var WKD = ['\u65e5', '\u6708', '\u706b', '\u6c34', '\u6728', '\u91d1', '\u571f'];
+  var demos = [
+    { title: '\u30d5\u30a9\u30fc\u30ab\u30b9', timeRange: '9:00\u301c10:00' },
+    { title: '\u79fb\u52d5', timeRange: '12:00\u301c12:30' },
+    { title: '\u30ec\u30d3\u30e5\u30fc', timeRange: '15:00\u301c16:00' },
+  ];
+  var out = [];
+  var base = new Date();
+  for (var i = 0; i < 3; i++) {
+    var d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+    out.push({
+      id: 'cu-demo-' + i,
+      day: d.getDate(),
+      monthLabel: d.getMonth() + 1 + '\u6708',
+      weekday: WKD[d.getDay()],
+      title: demos[i].title,
+      timeRange: demos[i].timeRange,
+    });
+  }
+  return out;
+}
+
 function granolaMiniBtn(surface, border, color) {
   return {
     fontSize:12,
@@ -89,7 +123,7 @@ function MtgProgressDots({ storageKey, listVersion }) {
 // MEETINGS — synthesis layer for calendar events + conversations
 // ===========================================================================
 function ScreenMeetings() {
-  const { useState, useEffect, useCallback, useRef } = React;
+  const { useState, useEffect, useCallback, useRef, useMemo } = React;
   const [granola, setGranola] = useState(null);
   const [granolaPane, setGranolaPane] = useState('memo');
   const [granolaDraft, setGranolaDraft] = useState({ body:'', transcript:'', summary:'', minutes:'' });
@@ -98,15 +132,51 @@ function ScreenMeetings() {
   const [granolaOutline, setGranolaOutline] = useState(false);
   const [granolaAsk, setGranolaAsk] = useState('');
   const [granolaTodos, setGranolaTodos] = useState(null);
-   const speechRef = useRef(null);
+  const granolaRef = useRef(null);
   const granolaDraftRef = useRef(granolaDraft);
   granolaDraftRef.current = granolaDraft;
 
-  const LIVE_SS_KEY = 'shogun.mtg.live.v1';
   const [userMeetingItems, setUserMeetingItems] = useState([]);
-  const [liveSession, setLiveSession] = useState(null);
   const [listTick, setListTick] = useState(0);
-  const [nowTick, setNowTick] = useState(function () { return Date.now(); });
+  const [audioRecSession, setAudioRecSession] = useState(null);
+  const [recTick, setRecTick] = useState(0);
+  const [comingUp, setComingUp] = useState(buildComingUpDemo);
+  const [meetingsPrompt, setMeetingsPrompt] = useState('');
+  const [meetingsRecipeBrowse, setMeetingsRecipeBrowse] = useState(false);
+
+  granolaRef.current = granola;
+
+  useEffect(function () {
+    try {
+      var raw = localStorage.getItem(MEETINGS_COMING_UP_STORAGE);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) setComingUp(parsed);
+      }
+    } catch (_e) {}
+    runRuntimeActionM('calendar.sync', { calendarId: 'primary', maxResults: 25 }, { silentError: true }).then(function (r) {
+      if (!r || !r.ok || !r.data || !Array.isArray(r.data.events) || !r.data.events.length) return;
+      var WKD = ['\u65e5', '\u6708', '\u706b', '\u6c34', '\u6728', '\u91d1', '\u571f'];
+      var mapped = r.data.events.map(function (ev, idx) {
+        var start = ev.startDateTimeMs != null ? new Date(ev.startDateTimeMs) : (ev.start ? new Date(ev.start) : new Date());
+        var end = ev.endDateTimeMs != null ? new Date(ev.endDateTimeMs) : (ev.end ? new Date(ev.end) : start);
+        return {
+          id: String(ev.id || 'ev-' + idx),
+          day: start.getDate(),
+          monthLabel: start.getMonth() + 1 + '\u6708',
+          weekday: WKD[start.getDay()],
+          title: ev.summary || ev.title || '\u4e88\u5b9a',
+          timeRange: start.getHours() + ':' + String(start.getMinutes()).padStart(2, '0') + '\u301c' + end.getHours() + ':' + String(end.getMinutes()).padStart(2, '0'),
+          startMs: start.getTime(),
+          endMs: end.getTime(),
+        };
+      });
+      setComingUp(mapped);
+      try {
+        localStorage.setItem(MEETINGS_COMING_UP_STORAGE, JSON.stringify(mapped));
+      } catch (_e2) {}
+    });
+  }, []);
 
   useEffect(function () {
     const L = mnl();
@@ -114,38 +184,133 @@ function ScreenMeetings() {
       const log = L.loadUserMeetingLog();
       setUserMeetingItems(Array.isArray(log.items) ? log.items : []);
     }
-    try {
-      const raw = sessionStorage.getItem(LIVE_SS_KEY);
-      if (raw) {
-        const o = JSON.parse(raw);
-        if (o && o.storageKey && o.startedAt) setLiveSession(o);
-      }
-    } catch (_e) {}
   }, []);
 
   useEffect(function () {
-    if (liveSession) sessionStorage.setItem(LIVE_SS_KEY, JSON.stringify(liveSession));
-    else sessionStorage.removeItem(LIVE_SS_KEY);
-  }, [liveSession]);
+    const onLog = function () {
+      const L = mnl();
+      if (L && L.loadUserMeetingLog) {
+        const log = L.loadUserMeetingLog();
+        setUserMeetingItems(Array.isArray(log.items) ? log.items : []);
+      }
+      setListTick(function (x) { return x + 1; });
+    };
+    window.addEventListener('shogun-user-meeting-log-changed', onLog);
+    return function () { window.removeEventListener('shogun-user-meeting-log-changed', onLog); };
+  }, []);
 
   useEffect(function () {
-    if (!liveSession) return;
-    const id = setInterval(function () { setNowTick(Date.now()); }, 1000);
+    function syncRec() {
+      var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+      if (M && M.isRecording && M.isRecording()) {
+        var sk = M.getActiveStorageKey && M.getActiveStorageKey();
+        setAudioRecSession({ startedAt: M.getStartedAt(), storageKey: sk || null });
+      } else {
+        setAudioRecSession(null);
+      }
+      setRecTick(function (x) { return x + 1; });
+    }
+    window.addEventListener('shogun-meeting-hud', syncRec);
+    window.addEventListener('shogun-meeting-recording-ended', syncRec);
+    syncRec();
+    return function () {
+      window.removeEventListener('shogun-meeting-hud', syncRec);
+      window.removeEventListener('shogun-meeting-recording-ended', syncRec);
+    };
+  }, []);
+
+  useEffect(function () {
+    if (!audioRecSession) return;
+    const id = setInterval(function () { setRecTick(function (x) { return x + 1; }); }, 1000);
     return function () { clearInterval(id); };
-  }, [liveSession]);
+  }, [audioRecSession]);
+
+  useEffect(function () {
+    const onAutoMinutes = function (e) {
+      var d = (e && e.detail) || {};
+      var sk = d.storageKey;
+      var g = granolaRef.current;
+      if (sk && g && g.storageKey === sk) {
+        setGranolaPane('minutes');
+      }
+    };
+    window.addEventListener('shogun-auto-open-meeting-minutes', onAutoMinutes);
+    return function () {
+      window.removeEventListener('shogun-auto-open-meeting-minutes', onAutoMinutes);
+    };
+  }, []);
+
+  const openGranolaMinutesForDetectedMeeting = useCallback(function (title, eventId) {
+    const L = mnl();
+    const key = 'cal-' + String(eventId != null ? eventId : Date.now());
+    const storageKey = L ? L.storageHash({ cal: key, t: title }) : key;
+    setGranolaPane('minutes');
+    setGranolaMenuOpen(false);
+    setGranola({
+      key,
+      storageKey,
+      title: title || 'Meeting',
+      titleJp: '\u8b70\u4e8b\u9332',
+      dateLabel: 'Today',
+      dateLabelJp: '\u4eca\u65e5',
+      authorLabel: 'Me',
+      authorLabelJp: '\u81ea\u5206',
+      body: '',
+      tag: 'MTG',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+    toastM('\u4e88\u5b9a\u304b\u3089\u30df\u30fc\u30c6\u30a3\u30f3\u30b0\u3092\u691c\u77e5\u3057\u307e\u3057\u305f\uff08\u8b70\u4e8b\u9332\uff09', 'success');
+  }, []);
+
+  useEffect(function () {
+    const onDetected = function (e) {
+      if (granolaRef.current) return;
+      var d = (e && e.detail) || {};
+      if (window.SHOGUN_RUNTIME && typeof window.SHOGUN_RUNTIME.setActiveScreen === 'function') {
+        window.SHOGUN_RUNTIME.setActiveScreen('meetings');
+      }
+      openGranolaMinutesForDetectedMeeting(d.title, d.eventId);
+    };
+    window.addEventListener('shogun-meeting-detected', onDetected);
+    return function () {
+      window.removeEventListener('shogun-meeting-detected', onDetected);
+    };
+  }, [openGranolaMinutesForDetectedMeeting]);
+
+  useEffect(function () {
+    if (!comingUp || !comingUp.length) return undefined;
+    const check = function () {
+      if (granolaRef.current) return;
+      const now = Date.now();
+      for (let i = 0; i < comingUp.length; i++) {
+        const ev = comingUp[i];
+        if (ev.startMs == null || ev.endMs == null) continue;
+        if (now < ev.startMs || now > ev.endMs) continue;
+        const mark = 'shogun_mtg_auto_' + ev.id;
+        if (sessionStorage.getItem(mark)) continue;
+        sessionStorage.setItem(mark, '1');
+        try {
+          window.dispatchEvent(
+            new CustomEvent('shogun-meeting-detected', {
+              detail: { title: ev.title, eventId: ev.id, startMs: ev.startMs, endMs: ev.endMs },
+            }),
+          );
+        } catch (_e) {}
+        break;
+      }
+    };
+    check();
+    const id = window.setInterval(check, 20000);
+    return function () {
+      window.clearInterval(id);
+    };
+  }, [comingUp]);
 
   function rowStorageKey(n, dateCtx, dayJp) {
     const L = mnl();
     if (n && n.storageKey) return n.storageKey;
     return L ? L.storageHash({ t: n.t, time: n.time, ctx: dateCtx, j: dayJp || '' }) : ('mtg-' + n.t + n.time);
   }
-
-  const recipes = [
-    {label:'Write weekly recap', jp:'週報'},
-    {label:'Coach me: Matt 1:1',  jp:'対話'},
-    {label:'List open decisions', jp:'決定'},
-    {label:'Draft follow-ups',    jp:'追跡'},
-  ];
 
   const yesterday = [
     {t:'Kitazawa · Aurora DPIA review', a:'Mio Sato, legal counsel', time:'15:18', tag:'DECISION', att:3, locked:true},
@@ -175,6 +340,10 @@ function ScreenMeetings() {
     THINKING: 'var(--text-dim)',
     NETWORK:  'var(--text-mute)',
     PLAN:     'var(--text)',
+    AUDIO:    'var(--text-mute)',
+    REC:      'var(--text-mute)',
+    LIVE:     'var(--gold)',
+    LOCAL:    'var(--text-dim)',
   }[tag] || 'var(--text-dim)');
 
   const openQuickNote = useCallback(() => {
@@ -186,8 +355,8 @@ function ScreenMeetings() {
     setGranola({
       key,
       storageKey,
-      title: 'New note',
-      titleJp: '新しいノート',
+      title: 'Untitled',
+      titleJp: '無題',
       dateLabel: 'Today',
       dateLabelJp: '今日',
       authorLabel: 'Me',
@@ -219,75 +388,6 @@ function ScreenMeetings() {
     });
   }, []);
 
-  const startLiveMeeting = useCallback(function () {
-    if (liveSession) {
-      toastM('\u3059\u3067\u306b\u4f1a\u8b70\u4e2d\u3067\u3059\u3002\u7d42\u4e86\u3059\u308b\u304b\u3001\u30ce\u30fc\u30c8\u3092\u9589\u3058\u3066\u304f\u3060\u3055\u3044\u3002', 'warn');
-      return;
-    }
-    var startedAt = Date.now();
-    var title = 'Live · ' + new Date(startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    var L = mnl();
-    var key = 'live-' + startedAt;
-    var storageKey = L ? L.storageHash({ live: key }) : key;
-    var session = { storageKey: storageKey, title: title, startedAt: startedAt };
-    setLiveSession(session);
-    setGranolaPane('memo');
-    setGranolaMenuOpen(false);
-    setGranola({
-      key: key,
-      storageKey: storageKey,
-      title: title,
-      titleJp: '\u9032\u884c\u4e2d\u306e\u4f1a\u8b70',
-      dateLabel: 'Today',
-      dateLabelJp: '\u4eca\u65e5',
-      authorLabel: 'Me',
-      authorLabelJp: '\u81ea\u5206',
-      body: '# \u4f1a\u8b70\u30e1\u30e2\n\n- \u958b\u59cb: ' + new Date(startedAt).toLocaleString() + '\n\n',
-      tag: 'LIVE',
-      time: new Date(startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    });
-    toastM('\u4f1a\u8b70\u3092\u958b\u59cb\u3057\u307e\u3057\u305f\uff08\u30ed\u30fc\u30ab\u30eb\u30fb\u7d4c\u904e\u6642\u9593\u8868\u793a\uff09', 'success');
-  }, [liveSession]);
-
-  const reopenLiveGranola = useCallback(function () {
-    if (!liveSession) return;
-    setGranolaPane('memo');
-    setGranolaMenuOpen(false);
-    setGranola({
-      key: 'live-' + liveSession.startedAt,
-      storageKey: liveSession.storageKey,
-      title: liveSession.title,
-      titleJp: '\u9032\u884c\u4e2d\u306e\u4f1a\u8b70',
-      dateLabel: 'Today',
-      dateLabelJp: '\u4eca\u65e5',
-      authorLabel: 'Me',
-      authorLabelJp: '\u81ea\u5206',
-      body: '',
-      tag: 'LIVE',
-      time: new Date(liveSession.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    });
-  }, [liveSession]);
-
-  const endLiveMeeting = useCallback(function () {
-    if (!liveSession) return;
-    var ended = Date.now();
-    var durationMin = Math.max(1, Math.round((ended - liveSession.startedAt) / 60000));
-    var entry = {
-      t: liveSession.title,
-      a: 'solo · local',
-      time: new Date(ended).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      tag: 'LIVE',
-      duration: durationMin + 'm',
-      storageKey: liveSession.storageKey,
-      dateCtx: 'today-user',
-    };
-    if (mnl() && mnl().prependMeetingLogEntry) mnl().prependMeetingLogEntry(entry);
-    setUserMeetingItems(function (prev) { return [entry].concat(prev); });
-    setLiveSession(null);
-    setListTick(function (x) { return x + 1; });
-    toastM('\u7d42\u4e86\u3057\u3001\u4eca\u65e5\u306e\u4e00\u89a7\u306b\u8ffd\u52a0\u3057\u307e\u3057\u305f', 'success');
-  }, [liveSession]);
-
   const openRecipeGranola = useCallback((recipe) => {
     const key = 'recipe-' + recipe.label + '-' + Date.now();
     const L = mnl();
@@ -315,23 +415,61 @@ function ScreenMeetings() {
   const closeGranola = useCallback(() => {
     const g = granola;
     if (g && g.storageKey && mnl() && mnl().saveNote) {
-      mnl().saveNote(g.storageKey, granolaDraftRef.current);
+      const tit = g.title != null ? String(g.title) : '';
+      mnl().saveNote(g.storageKey, { ...granolaDraftRef.current, title: tit });
+      const L = mnl();
+      if (tit.trim() && L.updateMeetingLogTitleByStorageKey) {
+        L.updateMeetingLogTitleByStorageKey(g.storageKey, tit);
+      }
+    }
+    var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+    if (M && M.isRecording && M.isRecording() && typeof M.abort === 'function') {
+      M.abort();
     }
     setGranola(null);
     setGranolaMenuOpen(false);
     setGranolaTodos(null);
     setCmdBarMin(false);
     setListTick(function (x) { return x + 1; });
-    if (speechRef.current) {
-      try { speechRef.current.stop(); } catch (_e) {}
-      speechRef.current = null;
-    }
   }, [granola]);
+
+  const startNoteRecording = useCallback(async function () {
+    if (audioRecSession || !granola || !granola.storageKey) return;
+    var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+    if (!M || typeof M.start !== 'function') {
+      toastM('録音モジュールが読み込まれていません', 'error');
+      return;
+    }
+    var r = await M.start({
+      storageKey: granola.storageKey,
+      title: granola.title,
+      onToast: toastM,
+    });
+    if (r && r.ok) {
+      setGranolaPane('minutes');
+    }
+  }, [audioRecSession, granola]);
+
+  const stopNoteRecording = useCallback(function () {
+    var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+    if (M && typeof M.stop === 'function') {
+      M.stop();
+    } else {
+      toastM('録音モジュールが読み込まれていません', 'error');
+    }
+  }, []);
 
   useEffect(() => {
     if (!granola || !granola.storageKey) return;
     const L = mnl();
+    const sk = granola.storageKey;
     const saved = L && L.loadNote ? L.loadNote(granola.storageKey) : null;
+    if (saved && typeof saved.title === 'string' && saved.title.trim()) {
+      setGranola(function (g) {
+        if (!g || g.storageKey !== sk) return g;
+        return { ...g, title: saved.title.trim() };
+      });
+    }
     if (saved && (saved.body || saved.transcript || saved.summary || saved.minutes)) {
       setGranolaDraft({
         body: saved.body || '',
@@ -349,11 +487,16 @@ function ScreenMeetings() {
     if (!granola || !granola.storageKey) return;
     const L = mnl();
     if (!L || !L.saveNote) return;
+    const sk = granola.storageKey;
+    const tit = granola.title != null ? String(granola.title) : '';
     const t = setTimeout(function () {
-      L.saveNote(granola.storageKey, granolaDraft);
+      L.saveNote(sk, { ...granolaDraft, title: tit });
+      if (tit.trim() && L.updateMeetingLogTitleByStorageKey) {
+        L.updateMeetingLogTitleByStorageKey(sk, tit);
+      }
     }, 450);
     return function () { clearTimeout(t); };
-  }, [granola && granola.storageKey, granolaDraft]);
+  }, [granola && granola.storageKey, granola && granola.title, granolaDraft]);
 
   useEffect(() => {
     if (!granola) return;
@@ -417,39 +560,6 @@ function ScreenMeetings() {
     }, { successMessage: 'Memory に保存しました' });
   }, [granola, granolaDraft]);
 
-  const toggleSpeech = useCallback(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      toastM('\u3053\u306e\u74b0\u5883\u3067\u306f\u97f3\u58f0\u5165\u529b\u304c\u4f7f\u3048\u307e\u305b\u3093\uff08Web Speech API\uff09', 'warn');
-      return;
-    }
-    if (speechRef.current) {
-      try { speechRef.current.stop(); } catch (_e) {}
-      speechRef.current = null;
-      toastM('\u97f3\u58f0\u5165\u529b\u3092\u505c\u6b62\u3057\u307e\u3057\u305f', 'info');
-      return;
-    }
-    const rec = new SR();
-    rec.lang = document.documentElement.lang === 'ja' ? 'ja-JP' : 'en-US';
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.onresult = function (ev) {
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        if (!ev.results[i].isFinal) continue;
-        const chunk = ev.results[i][0].transcript.trim();
-        if (!chunk) continue;
-        setGranolaDraft(function (d) {
-          const sep = d.transcript && !d.transcript.endsWith('\n') ? '\n' : '';
-          return { ...d, transcript: (d.transcript || '') + sep + chunk };
-        });
-      }
-    };
-    rec.onerror = function () { toastM('\u97f3\u58f0\u8a8d\u8b58\u30a8\u30e9\u30fc', 'warn'); };
-    rec.start();
-    speechRef.current = rec;
-    toastM('\u97f3\u58f0\u5165\u529b\u958b\u59cb\uff08\u6587\u5b57\u8d77\u3053\u3057\u30bf\u30d6\u3078\u8ffd\u8a18\uff09', 'success');
-  }, []);
-
   const runLocalAsk = useCallback(() => {
     const q = (granolaAsk || '').trim();
     if (!q) return;
@@ -475,6 +585,83 @@ function ScreenMeetings() {
       return { ...d, body: (d.body || '') + line };
     });
     toastM('\u30e1\u30e2\u306b\u30d5\u30a9\u30eb\u30c0\u30bf\u30b0\u3092\u8ffd\u52a0\u3057\u307e\u3057\u305f', 'success');
+  }, []);
+
+  const showGranolaDateInfo = useCallback(function () {
+    if (!granola) return;
+    try {
+      var d = new Date();
+      var jp = d.toLocaleDateString('ja-JP', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      var en = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      toastM(en + ' / ' + jp, 'info');
+    } catch (_e) {
+      toastM(String(granola.dateLabel || 'Today'), 'info');
+    }
+  }, [granola]);
+
+  const showGranolaAuthorInfo = useCallback(function () {
+    if (!granola) return;
+    var a = granola.authorLabel || 'Me';
+    toastM('\u53c2\u52a0\u8005\u8868\u793a: ' + a + ' \uff08\u30ed\u30fc\u30ab\u30eb\u30ce\u30fc\u30c8\uff09', 'info');
+  }, [granola]);
+
+  const submitMeetingsPrompt = useCallback(function (e) {
+    if (e) e.preventDefault();
+    var raw = (meetingsPrompt || '').trim();
+    if (!raw) return;
+    if (raw.startsWith('/')) {
+      toastM('\u30b3\u30de\u30f3\u30c9\u3092\u9078\u629e\u3059\u308b\u304b\u3001/\u3092\u524a\u3063\u3066\u691c\u7d22\u3057\u3066\u304f\u3060\u3055\u3044', 'info');
+      return;
+    }
+    runRuntimeActionM('memory.search', { query: raw, kinds: ['audio', 'note'], limit: 30 }, { successMessage: '\u691c\u7d22\u3057\u307e\u3057\u305f' });
+  }, [meetingsPrompt]);
+
+  const listRecentTodosFromDock = useCallback(function () {
+    runRuntimeActionM('memory.search', { query: 'TODO [ ]', kinds: ['note'], limit: 25 }, { successMessage: 'TODO\u3092\u691c\u7d22\u3057\u307e\u3057\u305f' });
+  }, []);
+
+  const runDockSlashItem = useCallback(function (item) {
+    setMeetingsRecipeBrowse(false);
+    setMeetingsPrompt('');
+    if (item.kind === 'action' && item.id === 'todos') {
+      listRecentTodosFromDock();
+      return;
+    }
+    if (item.kind === 'recipe' && item.recipeLabel) {
+      openRecipeGranola({ label: item.recipeLabel, jp: item.recipeJp || '\u30ed\u30fc\u30ab\u30eb' });
+    }
+  }, [listRecentTodosFromDock, openRecipeGranola]);
+
+  const filteredDockSlash = useMemo(function () {
+    if (meetingsRecipeBrowse) return MEETINGS_DOCK_SLASH_CATALOG;
+    if (!meetingsPrompt.startsWith('/')) return [];
+    var needle = meetingsPrompt.slice(1).toLowerCase().trim();
+    if (!needle) return MEETINGS_DOCK_SLASH_CATALOG;
+    return MEETINGS_DOCK_SLASH_CATALOG.filter(function (row) {
+      var inJp = row.jpHint && String(row.jpHint).toLowerCase().indexOf(needle) !== -1;
+      return row.label.toLowerCase().indexOf(needle) !== -1 || row.desc.toLowerCase().indexOf(needle) !== -1 || inJp;
+    });
+  }, [meetingsPrompt, meetingsRecipeBrowse]);
+
+  const showDockRecipeOverlay = meetingsRecipeBrowse || (meetingsPrompt.startsWith('/') && meetingsPrompt.length >= 1);
+
+  useEffect(function () {
+    if (!showDockRecipeOverlay) return;
+    function onKey(e) {
+      if (e.key === 'Escape') {
+        setMeetingsRecipeBrowse(false);
+        setMeetingsPrompt(function (p) { return (p && p.startsWith('/')) ? '' : (p || ''); });
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return function () { window.removeEventListener('keydown', onKey); };
+  }, [showDockRecipeOverlay]);
+
+  const meetingsDockHistory = useCallback(function () {
+    runRuntimeActionM('brief.get', { span: 'week', source: 'meetings_dock_history' }, { silentError: true }).then(function (r) {
+      if (r && r.ok) toastM('\u6700\u8fd1\u306e\u30d6\u30ea\u30fc\u30d5\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f', 'success');
+      else toastM('\u5c65\u6b74\u306f Memory \u691c\u7d22\u3067\u78ba\u8a8d\u3067\u304d\u307e\u3059\uff08\u30e2\u30c3\u30af\uff09', 'info');
+    });
   }, []);
 
   return (
@@ -533,107 +720,44 @@ function ScreenMeetings() {
           background:'var(--surface)',
           border:'1px solid var(--border)',
           marginBottom:18,
-          position:'relative',
         }}>
           <Icon name="calendar" size={20} className="gold"/>
-          <span style={{position:'absolute', bottom:-2, right:-2, width:16, height:16, borderRadius:'50%', background:'var(--bg)', border:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center'}}>
-            <Icon name="shield" size={9}/>
-          </span>
         </div>
         <h1 style={{margin:0, width:'100%', textAlign:'center', fontSize:34, fontWeight:600, letterSpacing:'-0.02em', fontFamily:'var(--font-serif, var(--font-en))'}}>
           Meetings <span className="jp" style={{fontSize:22, fontWeight:300, marginLeft:10, color:'var(--text-mute)'}}>会議</span>
         </h1>
         <div style={{marginTop:8, color:'var(--text-mute)', fontSize:13, display:'inline-flex', alignItems:'center', justifyContent:'center', gap:6, flexWrap:'wrap', textAlign:'center'}}>
-          <Icon name="shield" size={11}/>
           <span>Your private meeting notes and recordings</span>
           <span className="jp dim" style={{fontSize:11, marginLeft:4}}>個人</span>
         </div>
       </div>
 
-      {/* Live session — local progress you can see without backend */}
-      <div style={{
-        marginBottom:18,
-        padding:'14px 16px',
-        borderRadius:'var(--radius-lg)',
-        border:'1px solid ' + (liveSession ? 'var(--gold-dim)' : 'var(--border-hi)'),
-        background: liveSession ? 'color-mix(in srgb, var(--gold) 10%, var(--surface))' : 'var(--surface)',
-      }}>
-        {liveSession ? (
-          <div className="row" style={{gap:14, flexWrap:'wrap', alignItems:'center'}}>
-            <span className="t-mono" style={{color:'var(--gold)', fontWeight:600}}>LIVE</span>
-            <span style={{fontSize:20, fontWeight:600, fontVariantNumeric:'tabular-nums'}}>{fmtElapsedMs(nowTick - liveSession.startedAt)}</span>
-            <span className="jp dim" style={{fontSize:12}}>Granola で記録中 · ブラウザのみ</span>
-            <span className="spacer"/>
-            {!granola && (
-              <button type="button" className="btn btn-sm btn-ghost" onClick={reopenLiveGranola}>
-                <Icon name="note" size={14}/>
-                <span className="jp" style={{fontSize:11}}>ノートを開く</span>
-              </button>
-            )}
-            <button type="button" className="btn btn-sm btn-secondary" onClick={endLiveMeeting}>
-              <span className="en-only">End · save to Today</span>
-              <span className="jp" style={{fontSize:11}}>終了して今日に保存</span>
-            </button>
-          </div>
-        ) : (
-          <div className="row" style={{gap:12, flexWrap:'wrap', alignItems:'center'}}>
-            <button type="button" className="btn btn-sm btn-primary" onClick={startLiveMeeting}>
-              <Icon name="play" size={14}/>
-              <span className="en-only">Start meeting</span>
-              <span className="jp" style={{fontSize:11}}>会議を開始</span>
-            </button>
-            <span style={{fontSize:12, color:'var(--text-dim)'}} className="jp">経過時間を表示し、終了時に「今日」の一覧へ追記します（ダミーから進められます）</span>
-          </div>
-        )}
-      </div>
-
-      {/* Prompt area */}
-      <div style={{background:'var(--surface)', border:'1px solid var(--border-hi)', borderRadius:'var(--radius-lg)', padding:'14px 18px', marginBottom:18}}>
-        <div className="row" style={{marginBottom:10}}>
-          <button className="btn btn-sm btn-ghost" style={{padding:'0 8px', height:26, fontSize:11, background:'var(--surface-2)'}} onClick={()=>runRuntimeActionM('memory.search', { query:'meetings', kinds:['audio'], limit:30 }, { successMessage:'Meeting filter updated' })}>
-            <Icon name="shield" size={11}/>All meetings <Icon name="chevronDown" size={10}/>
-          </button>
-          <span className="spacer"/>
+      {/* Coming up — calendar-linked schedule (demo + sync when API returns events) */}
+      <section className="mtg-coming-up" aria-label="Coming up">
+        <h2 className="mtg-coming-up-title">
+          Coming up
+          <span className="jp dim" style={{fontSize:14, fontWeight:400, marginLeft:10}}>これからの予定</span>
+        </h2>
+        <div className="mtg-coming-up-card">
+          {comingUp.map(function (row) {
+            return (
+              <div key={row.id} className="mtg-coming-row">
+                <div className="mtg-coming-date">
+                  <span className="mtg-coming-daynum">{row.day}</span>
+                  <div className="mtg-coming-ymd">
+                    <span>{row.monthLabel}</span>
+                    <span style={{fontSize:11, color:'var(--text-dim)'}}>{row.weekday}</span>
+                  </div>
+                </div>
+                <div className="mtg-coming-event">
+                  <div className="mtg-coming-event-title">{row.title}</div>
+                  <div className="mtg-coming-event-time">{row.timeRange}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div className="row" style={{gap:10}}>
-          <div style={{flex:1, fontSize:14, color:'var(--text-dim)', padding:'6px 0'}}>Ask anything across 142 meetings…</div>
-          <span className="t-mono" style={{fontSize:10, color:'var(--text-mute)'}}>AUTO</span>
-          <button className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onClick={function () {
-            runRuntimeActionM('draft.create', { source:'meetings_prompt', action:'attach' }, { silentError:true }).then(function (r) {
-              if (r && r.ok) toastM('\u4e0b\u66f8\u304d\u3092\u751f\u6210\u3057\u307e\u3057\u305f\uff08\u30e2\u30c3\u30af\uff09', 'success');
-              else toastM((r && r.error && r.error.message) || '\u4e0b\u66f8\u304d\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f', 'warn');
-            });
-          }}><Icon name="paperclip" size={13}/></button>
-          <button className="btn btn-sm" style={{padding:'0 10px', background:'var(--gold)', color:'var(--bg)', borderColor:'var(--gold)'}} onClick={function () {
-            runRuntimeActionM('schedule.create', { source:'meetings_prompt', action:'record_voice_query' }, { silentError:true }).then(function (r) {
-              if (r && r.ok) toastM('\u97f3\u58f0\u30e1\u30e2\u3092\u30ad\u30e5\u30fc\u306b\u8ffd\u52a0\u3057\u307e\u3057\u305f\uff08\u30e2\u30c3\u30af / Tauri\u3067\u306f\u672c\u756a\uff09', 'success');
-              else toastM((r && r.error && r.error.message) || '\u30b9\u30b1\u30b8\u30e5\u30fc\u30eb\u306b\u5931\u6557\u3057\u307e\u3057\u305f', 'warn');
-            });
-          }}>
-            <Icon name="mic" size={13}/>
-          </button>
-        </div>
-      </div>
-
-      {/* Quick recipes */}
-      <div className="row" style={{gap:8, marginBottom:40, flexWrap:'wrap'}}>
-        {recipes.map((r,i) => (
-          <button key={i} className="btn btn-sm btn-ghost" style={{fontSize:11, height:26, padding:'0 10px', borderRadius:999, border:'1px dashed var(--border)', color:'var(--text-mute)'}} onClick={()=>openRecipeGranola(r)}>
-            <Icon name="check" size={10}/>
-            <span className="en-only">{r.label}</span>
-            <span className="jp" style={{fontSize:10, marginLeft:4}}>{r.jp}</span>
-          </button>
-        ))}
-        <span className="spacer"/>
-        <button className="btn btn-sm btn-ghost" style={{fontSize:11, height:26, padding:'0 10px', color:'var(--text-mute)'}} onClick={function () {
-          runRuntimeActionM('brief.get', { span:'week', source:'meetings_recipes' }, { silentError:true }).then(function (r) {
-            if (r && r.ok) toastM('\u30ec\u30b7\u30d4\u30e9\u30a4\u30d6\u30e9\u30ea\u3092\u958b\u304d\u307e\u3057\u305f', 'success');
-            else toastM('\u30d6\u30e9\u30a6\u30b6\u30e2\u30c3\u30af: \u4e0a\u306e\u30c1\u30c3\u30d7\u304b\u3089\u30ed\u30fc\u30ab\u30eb\u30c6\u30f3\u30d7\u3092\u958b\u3044\u3066\u304f\u3060\u3055\u3044', 'info');
-          });
-        }}>
-          <Icon name="grid" size={11}/>All recipes
-        </button>
-      </div>
+      </section>
 
       {/* Divider */}
       <div style={{height:1, background:'var(--border)', marginBottom:28, position:'relative'}}>
@@ -651,16 +775,28 @@ function ScreenMeetings() {
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:2}}>
             {userMeetingItems.map(function (n, i) {
+              var Mrow = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+              var recSk = audioRecSession && audioRecSession.storageKey;
+              var activeSk = recSk || (Mrow && Mrow.getActiveStorageKey && Mrow.getActiveStorageKey());
+              var isLiveRow = !!(Mrow && Mrow.isRecording && Mrow.isRecording() && n.storageKey && activeSk && n.storageKey === activeSk);
+              var rowTag = isLiveRow ? 'LIVE' : (n.tag || 'LOCAL');
               return (
-                <div key={i} role="button" tabIndex={0} className="mtg-row" onClick={function () { openMeetingNote(n, n.dateCtx || 'today-user'); }} onKeyDown={function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMeetingNote(n, n.dateCtx || 'today-user'); } }}>
+                <div key={n.storageKey || n.loggedAt || i} role="button" tabIndex={0} className="mtg-row" onClick={function () { openMeetingNote(n, n.dateCtx || 'today-user'); }} onKeyDown={function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMeetingNote(n, n.dateCtx || 'today-user'); } }}>
                   <div className="mtg-icon">
                     <Icon name="mic" size={14}/>
                   </div>
                   <div className="mtg-body">
                     <div className="row" style={{gap:8}}>
                       <span className="mtg-title">{n.t}</span>
-                      <span className="mtg-tag" style={{color:'var(--gold)', borderColor:'color-mix(in srgb, var(--gold) 30%, var(--border))'}}>
-                        {n.tag || 'LOCAL'}
+                      <span
+                        className="mtg-tag"
+                        style={{
+                          color: tagColor(rowTag),
+                          borderColor: 'color-mix(in srgb, ' + tagColor(rowTag) + ' 30%, var(--border))',
+                          animation: isLiveRow ? 'shogun-rec-pulse 1.35s ease-in-out infinite' : undefined,
+                        }}
+                      >
+                        {rowTag}
                       </span>
                       <MtgProgressDots storageKey={rowStorageKey(n, n.dateCtx || 'today-user')} listVersion={listTick}/>
                     </div>
@@ -684,8 +820,9 @@ function ScreenMeetings() {
         <div className="row" style={{marginBottom:16, gap:14}}>
           <span className="t-mono" style={{color:'var(--text-mute)'}}>YESTERDAY</span>
           <span className="jp dim" style={{fontSize:11}}>昨日</span>
+          <span className="jp dim" style={{fontSize:10, marginLeft:4}}>（UIサンプル）</span>
           <span style={{height:1, flex:1, background:'var(--border)'}}/>
-          <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>6 ITEMS · 2H 14M</span>
+          <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>{yesterday.length} ITEMS</span>
         </div>
         <div style={{display:'flex', flexDirection:'column', gap:2}}>
           {yesterday.map((n,i) => (
@@ -708,7 +845,6 @@ function ScreenMeetings() {
                 </div>
               </div>
               <div className="mtg-right">
-                {n.locked && <Icon name="shield" size={11} className="dim"/>}
                 <span className="t-mono mtg-time">{n.time}</span>
               </div>
             </div>
@@ -745,7 +881,6 @@ function ScreenMeetings() {
                   </div>
                 </div>
                 <div className="mtg-right">
-                  {n.locked && <Icon name="shield" size={11} className="dim"/>}
                   <span className="t-mono mtg-time">{n.time}</span>
                 </div>
               </div>
@@ -757,7 +892,10 @@ function ScreenMeetings() {
       {/* Footer */}
       <div style={{marginTop:48, padding:'18px 0', borderTop:'1px solid var(--border)', display:'flex', alignItems:'center', gap:12, color:'var(--text-dim)'}}>
         <Kamon size={14} color="var(--gold)"/>
-        <span className="t-mono" style={{fontSize:10}}>142 MEETINGS IN MEMORY · LOCAL</span>
+        <span className="t-mono" style={{fontSize:10}}>
+          {userMeetingItems.length} IN YOUR LOG · LOCAL
+          <span className="jp dim" style={{fontSize:9, marginLeft:8}}>（下の過去行はデモ）</span>
+        </span>
         <span className="spacer"/>
         <span className="jp" style={{fontSize:11}}>一期一会</span>
         <span style={{fontSize:11, fontStyle:'italic'}}>One meeting, one encounter</span>
@@ -765,6 +903,135 @@ function ScreenMeetings() {
 
         </div>
       </div>
+
+      {!granola && (
+      <div className="screen-meetings-chatdock">
+        <div className="screen-meetings-chatdock-inner">
+          <div className="mtg-chatdock-panel" tabIndex={-1}>
+          {showDockRecipeOverlay && filteredDockSlash.length > 0 && (
+            <div className="mtg-recipe-overlay" role="listbox" aria-label="Commands">
+              <div className="mtg-recipe-overlay-h">
+                <span className="mtg-recipe-overlay-h-main">{meetingsRecipeBrowse ? 'Recipes' : 'Commands'}</span>
+                <span className="mtg-recipe-overlay-h-jp jp dim">{meetingsRecipeBrowse ? '\u30ec\u30b7\u30d4' : '\u30b3\u30de\u30f3\u30c9'}</span>
+                <span className="mtg-recipe-overlay-h-line" aria-hidden="true"/>
+              </div>
+              {filteredDockSlash.map(function (row) {
+                var acc = row.accent || 'mint';
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    role="option"
+                    className="mtg-recipe-row"
+                    onMouseDown={function (e) { e.preventDefault(); }}
+                    onClick={function () { runDockSlashItem(row); }}
+                  >
+                    <span className={'mtg-recipe-icon mtg-recipe-icon--' + acc}>/</span>
+                    <div style={{minWidth:0}}>
+                      <div className="mtg-recipe-row-title">{row.label}</div>
+                      <div className="mtg-recipe-row-desc">{row.desc}</div>
+                      {row.jpHint && <div className="mtg-recipe-row-hint jp">{row.jpHint}</div>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+            <div className="mtg-chatdock-top">
+              <button type="button" className="mtg-chatdock-top-btn" title="History" aria-label="History" onMouseDown={function (e) { e.preventDefault(); }} onClick={meetingsDockHistory}>
+                <Icon name="history" size={16}/>
+              </button>
+              <div className="mtg-chatdock-chips">
+                <button type="button" className="mtg-chatdock-chip" onMouseDown={function (e) { e.preventDefault(); }} onClick={function () { runDockSlashItem(MEETINGS_DOCK_SLASH_CATALOG[0]); }}>
+                  <Icon name="edit" size={12}/>
+                  <span className="en-only">List recent todos</span>
+                  <span className="jp" style={{fontSize:10}}>TODO</span>
+                </button>
+                <button type="button" className="mtg-chatdock-chip" onMouseDown={function (e) { e.preventDefault(); }} onClick={function () { runDockSlashItem(MEETINGS_DOCK_SLASH_CATALOG[1]); }}>
+                  <Icon name="edit" size={12}/>
+                  <span>Coach me Matt</span>
+                </button>
+                <button type="button" className="mtg-chatdock-chip" onMouseDown={function (e) { e.preventDefault(); }} onClick={function () { runDockSlashItem(MEETINGS_DOCK_SLASH_CATALOG[2]); }}>
+                  <Icon name="edit" size={12}/>
+                  <span className="en-only">Write weekly recap</span>
+                  <span className="jp" style={{fontSize:10}}>週報</span>
+                </button>
+              </div>
+              <button
+                type="button"
+                className="mtg-chatdock-chip"
+                style={{flexShrink:0}}
+                onMouseDown={function (e) { e.preventDefault(); }}
+                onClick={function () { setMeetingsRecipeBrowse(function (v) { return !v; }); }}
+              >
+                <Icon name="grid" size={12}/>
+                <span className="en-only">All recipes</span>
+                <span className="jp" style={{fontSize:10}}>全て</span>
+              </button>
+            </div>
+
+            <form onSubmit={submitMeetingsPrompt}>
+              <div className="mtg-chatdock-inputblock">
+                <div className="mtg-chatdock-inputrow">
+                  <input
+                    type="text"
+                    value={meetingsPrompt}
+                    onChange={function (e) {
+                      var v = e.target.value;
+                      setMeetingsPrompt(v);
+                      if (v === '/') setMeetingsRecipeBrowse(false);
+                    }}
+                    onKeyDown={function (e) {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        submitMeetingsPrompt(e);
+                      }
+                    }}
+                    placeholder="Ask anything"
+                    aria-label="Ask anything"
+                    autoComplete="off"
+                    style={{
+                      border:'none',
+                      outline:'none',
+                      background:'transparent',
+                      color:'var(--text)',
+                      fontSize:14,
+                      fontFamily:'inherit',
+                    }}
+                  />
+                  <span
+                    className="mtg-chatdock-auto"
+                    role="button"
+                    tabIndex={0}
+                    onMouseDown={function (e) { e.preventDefault(); }}
+                    onClick={function () { toastM('Model: Auto', 'info'); }}
+                    onKeyDown={function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toastM('Model: Auto', 'info'); } }}
+                  >
+                    Auto <Icon name="chevronDown" size={10}/>
+                  </span>
+                  <button type="button" className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onMouseDown={function (e) { e.preventDefault(); }} onClick={function () {
+                    runRuntimeActionM('draft.create', { source: 'meetings_prompt', action: 'attach' }, { silentError: true }).then(function (r) {
+                      if (r && r.ok) toastM('\u4e0b\u66f8\u304d\u3092\u751f\u6210\u3057\u307e\u3057\u305f\uff08\u30e2\u30c3\u30af\uff09', 'success');
+                      else toastM((r && r.error && r.error.message) || '\u4e0b\u66f8\u304d\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f', 'warn');
+                    });
+                  }}><Icon name="paperclip" size={13}/></button>
+                  <button
+                    type="submit"
+                    className="mtg-chatdock-send"
+                    disabled={!(meetingsPrompt || '').trim() || (meetingsPrompt || '').trim().startsWith('/')}
+                    title="Send"
+                    aria-label="Send"
+                  >
+                    <Icon name="arrowUp" size={17}/>
+                  </button>
+                </div>
+              </div>
+            </form>
+            <div className="mtg-chatdock-handle" aria-hidden="true"/>
+          </div>
+        </div>
+      </div>
+      )}
 
       {/* Granola — scoped to main column only (sidebar + topbar stay visible) */}
       {granola && (
@@ -788,6 +1055,7 @@ function ScreenMeetings() {
               background:'var(--surface)',
               color:'var(--text-mute)',
               cursor:'pointer',
+              top: 20,
             }}
           >
             <Icon name="arrowLeft" size={18}/>
@@ -798,7 +1066,7 @@ function ScreenMeetings() {
               {['memo','transcript','summary','minutes'].map(function (pid) {
                 const labels = { memo:'メモ', transcript:'文字起こし', summary:'要約', minutes:'議事録' };
                 return (
-                  <button key={pid} type="button" onClick={function () { setGranolaPane(pid); }} style={{fontSize:11, padding:'6px 8px', borderRadius:8, border:'1px solid var(--border-hi)', background:granolaPane===pid?'color-mix(in srgb, var(--success) 16%, transparent)':'transparent', color:'var(--text)', cursor:'pointer', fontFamily:'inherit'}}>
+                  <button key={pid} type="button" onClick={function () { setGranolaPane(pid); }} style={{fontSize:11, padding:'6px 8px', borderRadius:8, border:'1px solid var(--border-hi)', background:granolaPane===pid?'color-mix(in srgb, var(--gold) 16%, transparent)':'transparent', color:'var(--text)', cursor:'pointer', fontFamily:'inherit'}}>
                     {labels[pid]}
                   </button>
                 );
@@ -810,7 +1078,6 @@ function ScreenMeetings() {
             <div className="granola-float" style={{bottom:cmdBarMin?88:150, left:'50%', transform:'translateX(-50%)', width:'min(320px, calc(100% - 32px))', padding:12, borderRadius:16, background:'var(--surface)', border:'1px solid var(--border-hi)', boxShadow:'var(--shadow-lg)'}}>
               {[
                 { fn: applyStubTranscript, en: 'Insert transcript template', jp: 'テンプレ文字起こし' },
-                { fn: toggleSpeech, en: 'Browser speech input', jp: 'ブラウザ音声入力' },
                 { fn: refreshSummary, en: 'Refresh summary (rules)', jp: '要約を更新（ルール）' },
                 { fn: refreshMinutes, en: 'Build minutes', jp: '議事録を生成' },
                 { fn: ingestNoteToMemory, en: 'Save to Memory', jp: 'Memory に保存' },
@@ -840,44 +1107,65 @@ function ScreenMeetings() {
           )}
 
           <div style={{flex:1, overflow:'auto', padding:'56px 32px ' + (cmdBarMin ? '100px' : '140px'), maxWidth:720, width:'100%', margin:'0 auto', boxSizing:'border-box'}}>
-            <h1 style={{
-              margin:0,
-              fontSize:32,
-              fontWeight:500,
-              letterSpacing:'-0.03em',
-              lineHeight:1.15,
-              fontFamily:'var(--font-serif, Georgia, "Times New Roman", serif)',
-              color:'var(--text)',
-            }}>
-              <span className="en-only">{granola.title}</span>
-              {granola.titleJp && <span className="jp">{granola.titleJp}</span>}
-            </h1>
+            <div style={{ margin: 0 }}>
+              <input
+                type="text"
+                className="granola-title-input"
+                aria-label="Note title"
+                value={granola.title != null ? granola.title : ''}
+                onChange={function (e) {
+                  var v = e.target.value;
+                  setGranola(function (g) { return g ? { ...g, title: v } : g; });
+                }}
+                placeholder="Untitled"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  margin: 0,
+                  padding: '2px 0',
+                  fontSize: 32,
+                  fontWeight: 500,
+                  letterSpacing: '-0.03em',
+                  lineHeight: 1.15,
+                  fontFamily: 'var(--font-serif, Georgia, "Times New Roman", serif)',
+                  color: 'var(--text)',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid transparent',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+              {granola.titleJp && (
+                <div className="jp" style={{ fontSize: 15, color: 'var(--text-mute)', marginTop: 6 }}>{granola.titleJp}</div>
+              )}
+            </div>
 
             <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:18}}>
-              <span style={granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)')}>
+              <button type="button" onClick={showGranolaDateInfo} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} title="Tap for full date">
                 <Icon name="calendar" size={13}/>
                 <span className="en-only">{granola.dateLabel}</span>
                 <span className="jp" style={{fontSize:12}}>{granola.dateLabelJp}</span>
                 {granola.time && <span style={{opacity:0.7, marginLeft:4}} className="t-mono">{granola.time}</span>}
-              </span>
-              <span style={granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)')}>
+              </button>
+              <button type="button" onClick={showGranolaAuthorInfo} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} title="Participant label">
                 <Icon name="users" size={13}/>
                 <span className="en-only">{granola.authorLabel}</span>
                 <span className="jp" style={{fontSize:12}}>{granola.authorLabelJp}</span>
-              </span>
+              </button>
               <button type="button" onClick={addFolderTag} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}}>
                 <Icon name="folder" size={13}/>
                 <span className="en-only">Add to folder</span>
                 <span className="jp" style={{fontSize:12}}>フォルダに追加</span>
               </button>
               {granola.tag && (
-                <span style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--success)'), color:'var(--success)', borderColor:'color-mix(in srgb, var(--success) 35%, transparent)'}}>
+                <span style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--gold)'), color:'var(--gold)', borderColor:'color-mix(in srgb, var(--gold) 35%, transparent)'}}>
                   {granola.tag}
                 </span>
               )}
             </div>
 
-            <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:20}}>
+            <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:20, alignItems:'center'}}>
               {[
                 { id:'memo', en:'Notes', jp:'メモ' },
                 { id:'transcript', en:'Transcript', jp:'文字起こし' },
@@ -886,7 +1174,7 @@ function ScreenMeetings() {
               ].map(function (t) {
                 const on = granolaPane === t.id;
                 return (
-                  <button key={t.id} type="button" onClick={function () { setGranolaPane(t.id); }} style={{padding:'8px 14px', borderRadius:999, border:'1px solid ' + (on ? 'var(--success)' : 'var(--border-hi)'), background:on ? 'color-mix(in srgb, var(--success) 14%, transparent)' : 'transparent', color:on ? 'var(--success)' : 'var(--text-mute)', cursor:'pointer', fontSize:12, fontFamily:'inherit'}}>
+                  <button key={t.id} type="button" onClick={function () { setGranolaPane(t.id); }} style={{padding:'8px 14px', borderRadius:999, border:'1px solid ' + (on ? 'var(--gold)' : 'var(--border-hi)'), background:on ? 'color-mix(in srgb, var(--gold) 14%, transparent)' : 'transparent', color:on ? 'var(--gold)' : 'var(--text-mute)', cursor:'pointer', fontSize:12, fontFamily:'inherit'}}>
                     <span className="en-only">{t.en}</span>
                     <span className="jp" style={{fontSize:11}}>{t.jp}</span>
                   </button>
@@ -895,19 +1183,18 @@ function ScreenMeetings() {
             </div>
 
             {granolaPane === 'transcript' && (
-              <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:12}}>
+              <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:12, alignItems:'center'}}>
                 <button type="button" onClick={applyStubTranscript} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--text-mute)')}>+ \u30c6\u30f3\u30d7</button>
-                <button type="button" onClick={toggleSpeech} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--success)')}>\u97f3\u58f0\u5165\u529b</button>
               </div>
             )}
             {granolaPane === 'summary' && (
               <div style={{marginTop:12}}>
-                <button type="button" onClick={refreshSummary} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--success)')}>\u8981\u7d04\u3092\u66f4\u65b0\uff08\u30eb\u30fc\u30eb\uff09</button>
+                <button type="button" onClick={refreshSummary} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--gold)')}>\u8981\u7d04\u3092\u66f4\u65b0\uff08\u30eb\u30fc\u30eb\uff09</button>
               </div>
             )}
             {granolaPane === 'minutes' && (
               <div style={{marginTop:12}}>
-                <button type="button" onClick={refreshMinutes} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--success)')}>\u8b70\u4e8b\u9332\u3092\u751f\u6210</button>
+                <button type="button" onClick={refreshMinutes} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--gold)')}>\u8b70\u4e8b\u9332\u3092\u751f\u6210</button>
               </div>
             )}
 
@@ -924,7 +1211,7 @@ function ScreenMeetings() {
               <textarea
                 value={granolaDraft.transcript}
                 onChange={function (e) { setGranolaDraft(function (d) { return { ...d, transcript: e.target.value }; }); }}
-                placeholder="Transcript (local / paste / speech)…"
+                placeholder="Transcript (paste or type locally)… \u8cbc\u308a\u4ed8\u3051\u307e\u305f\u306f\u5165\u529b\u2026"
                 className="granola-body granola-pane"
                 style={granolaTextareaStyle()}
               />
@@ -966,10 +1253,37 @@ function ScreenMeetings() {
               boxShadow:'var(--shadow-lg)',
             }}
           >
-            <div style={{display:'flex', alignItems:'center', gap:2, padding:'0 6px 0 10px'}}>
+            <div style={{display:'flex', alignItems:'center', gap:4, padding:'0 6px 0 10px'}}>
               <button type="button" style={granolaIconBtn} onClick={function () { setGranolaMenuOpen(function (v) { return !v; }); }} aria-expanded={granolaMenuOpen}><Icon name="more" size={16}/></button>
+              <button
+                type="button"
+                onClick={function () { if (audioRecSession) stopNoteRecording(); else startNoteRecording(); }}
+                aria-label={audioRecSession ? 'Stop recording' : 'Start recording'}
+                title={audioRecSession ? '録音を終了' : '録音を開始'}
+                style={{
+                  display:'flex',
+                  alignItems:'center',
+                  justifyContent:'center',
+                  width:40,
+                  height:34,
+                  borderRadius:10,
+                  flexShrink:0,
+                  border:'1px solid ' + (audioRecSession
+                    ? 'color-mix(in srgb, var(--gold) 50%, var(--border-hi))'
+                    : 'color-mix(in srgb, var(--gold) 38%, var(--border-hi))'),
+                  background: audioRecSession
+                    ? 'color-mix(in srgb, var(--gold) 26%, var(--surface))'
+                    : 'color-mix(in srgb, var(--gold) 14%, var(--surface))',
+                  color:'var(--gold)',
+                  cursor:'pointer',
+                  boxShadow: audioRecSession ? '0 0 0 1px color-mix(in srgb, var(--gold) 20%, transparent)' : 'none',
+                  animation: audioRecSession ? 'shogun-rec-pulse 1.35s ease-in-out infinite' : undefined,
+                }}
+              >
+                <Icon name={audioRecSession ? 'stop' : 'play'} size={audioRecSession ? 15 : 16}/>
+              </button>
               <button type="button" style={granolaIconBtn} onClick={function () { setCmdBarMin(true); setGranolaMenuOpen(false); }} aria-label="Minimize bar"><Icon name="chevronUp" size={16}/></button>
-              <button type="button" style={granolaIconBtn} onClick={function () { setGranolaOutline(function (v) { return !v; }); }} aria-label="Section outline"><span style={{display:'block', width:14, height:14, border:'1.5px solid var(--text-mute)', borderRadius:3}}/></button>
+              <button type="button" style={granolaIconBtn} onClick={function () { setGranolaOutline(function (v) { return !v; }); }} aria-label="Section outline" title="セクション一覧"><Icon name="grid" size={15}/></button>
             </div>
             <input
               type="text"
@@ -1016,7 +1330,30 @@ function ScreenMeetings() {
           </div>
           )}
           {cmdBarMin && (
-            <div className="granola-float" style={{left:'50%', bottom:28, transform:'translateX(-50%)'}}>
+            <div className="granola-float" style={{left:'50%', bottom:28, transform:'translateX(-50%)', display:'flex', alignItems:'center', gap:8}}>
+              {audioRecSession && (
+                <button
+                  type="button"
+                  onClick={function (e) { e.preventDefault(); stopNoteRecording(); }}
+                  aria-label="Stop recording"
+                  title="録音を終了"
+                  style={{
+                    display:'flex',
+                    alignItems:'center',
+                    justifyContent:'center',
+                    width:44,
+                    height:44,
+                    borderRadius:999,
+                    border:'1px solid color-mix(in srgb, var(--gold) 45%, var(--border-hi))',
+                    background:'color-mix(in srgb, var(--gold) 22%, var(--surface))',
+                    color:'var(--gold)',
+                    cursor:'pointer',
+                    flexShrink:0,
+                  }}
+                >
+                  <Icon name="stop" size={16}/>
+                </button>
+              )}
               <button type="button" onClick={function () { setCmdBarMin(false); }} style={{display:'flex', alignItems:'center', gap:8, padding:'10px 18px', borderRadius:999, border:'1px solid var(--border-hi)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', fontFamily:'inherit'}}>
                 <Icon name="chevronDown" size={16}/> Command bar
               </button>
@@ -1032,6 +1369,7 @@ function ScreenMeetings() {
 
       {/* Scoped styles */}
       <style>{`
+        @keyframes shogun-rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
         .mtg-row {
           display:flex; align-items:center; gap:14px;
           padding:14px 14px; border-radius:var(--radius-md);

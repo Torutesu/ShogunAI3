@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React, ReactDOM, ShogunKeyboardShortcuts */
+/* global Icon, Kamon, IntegrationLogo, React, ReactDOM, ShogunKeyboardShortcuts */
 const { useState: useStateS } = React;
 
 const SETTINGS_NAV = [
@@ -9,7 +9,6 @@ const SETTINGS_NAV = [
   {id:'data',         label:'Data Controls',      jp:'資料', icon:'memory'},
   {id:'hummingbird',  label:'Hummingbird',        jp:'鳥',   icon:'zap'},
   {id:'meetings',     label:'Meetings',           jp:'会議', icon:'calendar'},
-  {id:'brief',        label:'Morning Brief',      jp:'朝礼', icon:'note'},
   {id:'chat',         label:'Chat',               jp:'対話', icon:'chat'},
   {id:'llm',          label:'Model & API',        jp:'モデル', icon:'key'},
   {id:'integrations', label:'Integrations',       jp:'連携', icon:'plug'},
@@ -23,7 +22,71 @@ const SETTINGS_NAV = [
 const PANE_ALIAS = {
   upgrade:'subscription', feedback:'support', download:'general',
   referral:'subscription', changelog:'general', api:'llm',
+  brief: 'general',
 };
+
+/**
+ * Commercial build: customer-facing legal URLs (optional). Leave empty to rely on bundled markdown
+ * (docs/TERMS_OF_SERVICE.md, docs/TERMS_OF_SERVICE_EN.md, PRIVACY.md). Replace supportMailto with your support address.
+ */
+const PRODUCT = {
+  supportMailto: 'mailto:support@yourcompany.com?subject=SHOGUN%20support',
+  termsJaUrl: '',
+  termsEnUrl: '',
+  privacyUrl: '',
+};
+
+function ProductLegalLinks() {
+  const hasHosted = !!(PRODUCT.termsJaUrl || PRODUCT.termsEnUrl || PRODUCT.privacyUrl);
+  return (
+    <div className="row" style={{ marginTop: 12, gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+      {PRODUCT.termsJaUrl ? (
+        <a className="s-link" href={PRODUCT.termsJaUrl} target="_blank" rel="noopener noreferrer">
+          Terms / 利用規約（日本語） <Icon name="arrowUpRight" size={10} />
+        </a>
+      ) : null}
+      {PRODUCT.termsEnUrl ? (
+        <a className="s-link" href={PRODUCT.termsEnUrl} target="_blank" rel="noopener noreferrer">
+          Terms (English) <Icon name="arrowUpRight" size={10} />
+        </a>
+      ) : null}
+      {PRODUCT.privacyUrl ? (
+        <a className="s-link" href={PRODUCT.privacyUrl} target="_blank" rel="noopener noreferrer">
+          Privacy / プライバシー <Icon name="arrowUpRight" size={10} />
+        </a>
+      ) : null}
+      <a className="s-link" href={PRODUCT.supportMailto}>
+        Contact support / サポート <Icon name="arrowUpRight" size={10} />
+      </a>
+      {!hasHosted ? (
+        <span className="s-field-hint" style={{ fontSize: 11, maxWidth: 420 }}>
+          Full legal text is supplied as markdown with your license (JP/EN Terms + Privacy). Host URLs in PRODUCT.* in source when you publish web pages.
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** In notices when hosted Terms URL may be unset — underline non-link. */
+function TermsNoticeAnchor({ children }) {
+  const href = PRODUCT.termsJaUrl || PRODUCT.termsEnUrl;
+  if (!href) {
+    return (
+      <span
+        className="s-link"
+        style={{ cursor: 'help', textDecoration: 'underline dotted' }}
+        title="See TERMS_OF_SERVICE.md and TERMS_OF_SERVICE_EN.md included with your purchase"
+      >
+        {children}
+      </span>
+    );
+  }
+  return (
+    <a className="s-link" href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  );
+}
 
 /** Stable fallback so `sections.security` missing does not allocate a new `{}` every render. */
 const EMPTY_SETTINGS_SECURITY = {};
@@ -109,6 +172,33 @@ function useRuntimeActions() {
 /** Sections map from `app_settings_load` → `settings.sections`; consumed by settings panes. */
 const SettingsHydrationContext = React.createContext({ sections: {}, refreshSections: null });
 
+/**
+ * Read a value saved either as a dotted top-level key (`sections['chat.instructions']`)
+ * or nested (`sections.chat.instructions`), with optional `{ value: string }` wrapper.
+ */
+function readSectionValue(sections, dottedKey) {
+  if (!sections || typeof sections !== 'object') return undefined;
+  const direct = sections[dottedKey];
+  if (direct != null && typeof direct === 'object' && 'value' in direct) {
+    return direct.value == null ? '' : String(direct.value);
+  }
+  if (typeof direct === 'string') return direct;
+  const parts = String(dottedKey || '')
+    .split('.')
+    .filter(Boolean);
+  if (parts.length < 2) return undefined;
+  let cur = sections;
+  for (let i = 0; i < parts.length; i++) {
+    if (!cur || typeof cur !== 'object') return undefined;
+    cur = cur[parts[i]];
+  }
+  if (cur != null && typeof cur === 'object' && 'value' in cur) {
+    return cur.value == null ? '' : String(cur.value);
+  }
+  if (typeof cur === 'string') return cur;
+  return undefined;
+}
+
 function Pane({title, jp, children, subtitle}) {
   return (
     <div className="s-pane">
@@ -126,11 +216,23 @@ function Pane({title, jp, children, subtitle}) {
 
 function PaneGeneral() {
   const { run, toast } = useRuntimeActions();
-  const { sections } = React.useContext(SettingsHydrationContext);
-  const [name, setName] = useStateS('Toru Tano');
-  const [aliases, setAliases] = useStateS('torubj0904@gmail.com, @toru, toru.t');
-  const [email, setEmail] = useStateS('torubj0904@gmail.com');
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
+  const [name, setName] = useStateS('');
+  const [aliases, setAliases] = useStateS('');
+  const [email, setEmail] = useStateS('');
   const [clerkState, setClerkState] = useStateS({ enabled: false, signedIn: false, label: '' });
+  const saveProfile = React.useCallback(
+    async (opts) => {
+      const quiet = opts && opts.quiet;
+      const r = await run(
+        'settings.save',
+        { section: 'general', name, aliases, email },
+        quiet ? { silentError: true } : { silentError: true, successMessage: 'Profile updated' },
+      );
+      if (r && r.ok && refreshSections) await refreshSections();
+    },
+    [run, refreshSections, name, aliases, email],
+  );
   React.useEffect(() => {
     const g = sections.general;
     if (!g || typeof g !== 'object') return;
@@ -166,9 +268,45 @@ function PaneGeneral() {
   }, []);
   return (
     <Pane title="General" jp="一般">
+      <div
+        className="s-field-hint"
+        style={{
+          marginBottom: 16,
+          padding: 14,
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)',
+          lineHeight: 1.55,
+          fontSize: 12,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>SHOGUN v1 — product scope / 製品範囲</div>
+        <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-dim)' }}>
+          <li>
+            <strong className="en-only">Platform:</strong>
+            <strong className="jp">対象:</strong> macOS desktop (Tauri). Other OS are not supported in this release.
+          </li>
+          <li>
+            <strong className="en-only">Morning Brief:</strong> content may be a <strong>stub</strong> or generated via{' '}
+            <strong>your configured LLM</strong>; it is not guaranteed to match a separate AMC batch pipeline unless you wire
+            that yourself.
+          </li>
+          <li>
+            <strong className="en-only">Integrations:</strong> many &quot;Connect&quot; rows are <strong>preview / not wired</strong> in v1 — expect
+            warnings where OAuth is unavailable.
+          </li>
+          <li>
+            <strong className="en-only">Billing UI:</strong> subscription screens may be <strong>illustrative</strong> until checkout is connected — see Terms.
+          </li>
+        </ul>
+        <div className="jp" style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
+          Morning Brief は環境によりスタブまたはご自身の LLM 経由の生成です。連携の Connect は v1 では未接続のことがあります。契約画面の金額はイメージの場合があります（利用規約参照）。
+        </div>
+        <ProductLegalLinks />
+      </div>
       <Field
         label="Clerk account"
-        hint="Free tier: sign in with email, Google, etc. (in-app overlay). Add your dev URL and shogun-ai:// under Clerk → Redirect URLs if OAuth redirects fail; the app may fall back to the system browser. For Touch ID / Face ID on this device without a paid Clerk plan, use Privacy → Biometric app lock."
+        hint="Free tier: sign in with email, Google, etc. (in-app overlay). Add your dev URL and shogun-ai:// under Clerk → Redirect URLs if OAuth redirects fail; the app may fall back to the system browser. For Touch ID / Face ID on this device without a paid Clerk plan, use Privacy → Biometric app lock. When Clerk is enabled, Clerk’s own Terms of Service and Privacy Policy (clerk.com) apply to authentication and account data processed by Clerk, in addition to SHOGUN’s documents."
       >
         {!clerkState.enabled && (
           <div className="s-field-hint" style={{ marginTop: 0 }}>
@@ -206,15 +344,38 @@ function PaneGeneral() {
         )}
       </Field>
       <Field label="What should SHOGUN call you?">
-        <input className="s-input" value={name} onChange={e=>setName(e.target.value)}/>
+        <input
+          className="s-input"
+          placeholder="Your name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => void saveProfile({ quiet: true })}
+        />
       </Field>
       <Field label="Aliases" hint="Include your nicknames, online handles, and other identifiers, separated by commas">
-        <input className="s-input" value={aliases} onChange={e=>setAliases(e.target.value)}/>
+        <input
+          className="s-input"
+          placeholder="e.g. @handle, nickname"
+          value={aliases}
+          onChange={(e) => setAliases(e.target.value)}
+          onBlur={() => void saveProfile({ quiet: true })}
+        />
       </Field>
       <Field label="Email">
         <div className="row" style={{gap:8}}>
-          <input className="s-input" value={email} onChange={e=>setEmail(e.target.value)} style={{flex:1}}/>
-          <button className="btn btn-sm btn-secondary" onClick={()=>run('settings.save', { section:'general', name, aliases, email }, { successMessage:'Profile updated' })}><Icon name="edit" size={12}/></button>
+          <input
+            className="s-input"
+            placeholder="you@example.com"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            style={{flex:1}}
+            onBlur={() => void saveProfile({ quiet: true })}
+          />
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => void saveProfile()}>
+            <Icon name="edit" size={12}/>
+          </button>
         </div>
       </Field>
       <div className="s-meta">
@@ -393,6 +554,26 @@ function PanePrivacy() {
         <div style={{fontWeight:600, marginBottom:6}}>Local-first · ローカルファースト</div>
         <div>Memory and ingested context stay in this app&apos;s data on this Mac. There is no SHOGUN cloud sync for the Memory index in this build. Chat / LLM and Clerk still send data to those services when you use them.</div>
         <div className="jp" style={{marginTop:8, fontSize:11, color:'var(--text-dim)'}}>Memory と取り込んだコンテキストはこの Mac のアプリデータにのみ保存されます。Memory本体の SHOGUN クラウド同期はありません。Chat・LLM や Clerk 利用時は各サービスへ送信されます。</div>
+        <div className="row" style={{ marginTop: 12, gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          {PRODUCT.privacyUrl ? (
+            <a className="s-link" href={PRODUCT.privacyUrl} target="_blank" rel="noopener noreferrer">
+              Privacy summary <Icon name="arrowUpRight" size={10} />
+            </a>
+          ) : (
+            <span className="s-field-hint" style={{ fontSize: 11 }}>
+              Privacy: see <code style={{ fontSize: 10 }}>PRIVACY.md</code> with your license
+            </span>
+          )}
+          {PRODUCT.termsJaUrl ? (
+            <a className="s-link" href={PRODUCT.termsJaUrl} target="_blank" rel="noopener noreferrer">
+              Terms / 利用規約 <Icon name="arrowUpRight" size={10} />
+            </a>
+          ) : (
+            <span className="s-field-hint" style={{ fontSize: 11 }}>
+              Terms: <code style={{ fontSize: 10 }}>TERMS_OF_SERVICE.md</code> / <code style={{ fontSize: 10 }}>TERMS_OF_SERVICE_EN.md</code>
+            </span>
+          )}
+        </div>
       </div>
       <div className="s-card" style={{marginBottom:14}}>
         <Row
@@ -516,12 +697,14 @@ function PaneHummingbird() {
   const [enabled, setEnabled] = useStateS(true);
   const [alwaysNew, setAlwaysNew] = useStateS(false);
   const [mode, setMode] = useStateS('any_app');
+  const [globalShortcut, setGlobalShortcut] = useStateS('option_double_tap');
   React.useEffect(() => {
     const h = sections.hummingbird;
     if (!h || typeof h !== 'object') return;
     if (h.mode != null) setMode(String(h.mode));
     if (typeof h.enabled === 'boolean') setEnabled(h.enabled);
     if (typeof h.alwaysNew === 'boolean') setAlwaysNew(h.alwaysNew);
+    if (h.globalShortcut != null) setGlobalShortcut(String(h.globalShortcut));
   }, [sections]);
   return (
     <Pane title="Hummingbird" jp="鳥" subtitle="Chat with anything on your screen — apps, meetings, or selected text.">
@@ -533,9 +716,9 @@ function PaneHummingbird() {
         {open && (
           <div style={{borderTop:'1px solid var(--border)'}}>
             <div className="row" style={{padding:'10px 16px', gap:6}}>
-              <button className="btn btn-sm" style={{background:mode==='any_app'?'var(--surface-2)':'transparent'}} onClick={()=>{ setMode('any_app'); run('settings.save', { section:'hummingbird', mode:'any_app', enabled, alwaysNew }, { silentError:true }); }}>Any app</button>
-              <button className="btn btn-sm btn-ghost" onClick={()=>{ setMode('meeting'); run('settings.save', { section:'hummingbird', mode:'meeting', enabled, alwaysNew }, { silentError:true }); }}>Ongoing meeting</button>
-              <button className="btn btn-sm btn-ghost" onClick={()=>{ setMode('selection'); run('settings.save', { section:'hummingbird', mode:'selection', enabled, alwaysNew }, { silentError:true }); }}>Selected text</button>
+              <button type="button" className="btn btn-sm" style={{background:mode==='any_app'?'var(--surface-2)':'transparent'}} onClick={()=>{ setMode('any_app'); run('settings.save', { section:'hummingbird', mode:'any_app', enabled, alwaysNew, globalShortcut }, { silentError:true }); }}>Any app</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={()=>{ setMode('meeting'); run('settings.save', { section:'hummingbird', mode:'meeting', enabled, alwaysNew, globalShortcut }, { silentError:true }); }}>Ongoing meeting</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={()=>{ setMode('selection'); run('settings.save', { section:'hummingbird', mode:'selection', enabled, alwaysNew, globalShortcut }, { silentError:true }); }}>Selected text</button>
             </div>
             <div style={{margin:'0 16px 16px', border:'1px solid var(--border)', borderRadius:'var(--radius-md)', background:'#f4f1ea', padding:'40px 30px', fontFamily:'Georgia, serif', color:'#2a2420', position:'relative', minHeight:180}}>
               <div style={{fontSize:22, fontWeight:500, marginBottom:8}}>Creativity Is a Process, Not an Event</div>
@@ -545,7 +728,7 @@ function PaneHummingbird() {
                 <Kamon size={12} color="var(--gold)"/>
                 <span style={{fontSize:12, color:'var(--text-mute)'}}>Summarize this article about creativity</span>
                 <span className="spacer"/>
-                <button className="btn btn-sm btn-primary" style={{width:22, height:22, padding:0}} onClick={()=>run('settings.save', { section:'hummingbird', mode, enabled, alwaysNew }, { successMessage:'Hummingbird mode saved' })}><Icon name="arrowUpRight" size={10}/></button>
+                <button type="button" className="btn btn-sm btn-primary" style={{width:22, height:22, padding:0}} onClick={()=>run('settings.save', { section:'hummingbird', mode, enabled, alwaysNew, globalShortcut }, { successMessage:'Hummingbird mode saved' })}><Icon name="arrowUpRight" size={10}/></button>
               </div>
             </div>
           </div>
@@ -553,93 +736,184 @@ function PaneHummingbird() {
       </div>
       <div className="s-card" style={{marginTop:14}}>
         <Row title="Enable Hummingbird" desc="Open SHOGUN from anywhere and ask about what's on your screen.">
-          <Toggle on={enabled} onClick={()=>{ const next = !enabled; setEnabled(next); run('settings.save', { section:'hummingbird', mode, enabled: next, alwaysNew }, { silentError:true }); }}/>
+          <Toggle on={enabled} onClick={()=>{ const next = !enabled; setEnabled(next); run('settings.save', { section:'hummingbird', mode, enabled: next, alwaysNew, globalShortcut }, { silentError:true }); }}/>
         </Row>
         <Row title="Global Shortcut" desc="Choose the global shortcut used to open Hummingbird">
-          <select className="s-select"><option>Tap Option twice</option><option>⌘ + Space</option></select>
-        </Row>
-        <Row title="Always Start New Chat" desc="Start with a fresh chat each time you open Hummingbird" last>
-          <Toggle on={alwaysNew} onClick={()=>{ const next = !alwaysNew; setAlwaysNew(next); run('settings.save', { section:'hummingbird', mode, enabled, alwaysNew: next }, { silentError:true }); }}/>
-        </Row>
-      </div>
-    </Pane>
-  );
-}
-
-function PaneBrief() {
-  const { run } = useRuntimeActions();
-  const { sections } = React.useContext(SettingsHydrationContext);
-  const [morningBriefVersion, setMorningBriefVersion] = useStateS('1');
-  React.useEffect(() => {
-    const b = sections.brief;
-    if (!b || typeof b !== 'object') return;
-    if (b.morningBriefVersion != null) setMorningBriefVersion(String(b.morningBriefVersion));
-  }, [sections]);
-  return (
-    <Pane title="Morning Brief" jp="朝礼">
-      <div className="s-card">
-        <Row
-          title="Brief format"
-          desc="v2 uses AMC (What, Why-now, Related context, Next action). v1 uses the legacy LLM sections layout."
-          last
-        >
           <select
             className="s-select"
-            value={morningBriefVersion}
+            value={globalShortcut}
             onChange={(e) => {
               const v = e.target.value;
-              setMorningBriefVersion(v);
-              window.__SHOGUN_SETTINGS_BRIEF__ = { morningBriefVersion: v };
-              run(
-                'settings.save',
-                { section: 'brief', morningBriefVersion: v },
-                { successMessage: v === '2' ? 'Morning Brief v2 enabled' : 'Morning Brief v1 enabled' },
-              );
+              setGlobalShortcut(v);
+              run('settings.save', { section: 'hummingbird', mode, enabled, alwaysNew, globalShortcut: v }, { silentError: true });
             }}
           >
-            <option value="1">v1 — Legacy sections</option>
-            <option value="2">v2 — AMC cards</option>
+            <option value="option_double_tap">Tap Option twice</option>
+            <option value="cmd_space">⌘ + Space</option>
           </select>
         </Row>
-        <div className="s-field-hint" style={{ marginTop: 12 }}>
-          Dev: append <code>?brief=v2</code> to the URL to force v2 in the browser mock.
-        </div>
+        <Row title="Always Start New Chat" desc="Start with a fresh chat each time you open Hummingbird" last>
+          <Toggle on={alwaysNew} onClick={()=>{ const next = !alwaysNew; setAlwaysNew(next); run('settings.save', { section:'hummingbird', mode, enabled, alwaysNew: next, globalShortcut }, { silentError:true }); }}/>
+        </Row>
       </div>
     </Pane>
   );
 }
 
 function PaneMeetings() {
-  const [r, setR] = useStateS(true);
-  const [ex, setEx] = useStateS(true);
-  const [det, setDet] = useStateS(true);
-  const [auto, setAuto] = useStateS(false);
+  const { run } = useRuntimeActions();
+  const { sections } = React.useContext(SettingsHydrationContext);
+  const [notifScope, setNotifScope] = useStateS('confirmed_only');
+  const [meetingLang, setMeetingLang] = useStateS('ja');
+  const [remindersOn, setRemindersOn] = useStateS(true);
+  const [reminderMins, setReminderMins] = useStateS('5');
+  const [excludeNoGuests, setExcludeNoGuests] = useStateS(true);
+  const [appDetectAlerts, setAppDetectAlerts] = useStateS(true);
+  const [autoRecord, setAutoRecord] = useStateS(false);
+  const [inactivityMins, setInactivityMins] = useStateS('15');
+  const persist = React.useCallback(
+    (patch) =>
+      run(
+        'settings.save',
+        {
+          section: 'meetings',
+          notifScope,
+          meetingLang,
+          remindersOn,
+          reminderMins,
+          excludeNoGuests,
+          appDetectAlerts,
+          autoRecord,
+          inactivityMins,
+          ...patch,
+        },
+        { silentError: true },
+      ),
+    [
+      run,
+      notifScope,
+      meetingLang,
+      remindersOn,
+      reminderMins,
+      excludeNoGuests,
+      appDetectAlerts,
+      autoRecord,
+      inactivityMins,
+    ],
+  );
+  React.useEffect(() => {
+    const m = sections.meetings;
+    if (!m || typeof m !== 'object') return;
+    if (m.notifScope != null) setNotifScope(String(m.notifScope));
+    if (m.meetingLang != null) setMeetingLang(String(m.meetingLang));
+    if (typeof m.remindersOn === 'boolean') setRemindersOn(m.remindersOn);
+    if (m.reminderMins != null) setReminderMins(String(m.reminderMins));
+    if (typeof m.excludeNoGuests === 'boolean') setExcludeNoGuests(m.excludeNoGuests);
+    if (typeof m.appDetectAlerts === 'boolean') setAppDetectAlerts(m.appDetectAlerts);
+    if (typeof m.autoRecord === 'boolean') setAutoRecord(m.autoRecord);
+    if (m.inactivityMins != null) setInactivityMins(String(m.inactivityMins));
+  }, [sections]);
   return (
     <Pane title="Meetings" jp="会議">
       <div className="s-card">
         <Row title="Meeting Notifications" desc="Choose when to get notified for upcoming meetings">
-          <select className="s-select"><option>Confirmed Only</option><option>All meetings</option></select>
+          <select
+            className="s-select"
+            value={notifScope}
+            onChange={(e) => {
+              const v = e.target.value;
+              setNotifScope(v);
+              void persist({ notifScope: v });
+            }}
+          >
+            <option value="confirmed_only">Confirmed Only</option>
+            <option value="all">All meetings</option>
+          </select>
         </Row>
         <Row title="Meeting Language" desc="Choose the language that will be used for transcriptions">
-          <select className="s-select"><option>Japanese</option><option>English</option><option>Auto-detect</option></select>
+          <select
+            className="s-select"
+            value={meetingLang}
+            onChange={(e) => {
+              const v = e.target.value;
+              setMeetingLang(v);
+              void persist({ meetingLang: v });
+            }}
+          >
+            <option value="ja">Japanese</option>
+            <option value="en">English</option>
+            <option value="auto">Auto-detect</option>
+          </select>
         </Row>
         <Row title="Meeting Reminders" desc="Show notifications before meetings start">
-          <Toggle on={r} onClick={()=>setR(!r)}/>
+          <Toggle
+            on={remindersOn}
+            onClick={() => {
+              const next = !remindersOn;
+              setRemindersOn(next);
+              void persist({ remindersOn: next });
+            }}
+          />
         </Row>
         <Row title="Reminder Time" desc="Set the time before a meeting to get a reminder">
-          <select className="s-select"><option>1 Minute</option><option>5 Minutes</option><option>15 Minutes</option></select>
+          <select
+            className="s-select"
+            value={reminderMins}
+            onChange={(e) => {
+              const v = e.target.value;
+              setReminderMins(v);
+              void persist({ reminderMins: v });
+            }}
+          >
+            <option value="1">1 Minute</option>
+            <option value="5">5 Minutes</option>
+            <option value="15">15 Minutes</option>
+          </select>
         </Row>
         <Row title="Exclude Events Without Guests" desc="Don't show notifications for events without other guests or meeting links">
-          <Toggle on={ex} onClick={()=>setEx(!ex)}/>
+          <Toggle
+            on={excludeNoGuests}
+            onClick={() => {
+              const next = !excludeNoGuests;
+              setExcludeNoGuests(next);
+              void persist({ excludeNoGuests: next });
+            }}
+          />
         </Row>
         <Row title="Meeting App Detection Alerts" desc="Show notifications when a meeting app is detected">
-          <Toggle on={det} onClick={()=>setDet(!det)}/>
+          <Toggle
+            on={appDetectAlerts}
+            onClick={() => {
+              const next = !appDetectAlerts;
+              setAppDetectAlerts(next);
+              void persist({ appDetectAlerts: next });
+            }}
+          />
         </Row>
         <Row title="Auto-Start Recording on Detection" desc="Automatically start recording when a meeting app is detected and the notification timer expires">
-          <Toggle on={auto} onClick={()=>setAuto(!auto)}/>
+          <Toggle
+            on={autoRecord}
+            onClick={() => {
+              const next = !autoRecord;
+              setAutoRecord(next);
+              void persist({ autoRecord: next });
+            }}
+          />
         </Row>
         <Row title="Auto-Stop Inactivity Timeout" desc="Automatically stop transcription after inactivity" last>
-          <select className="s-select"><option>15 Minutes</option><option>5 Minutes</option><option>30 Minutes</option></select>
+          <select
+            className="s-select"
+            value={inactivityMins}
+            onChange={(e) => {
+              const v = e.target.value;
+              setInactivityMins(v);
+              void persist({ inactivityMins: v });
+            }}
+          >
+            <option value="5">5 Minutes</option>
+            <option value="15">15 Minutes</option>
+            <option value="30">30 Minutes</option>
+          </select>
         </Row>
       </div>
     </Pane>
@@ -648,14 +922,14 @@ function PaneMeetings() {
 
 function PaneChat() {
   const { run, toast } = useRuntimeActions();
-  const { sections } = React.useContext(SettingsHydrationContext);
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
   const [instr, setInstr] = useStateS('');
   const [notes, setNotes] = useStateS('');
   React.useEffect(() => {
-    const i = sections['chat.instructions'];
-    const n = sections['chat.notes'];
-    if (i && i.value != null) setInstr(String(i.value));
-    if (n && n.value != null) setNotes(String(n.value));
+    const vi = readSectionValue(sections, 'chat.instructions');
+    const vn = readSectionValue(sections, 'chat.notes');
+    if (vi !== undefined) setInstr(vi);
+    if (vn !== undefined) setNotes(vn);
   }, [sections]);
   return (
     <Pane title="Chat" jp="対話">
@@ -664,8 +938,21 @@ function PaneChat() {
         <div className="row" style={{marginTop:8}}>
           <span className="s-field-hint">No unsaved changes</span>
           <span className="spacer"/>
-          <button className="btn btn-sm btn-ghost" onClick={()=>setInstr('')}>Discard</button>
-          <button className="btn btn-sm btn-secondary" onClick={()=>run('settings.save', { section:'chat.instructions', value:instr }, { successMessage:'Instructions saved' })}>Save</button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={()=>setInstr('')}>Discard</button>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={async () => {
+              const r = await run(
+                'settings.save',
+                { section: 'chat.instructions', value: instr },
+                { successMessage: 'Instructions saved' },
+              );
+              if (r && r.ok && refreshSections) await refreshSections();
+            }}
+          >
+            Save
+          </button>
         </div>
       </Field>
       <Field label="Assistant Notes" hint="Review and edit what SHOGUN has remembered from past chats to guide future conversations">
@@ -673,11 +960,22 @@ function PaneChat() {
         <div className="row" style={{marginTop:8}}>
           <span className="s-field-hint">{notes.length} / 2000 characters</span>
           <span className="spacer"/>
-          <button className="btn btn-sm btn-ghost" onClick={()=>setNotes('')}>Discard</button>
-          <button className="btn btn-sm btn-secondary" onClick={async ()=>{
-            if (notes.length > 2000) return toast('Assistant notes exceed 2000 characters', 'error');
-            await run('settings.save', { section:'chat.notes', value:notes }, { successMessage:'Assistant notes saved' });
-          }}>Save</button>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={()=>setNotes('')}>Discard</button>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={async ()=>{
+              if (notes.length > 2000) return toast('Assistant notes exceed 2000 characters', 'error');
+              const r = await run(
+                'settings.save',
+                { section: 'chat.notes', value: notes },
+                { successMessage: 'Assistant notes saved' },
+              );
+              if (r && r.ok && refreshSections) await refreshSections();
+            }}
+          >
+            Save
+          </button>
         </div>
       </Field>
     </Pane>
@@ -1064,18 +1362,18 @@ function PaneIntegrations() {
         Workspace Integrations screen has the same agent contract. Tauri invoke: <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh).
       </div>
       <div className="s-card" style={{marginBottom:10}}>
-        <Row title={<div className="row" style={{gap:10}}><div className="s-intg-icon" style={{background:'#1a1a1a'}}>📅</div><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
+        <Row title={<div className="row" style={{gap:10}}><IntegrationLogo slug="apple_calendar" size={30} title="Apple Calendar" /><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
           <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider:'apple_calendar' }, { silentError:true })}>Connect</button>
         </Row>
       </div>
       <div className="s-card" style={{marginBottom:10}}>
-        <Row title={<div className="row" style={{gap:10}}><div className="s-intg-icon" style={{background:'#2a1a1a'}}>📋</div><div><div style={{fontSize:13, fontWeight:500}}>Apple Reminders <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your reminders and tasks in Apple Reminders</div></div></div>} last>
+        <Row title={<div className="row" style={{gap:10}}><IntegrationLogo slug="apple_reminders" size={30} title="Apple Reminders" /><div><div style={{fontSize:13, fontWeight:500}}>Apple Reminders <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your reminders and tasks in Apple Reminders</div></div></div>} last>
           <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider:'apple_reminders' }, { silentError:true })}>Connect</button>
         </Row>
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <div className="row" style={{padding:'14px 16px'}}>
-          <div className="s-intg-icon" style={{background:'#fff'}}>✉</div>
+          <IntegrationLogo slug="gmail" size={30} title="Gmail" />
           <span style={{fontSize:13, fontWeight:500, marginLeft:10}}>Gmail</span>
           <span className="spacer"/>
           <Icon name="chevronDown" size={12} className="dim"/>
@@ -1093,7 +1391,7 @@ function PaneIntegrations() {
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <div className="row" style={{padding:'14px 16px'}}>
-          <div className="s-intg-icon" style={{background:'#fff'}}>🗓</div>
+          <IntegrationLogo slug="google_calendar" size={30} title="Google Calendar" />
           <div style={{marginLeft:10}}>
             <div style={{fontSize:13, fontWeight:500}}>Google Calendar</div>
             <div className="s-field-hint">Manage and see your calendar events and appointments through Google Calendar.</div>
@@ -1143,10 +1441,16 @@ function PaneIntegrations() {
           >Save auto-sync</button>
         </div>
       </div>
-      {[['Google Drive','☁'],['Outlook','✉'],['Notion','📝'],['Linear','◣'],['Slack','#']].map((s,i)=>(
-        <div key={i} className="s-card" style={{marginBottom:8}}>
-          <Row last title={<div className="row" style={{gap:10}}><div className="s-intg-icon">{s[1]}</div><div style={{fontSize:13, fontWeight:500}}>{s[0]}</div></div>}>
-            <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider:s[0].toLowerCase().replace(/\s+/g,'_') }, { silentError:true })}>Connect</button>
+      {[
+        { slug: 'google_drive', title: 'Google Drive' },
+        { slug: 'outlook', title: 'Outlook' },
+        { slug: 'notion', title: 'Notion' },
+        { slug: 'linear', title: 'Linear' },
+        { slug: 'slack', title: 'Slack' },
+      ].map((s) => (
+        <div key={s.slug} className="s-card" style={{marginBottom:8}}>
+          <Row last title={<div className="row" style={{gap:10}}><IntegrationLogo slug={s.slug} size={30} title={s.title} /><div style={{fontSize:13, fontWeight:500}}>{s.title}</div></div>}>
+            <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider: s.slug }, { silentError:true })}>Connect</button>
           </Row>
         </div>
       ))}
@@ -1278,63 +1582,232 @@ function PaneShortcuts() {
   );
 }
 
+/** Shown prices are UI copy; billing is finalized at checkout. Annual = 15% off vs list monthly. */
+const SUB_PLUS_MONTHLY_USD = 20;
+const SUB_PRO_5X_MONTHLY_USD = 100;
+const SUB_PRO_12X_MONTHLY_USD = 200;
+const SUB_ANNUAL_OFF_PCT = 15;
+
+function subscriptionAnnualEquivMonthly(monthlyUsd) {
+  return Math.round(monthlyUsd * (100 - SUB_ANNUAL_OFF_PCT)) / 100;
+}
+
 function PaneSubscription() {
   const { run } = useRuntimeActions();
   const { sections } = React.useContext(SettingsHydrationContext);
   const [billingCycle, setBillingCycle] = useStateS('annual');
+  const [referralCode, setReferralCode] = useStateS('');
   React.useEffect(() => {
     const s = sections.subscription;
     if (s && s.billingCycle != null) setBillingCycle(String(s.billingCycle));
+    if (s && s.referralCodeDraft != null) setReferralCode(String(s.referralCodeDraft));
   }, [sections]);
+
+  const isAnnual = billingCycle === 'annual';
+  const plusListMo = SUB_PLUS_MONTHLY_USD;
+  const plusEffMo = subscriptionAnnualEquivMonthly(SUB_PLUS_MONTHLY_USD);
+  const plusAnnualCharge = Math.round(plusEffMo * 12);
+  const pro5Mo = isAnnual ? subscriptionAnnualEquivMonthly(SUB_PRO_5X_MONTHLY_USD) : SUB_PRO_5X_MONTHLY_USD;
+  const pro12Mo = isAnnual ? subscriptionAnnualEquivMonthly(SUB_PRO_12X_MONTHLY_USD) : SUB_PRO_12X_MONTHLY_USD;
+  const pro5AnnualCharge = Math.round(subscriptionAnnualEquivMonthly(SUB_PRO_5X_MONTHLY_USD) * 12);
+  const pro12AnnualCharge = Math.round(subscriptionAnnualEquivMonthly(SUB_PRO_12X_MONTHLY_USD) * 12);
+
+  const persistBilling = (cycle) => {
+    setBillingCycle(cycle);
+    run('settings.save', { section: 'subscription', billingCycle: cycle }, { silentError: true });
+  };
+
+  const plusFeatures = [
+    'Higher chat & model limits vs Basic',
+    'Full Memory search, ingest, and timeline',
+    'Meetings: transcription, notes, and calendar-aware context',
+    'Hummingbird: screen-aware quick ask',
+    'Standard image generation tier',
+    'Email support',
+  ];
+  const proFeatures = [
+    '5× or 12× usage multiplier vs Plus (pick a tier)',
+    'Larger context windows and batch jobs',
+    'Premium / max-intelligence model routing',
+    'Premium image generation tier',
+    'Early access to new SHOGUN features',
+  ];
+
   return (
     <Pane title="Subscription" jp="契約">
+      <div
+        className="s-field-hint"
+        style={{
+          marginBottom: 14,
+          padding: 12,
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: 12,
+          lineHeight: 1.55,
+        }}
+      >
+        <strong className="en-only">Important:</strong>
+        <strong className="jp">重要:</strong> Prices and plan buttons below are <strong>UI / product design</strong> until a payment
+        provider is connected. Actions may only persist preferences locally. See{' '}
+        <TermsNoticeAnchor>Terms of Service</TermsNoticeAnchor>.
+        <div className="jp" style={{ marginTop: 8, fontSize: 11, color: 'var(--text-dim)' }}>
+          表示価格・「トライアル」「プラン選択」等は、決済基盤が接続されるまで<strong>画面イメージまたはローカル保存のみ</strong>の場合があります。課金が発生する前に必ず利用規約を確認してください。
+        </div>
+      </div>
       <div className="s-subscription-grid">
         <div className="s-card" style={{padding:20}}>
           <div className="row">
             <div style={{fontSize:16, fontWeight:500}}>Plus</div>
             <span className="spacer"/>
             <div style={{display:'flex', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', overflow:'hidden'}}>
-              <button className="btn btn-sm btn-ghost" style={{borderRadius:0, background:billingCycle==='monthly'?'var(--surface-2)':'transparent', color:billingCycle==='monthly'?'var(--text)':'var(--text-mute)'}} onClick={()=>{ setBillingCycle('monthly'); run('settings.save', { section:'subscription', billingCycle:'monthly' }, { silentError:true }); }}>Monthly</button>
-              <button className="btn btn-sm" style={{borderRadius:0, background:billingCycle==='annual'?'var(--surface-2)':'transparent', color:billingCycle==='annual'?'var(--text)':'var(--text-mute)'}} onClick={()=>{ setBillingCycle('annual'); run('settings.save', { section:'subscription', billingCycle:'annual' }, { silentError:true }); }}>Annual</button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                style={{borderRadius:0, background:billingCycle==='monthly'?'var(--surface-2)':'transparent', color:billingCycle==='monthly'?'var(--text)':'var(--text-mute)'}}
+                onClick={() => persistBilling('monthly')}
+              >
+                Monthly
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{borderRadius:0, background:billingCycle==='annual'?'var(--surface-2)':'transparent', color:billingCycle==='annual'?'var(--text)':'var(--text-mute)'}}
+                onClick={() => persistBilling('annual')}
+              >
+                Annual
+              </button>
             </div>
           </div>
-          <div style={{fontSize:36, fontWeight:600, marginTop:16, letterSpacing:'-0.02em'}}>
-            $17<span style={{fontSize:14, color:'var(--text-dim)', fontWeight:400}}>/mo</span>
-            <span className="label label-gold" style={{marginLeft:8, verticalAlign:'middle'}}>-15%</span>
+          <div style={{fontSize:36, fontWeight:600, marginTop:16, letterSpacing:'-0.02em', lineHeight:1.15}}>
+            ${isAnnual ? plusEffMo : plusListMo}
+            <span style={{fontSize:14, color:'var(--text-dim)', fontWeight:400}}>/mo</span>
+            {isAnnual ? (
+              <span className="label label-gold" style={{marginLeft:8, verticalAlign:'middle'}}>-{SUB_ANNUAL_OFF_PCT}%</span>
+            ) : null}
           </div>
-          <div style={{marginTop:18, fontSize:12, color:'var(--text-mute)'}}>Includes everything in Basic, and:</div>
+          <div className="s-field-hint" style={{marginTop:8, fontSize:12, lineHeight:1.5}}>
+            {isAnnual
+              ? `Equivalent monthly rate · $${plusAnnualCharge} billed once per year (vs $${plusListMo}/mo on Monthly).`
+              : `Billed $${plusListMo} every month · switch to Annual for −${SUB_ANNUAL_OFF_PCT}% (≈ $${plusEffMo}/mo).`}
+          </div>
+          <div style={{marginTop:18, fontSize:12, color:'var(--text-mute)'}}>Everything in Basic, plus:</div>
           <ul style={{margin:'8px 0 0', padding:0, listStyle:'none', fontSize:12, lineHeight:1.9}}>
-            {['Advanced intelligence in chat','Enhanced memory and personalization','Additional daily chats','Additional active routines','Unlimited meeting notes','Access to max intelligence for complex tasks and deep research','Access to standard image generation','Priority support'].map(f=>(
+            {plusFeatures.map((f) => (
               <li key={f}><Icon name="check" size={11} className="gold" style={{marginRight:8}}/>{f}</li>
             ))}
           </ul>
-          <button className="btn btn-secondary" style={{width:'100%', marginTop:18}} onClick={()=>run('settings.save', { section:'subscription', plan:'plus_trial' }, { successMessage:'Trial request submitted' })}>Start 14-day free trial</button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            style={{width:'100%', marginTop:18}}
+            onClick={() =>
+              run(
+                'settings.save',
+                { section: 'subscription', plan: 'plus_trial', billingCycle },
+                { successMessage: 'Trial request submitted' },
+              )
+            }
+          >
+            Start 14-day free trial
+          </button>
         </div>
         <div className="s-card" style={{padding:20}}>
-          <div style={{fontSize:16, fontWeight:500}}>Pro</div>
-          <div style={{fontSize:36, fontWeight:600, marginTop:16, letterSpacing:'-0.02em'}}>
-            From $100<span style={{fontSize:14, color:'var(--text-dim)', fontWeight:400}}>/mo</span>
+          <div className="row" style={{alignItems:'flex-start'}}>
+            <div>
+              <div style={{fontSize:16, fontWeight:500}}>Pro</div>
+              <div className="s-field-hint" style={{marginTop:4, fontSize:11, maxWidth:280}}>
+                Same billing toggle as Plus ({isAnnual ? 'Annual' : 'Monthly'}) — prices below update automatically.
+              </div>
+            </div>
           </div>
-          <div style={{marginTop:18, fontSize:12, color:'var(--text-mute)'}}>Includes everything in Plus, and:</div>
+          <div style={{fontSize:36, fontWeight:600, marginTop:12, letterSpacing:'-0.02em'}}>
+            From ${pro5Mo}<span style={{fontSize:14, color:'var(--text-dim)', fontWeight:400}}>/mo</span>
+            {isAnnual ? (
+              <span className="label label-gold" style={{marginLeft:8, verticalAlign:'middle', fontSize:11}}>5× tier · annual</span>
+            ) : null}
+          </div>
+          <div className="s-field-hint" style={{marginTop:6, fontSize:12, lineHeight:1.5}}>
+            {isAnnual
+              ? `5×: $${pro5AnnualCharge}/yr · 12×: $${pro12AnnualCharge}/yr when paid annually.`
+              : `5×: $${SUB_PRO_5X_MONTHLY_USD}/mo · 12×: $${SUB_PRO_12X_MONTHLY_USD}/mo billed monthly.`}
+          </div>
+          <div style={{marginTop:18, fontSize:12, color:'var(--text-mute)'}}>Everything in Plus, plus:</div>
           <ul style={{margin:'8px 0 0', padding:0, listStyle:'none', fontSize:12, lineHeight:1.9}}>
-            {['Choose 5x or 12x more usage than Plus','Auto-detect language in meeting notes','Higher limits for max intelligence','Access to premium image generation','Early access to new features'].map(f=>(
+            {proFeatures.map((f) => (
               <li key={f}><Icon name="check" size={11} className="gold" style={{marginRight:8}}/>{f}</li>
             ))}
           </ul>
-          <button className="s-tier-btn" onClick={()=>run('settings.save', { section:'subscription', plan:'pro_5x' }, { successMessage:'Plan selection submitted' })}><span>Choose Pro 5x</span><span style={{color:'var(--text-dim)'}}>$100/mo</span></button>
-          <button className="s-tier-btn" onClick={()=>run('settings.save', { section:'subscription', plan:'pro_12x' }, { successMessage:'Plan selection submitted' })}><span>Choose Pro 12x</span><span style={{color:'var(--text-dim)'}}>$200/mo</span></button>
+          <button
+            type="button"
+            className="s-tier-btn"
+            onClick={() =>
+              run(
+                'settings.save',
+                { section: 'subscription', plan: 'pro_5x', billingCycle },
+                { successMessage: 'Plan selection submitted' },
+              )
+            }
+          >
+            <span>Choose Pro 5×</span>
+            <span style={{color:'var(--text-dim)'}}>
+              ${pro5Mo}/mo{isAnnual ? ` · $${pro5AnnualCharge}/yr` : ''}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="s-tier-btn"
+            onClick={() =>
+              run(
+                'settings.save',
+                { section: 'subscription', plan: 'pro_12x', billingCycle },
+                { successMessage: 'Plan selection submitted' },
+              )
+            }
+          >
+            <span>Choose Pro 12×</span>
+            <span style={{color:'var(--text-dim)'}}>
+              ${pro12Mo}/mo{isAnnual ? ` · $${pro12AnnualCharge}/yr` : ''}
+            </span>
+          </button>
         </div>
       </div>
       <div className="s-card" style={{marginTop:14, padding:16}}>
         <div style={{fontSize:13, fontWeight:500}}>Have a referral code?</div>
         <div className="s-field-hint" style={{marginTop:2}}>Enter a code to unlock referral rewards</div>
         <div className="row" style={{gap:8, marginTop:10}}>
-          <input className="s-input" placeholder="Enter referral code" style={{flex:1}}/>
-          <button className="btn btn-sm btn-secondary" onClick={()=>run('settings.save', { section:'subscription', action:'apply_referral' }, { successMessage:'Referral code submitted' })}>Apply</button>
+          <input
+            className="s-input"
+            placeholder="Enter referral code"
+            style={{flex:1}}
+            value={referralCode}
+            onChange={(e) => setReferralCode(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={() =>
+              run(
+                'settings.save',
+                {
+                  section: 'subscription',
+                  action: 'apply_referral',
+                  referralCode: referralCode.trim(),
+                  referralCodeDraft: referralCode.trim(),
+                },
+                { successMessage: 'Referral code submitted' },
+              )
+            }
+          >
+            Apply
+          </button>
         </div>
       </div>
       <div style={{marginTop:14, textAlign:'center', fontSize:12, color:'var(--text-dim)'}}>
-        Want SHOGUN for your team or business? <a className="s-link">Contact us <Icon name="arrowUpRight" size={10}/></a>
+        Want SHOGUN for your team or business?{' '}
+        <a className="s-link" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
+          Contact via GitHub Issues <Icon name="arrowUpRight" size={10} />
+        </a>
       </div>
     </Pane>
   );
@@ -1345,6 +1818,13 @@ function PaneTeam() {
   return (
     <Pane title="Team" jp="組">
       <div className="s-card" style={{padding:20}}>
+        <div className="s-field-hint" style={{ marginBottom: 12, fontSize: 11, lineHeight: 1.5 }}>
+          Team checkout and seat billing are <strong>not connected</strong> in v1 — this pane is a product preview. Use{' '}
+          <a className="s-link" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
+            Issues
+          </a>{' '}
+          for enterprise interest.
+        </div>
         <div style={{fontSize:16, fontWeight:500}}>SHOGUN for Teams <span className="jp dim" style={{fontSize:11, marginLeft:6}}>組織版</span></div>
         <div className="s-field-hint" style={{marginTop:6}}>Get SHOGUN for your whole company with one subscription.</div>
         <ul style={{margin:'16px 0 0', padding:0, listStyle:'none', fontSize:13, lineHeight:2}}>
@@ -1354,7 +1834,9 @@ function PaneTeam() {
         </ul>
         <div style={{borderTop:'1px solid var(--border)', marginTop:16, paddingTop:14}} className="row">
           <button className="btn btn-secondary" onClick={()=>run('settings.save', { section:'team', action:'create' }, { successMessage:'Team creation flow started' })}>Create a Team</button>
-          <span className="s-field-hint" style={{marginLeft:12}}>Starting at $17/seat/mo billed annually</span>
+          <span className="s-field-hint" style={{marginLeft:12}}>
+            {`Starting at $${subscriptionAnnualEquivMonthly(SUB_PLUS_MONTHLY_USD)}/seat/mo billed annually (vs $${SUB_PLUS_MONTHLY_USD} on monthly)`}
+          </span>
         </div>
       </div>
     </Pane>
@@ -1365,12 +1847,30 @@ function PaneSupport() {
   const { run } = useRuntimeActions();
   return (
     <Pane title="Support" jp="支援">
+      <div className="s-field-hint" style={{ marginBottom: 14, padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 12, lineHeight: 1.55 }}>
+        <span className="en-only">Primary channel:</span>
+        <span className="jp">主な連絡先:</span>{' '}
+        <a className="s-link" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
+          GitHub Issues（不具合・要望）
+        </a>
+        。Discord 等のコミュニティは準備中の場合があります。
+      </div>
       <div className="s-card">
-        <Row title="Email Support" desc="Contact us at support@shogun.local">
-          <button className="btn btn-sm btn-secondary" onClick={()=>run('settings.save', { section:'support', action:'email' }, { successMessage:'Support action queued' })}>Email Support</button>
+        <Row title="GitHub Issues" desc="Bug reports, feature requests, and setup questions for this repository.">
+          <a className="btn btn-sm btn-secondary" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
+            Open Issues
+          </a>
         </Row>
-        <Row title="Join our Discord" desc="Join our Discord server for real time support and discussions">
-          <button className="btn btn-sm btn-secondary" onClick={()=>run('settings.save', { section:'support', action:'discord' }, { successMessage:'Discord action queued' })}>Join Discord</button>
+        <Row title="Join our Discord" desc="Community Discord is not guaranteed in v1 — check Issues for updates.">
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled
+            title="Coming soon"
+            onClick={() => run('settings.save', { section: 'support', action: 'discord' }, { successMessage: 'Discord action queued' })}
+          >
+            Join Discord
+          </button>
         </Row>
         <Row title="Report Performance Issues" desc="Experiencing slowdowns or high resource usage? Create a 5-second diagnostic snapshot to help us troubleshoot the issue." last>
           <button className="btn btn-sm btn-secondary" onClick={()=>run('diagnostics.report', { source:'settings.support' }, { successMessage:'Diagnostics report started' })}>Report</button>
@@ -1383,7 +1883,7 @@ function PaneSupport() {
 const PANES = {
   general: PaneGeneral, system: PaneSystem, appearance: PaneAppearance,
   privacy: PanePrivacy, data: PaneData, hummingbird: PaneHummingbird,
-  meetings: PaneMeetings, brief: PaneBrief, chat: PaneChat, llm: PaneLLM, integrations: PaneIntegrations,
+  meetings: PaneMeetings, chat: PaneChat, llm: PaneLLM, integrations: PaneIntegrations,
   shortcuts: PaneShortcuts, subscription: PaneSubscription,
   team: PaneTeam, support: PaneSupport,
 };
@@ -1463,20 +1963,20 @@ function SettingsModal({pane, setPane, close}) {
           top:50%; left:50%; transform:translate(-50%, -50%);
           box-sizing:border-box;
           /*
- Compact centered dialog (~50–60% width, ~60–70% height on typical screens), similar to Littlebird-style settings.
+ Centered settings dialog — scales up on large / fullscreen viewports so content is not tiny.
           */
-          --s-edge: max(20px, min(40px, 4.5vmin));
+          --s-edge: max(16px, min(48px, 5vmin));
           --s-safe-x: calc(env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px));
           --s-safe-y: calc(env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
           --s-max-view-w: calc(100vw - 2 * var(--s-edge) - var(--s-safe-x));
           --s-max-view-h: calc(100dvh - 2 * var(--s-edge) - var(--s-safe-y));
-          --s-pref-w: min(720px, 56vw);
-          --s-pref-h: clamp(320px, 65dvh, 540px);
+          --s-pref-w: min(1200px, min(92vw, var(--s-max-view-w)));
+          --s-pref-h: clamp(400px, 86dvh, min(820px, var(--s-max-view-h)));
           width:min(var(--s-pref-w), var(--s-max-view-w));
           height:min(var(--s-pref-h), var(--s-max-view-h));
           max-width:var(--s-max-view-w);
           max-height:var(--s-max-view-h);
-          min-height:min(320px, var(--s-max-view-h));
+          min-height:min(384px, var(--s-max-view-h));
           background:var(--bg);
           border:1px solid var(--border-hi);
           border-radius:var(--radius-lg);
@@ -1537,8 +2037,8 @@ function SettingsModal({pane, setPane, close}) {
         .s-close:hover { background:var(--surface); border-color:var(--border); color:var(--text); }
 
         .s-pane-head { margin-bottom:18px; }
-        .s-pane-sub { margin-top:6px; font-size:12px; color:var(--text-mute); line-height:1.55; max-width:min(640px, 100%); }
-        .s-pane-body { max-width:min(640px, 100%); }
+        .s-pane-sub { margin-top:6px; font-size:12px; color:var(--text-mute); line-height:1.55; max-width:min(960px, 100%); }
+        .s-pane-body { max-width:min(960px, 100%); }
 
         .s-card {
           background:var(--surface);

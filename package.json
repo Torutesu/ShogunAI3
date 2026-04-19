@@ -1,11 +1,8 @@
 {
   "name": "shogun-ai-hifi",
   "private": true,
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Torutesu/ShogunAI3.git"
-  },
   "version": "0.4.1",
+  "license": "UNLICENSED",
   "scripts": {
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
@@ -16,7 +13,8 @@
     "build:icons": "node scripts/build-icons.mjs",
     "tauri": "tauri",
     "dev:desktop": "tauri dev",
-    "build:desktop": "tauri build"
+    "build:desktop": "tauri build",
+    "build:desktop:signed": "tauri build -c src-tauri/tauri.signing.local.json"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

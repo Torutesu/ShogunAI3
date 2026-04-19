@@ -15,8 +15,6 @@
     MEMORY_CAPTURE: "shortcut.memory_capture_moment",
     MEMORY_JUMP_TIMELINE: "shortcut.memory_jump_timeline",
     CHAT_TOGGLE_MAX: "shortcut.chat_toggle_max",
-    CHAT_VOICE_TOGGLE: "shortcut.chat_voice_toggle",
-    CHAT_VOICE_CANCEL: "shortcut.chat_voice_cancel",
   };
 
   /** @type {Record<string, { key: string, super: boolean, ctrl: boolean, alt: boolean, shift: boolean }>} */
@@ -30,14 +28,6 @@
     [ACTION_IDS.MEMORY_CAPTURE]: { key: "c", super: true, ctrl: false, alt: false, shift: true },
     [ACTION_IDS.MEMORY_JUMP_TIMELINE]: { key: "t", super: true, ctrl: false, alt: false, shift: true },
     [ACTION_IDS.CHAT_TOGGLE_MAX]: { key: "t", super: false, ctrl: true, alt: false, shift: false },
-    [ACTION_IDS.CHAT_VOICE_TOGGLE]: { key: ".", super: false, ctrl: false, alt: true, shift: false },
-    [ACTION_IDS.CHAT_VOICE_CANCEL]: {
-      key: "Backspace",
-      super: false,
-      ctrl: false,
-      alt: true,
-      shift: false,
-    },
   };
 
   const ACTION_PRIORITY = [
@@ -50,14 +40,10 @@
     ACTION_IDS.NAVIGATE_BACK,
     ACTION_IDS.NAVIGATE_FORWARD,
     ACTION_IDS.CHAT_TOGGLE_MAX,
-    ACTION_IDS.CHAT_VOICE_TOGGLE,
-    ACTION_IDS.CHAT_VOICE_CANCEL,
   ];
 
   const CHAT_ONLY_ACTIONS = new Set([
     ACTION_IDS.CHAT_TOGGLE_MAX,
-    ACTION_IDS.CHAT_VOICE_TOGGLE,
-    ACTION_IDS.CHAT_VOICE_CANCEL,
   ]);
 
   const SHORTCUT_UI_GROUPS = [
@@ -81,8 +67,6 @@
       name: "Chat",
       items: [
         { label: "Toggle Max", actionId: ACTION_IDS.CHAT_TOGGLE_MAX },
-        { label: "Start voice recording (press again to stop)", actionId: ACTION_IDS.CHAT_VOICE_TOGGLE },
-        { label: "Cancel voice recording", actionId: ACTION_IDS.CHAT_VOICE_CANCEL },
       ],
     },
     {

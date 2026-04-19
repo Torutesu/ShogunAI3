@@ -8,14 +8,20 @@
 
   function safeParse(json, fallback) {
     try {
-      return JSON.parse(json);
+      if (json == null || json === "") return fallback;
+      const v = JSON.parse(json);
+      return v != null ? v : fallback;
     } catch (_e) {
       return fallback;
     }
   }
 
   function loadAll() {
-    return safeParse(global.localStorage.getItem(STORAGE_KEY), {});
+    const parsed = safeParse(global.localStorage.getItem(STORAGE_KEY), {});
+    if (parsed != null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return {};
   }
 
   function saveAll(obj) {
@@ -209,7 +215,13 @@
   const USER_MTG_LOG_KEY = "shogun.meetings.userSessionLog.v1";
 
   function loadUserMeetingLog() {
-    return safeParse(global.localStorage.getItem(USER_MTG_LOG_KEY), { items: [] });
+    const parsed = safeParse(global.localStorage.getItem(USER_MTG_LOG_KEY), { items: [] });
+    if (parsed != null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return {
+        items: Array.isArray(parsed.items) ? parsed.items : [],
+      };
+    }
+    return { items: [] };
   }
 
   function prependMeetingLogEntry(entry) {
@@ -222,6 +234,34 @@
     try {
       global.localStorage.setItem(USER_MTG_LOG_KEY, JSON.stringify(log));
     } catch (_e) {
+      /* ignore */
+    }
+  }
+
+  /** Keep TODAY list title in sync when the user renames a note (matches `storageKey`). */
+  function updateMeetingLogTitleByStorageKey(storageKey, newTitle) {
+    if (!storageKey || newTitle == null) return;
+    const t = String(newTitle).trim();
+    if (!t) return;
+    const log = loadUserMeetingLog();
+    const items = Array.isArray(log.items) ? log.items : [];
+    let changed = false;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i] && items[i].storageKey === storageKey) {
+        items[i] = { ...items[i], t: t };
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
+    try {
+      global.localStorage.setItem(USER_MTG_LOG_KEY, JSON.stringify({ items: items }));
+    } catch (_e) {
+      return;
+    }
+    try {
+      global.dispatchEvent(new CustomEvent("shogun-user-meeting-log-changed"));
+    } catch (_e2) {
       /* ignore */
     }
   }
@@ -285,6 +325,7 @@
     splitSentences: splitSentences,
     loadUserMeetingLog: loadUserMeetingLog,
     prependMeetingLogEntry: prependMeetingLogEntry,
+    updateMeetingLogTitleByStorageKey: updateMeetingLogTitleByStorageKey,
     noteProgress: noteProgress,
   };
 })(window);

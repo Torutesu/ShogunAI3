@@ -30,17 +30,25 @@ Assets are copied to `build.frontendDist` (`../web-dist` per `tauri.conf.json`).
 
 ## 3. Signing (Tauri)
 
-Add macOS bundle settings under `bundle` in `src-tauri/tauri.conf.json`. Example (use real values):
+Committed `tauri.conf.json` keeps **`hardenedRuntime`** and **`entitlements`** but omits **`signingIdentity`** so CI and contributors build unsigned by default.
 
-```json
-"bundle": {
-  "macOS": {
-    "signingIdentity": "Developer ID Application: Your Name (TEAMID)",
-    "entitlements": "Entitlements.plist",
-    "hardenedRuntime": true
-  }
-}
+### 3a. Local machine (Keychain identity)
+
+Either merge a signing identity at build time:
+
+```bash
+npm run build:desktop -- -c '{"bundle":{"macOS":{"signingIdentity":"Developer ID Application: Your Name (TEAMID)"}}}'
 ```
+
+Or copy `src-tauri/tauri.signing.local.example.json` to **`src-tauri/tauri.signing.local.json`** (gitignored), edit the identity string, then:
+
+```bash
+npm run build:desktop:signed
+```
+
+### 3b. CI (`.p12` + password)
+
+When **`APPLE_CERTIFICATE`** (base64 of the `.p12`) and **`APPLE_CERTIFICATE_PASSWORD`** are set, Tauri CLI can import the certificate and infer the signing identity — you do not need `signingIdentity` in JSON. See [Tauri · macOS code signing](https://v2.tauri.app/distribute/sign-macos/).
 
 Use the repo’s `src-tauri/Entitlements.plist` (path set in `tauri.conf.json`) and extend only as needed: network, Apple Events / Automation if you script other apps, **Accessibility** if you ship AX-based capture, Keychain via standard APIs, etc.
 
@@ -64,7 +72,9 @@ xcrun stapler staple "path/to/shogun-ai.app"
 
 ## 5. DMG / distribution
 
-Ship the generated `.dmg` or a stapled `.app`. Document that LLM calls send the user's API key and prompt to the configured HTTPS endpoint (see `PRIVACY.md`).
+Ship the generated `.dmg` or a stapled `.app`. Include or link: **[`PRIVACY.md`](../PRIVACY.md)** (data / Keychain / LLM) and **[`docs/TERMS_OF_SERVICE.md`](TERMS_OF_SERVICE.md)** (beta scope, billing UI disclaimer, third-party services).
+
+**CI vs local:** Default `tauri build` in **`ci.yml`** is **unsigned** (no `signingIdentity` in committed config). Artifacts are fine for smoke tests; for end-user distribution, use §3 (local or `.p12` secrets) and §4 / optional §7 for notarization.
 
 ## 6. Manual gate on a clean Mac (recommended)
 
@@ -77,4 +87,22 @@ Ship the generated `.dmg` or a stapled `.app`. Document that LLM calls send the 
 
 ## CI
 
-`.github/workflows/ci.yml` runs `check:actions`, `check:rust`, and `build:web-dist`. Signed `tauri build` is usually run locally or in a protected workflow with secrets.
+`.github/workflows/ci.yml` runs `check:actions`, `check:ipc-mock`, `check:rust`, `build:web-dist`, Playwright E2E, and an **unsigned** `tauri build`.
+
+## 7. GitHub Actions: signed release (manual)
+
+Workflow: [`.github/workflows/release-macos.yml`](../.github/workflows/release-macos.yml) — **Actions → Release macOS (signed) → Run workflow**.
+
+| Repository secret | Required | Purpose |
+|-------------------|----------|---------|
+| `APPLE_CERTIFICATE` | **Yes** | Base64-encoded **Developer ID Application** `.p12` (export cert + private key from Keychain). |
+| `APPLE_CERTIFICATE_PASSWORD` | **Yes** | Password used when exporting the `.p12`. |
+| `APPLE_API_KEY_P8_BASE64` | No | Base64-encoded **App Store Connect API** private key (`.p8` contents). |
+| `APPLE_API_KEY_ID` | No | Key ID (e.g. `ABC123DEFG`) for notarization. |
+| `APPLE_API_ISSUER` | No | Issuer UUID from App Store Connect → Users and Access → Keys. |
+
+If the three `APPLE_API_*` optional secrets are all set, the workflow writes the `.p8` to a temp path and exports **`APPLE_API_KEY_PATH`**, **`APPLE_API_KEY`**, **`APPLE_API_ISSUER`** for Tauri’s notarization step (see Tauri changelog: API key auth for `notarytool`). Otherwise the build is **signed only**; staple or re-run notarization locally per §4 if needed.
+
+The run uploads the generated **`.dmg`** as a workflow artifact.
+
+For day-to-day verification, use unsigned **`ci.yml`**; use **`release-macos.yml`** only when secrets are configured on the repository.

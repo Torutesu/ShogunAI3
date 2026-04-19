@@ -14,6 +14,12 @@ async function openSettingsModal(page) {
   await expect(page.locator(".s-modal")).toBeVisible();
 }
 
+/** Topbar actions (Hummingbird / star / share) render only on the Chat screen. */
+async function goToChat(page) {
+  await page.locator(".cmdk").click();
+  await expect(page.locator(".page-actions .page-action")).toHaveCount(3);
+}
+
 test.describe("SHOGUN Hi-Fi UI", () => {
   test("mounts app and exposes SHOGUN_RUNTIME", async ({ page }) => {
     const consoleErrors = [];
@@ -168,6 +174,7 @@ test.describe("SHOGUN Hi-Fi UI", () => {
 
   test("Hummingbird WRITE confirm opens and Cancel closes", async ({ page }) => {
     await openHiFi(page);
+    await goToChat(page);
 
     await page.locator(".page-actions .page-action").first().click();
     await expect(page.locator(".swm-modal")).toBeVisible();
@@ -179,6 +186,7 @@ test.describe("SHOGUN Hi-Fi UI", () => {
 
   test("Hummingbird WRITE confirm completes on Confirm", async ({ page }) => {
     await openHiFi(page);
+    await goToChat(page);
 
     await page.locator(".page-actions .page-action").first().click();
     await expect(page.locator(".swm-modal")).toBeVisible();
@@ -212,6 +220,7 @@ test.describe("SHOGUN Hi-Fi UI", () => {
 
   test("Share modal opens and closes via backdrop click", async ({ page }) => {
     await openHiFi(page);
+    await goToChat(page);
 
     await page.locator(".page-actions .page-action").nth(2).click();
     await expect(page.locator(".share-modal")).toBeVisible();
@@ -224,6 +233,7 @@ test.describe("SHOGUN Hi-Fi UI", () => {
 
   test("Share modal Export to file shows success toast", async ({ page }) => {
     await openHiFi(page);
+    await goToChat(page);
 
     await page.locator(".page-actions .page-action").nth(2).click();
     await expect(page.locator(".share-modal")).toBeVisible();
@@ -242,7 +252,11 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
     await expect(page.locator(".s-pane-head")).toContainText("Integrations");
 
-    await page.locator(".s-pane-body").getByRole("button", { name: "Connect" }).first().click();
+    await page
+      .locator(".s-card")
+      .filter({ hasText: "Slack" })
+      .getByRole("button", { name: "Connect" })
+      .click();
     await expect(page.locator(".app-toast.warn")).toContainText(/not available in v1/i, {
       timeout: 8000,
     });
