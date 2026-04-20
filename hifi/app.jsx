@@ -1844,7 +1844,6 @@ function App() {
                           <span className="dot"/>
                           <span className="chat-sub-title">{it.title}</span>
                           {it.time && <span className="t-mono chat-sub-time">{it.time}</span>}
-                          <button type="button" draggable={false} className="chat-fav-btn fav-hover" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Favorite">＋</button>
                         </div>
                       ))}
                     </div>

@@ -1719,7 +1719,7 @@ function PaneLLM() {
       subtitle="OpenAI-compatible chat/completions and /v1/embeddings (Memory semantic search). Endpoint and models are saved locally; the API key stays in the macOS Keychain."
     >
       <div className="s-card" style={{padding:20, marginBottom:16}}>
-        <Field label="Base URL" hint="e.g. https://api.openai.com/v1 — if the path has no /v1, it is appended automatically.">
+        <Field label="Base URL" hint="Trusted hosts only (api.openai.com, api.anthropic.com, openrouter.ai, api.x.ai, generativelanguage.googleapis.com, *.openai.azure.com) or localhost HTTP for local gateways. If the path has no /v1, it is appended automatically.">
           <input
             className="s-input"
             value={baseUrl}
