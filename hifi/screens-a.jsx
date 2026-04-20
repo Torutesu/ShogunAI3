@@ -11,6 +11,23 @@ function requestWriteActionA(actionKey, payload, title, description) {
   window.SHOGUN_RUNTIME.requestWriteAction(actionKey, payload, title, description);
 }
 
+/** Mirrors desktop `derive_provenance_from_source` when API omits `provenance`. */
+function deriveLocalProvenance(source) {
+  const s = String(source || '');
+  if (s === 'capture_sampler' || s === 'capture_ax') return 'screen';
+  if (s === 'google_calendar' || s === 'gmail') return 'connector';
+  if (s === 'meeting' || s.startsWith('meetings')) return 'meeting';
+  return 'user';
+}
+
+function memoryProvenanceLabel(prov) {
+  const p = prov || 'user';
+  if (p === 'screen') return { en: 'Screen', jp: '画面' };
+  if (p === 'connector') return { en: 'Connector', jp: '連携' };
+  if (p === 'meeting') return { en: 'Meeting', jp: '会議' };
+  return { en: 'User', jp: '手動' };
+}
+
 function memoryHitToRiverEvent(hit) {
   const ts = hit.created_at != null ? Number(hit.created_at) : Date.now();
   const d = new Date(ts);
@@ -22,6 +39,9 @@ function memoryHitToRiverEvent(hit) {
   if (rawSrc === 'meetings' || (Array.isArray(hit.kinds) && hit.kinds.indexOf('audio') >= 0)) src = 'meet';
   else if (rawSrc === 'chat') src = 'chat';
   else if (rawSrc === 'work') src = 'code';
+  else if (rawSrc === 'google_calendar') src = 'meet';
+  else if (rawSrc === 'gmail') src = 'mail';
+  const provenance = hit.provenance || deriveLocalProvenance(hit.source);
   return {
     t,
     h,
@@ -29,6 +49,9 @@ function memoryHitToRiverEvent(hit) {
     title: hit.title || 'Memory',
     snippet: hit.snippet || '',
     memoryId: hit.id,
+    provenance,
+    sourceRaw: hit.source || '',
+    entityId: hit.entity_id != null ? String(hit.entity_id) : null,
     big: false,
   };
 }
@@ -44,6 +67,62 @@ function mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx) {
   const mapped = hits.map(memoryHitToRiverEvent);
   setEvents(mapped);
   setScrubIdx(0);
+}
+
+/** Jump to Chat with composer text + one-shot `memoryAssembly` preset (title-biased retrieval). */
+function openMemoryEntryInChat(entry, options) {
+  const opts = options || {};
+  const allowAsm = opts.allowServerMemoryAssembly !== false;
+  const title = String(entry.title || '').trim() || 'Memory';
+  const snippet = String(entry.snippet || '');
+  const lead = opts.userLead != null ? String(opts.userLead) : 'この記憶について手伝ってください。';
+  const text = lead + '\n\n**' + title + '**\n\n' + snippet.slice(0, 2000);
+  const memQ = String(opts.memoryAssemblyQuery != null ? opts.memoryAssemblyQuery : title).slice(0, 480);
+  const limRaw = opts.memoryAssemblyLimit != null ? Number(opts.memoryAssemblyLimit) : 14;
+  const limit = Number.isFinite(limRaw) ? Math.min(80, Math.max(1, Math.floor(limRaw))) : 14;
+  const semantic = opts.memoryAssemblySemantic !== false;
+  const detail = {
+    text,
+    webSearch: !!opts.webSearch,
+    assembleMemory: allowAsm,
+  };
+  if (allowAsm) {
+    detail.memoryAssemblyPreset = { query: memQ, limit, semantic };
+  } else {
+    detail.clearMemoryAssemblyPreset = true;
+  }
+  window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
+  window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+}
+
+/** IANA zone from Shogun helper or `Intl` (browser / OS). */
+function resolveUserTimeZoneId() {
+  const U = typeof window !== 'undefined' ? window.ShogunUserTimezone : null;
+  if (U && typeof U.getTimeZone === 'function') {
+    const z = U.getTimeZone();
+    if (z && String(z).trim()) return String(z).trim();
+  }
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch (_e) {
+    return 'UTC';
+  }
+}
+
+function composerPlaceholderForLang(lang) {
+  const L = lang === 'en' || lang === 'jp' || lang === 'bi' ? lang : 'en';
+  if (L === 'jp') return '本日はどのようなお手伝いをさせていただけますか？';
+  if (L === 'bi') {
+    return 'How can I help you today? ／ 本日はどのようなお手伝いをさせていただけますか？';
+  }
+  return 'How can I help you today?';
+}
+
+/** First word of display name for EN/JP greeting lines (matches previous behavior). */
+function homeFirstNameToken(fullName) {
+  const raw = fullName != null ? String(fullName).trim() : '';
+  if (!raw) return '';
+  return raw.split(/\s+/)[0];
 }
 
 /** Drive-style mark using SHOGUN palette (not Google colors). */
@@ -76,23 +155,32 @@ function computeHomeGreetingState(now) {
     greetEn = 'Good evening';
     greetJp = 'お疲れ様です';
   }
-  const dateOpts = { weekday: 'long', month: 'short', day: 'numeric', timeZoneName: 'short' };
-  const dateEn = d.toLocaleDateString('en-US', dateOpts).toUpperCase();
-  const dateJp = d.toLocaleDateString('ja-JP', {
+  const tz = resolveUserTimeZoneId();
+  const dateEn = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    timeZone: tz,
+    timeZoneName: 'short',
+  })
+    .format(d)
+    .toUpperCase();
+  const dateJp = new Intl.DateTimeFormat('ja-JP', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
+    timeZone: tz,
     timeZoneName: 'short',
-  });
-  const dateBi = d.toLocaleDateString(undefined, dateOpts);
-  let tzId = '';
-  try {
-    tzId = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-  } catch (_) {
-    /* ignore */
-  }
-  return { greetEn, greetJp, dateEn, dateJp, dateBi, tzId };
+  }).format(d);
+  const dateBi = new Intl.DateTimeFormat(undefined, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    timeZone: tz,
+    timeZoneName: 'short',
+  }).format(d);
+  return { greetEn, greetJp, dateEn, dateJp, dateBi };
 }
 
 const HOME_QUICK_CATEGORIES = [
@@ -148,23 +236,47 @@ function ScreenHome() {
   const [morningBrief, setMorningBrief] = useState(null);
   const [briefErr, setBriefErr] = useState(null);
   const [memoryTotal, setMemoryTotal] = useState(null);
-  const [displayName, setDisplayName] = useState('');
+  const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
   const [homeInput, setHomeInput] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
   const [promptModal, setPromptModal] = useState(null);
   const [webSearchOn, setWebSearchOn] = useState(true);
-  const [composerPh, setComposerPh] = useState('本日はどのようなお手伝いをさせていただけますか？');
+  const [assembleMemoryOn, setAssembleMemoryOn] = useState(false);
+  const [composerPh, setComposerPh] = useState(() =>
+    composerPlaceholderForLang(
+      typeof document !== 'undefined' ? document.body.getAttribute('data-lang') : null,
+    ),
+  );
   const [uiLang, setUiLang] = useState(() =>
     typeof document !== 'undefined' ? document.body.getAttribute('data-lang') || 'en' : 'en',
   );
   const [clockTick, setClockTick] = useState(0);
   const plusRef = useRef(null);
+  const plusFileInputRef = useRef(null);
   const quickPromptRootRef = useRef(null);
 
   const headLine = useMemo(() => computeHomeGreetingState(new Date()), [clockTick]);
+  const greetFirstName = useMemo(() => homeFirstNameToken(profileFullName), [profileFullName]);
   const homeDateStr =
     uiLang === 'jp' ? headLine.dateJp : uiLang === 'bi' ? headLine.dateBi : headLine.dateEn;
+
+  const briefGeneratedDisplay = useMemo(() => {
+    const iso = morningBrief && morningBrief.generated_at;
+    if (!iso) return '';
+    const U = typeof window !== 'undefined' ? window.ShogunUserTimezone : null;
+    if (U && typeof U.formatIsoInTimeZone === 'function') {
+      const x = U.formatIsoInTimeZone(iso);
+      const t = (x.time || '').trim();
+      const z = (x.tzShort || '').trim();
+      return t + (z ? ' ' + z : '');
+    }
+    try {
+      const d = new Date(iso);
+      if (!Number.isNaN(d.getTime())) return d.toTimeString().slice(0, 5);
+    } catch (_e) {}
+    return typeof iso === 'string' && iso.length >= 16 ? iso.slice(11, 16) : '';
+  }, [morningBrief]);
 
   /* Local clock only — no API/LLM cost. Hourly + tab refocus keeps greeting/date in sync without waking every minute. */
   useEffect(() => {
@@ -207,11 +319,7 @@ function ScreenHome() {
       const L = typeof document !== 'undefined' ? document.body.getAttribute('data-lang') : null;
       const next = L === 'en' || L === 'jp' || L === 'bi' ? L : 'en';
       setUiLang(next);
-      setComposerPh(
-        next === 'en'
-          ? 'How can I help you today?'
-          : '本日はどのようなお手伝いをさせていただけますか？',
-      );
+      setComposerPh(composerPlaceholderForLang(next));
     };
     syncPh();
     const obs =
@@ -229,8 +337,9 @@ function ScreenHome() {
     runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
       if (cancelled || !r?.ok || !r.data?.settings?.sections) return;
       const g = r.data.settings.sections.general;
-      if (g && typeof g.name === 'string' && g.name.trim()) {
-        setDisplayName(g.name.trim().split(/\s+/)[0]);
+      if (g && typeof g === 'object') {
+        const raw = g.name != null ? String(g.name).trim() : '';
+        setProfileFullName(raw);
       }
       const llm = r.data.settings.sections.llm;
       if (llm && llm.model != null) setModelHint(String(llm.model));
@@ -239,11 +348,23 @@ function ScreenHome() {
   }, []);
 
   useEffect(() => {
+    const onProfile = (e) => {
+      const d = e && e.detail;
+      if (!d || typeof d !== 'object') return;
+      if (Object.prototype.hasOwnProperty.call(d, 'name')) {
+        setProfileFullName(d.name == null ? '' : String(d.name).trim());
+      }
+    };
+    window.addEventListener('shogun-profile-changed', onProfile);
+    return () => window.removeEventListener('shogun-profile-changed', onProfile);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       const res = await runRuntimeActionA(
         "brief.get",
-        { span: "today", source: "home" },
+        { span: "today", source: "home", user_tz: resolveUserTimeZoneId() },
         { silentError: true }
       );
       if (cancelled) return;
@@ -300,15 +421,171 @@ function ScreenHome() {
 
   const seedAndOpenChat = (text) => {
     const t = String(text || '').trim();
-    window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail: { text: t } }));
+    window.dispatchEvent(
+      new CustomEvent('shogun-chat-composer-seed', {
+        detail: { text: t, webSearch: webSearchOn, assembleMemory: assembleMemoryOn },
+      }),
+    );
     window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
   };
 
   const goAsk = () => {
     const t = homeInput.trim();
     if (t) seedAndOpenChat(t);
-    else window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+    else {
+      window.dispatchEvent(
+        new CustomEvent('shogun-chat-composer-seed', {
+          detail: { text: '', webSearch: webSearchOn, assembleMemory: assembleMemoryOn },
+        }),
+      );
+      window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+    }
   };
+
+  const ingestPlusFiles = useCallback(async (fileList) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    let n = 0;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      let snippet = '';
+      if (file.type && file.type.indexOf('image/') === 0) {
+        snippet = `[Image] ${file.name} (${file.size} bytes)`;
+      } else {
+        try {
+          const text = await new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : '');
+            fr.onerror = () => reject(new Error('read'));
+            fr.readAsText(file);
+          });
+          snippet = String(text).slice(0, 16000);
+        } catch (_) {
+          snippet = `[File] ${file.name} — could not read as text (binary or too large).`;
+        }
+      }
+      const r = await runRuntimeActionA(
+        'memory.ingest',
+        {
+          title: `Home · ${file.name}`,
+          snippet,
+          source: 'home_attachment',
+          kinds: ['input', 'note'],
+        },
+        { silentError: true },
+      );
+      if (r && r.ok) n += 1;
+    }
+    if (n > 0) {
+      window.SHOGUN_RUNTIME?.pushToast?.(`${n} file(s) added to Memory`, 'success');
+    } else {
+      window.SHOGUN_RUNTIME?.pushToast?.('Could not ingest files', 'warn');
+    }
+  }, []);
+
+  const onPlusFilesChange = useCallback(
+    (e) => {
+      const fl = e.target.files;
+      if (fl && fl.length) void ingestPlusFiles(fl);
+      e.target.value = '';
+    },
+    [ingestPlusFiles],
+  );
+
+  const plusMenuSections = useMemo(
+    () => [
+      [
+        {
+          icon: 'paperclip',
+          label: 'ファイルまたは写真を追加',
+          chev: false,
+          onPick: () => plusFileInputRef.current && plusFileInputRef.current.click(),
+        },
+        {
+          icon: 'layers',
+          label: 'プロジェクトに追加',
+          chev: true,
+          onPick: () => {
+            window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
+            window.SHOGUN_RUNTIME?.pushToast?.('Memory を開きました — タイムラインでプロジェクトを整理できます', 'info');
+          },
+        },
+        {
+          icon: 'github',
+          label: 'GitHubから追加',
+          chev: false,
+          onPick: () => {
+            window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations');
+            window.SHOGUN_RUNTIME?.pushToast?.('連携から Git / ツールを選ぶか、リポジトリ URL をチャットに貼ってください', 'info');
+          },
+        },
+      ],
+      [
+        {
+          icon: 'note',
+          label: 'スキル',
+          chev: true,
+          onPick: () => {
+            window.SHOGUN_RUNTIME?.openSettingsPane?.('chat');
+            window.SHOGUN_RUNTIME?.pushToast?.('Chat のカスタム指示を編集できます', 'info');
+          },
+        },
+        {
+          icon: 'grid',
+          label: 'コネクタ',
+          chev: true,
+          onPick: () => {
+            window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations');
+          },
+        },
+        {
+          icon: 'plug',
+          label: 'プラグイン',
+          chev: true,
+          onPick: () => {
+            window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations');
+          },
+        },
+      ],
+      [
+        {
+          icon: 'search',
+          label: 'リサーチ',
+          chev: false,
+          onPick: () => {
+            setHomeInput((v) => {
+              const t = (v || '').trim();
+              return t ? `${t}\nResearch: ` : 'Research: ';
+            });
+            window.SHOGUN_RUNTIME?.pushToast?.('入力欄に Research: を挿入しました（続きを書いて送信）', 'info');
+          },
+        },
+        {
+          icon: 'globe',
+          label: 'ウェブ検索',
+          chev: false,
+          active: webSearchOn,
+          onPick: () => setWebSearchOn((v) => !v),
+        },
+        {
+          icon: 'memory',
+          label: 'Memory 自動取得',
+          chev: false,
+          active: assembleMemoryOn,
+          onPick: () => setAssembleMemoryOn((v) => !v),
+        },
+        {
+          icon: 'edit',
+          label: 'スタイルを使用',
+          chev: true,
+          onPick: () => {
+            window.SHOGUN_RUNTIME?.openSettingsPane?.('appearance');
+          },
+        },
+      ],
+    ],
+    [webSearchOn, assembleMemoryOn],
+  );
 
   const runBriefMcp = (item, tool) => {
     if (!tool?.tool_name) return;
@@ -377,14 +654,7 @@ function ScreenHome() {
         }}
       >
         <div style={{ textAlign: 'center' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 10,
-            }}
-          >
+          <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'center' }}>
             <Kamon size={28} />
           </div>
           <h1
@@ -397,7 +667,7 @@ function ScreenHome() {
               lineHeight: 1.35,
             }}
           >
-            {headLine.greetEn}, {displayName || 'there'}.
+            {headLine.greetEn}, {greetFirstName || 'there'}.
           </h1>
           <h1
             className="jp"
@@ -409,7 +679,7 @@ function ScreenHome() {
               lineHeight: 1.35,
             }}
           >
-            {headLine.greetJp}。{displayName || 'ゲスト'}さん、お帰りなさい
+            {headLine.greetJp}。{greetFirstName || 'ゲスト'}さん、お帰りなさい
           </h1>
           <div className="t-mono" style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
             {homeDateStr}
@@ -437,7 +707,7 @@ function ScreenHome() {
             <textarea
               value={homeInput}
               onChange={(e) => setHomeInput(e.target.value)}
-              placeholder="本日はどのようなお手伝いをさせていただけますか？"
+              placeholder={composerPh}
               rows={3}
               style={{
                 width: '100%',
@@ -469,6 +739,15 @@ function ScreenHome() {
               }}
             >
               <div style={{ position: 'relative' }} ref={plusRef}>
+                <input
+                  ref={plusFileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.txt,.md,.json,.csv,.html,text/plain,text/markdown"
+                  style={{ display: 'none' }}
+                  aria-hidden
+                  onChange={onPlusFilesChange}
+                />
                 <button
                   type="button"
                   aria-expanded={plusOpen}
@@ -505,29 +784,7 @@ function ScreenHome() {
                       zIndex: 50,
                     }}
                   >
-                    {[
-                      [
-                        { icon: 'paperclip', label: 'ファイルまたは写真を追加', chev: false },
-                        { icon: 'layers', label: 'プロジェクトに追加', chev: true },
-                        { icon: 'github', label: 'GitHubから追加', chev: false },
-                      ],
-                      [
-                        { icon: 'note', label: 'スキル', chev: true },
-                        { icon: 'grid', label: 'コネクタ', chev: true },
-                        { icon: 'plug', label: 'プラグイン', chev: false, disabled: true },
-                      ],
-                      [
-                        { icon: 'search', label: 'リサーチ', chev: false },
-                        {
-                          icon: 'globe',
-                          label: 'ウェブ検索',
-                          chev: false,
-                          active: webSearchOn,
-                          onPick: () => setWebSearchOn((v) => !v),
-                        },
-                        { icon: 'edit', label: 'スタイルを使用', chev: true },
-                      ],
-                    ].map((section, si) => (
+                    {plusMenuSections.map((section, si) => (
                       <div key={si}>
                         {si > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '6px 0' }} />}
                         {section.map((row, ri) => (
@@ -766,7 +1023,7 @@ function ScreenHome() {
             <div className="t-mono gold">MORNING BRIEF · AMC</div>
             <span className="pill" style={{ fontSize: 10 }}>{morningBrief.posture}</span>
             <span className="spacer" />
-            <span className="t-mono xsmall muted">{morningBrief.generated_at?.slice(11, 16)} JST</span>
+            <span className="t-mono xsmall muted">{briefGeneratedDisplay || '—'}</span>
           </div>
           <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 18, lineHeight: 1.35 }}>{morningBrief.headline}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -827,6 +1084,7 @@ function ScreenMemory() {
   const [scrubIdx, setScrubIdx] = useState(0);
   const [sourceEntities, setSourceEntities] = useState([]);
   const [semanticMemorySearch, setSemanticMemorySearch] = useState(true);
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
   const [memorySettingsLoaded, setMemorySettingsLoaded] = useState(false);
   const timelineLoading = !memorySettingsLoaded;
   const withSemantic = useCallback(
@@ -856,9 +1114,25 @@ function ScreenMemory() {
       if (mem && typeof mem === 'object' && typeof mem.semanticRerank === 'boolean') {
         setSemanticMemorySearch(mem.semanticRerank);
       }
+      const priv = r?.ok && r.data?.settings?.sections?.privacy;
+      if (priv && typeof priv === 'object') {
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+      }
       setMemorySettingsLoaded(true);
     })();
     return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    const onPrivacy = () => {
+      void runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
+        const priv = r?.ok && r.data?.settings?.sections?.privacy;
+        if (priv && typeof priv === 'object') {
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        }
+      });
+    };
+    window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
+    return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
   }, []);
   useEffect(() => {
     if (!memorySettingsLoaded) return;
@@ -908,10 +1182,10 @@ function ScreenMemory() {
     return { bins: b, maxBin: Math.max(...b, 1) };
   }, [events]);
   const scrubbed = timelineLoading
-    ? { t: '--', h: 12, src: 'note', title: '', snippet: '', memoryId: null }
+    ? { t: '--', h: 12, src: 'note', title: '', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null }
     : events.length
       ? events[Math.min(scrubIdx, events.length - 1)]
-      : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '' };
+      : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null };
   const srcIcon = s => s==='chat'?'chat':s==='meet'?'calendar':s==='note'?'note':s==='mail'?'mail':s==='agent'?'bot':s==='code'?'terminal':'file';
   const srcLabel = s => ({chat:'Conversation',meet:'Meeting',note:'Note',mail:'Email',agent:'Agent run',code:'Code'})[s]||'Event';
   const memoryHeadDate = useMemo(() => {
@@ -1120,6 +1394,17 @@ function ScreenMemory() {
               <div className="row" style={{gap:6, flexWrap:'wrap', marginTop:2}}>
                 {scrubbed.tag==='auto' && <span className="label label-gold"><Icon name="bot" size={10} style={{marginRight:4}}/>auto-captured</span>}
                 {scrubbed.memoryId && <span className="label">index</span>}
+                {scrubbed.provenance && (
+                  <span className="label" style={{ borderColor: 'var(--gold-dim)', color: 'var(--gold)' }} title={scrubbed.sourceRaw || ''}>
+                    <span className="en-only">{memoryProvenanceLabel(scrubbed.provenance).en}</span>
+                    <span className="jp" style={{ fontSize: 10 }}>{memoryProvenanceLabel(scrubbed.provenance).jp}</span>
+                  </span>
+                )}
+                {scrubbed.entityId && (
+                  <span className="label t-mono" style={{ fontSize: 9, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }} title={scrubbed.entityId}>
+                    id · {scrubbed.entityId.slice(0, 24)}{scrubbed.entityId.length > 24 ? '…' : ''}
+                  </span>
+                )}
                 {scrubbed.dur && <span className="label"><Icon name="clock" size={10} style={{marginRight:4}}/>{scrubbed.dur}</span>}
               </div>
 
@@ -1138,6 +1423,54 @@ function ScreenMemory() {
               <div className="row" style={{gap:8, paddingTop:10, borderTop:'1px solid var(--border)', marginTop:10, flexWrap:'wrap'}}>
                 <button type="button" className="btn btn-sm btn-secondary" disabled={timelineLoading} onClick={()=>runRuntimeActionA('memory.search', withSemantic({ query:scrubbed.title, limit:10 }), { successMessage:'Search run' })}><Icon name="chat" size={12}/>Search title</button>
                 <button type="button" className="btn btn-sm btn-secondary" disabled={timelineLoading} onClick={()=>runRuntimeActionA('memory.search', withSemantic({ query:`source:${scrubbed.src} ${scrubbed.title}`, limit:10 }), { successMessage:'Search run' })}><Icon name="file" size={12}/>Search source</button>
+                {scrubbed.memoryId && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    disabled={timelineLoading}
+                    onClick={() => {
+                      const prompt =
+                        'Turn this indexed memory into a concise Markdown work note (bullets OK).\n\n**Title:** ' +
+                        (scrubbed.title || '') +
+                        '\n\n**Snippet:**\n' +
+                        (scrubbed.snippet || '').slice(0, 4000);
+                      runRuntimeActionA(
+                        'draft.create',
+                        (() => {
+                          const p = {
+                            target: 'work_document',
+                            source: 'memory_timeline',
+                            prompt,
+                          };
+                          if (allowServerMemoryAssembly) {
+                            p.memoryAssembly = {
+                              query: String(scrubbed.title || '').slice(0, 240),
+                              limit: 12,
+                              semantic: true,
+                            };
+                          }
+                          return p;
+                        })(),
+                        { successMessage: 'Draft ready' },
+                      );
+                    }}
+                  ><Icon name="edit" size={12}/><span className="en-only"> Draft</span><span className="jp" style={{ fontSize: 11 }}> 下書き</span></button>
+                )}
+                {scrubbed.memoryId && !timelineLoading && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    onClick={() =>
+                      openMemoryEntryInChat(
+                        { title: scrubbed.title, snippet: scrubbed.snippet },
+                        {
+                          memoryAssemblyQuery: scrubbed.title,
+                          memoryAssemblyLimit: 14,
+                          allowServerMemoryAssembly,
+                        },
+                      )}
+                  ><Icon name="chat" size={12}/><span className="en-only"> Open in Chat</span><span className="jp" style={{ fontSize: 11 }}> チャットへ</span></button>
+                )}
                 {scrubbed.memoryId && (
                   <button
                     type="button"
@@ -1324,12 +1657,33 @@ function ScreenMemory() {
                   <div style={{position:'absolute', left:-4, top:4, width:9, height:9, borderRadius:'50%', background: e.tag==='auto'?'var(--gold)':'var(--text)'}}/>
                 </div>
                 <div style={{flex:1}}>
-                  <div className="row" style={{gap:8, marginBottom:4}}>
+                  <div className="row" style={{gap:8, marginBottom:4, flexWrap:'wrap'}}>
                     <Icon name={e.src==='chat'?'chat':e.src==='meet'?'calendar':e.src==='note'?'note':e.src==='mail'?'mail':e.src==='agent'?'bot':'file'} size={14} className="dim"/>
                     <span className="t-mono" style={{fontSize:10}}>{e.src}</span>
+                    {e.provenance && (
+                      <span className="label" style={{ height: 18, fontSize: 9, borderColor: 'var(--gold-dim)', color: 'var(--gold)' }}>
+                        {memoryProvenanceLabel(e.provenance).en}
+                      </span>
+                    )}
                     {e.dur && <span className="label" style={{height:18, fontSize:10}}>{e.dur}</span>}
                   </div>
                   <div style={{fontSize:15, fontWeight: e.big?500:400}}>{e.title}</div>
+                  {e.memoryId && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      style={{ marginTop: 10, padding: '0 8px' }}
+                      onClick={() =>
+                        openMemoryEntryInChat(
+                          { title: e.title, snippet: e.snippet },
+                          {
+                            memoryAssemblyQuery: e.title,
+                            memoryAssemblyLimit: 14,
+                            allowServerMemoryAssembly,
+                          },
+                        )}
+                    ><Icon name="chat" size={12}/><span className="en-only"> Open in Chat</span><span className="jp" style={{ fontSize: 11 }}> チャットへ</span></button>
+                  )}
                 </div>
               </div>
             ))}

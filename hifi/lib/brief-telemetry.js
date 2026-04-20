@@ -8,6 +8,8 @@
     ITEM_DISMISS: "brief.item.dismiss",
     RATING: "brief.rating.submitted",
     BRIEF_RENDERED: "brief.rendered",
+    /** Chat send: whether manual memoryContext vs server memoryAssembly was used (privacy-respecting). */
+    CHAT_COMPLETION_CONTEXT: "chat.completion.context",
   };
 
   /** @type {Array<{ t: string, name: string, payload: object }>} */

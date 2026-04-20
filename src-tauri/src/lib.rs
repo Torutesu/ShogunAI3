@@ -4,11 +4,14 @@ mod brief;
 mod brief_actions;
 mod calendar_sync;
 mod capture_sampler;
+mod context_assembly;
 mod commands;
 mod deep_link_credentials;
 mod embed_backfill;
 mod embeddings;
+mod gmail;
 mod google_calendar;
+mod google_oauth;
 mod integration_secrets;
 mod integrations;
 mod llm;
@@ -56,6 +59,7 @@ pub fn run() {
     .manage(meeting_session::MeetingSessionState::default())
     .manage(meeting_mic::MeetingMicController::default())
     .plugin(tauri_plugin_deep_link::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -115,10 +119,15 @@ pub fn run() {
       commands::app_integration_credentials_status,
       commands::app_integration_toggle,
       commands::shogun_google_calendar_sync,
+      commands::shogun_gmail_sync,
       commands::app_capture_pause,
       commands::app_capture_resume,
       commands::app_permissions_manage,
+      commands::app_privacy_pick_app,
       commands::app_diagnostics_report,
+      commands::app_frontend_error_report,
+      commands::app_updates_check,
+      commands::app_updates_download_install,
       commands::app_delete_data_range,
       commands::app_delete_all_data,
       commands::app_delete_account,

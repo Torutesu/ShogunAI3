@@ -12,12 +12,13 @@ Static **SHOGUN** hi-fi prototype: React via Babel in the browser, optional Taur
 | `lib/shogun-api.js` | Thin wrappers around IPC commands |
 | `lib/action-registry.js` | Maps UI action keys to API methods |
 | `lib/morning-brief-contract.js` | Mock Morning Brief v1 (`getMorningBriefMockResponse`) |
-| `lib/brief-telemetry.js` | Eval hooks: next-action click, dismiss, rating (`shogunBriefTelemetrySink`) |
+| `lib/brief-telemetry.js` | Eval hooks: next-action click, dismiss, rating, and chat context source (`chat.completion.context`) (`shogunBriefTelemetrySink`) |
 | `screens-a.jsx` | Home screen including **Morning Brief (AMC)** card |
 | `action-map.md` | Action inventory; keep in sync with `scripts/check-actions.py` |
 | [`../docs/END_USER_SETUP.md`](../docs/END_USER_SETUP.md) | Short **end-user** steps: Tauri app, API key, Memory embeddings & semantic search |
 | [`../PRIVACY.md`](../PRIVACY.md) | Desktop v1 **privacy summary** (local data, Keychain, LLM/network) — ship or link with distribution |
-| [`../docs/TERMS_OF_SERVICE.md`](../docs/TERMS_OF_SERVICE.md) | **利用規約（ベータ）** — サブスク UI の範囲、第三者サービス、免責 |
+| [`../docs/TERMS_OF_SERVICE.md`](../docs/TERMS_OF_SERVICE.md) | **利用規約（ベータ・日本語）** — サブスク UI の範囲、第三者サービス、免責 |
+| [`../docs/TERMS_OF_SERVICE_EN.md`](../docs/TERMS_OF_SERVICE_EN.md) | **Terms of Service (beta, English)** — same scope; jurisdiction may pick authoritative text |
 
 ## External agent · credentials (no in-app OAuth)
 
@@ -27,7 +28,14 @@ See **`action-map.md`** for the full UI ↔ command matrix. Summary:
 - **Deep link** `shogun-ai://credentials/import?…` (same fields as query params where applicable). Emits **`credentials-imported`** (`via: "deep-link"`). **Prefer invoke** for secrets (URLs leak to logs/history).
 - **Status**: `integrations.credentials_status` → `configured`, **`tokenRefreshReady`** (Google refresh possible when `refreshToken` + `oauthClientId` exist).
 - **Calendar → Memory**: `calendar.sync`. Token refresh on expiry/401 when OAuth client + refresh token are stored.
+- **Gmail → Memory**: `gmail.sync` (`provider: "gmail"` credentials required). Ingests inbox metadata with `provenance: connector`, `source: gmail`.
 - **Background calendar**: `settings.save` on section **`integrations`** with **`googleCalendarAutoSync`** and **`googleCalendarSyncIntervalMins`** (5–1440); requires Keychain credentials.
+
+## Privacy guardrail
+
+- `settings.sections.privacy.allowChatServerMemoryAssembly` (default `true`) explicitly controls whether server-side `memoryAssembly` is honored on `chat.complete` / `draft.create`.
+- Settings save emits `shogun-privacy-settings-changed`; Chat / Memory / Work / Meetings / Agents reload this flag via `settings.load` without remount.
+- `window.shogunBriefTelemetrySink` now persists `chat.completion.context` events to a local ring buffer (`localStorage`) and ingests compact telemetry rows to Memory (`source: telemetry_chat_context`).
 
 ## Capture (macOS desktop)
 

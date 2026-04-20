@@ -38,7 +38,7 @@ pub fn clear_credentials(provider: &str) -> Result<(), String> {
 
 /// Clears known integration credential entries (extend when adding providers).
 pub fn clear_all_known() {
-  for p in ["google_calendar"] {
+  for p in ["google_calendar", "gmail"] {
     let _ = clear_credentials(p);
   }
 }

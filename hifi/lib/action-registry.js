@@ -37,10 +37,14 @@
     );
     register("integrations.toggle", (payload) => api.integrationToggle(payload));
     register("calendar.sync", (payload) => api.googleCalendarSync(payload));
+    register("gmail.sync", (payload) => api.gmailSync(payload));
     register("capture.pause", () => api.capturePause({ reason: "user_request" }));
     register("capture.resume", () => api.captureResume({ reason: "user_request" }));
     register("permissions.manage", (payload) => api.permissionsManage(payload));
+    register("privacy.pick_app", (payload) => api.privacyPickApp(payload));
     register("diagnostics.report", (payload) => api.diagnosticsReport(payload));
+    register("updates.check", (payload) => api.updatesCheck(payload));
+    register("updates.download_install", (payload) => api.updatesDownloadInstall(payload));
     register("data.delete_range", (payload) => api.accountDeleteData(payload));
     register("data.delete_all", () => api.accountDeleteAll({}));
     register("account.delete", () => api.accountDeleteSelf({}));

@@ -9,6 +9,8 @@
 (function initIntegrationConnectors(global) {
   const LS_CONNECTED = "shogun.hifi.mock.integrations.connected.v1";
   const LS_GCAL = "shogun.hifi.mock.integrations.google_calendar.v1";
+  const LS_GMAIL = "shogun.hifi.mock.integrations.gmail.v1";
+  const LS_GMAIL = "shogun.hifi.mock.integrations.gmail.v1";
 
   /** @type {Record<string, string>} slug -> path under `hifi/assets/integrations/` */
   const ICON_BY_SLUG = {
@@ -39,7 +41,6 @@
     "linear",
     "outlook",
     "google_drive",
-    "gmail",
     "github",
     "claude",
     "figma",
@@ -113,6 +114,43 @@
     }
   }
 
+  function readGmailMock() {
+    try {
+      if (!global.localStorage) return { configured: false, tokenRefreshReady: false };
+      const raw = global.localStorage.getItem(LS_GMAIL);
+      if (!raw) return { configured: false, tokenRefreshReady: false };
+      const o = JSON.parse(raw);
+      if (!o || typeof o !== "object") return { configured: false, tokenRefreshReady: false };
+      return {
+        configured: !!o.configured,
+        tokenRefreshReady: !!o.tokenRefreshReady,
+      };
+    } catch (_) {
+      return { configured: false, tokenRefreshReady: false };
+    }
+  }
+
+  function writeGmailMock(patch) {
+    try {
+      if (!global.localStorage) return;
+      const prev = (() => {
+        try {
+          const raw = global.localStorage.getItem(LS_GMAIL);
+          if (!raw) return {};
+          const o = JSON.parse(raw);
+          return o && typeof o === "object" ? o : {};
+        } catch (_) {
+          return {};
+        }
+      })();
+      const next = { ...prev, ...patch };
+      global.localStorage.setItem(LS_GMAIL, JSON.stringify(next));
+      dispatchCredEvent();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
   function writeGcalMock(patch) {
     try {
       if (!global.localStorage) return;
@@ -174,6 +212,27 @@
     switch (command) {
       case "app_integration_connect": {
         const slug = normalizeProvider(e.provider);
+        if (slug === "gmail") {
+          const g = readGmailMock();
+          if (g.configured) {
+            setConnected(slug, true);
+            return {
+              connected: true,
+              provider: slug,
+              stub: false,
+              echo: e,
+            };
+          }
+          return {
+            connected: false,
+            needsCredentials: true,
+            provider: slug,
+            message:
+              "Import Gmail OAuth tokens via integrations.import_credentials (provider: gmail). Browser mock: paste tokens in Integrations dev tools.",
+            stub: false,
+            echo: e,
+          };
+        }
         if (slug === "new_tool" || !REGISTERED.has(slug)) {
           return notImpl(
             slug === "new_tool"
@@ -221,6 +280,16 @@
             importedAt: Date.now(),
           });
         }
+        if (slug === "gmail") {
+          const hasAccess = String(e.accessToken || "").trim().length > 0;
+          const hasRefresh = String(e.refreshToken || "").trim().length > 0;
+          const hasClient = String(e.oauthClientId || "").trim().length > 0;
+          writeGmailMock({
+            configured: hasAccess,
+            tokenRefreshReady: hasRefresh && hasClient,
+            importedAt: Date.now(),
+          });
+        }
         return {
           saved: true,
           provider: slug,
@@ -240,10 +309,29 @@
             echo: e,
           };
         }
+        if (slug === "gmail") {
+          const g = readGmailMock();
+          return {
+            configured: g.configured,
+            tokenRefreshReady: g.tokenRefreshReady,
+            provider: slug,
+            stub: false,
+            echo: e,
+          };
+        }
         return {
           configured: false,
           tokenRefreshReady: false,
           provider: slug,
+          stub: false,
+          echo: e,
+        };
+      }
+      case "shogun_gmail_sync": {
+        const g = readGmailMock();
+        const ingested = g.configured ? 2 : 0;
+        return {
+          ingested,
           stub: false,
           echo: e,
         };
@@ -294,5 +382,6 @@
     DEFAULT_GRID_TOOLS,
     mockIntegrationPayload,
     readGcalMock,
+    readGmailMock,
   };
 })(typeof window !== "undefined" ? window : globalThis);

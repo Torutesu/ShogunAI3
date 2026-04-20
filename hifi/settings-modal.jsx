@@ -172,6 +172,70 @@ function useRuntimeActions() {
 /** Sections map from `app_settings_load` → `settings.sections`; consumed by settings panes. */
 const SettingsHydrationContext = React.createContext({ sections: {}, refreshSections: null });
 
+const PRIVACY_DEFAULT_APPS = [
+  { id: 'preset-finder', name: 'Finder', icon: '📁', enabled: true },
+  { id: 'preset-1password', name: '1Password', icon: '🔐', enabled: true },
+  { id: 'preset-banking', name: 'Banking', icon: '🏦', enabled: true },
+];
+const PRIVACY_DEFAULT_SITES = [
+  { id: 'site-ex1', host: 'internal.corp.example', label: 'Corporate SSO (example)', enabled: true },
+  { id: 'site-ex2', host: 'pay.vendor.example', label: 'Vendor payments (example)', enabled: false },
+];
+
+function normalizePrivacyFromSettings(sec) {
+  let apps = sec && Array.isArray(sec.excludedApps) ? sec.excludedApps : null;
+  let sites = sec && Array.isArray(sec.excludedSites) ? sec.excludedSites : null;
+  if (!apps && sec && typeof sec.app === 'string' && sec.app) {
+    apps = [{ id: 'legacy-app', name: sec.app, icon: '📱', enabled: !!sec.enabled }];
+  }
+  if (!apps) apps = PRIVACY_DEFAULT_APPS.map((r) => ({ ...r }));
+  if (!sites) sites = PRIVACY_DEFAULT_SITES.map((r) => ({ ...r }));
+  return {
+    excludedApps: apps.map((r) => ({
+      id: String(r.id || r.name || 'app'),
+      name: String(r.name || 'App'),
+      icon: r.icon != null ? String(r.icon) : '⬚',
+      enabled: !!r.enabled,
+      path: r.path ? String(r.path) : undefined,
+    })),
+    excludedSites: sites.map((r) => ({
+      id: String(r.id || r.host || 'site'),
+      host: String(r.host || '').toLowerCase().replace(/^https?:\/\//i, '').split('/')[0],
+      label: r.label != null ? String(r.label) : String(r.host || ''),
+      enabled: !!r.enabled,
+    })),
+  };
+}
+
+/** Fired after a successful `settings.save` on `section: privacy` so Chat / Memory / Work reload flags without remounting. */
+function notifyPrivacySettingsChanged(detail) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent('shogun-privacy-settings-changed', {
+        detail: detail && typeof detail === 'object' ? detail : {},
+      }),
+    );
+  } catch (_) {}
+}
+
+function filterPrivacyRows(rows, q, filt, textOf) {
+  const qq = (q || '').trim().toLowerCase();
+  return rows.filter((r) => {
+    if (filt === 'on' && !r.enabled) return false;
+    if (filt === 'off' && r.enabled) return false;
+    if (!qq) return true;
+    return String(textOf(r)).toLowerCase().includes(qq);
+  });
+}
+
+/** `executeAction` の戻りから IPC ペイロードを取り出す（ShogunAPI の二重ラップを吸収）。 */
+function unwrapExecutePayload(res) {
+  if (!res || !res.data) return null;
+  const d = res.data;
+  if (d && d.data !== undefined && d.data !== null && typeof d.data === 'object') return d.data;
+  return d;
+}
+
 /**
  * Read a value saved either as a dotted top-level key (`sections['chat.instructions']`)
  * or nested (`sections.chat.instructions`), with optional `{ value: string }` wrapper.
@@ -199,6 +263,67 @@ function readSectionValue(sections, dottedKey) {
   return undefined;
 }
 
+const MAX_PROFILE_PHOTO_BYTES = 512 * 1024;
+
+function isProfilePhotoDataUrlSetting(s) {
+  const t = s != null ? String(s).trim() : '';
+  return t.length > 0 && /^data:image\//i.test(t);
+}
+
+function downscaleDataUrlToMaxEdge(dataUrl, maxEdge) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) {
+        resolve(dataUrl);
+        return;
+      }
+      const scale = Math.min(1, maxEdge / Math.max(w, h));
+      const cw = Math.max(1, Math.round(w * scale));
+      const ch = Math.max(1, Math.round(h * scale));
+      try {
+        const c = document.createElement('canvas');
+        c.width = cw;
+        c.height = ch;
+        const ctx = c.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, cw, ch);
+        resolve(c.toDataURL('image/jpeg', 0.88));
+      } catch (_e) {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+async function imageFileToAvatarDataUrl(file) {
+  if (!file || !file.type.startsWith('image/')) return { error: 'Choose an image file.' };
+  if (file.size > MAX_PROFILE_PHOTO_BYTES) {
+    return { error: 'Image must be 512 KB or smaller.' };
+  }
+  const raw = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+  let out = typeof raw === 'string' ? raw : '';
+  if (out.length > 550000) {
+    out = await downscaleDataUrlToMaxEdge(out, 256);
+  }
+  if (!isProfilePhotoDataUrlSetting(out) || out.length > 900000) {
+    return { error: 'Could not store this image — try a smaller file.' };
+  }
+  return { dataUrl: out };
+}
+
 function Pane({title, jp, children, subtitle}) {
   return (
     <div className="s-pane">
@@ -218,25 +343,41 @@ function PaneGeneral() {
   const { run, toast } = useRuntimeActions();
   const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
   const [name, setName] = useStateS('');
+  const [avatarGlyph, setAvatarGlyph] = useStateS('');
+  const [avatarImageDataUrl, setAvatarImageDataUrl] = useStateS('');
   const [aliases, setAliases] = useStateS('');
   const [email, setEmail] = useStateS('');
   const [clerkState, setClerkState] = useStateS({ enabled: false, signedIn: false, label: '' });
+  const photoInputRef = React.useRef(null);
   const saveProfile = React.useCallback(
     async (opts) => {
       const quiet = opts && opts.quiet;
       const r = await run(
         'settings.save',
-        { section: 'general', name, aliases, email },
+        { section: 'general', name, aliases, email, avatarGlyph, avatarImageDataUrl },
         quiet ? { silentError: true } : { silentError: true, successMessage: 'Profile updated' },
       );
       if (r && r.ok && refreshSections) await refreshSections();
+      if (r && r.ok) {
+        try {
+          window.dispatchEvent(
+            new CustomEvent('shogun-profile-changed', {
+              detail: { name, avatarGlyph, avatarImageDataUrl },
+            }),
+          );
+        } catch (_) {
+          /* ignore */
+        }
+      }
     },
-    [run, refreshSections, name, aliases, email],
+    [run, refreshSections, name, aliases, email, avatarGlyph, avatarImageDataUrl],
   );
   React.useEffect(() => {
     const g = sections.general;
     if (!g || typeof g !== 'object') return;
     if (g.name != null) setName(String(g.name));
+    if (g.avatarGlyph != null) setAvatarGlyph(String(g.avatarGlyph));
+    if (g.avatarImageDataUrl != null) setAvatarImageDataUrl(String(g.avatarImageDataUrl));
     if (g.aliases != null) setAliases(String(g.aliases));
     if (g.email != null) setEmail(String(g.email));
   }, [sections]);
@@ -351,6 +492,196 @@ function PaneGeneral() {
           onChange={(e) => setName(e.target.value)}
           onBlur={() => void saveProfile({ quiet: true })}
         />
+      </Field>
+      <Field
+        label={
+          <span>
+            Avatar{' '}
+            <span className="jp" style={{ fontSize: 12, color: 'var(--text-dim)', fontWeight: 400 }}>
+              表示アイコン
+            </span>
+          </span>
+        }
+        hint={
+          <span>
+            <span className="en-only">
+              Photo (optional, max 512 KB) overrides the letter. Otherwise use one letter or emoji, or leave empty for the first
+              character of your display name. Stored locally in settings.
+            </span>
+            <span className="jp">
+              写真（512KB以下・任意）は文字より優先表示されます。未設定なら1文字／絵文字、または「呼び名」の先頭文字。設定にローカル保存されます。
+            </span>
+          </span>
+        }
+      >
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            void (async () => {
+              const f = e.target.files && e.target.files[0];
+              e.target.value = '';
+              if (!f) return;
+              const res = await imageFileToAvatarDataUrl(f);
+              if (res.error) {
+                toast(res.error, 'warn');
+                return;
+              }
+              setAvatarImageDataUrl(res.dataUrl);
+              const r = await run(
+                'settings.save',
+                {
+                  section: 'general',
+                  name,
+                  aliases,
+                  email,
+                  avatarGlyph,
+                  avatarImageDataUrl: res.dataUrl,
+                },
+                { silentError: true, successMessage: 'Profile photo updated' },
+              );
+              if (r && r.ok && refreshSections) await refreshSections();
+              if (r && r.ok) {
+                try {
+                  window.dispatchEvent(
+                    new CustomEvent('shogun-profile-changed', {
+                      detail: { name, avatarGlyph, avatarImageDataUrl: res.dataUrl },
+                    }),
+                  );
+                } catch (_) {
+                  /* ignore */
+                }
+              }
+            })();
+          }}
+        />
+        <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div
+            className="avatar"
+            style={{
+              width: 40,
+              height: 40,
+              fontSize: avatarGlyph.trim() && !isProfilePhotoDataUrlSetting(avatarImageDataUrl) ? 18 : 14,
+              flexShrink: 0,
+              border: '1px solid var(--border-hi)',
+              overflow: 'hidden',
+              padding: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-hidden
+          >
+            {isProfilePhotoDataUrlSetting(avatarImageDataUrl) ? (
+              <img
+                src={avatarImageDataUrl}
+                alt=""
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            ) : (
+              (() => {
+                const g = avatarGlyph.trim();
+                if (g) return Array.from(g)[0] || '?';
+                const n = String(name || '').trim();
+                if (n) {
+                  const c = Array.from(n)[0];
+                  return /^[a-z]$/i.test(c) ? c.toUpperCase() : c;
+                }
+                return '?';
+              })()
+            )}
+          </div>
+          <input
+            className="s-input"
+            value={avatarGlyph}
+            onChange={(e) => setAvatarGlyph(e.target.value)}
+            onBlur={() => void saveProfile({ quiet: true })}
+            placeholder="e.g. T or 🎯"
+            maxLength={8}
+            style={{ flex: 1, minWidth: 120 }}
+            aria-label="Avatar letter or emoji"
+          />
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => photoInputRef.current && photoInputRef.current.click()}>
+            <Icon name="upload" size={12} />
+            <span className="en-only">Photo</span>
+            <span className="jp">写真</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={!isProfilePhotoDataUrlSetting(avatarImageDataUrl)}
+            onClick={() => {
+              void (async () => {
+                const r = await run(
+                  'settings.save',
+                  {
+                    section: 'general',
+                    name,
+                    aliases,
+                    email,
+                    avatarGlyph,
+                    avatarImageDataUrl: '',
+                  },
+                  { silentError: true },
+                );
+                setAvatarImageDataUrl('');
+                if (r && r.ok && refreshSections) await refreshSections();
+                if (r && r.ok) {
+                  try {
+                    window.dispatchEvent(
+                      new CustomEvent('shogun-profile-changed', {
+                        detail: { name, avatarGlyph, avatarImageDataUrl: '' },
+                      }),
+                    );
+                  } catch (_) {
+                    /* ignore */
+                  }
+                }
+              })();
+            }}
+          >
+            <span className="en-only">Remove photo</span>
+            <span className="jp">写真を削除</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => {
+              void (async () => {
+                const r = await run(
+                  'settings.save',
+                  {
+                    section: 'general',
+                    name,
+                    aliases,
+                    email,
+                    avatarGlyph: '',
+                    avatarImageDataUrl,
+                  },
+                  { silentError: true },
+                );
+                setAvatarGlyph('');
+                if (r && r.ok && refreshSections) await refreshSections();
+                if (r && r.ok) {
+                  try {
+                    window.dispatchEvent(
+                      new CustomEvent('shogun-profile-changed', {
+                        detail: { name, avatarGlyph: '', avatarImageDataUrl },
+                      }),
+                    );
+                  } catch (_) {
+                    /* ignore */
+                  }
+                }
+              })();
+            }}
+          >
+            <span className="en-only">Clear letter</span>
+            <span className="jp">文字を消す</span>
+          </button>
+        </div>
       </Field>
       <Field label="Aliases" hint="Include your nicknames, online handles, and other identifiers, separated by commas">
         <input
@@ -499,21 +830,59 @@ function PaneAppearance() {
 function PanePrivacy() {
   const { run, toast } = useRuntimeActions();
   const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
+  const privacySec =
+    sections.privacy && typeof sections.privacy === 'object' ? sections.privacy : {};
   const secSecurity =
     sections.security && typeof sections.security === 'object'
       ? sections.security
       : EMPTY_SETTINGS_SECURITY;
+
   const [tab, setTab] = useStateS('apps');
-  const [apps, setApps] = useStateS([
-    {name:'Finder', icon:'📁', on:true},
-    {name:'1Password', icon:'🔐', on:true},
-    {name:'Banking', icon:'🏦', on:true},
-  ]);
+  const [apps, setApps] = useStateS(() => PRIVACY_DEFAULT_APPS.map((r) => ({ ...r })));
+  const [sites, setSites] = useStateS(() => PRIVACY_DEFAULT_SITES.map((r) => ({ ...r })));
+  const [appSearch, setAppSearch] = useStateS('');
+  const [siteSearch, setSiteSearch] = useStateS('');
+  const [appFilter, setAppFilter] = useStateS('all');
+  const [siteFilter, setSiteFilter] = useStateS('all');
+  const [siteDraft, setSiteDraft] = useStateS('');
+
+  /** When true, `chat.complete` may run local Memory search server-side (`memoryAssembly`). Default on for backward compatibility. */
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateS(true);
+
   const [bioLock, setBioLock] = useStateS(!!secSecurity.biometricLockEnabled);
   const [bioStatus, setBioStatus] = useStateS(null);
+
+  const persistPrivacy = React.useCallback(
+    async (nextApps, nextSites) => {
+      const r = await run(
+        'settings.save',
+        {
+          section: 'privacy',
+          excludedApps: nextApps,
+          excludedSites: nextSites,
+          allowChatServerMemoryAssembly: allowServerMemoryAssembly,
+        },
+        { silentError: true },
+      );
+      if (r && r.ok && refreshSections) await refreshSections();
+      if (r && r.ok) notifyPrivacySettingsChanged({ allowChatServerMemoryAssembly: allowServerMemoryAssembly });
+      return r;
+    },
+    [run, refreshSections, allowServerMemoryAssembly],
+  );
+
+  const privacyKey = JSON.stringify(privacySec);
+  React.useEffect(() => {
+    const { excludedApps, excludedSites } = normalizePrivacyFromSettings(privacySec);
+    setApps(excludedApps);
+    setSites(excludedSites);
+    setAllowServerMemoryAssembly(privacySec.allowChatServerMemoryAssembly !== false);
+  }, [privacyKey]);
+
   React.useEffect(() => {
     setBioLock(!!secSecurity.biometricLockEnabled);
   }, [secSecurity.biometricLockEnabled]);
+
   React.useEffect(() => {
     let cancelled = false;
     const defer = window.setTimeout(() => {
@@ -537,7 +906,10 @@ function PanePrivacy() {
             setBioStatus(fallback);
             return;
           }
-          if (r && r.ok && r.data) setBioStatus(r.data);
+          if (r && r.ok) {
+            const bio = unwrapExecutePayload(r);
+            if (bio) setBioStatus(bio);
+          }
         } catch (_) {
           if (!cancelled) setBioStatus(fallback);
         }
@@ -548,8 +920,134 @@ function PanePrivacy() {
       window.clearTimeout(defer);
     };
   }, [run]);
+
+  const filteredApps = filterPrivacyRows(apps, appSearch, appFilter, (r) => `${r.name} ${r.icon || ''}`);
+  const filteredSites = filterPrivacyRows(sites, siteSearch, siteFilter, (r) => `${r.host} ${r.label || ''}`);
+
+  const learnMore = React.useCallback(async () => {
+    if (PRODUCT.privacyUrl) {
+      window.open(PRODUCT.privacyUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    await run('permissions.manage', { target: 'screen_capture' }, { silentError: true });
+  }, [run]);
+
+  const onPickApp = React.useCallback(async () => {
+    const r = await run('privacy.pick_app', {}, { silentError: true });
+    const p = unwrapExecutePayload(r);
+    if (!r || !r.ok) {
+      toast('アプリを選択できませんでした', 'warn');
+      return;
+    }
+    if (!p || p.cancelled) return;
+    const name = (p.name && String(p.name)) || 'App';
+    const baseId = `bundle:${name
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9.-]/g, '')}`;
+    let id = baseId || 'bundle:app';
+    let n = 0;
+    while (apps.some((a) => a.id === id)) {
+      n += 1;
+      id = `${baseId}-${n}`;
+    }
+    const row = {
+      id,
+      name,
+      icon: '📦',
+      enabled: true,
+      path: p.path ? String(p.path) : undefined,
+    };
+    const next = apps.concat([row]);
+    setApps(next);
+    await persistPrivacy(next, sites);
+    toast(`除外リストに「${name}」を追加しました`, 'success');
+  }, [apps, sites, persistPrivacy, run, toast]);
+
+  const removeAppRow = React.useCallback(
+    async (id) => {
+      const next = apps.filter((a) => a.id !== id);
+      setApps(next);
+      await persistPrivacy(next, sites);
+    },
+    [apps, sites, persistPrivacy],
+  );
+
+  const addSiteRow = React.useCallback(async () => {
+    let host = siteDraft.trim().toLowerCase();
+    host = host.replace(/^https?:\/\//i, '').split('/')[0].trim();
+    if (!host) {
+      toast('ホスト名を入力してください', 'warn');
+      return;
+    }
+    if (!/^[a-z0-9.-]+$/i.test(host)) {
+      toast('有効なホスト名を入力してください', 'warn');
+      return;
+    }
+    if (sites.some((s) => s.host === host)) {
+      toast('そのサイトは既にあります', 'info');
+      return;
+    }
+    const row = { id: `site:${host}`, host, label: host, enabled: true };
+    const next = sites.concat([row]);
+    setSites(next);
+    setSiteDraft('');
+    await persistPrivacy(apps, next);
+  }, [apps, siteDraft, sites, persistPrivacy, toast]);
+
+  const removeSiteRow = React.useCallback(
+    async (id) => {
+      const next = sites.filter((s) => s.id !== id);
+      setSites(next);
+      await persistPrivacy(apps, next);
+    },
+    [apps, sites, persistPrivacy],
+  );
+
+  const toggleApp = React.useCallback(
+    async (id, enabled) => {
+      const nextApps = apps.map((a) => (a.id === id ? { ...a, enabled } : a));
+      setApps(nextApps);
+      await persistPrivacy(nextApps, sites);
+    },
+    [apps, sites, persistPrivacy],
+  );
+
+  const toggleSite = React.useCallback(
+    async (id, enabled) => {
+      const nextSites = sites.map((s) => (s.id === id ? { ...s, enabled } : s));
+      setSites(nextSites);
+      await persistPrivacy(apps, nextSites);
+    },
+    [apps, sites, persistPrivacy],
+  );
+
   return (
-    <Pane title="Privacy Controls" jp="守秘" subtitle={<span>Control what SHOGUN can see. Excluded content won't appear in your context. <a className="s-link">Learn more <Icon name="arrowUpRight" size={10}/></a></span>}>
+    <Pane
+      title="Privacy Controls"
+      jp="守秘"
+      subtitle={
+        <span>
+          Control what SHOGUN can see. Excluded content won&apos;t appear in your context.{' '}
+          <button
+            type="button"
+            className="s-link"
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              font: 'inherit',
+              cursor: 'pointer',
+              color: 'inherit',
+            }}
+            onClick={() => void learnMore()}
+          >
+            Learn more <Icon name="arrowUpRight" size={10} />
+          </button>
+        </span>
+      }
+    >
       <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', lineHeight:1.55, fontSize:12}}>
         <div style={{fontWeight:600, marginBottom:6}}>Local-first · ローカルファースト</div>
         <div>Memory and ingested context stay in this app&apos;s data on this Mac. There is no SHOGUN cloud sync for the Memory index in this build. Chat / LLM and Clerk still send data to those services when you use them.</div>
@@ -575,6 +1073,43 @@ function PanePrivacy() {
           )}
         </div>
       </div>
+      <div className="s-card" style={{ marginBottom: 14 }}>
+        <Row
+          title={
+            <span>
+              <span className="en-only">Allow Memory assembly in Chat</span>
+              <span className="jp">チャットでサーバ側の Memory 組み立てを許可</span>
+            </span>
+          }
+          desc="When enabled, sending a chat message can trigger a local memory search on this Mac and attach hits as extra context (memoryAssembly). Text stays local; turn off if you want only pasted memoryContext or no automatic assembly."
+          last
+        >
+          <Toggle
+            on={allowServerMemoryAssembly}
+            onClick={async () => {
+              const next = !allowServerMemoryAssembly;
+              setAllowServerMemoryAssembly(next);
+              const r = await run(
+                'settings.save',
+                {
+                  section: 'privacy',
+                  allowChatServerMemoryAssembly: next,
+                  excludedApps: apps,
+                  excludedSites: sites,
+                },
+                {
+                  silentError: true,
+                  successMessage: next
+                    ? 'チャットでの Memory 組み立てを許可しました'
+                    : 'チャットでの Memory 組み立てをオフにしました',
+                },
+              );
+              if (r && r.ok && refreshSections) await refreshSections();
+              if (r && r.ok) notifyPrivacySettingsChanged({ allowChatServerMemoryAssembly: next });
+            }}
+          />
+        </Row>
+      </div>
       <div className="s-card" style={{marginBottom:14}}>
         <Row
           title={<span><span className="en-only">Biometric app lock</span><span className="jp">生体認証でロック</span></span>}
@@ -587,7 +1122,7 @@ function PanePrivacy() {
               const next = !bioLock;
               if (next) {
                 const st = await run('auth.biometric.status', {}, { silentError: true });
-                const d = st && st.data;
+                const d = unwrapExecutePayload(st);
                 if (!d || !d.supported || !d.enrolled) {
                   toast(
                     'この環境では生体認証が使えません（デスクトップアプリと Touch ID 等の登録が必要です）。',
@@ -620,32 +1155,152 @@ function PanePrivacy() {
           </div>
         )}
       </div>
+      <div className="s-field-hint" style={{ marginBottom: 10, fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.45 }}>
+        <span className="en-only">
+          App / site rules are saved locally. On macOS, the capture sampler skips ingests when the frontmost app matches an excluded app, or when an AX snapshot / URL references an excluded site.
+        </span>
+        <span className="jp" style={{ display: 'block', marginTop: 4 }}>
+          アプリ・サイトの除外はローカルに保存されます。macOS ではキャプチャ取り込みが、除外アプリが最前面のとき、または AX テキスト／URL が除外サイトに該当するときにスキップされます。
+        </span>
+      </div>
       <div className="row" style={{gap:4, background:'var(--surface)', border:'1px solid var(--border)', padding:3, borderRadius:'var(--radius-md)', width:'fit-content', marginBottom:14}}>
-        <button className="btn btn-sm" style={{background:tab==='apps'?'var(--surface-2)':'transparent', borderColor:'transparent'}} onClick={()=>setTab('apps')}>Exclude Apps <span style={{color:'var(--text-dim)', marginLeft:4}}>3</span></button>
-        <button className="btn btn-sm btn-ghost" onClick={()=>setTab('websites')}>Exclude Websites <span style={{color:'var(--text-dim)', marginLeft:4}}>11</span></button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          style={{background:tab==='apps'?'var(--surface-2)':'transparent', borderColor:'transparent'}}
+          onClick={()=>setTab('apps')}
+        >
+          Exclude Apps <span style={{color:'var(--text-dim)', marginLeft:4}}>{apps.length}</span>
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          style={{background:tab==='websites'?'var(--surface-2)':'transparent', borderColor:tab==='websites'?'transparent':undefined}}
+          onClick={()=>setTab('websites')}
+        >
+          Exclude Websites <span style={{color:'var(--text-dim)', marginLeft:4}}>{sites.length}</span>
+        </button>
       </div>
       <div className="row" style={{gap:10, marginBottom:10}}>
-        <input className="s-input" placeholder="Search applications…" style={{flex:1}}/>
-        <select className="s-select">
-          <option>Filter</option>
-          <option>Enabled</option>
-          <option>Disabled</option>
+        <input
+          className="s-input"
+          placeholder={tab === 'apps' ? 'Search applications…' : 'Search sites…'}
+          style={{flex:1}}
+          value={tab === 'apps' ? appSearch : siteSearch}
+          onChange={(e) => (tab === 'apps' ? setAppSearch(e.target.value) : setSiteSearch(e.target.value))}
+        />
+        <select
+          className="s-select"
+          value={tab === 'apps' ? appFilter : siteFilter}
+          onChange={(e) => (tab === 'apps' ? setAppFilter(e.target.value) : setSiteFilter(e.target.value))}
+        >
+          <option value="all">All</option>
+          <option value="on">Excluded (on)</option>
+          <option value="off">Included (off)</option>
         </select>
       </div>
-      <div className="s-card">
-        {apps.map((a,i,arr)=>(
-          <div key={i} className={'s-row'+(i===arr.length-1?' last':'')}>
-            <div style={{width:24, height:24, borderRadius:6, background:'var(--surface-2)', border:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, marginRight:12}}>{a.icon}</div>
-            <div style={{flex:1, fontSize:13}}>{a.name}</div>
-            <Toggle on={a.on} onClick={async ()=>{
-              const next = !a.on;
-              setApps(prev => prev.map(item => item.name===a.name ? { ...item, on: next } : item));
-              await run('settings.save', { section:'privacy', app:a.name, enabled:next }, { successMessage:'Privacy rule updated' });
-            }}/>
+      {tab === 'apps' ? (
+        <div className="s-card">
+          {filteredApps.length === 0 ? (
+            <div className="s-field-hint" style={{ padding: 16 }}>No applications match this search.</div>
+          ) : (
+            filteredApps.map((a, i, arr) => (
+              <div key={a.id} className={'s-row'+(i===arr.length-1?' last':'')}>
+                <div style={{width:24, height:24, borderRadius:6, background:'var(--surface-2)', border:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, marginRight:12}}>{a.icon}</div>
+                <div style={{flex:1, fontSize:13}}>
+                  {a.name}
+                  {a.path ? (
+                    <div className="s-field-hint" style={{ fontSize: 10, marginTop: 2 }}>{a.path}</div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  style={{ marginRight: 8 }}
+                  title="Remove from list"
+                  onClick={() => void removeAppRow(a.id)}
+                >
+                  ×
+                </button>
+                <Toggle
+                  on={a.enabled}
+                  onClick={() => void toggleApp(a.id, !a.enabled)}
+                />
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="s-card">
+            {filteredSites.length === 0 ? (
+              <div className="s-field-hint" style={{ padding: 16 }}>No sites match this search.</div>
+            ) : (
+              filteredSites.map((s, i, arr) => (
+                <div key={s.id} className={'s-row'+(i===arr.length-1?' last':'')}>
+                  <div style={{ flex: 1, fontSize: 13 }}>
+                    <div style={{ fontWeight: 500 }}>{s.host}</div>
+                    {s.label && s.label !== s.host ? (
+                      <div className="s-field-hint" style={{ fontSize: 11 }}>{s.label}</div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    style={{ marginRight: 8 }}
+                    title="Remove from list"
+                    onClick={() => void removeSiteRow(s.id)}
+                  >
+                    ×
+                  </button>
+                  <Toggle on={s.enabled} onClick={() => void toggleSite(s.id, !s.enabled)} />
+                </div>
+              ))
+            )}
           </div>
-        ))}
-      </div>
-      <div className="s-field-hint" style={{marginTop:14, textAlign:'center'}}>Can't find your app? <a className="s-link">Select it manually</a></div>
+          <div className="row" style={{ gap: 8, marginTop: 12 }}>
+            <input
+              className="s-input"
+              style={{ flex: 1 }}
+              placeholder="e.g. bank.example.com"
+              value={siteDraft}
+              onChange={(e) => setSiteDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void addSiteRow();
+                }
+              }}
+            />
+            <button type="button" className="btn btn-sm btn-secondary" onClick={() => void addSiteRow()}>
+              Add site
+            </button>
+          </div>
+        </>
+      )}
+      {tab === 'apps' ? (
+        <div className="s-field-hint" style={{marginTop:14, textAlign:'center'}}>
+          Can&apos;t find your app?{' '}
+          <button
+            type="button"
+            className="s-link"
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              font: 'inherit',
+              cursor: 'pointer',
+              color: 'inherit',
+            }}
+            onClick={() => void onPickApp()}
+          >
+            Select .app manually…
+          </button>
+          <span className="jp" style={{ display: 'block', fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>
+            macOS アプリではフォルダから .app を選べます（ブラウザではキャンセル扱い）。
+          </span>
+        </div>
+      ) : null}
     </Pane>
   );
 }
@@ -1322,6 +1977,8 @@ function PaneIntegrations() {
   const { run } = useRuntimeActions();
   const [googleCalCred, setGoogleCalCred] = useStateS(false);
   const [googleCalRefresh, setGoogleCalRefresh] = useStateS(false);
+  const [gmailCred, setGmailCred] = useStateS(false);
+  const [gmailRefresh, setGmailRefresh] = useStateS(false);
   const [calAutoSync, setCalAutoSync] = useStateS(false);
   const [calSyncMins, setCalSyncMins] = useStateS(15);
 
@@ -1333,9 +1990,18 @@ function PaneIntegrations() {
     }
   }, [run]);
 
+  const refreshGmailStatus = React.useCallback(async () => {
+    const r = await run('integrations.credentials_status', { provider: 'gmail' }, { silentError: true });
+    if (r.ok && r.data && typeof r.data.configured === 'boolean') {
+      setGmailCred(r.data.configured);
+      setGmailRefresh(!!r.data.tokenRefreshReady);
+    }
+  }, [run]);
+
   React.useEffect(() => {
     void refreshGoogleCalStatus();
-  }, [refreshGoogleCalStatus]);
+    void refreshGmailStatus();
+  }, [refreshGoogleCalStatus, refreshGmailStatus]);
 
   React.useEffect(() => {
     void (async () => {
@@ -1351,15 +2017,16 @@ function PaneIntegrations() {
   React.useEffect(() => {
     const onCred = () => {
       void refreshGoogleCalStatus();
+      void refreshGmailStatus();
     };
     window.addEventListener('shogun-credentials-updated', onCred);
     return () => window.removeEventListener('shogun-credentials-updated', onCred);
-  }, [refreshGoogleCalStatus]);
+  }, [refreshGoogleCalStatus, refreshGmailStatus]);
 
   return (
     <Pane title="All Integrations" jp="連携" subtitle="v1: In-app OAuth is not wired. Google Calendar tokens can be imported by an external agent (Keychain); use Refresh / Sync below. Other Connect rows show an honest notice where applicable.">
       <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
-        Workspace Integrations screen has the same agent contract. Tauri invoke: <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh).
+        Workspace Integrations screen has the same agent contract. Tauri invoke: <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code> or <code style={{fontSize:11}}>&quot;gmail&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh). Gmail needs scope <code style={{fontSize:11}}>gmail.readonly</code> or broader.
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><IntegrationLogo slug="apple_calendar" size={30} title="Apple Calendar" /><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
@@ -1374,20 +2041,55 @@ function PaneIntegrations() {
       <div className="s-card" style={{marginBottom:10}}>
         <div className="row" style={{padding:'14px 16px'}}>
           <IntegrationLogo slug="gmail" size={30} title="Gmail" />
-          <span style={{fontSize:13, fontWeight:500, marginLeft:10}}>Gmail</span>
+          <div style={{marginLeft:10}}>
+            <div style={{fontSize:13, fontWeight:500}}>Gmail</div>
+            <div className="s-field-hint">Inbox list → Memory ingest (<code style={{fontSize:10}}>provenance: connector</code>, source <code style={{fontSize:10}}>gmail</code>).</div>
+          </div>
           <span className="spacer"/>
           <Icon name="chevronDown" size={12} className="dim"/>
         </div>
-        <div style={{borderTop:'1px solid var(--border)', padding:'12px 16px', display:'flex', alignItems:'center', gap:10}}>
-          <span style={{fontSize:12, color:'var(--text-mute)'}}>example@gmail.com</span>
-          <span className="label" style={{background:'var(--surface-2)', color:'var(--text-dim)', borderColor:'var(--border)'}}>Not linked · v1</span>
+        <div style={{borderTop:'1px solid var(--border)', padding:'12px 16px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:10}}>
+          <span style={{fontSize:12, color:'var(--text-mute)'}}>Agent-imported token</span>
+          <span className={'label ' + (gmailCred ? 'label-success' : '')} style={{borderColor:'var(--border)'}}>
+            {gmailCred ? 'Keychain · configured' : 'No token · import via agent'}
+          </span>
+          {gmailCred ? (
+            <span className={'label ' + (gmailRefresh ? 'label-success' : '')} style={{borderColor:'var(--border)', fontSize:11}}>
+              {gmailRefresh ? 'Refresh: client+refresh token' : 'Refresh: add oauthClientId + refreshToken'}
+            </span>
+          ) : null}
           <span className="spacer"/>
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => { void refreshGmailStatus(); }}>Refresh status</button>
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider:'gmail' }, { silentError:true })}>Connect</button>
+          <button className="btn btn-sm btn-primary" type="button" onClick={() => run('gmail.sync', { maxResults:20 }, { successMessage:'Gmail synced to Memory' })}>Sync to Memory</button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'edit' }, { silentError:true })}><Icon name="edit" size={12}/></button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'settings' }, { silentError:true })}><Icon name="settings" size={12}/></button>
         </div>
-        <div style={{borderTop:'1px solid var(--border)', padding:'10px 16px', fontSize:12, color:'var(--text-dim)', cursor:'pointer'}}>
-          <Icon name="plus" size={12} style={{marginRight:6}}/>Add another account
-        </div>
+        {!gmailCred ? (
+          <div style={{borderTop:'1px solid var(--border)', padding:'10px 16px', fontSize:12, color:'var(--text-dim)', lineHeight:1.55}}>
+            <div style={{fontWeight:600, marginBottom:6}}>How to import Gmail token</div>
+            <div>1) Get OAuth access token (+ optional refresh token / client id) with Gmail scope <code style={{fontSize:10}}>gmail.readonly</code>.</div>
+            <div>2) Call <code style={{fontSize:10}}>app_integration_import_credentials</code> with <code style={{fontSize:10}}>provider: "gmail"</code>.</div>
+            <div style={{marginTop:8, display:'flex', gap:12, flexWrap:'wrap'}}>
+              <a
+                className="s-link"
+                href="https://developers.google.com/workspace/gmail/api/auth/scopes"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Gmail scopes guide <Icon name="arrowUpRight" size={10} />
+              </a>
+              <button
+                type="button"
+                className="s-link"
+                style={{background:'none', border:'none', padding:0, font: 'inherit', cursor:'pointer'}}
+                onClick={() => run('integrations.connect', { provider:'gmail' }, { silentError:true })}
+              >
+                Re-check token status
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <div className="row" style={{padding:'14px 16px'}}>
@@ -1805,8 +2507,8 @@ function PaneSubscription() {
       </div>
       <div style={{marginTop:14, textAlign:'center', fontSize:12, color:'var(--text-dim)'}}>
         Want SHOGUN for your team or business?{' '}
-        <a className="s-link" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
-          Contact via GitHub Issues <Icon name="arrowUpRight" size={10} />
+        <a className="s-link" href={PRODUCT.supportMailto}>
+          Contact support <Icon name="arrowUpRight" size={10} />
         </a>
       </div>
     </Pane>
@@ -1819,9 +2521,9 @@ function PaneTeam() {
     <Pane title="Team" jp="組">
       <div className="s-card" style={{padding:20}}>
         <div className="s-field-hint" style={{ marginBottom: 12, fontSize: 11, lineHeight: 1.5 }}>
-          Team checkout and seat billing are <strong>not connected</strong> in v1 — this pane is a product preview. Use{' '}
-          <a className="s-link" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
-            Issues
+          Team checkout and seat billing are <strong>not connected</strong> in v1 — this pane is a product preview. Contact{' '}
+          <a className="s-link" href={PRODUCT.supportMailto}>
+            support
           </a>{' '}
           for enterprise interest.
         </div>
@@ -1844,32 +2546,67 @@ function PaneTeam() {
 }
 
 function PaneSupport() {
-  const { run } = useRuntimeActions();
+  const { run, toast } = useRuntimeActions();
+  const onCheckUpdates = React.useCallback(async () => {
+    const r = await run('updates.check', {}, { silentError: true });
+    if (!r || !r.ok) {
+      toast((r && r.error && r.error.message) || 'Update check failed', 'error');
+      return;
+    }
+    const d = r.data;
+    if (!d || !d.available) {
+      toast('You are on the latest version. / 最新です', 'info');
+      return;
+    }
+    const ver = d.version != null ? String(d.version) : '';
+    const msg =
+      (d.body && String(d.body).trim()) ||
+      `Version ${ver} is available. Install now? The app will restart.`;
+    if (typeof window.confirm === 'function' && window.confirm(msg)) {
+      const inst = await run('updates.download_install', {}, { silentError: true });
+      if (!inst || !inst.ok) {
+        toast((inst && inst.error && inst.error.message) || 'Update install failed', 'error');
+      }
+    }
+  }, [run, toast]);
   return (
     <Pane title="Support" jp="支援">
       <div className="s-field-hint" style={{ marginBottom: 14, padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 12, lineHeight: 1.55 }}>
         <span className="en-only">Primary channel:</span>
         <span className="jp">主な連絡先:</span>{' '}
-        <a className="s-link" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
-          GitHub Issues（不具合・要望）
+        <a className="s-link" href={PRODUCT.supportMailto}>
+          Email support（サポート）
         </a>
-        。Discord 等のコミュニティは準備中の場合があります。
+        （<code style={{ fontSize: 10 }}>PRODUCT.supportMailto</code> を販売用アドレスに差し替えてください）。Discord 等は準備中の場合があります。
+        <div className="en-only" style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
+          Desktop: uncaught UI errors are also written to the app process log (stderr / system log). Mention the time of the issue when contacting support. Optional Sentry: set{' '}
+          <code style={{ fontSize: 10 }}>&lt;meta name=&quot;shogun-sentry-dsn&quot; content=&quot;…&quot; /&gt;</code> in the HTML shell.
+        </div>
+        <div className="jp" style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
+          デスクトップ版では、捕捉されなかった UI エラーがアプリのプロセスログ（stderr / システムログ）にも残ります。問い合わせ時は発生時刻を併記してください。任意で Sentry を使う場合は HTML に{' '}
+          <code style={{ fontSize: 10 }}>&lt;meta name=&quot;shogun-sentry-dsn&quot; content=&quot;…&quot; /&gt;</code> を追加します。
+        </div>
       </div>
       <div className="s-card">
-        <Row title="GitHub Issues" desc="Bug reports, feature requests, and setup questions for this repository.">
-          <a className="btn btn-sm btn-secondary" href={SHOGUN_ISSUES} target="_blank" rel="noopener noreferrer">
-            Open Issues
+        <Row title="Email support" desc="Bug reports, licensing, and setup — use the address configured for your product build.">
+          <a className="btn btn-sm btn-secondary" href={PRODUCT.supportMailto}>
+            Open mail
           </a>
         </Row>
-        <Row title="Join our Discord" desc="Community Discord is not guaranteed in v1 — check Issues for updates.">
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            disabled
-            title="Coming soon"
-            onClick={() => run('settings.save', { section: 'support', action: 'discord' }, { successMessage: 'Discord action queued' })}
+        <Row title="Community" desc="Discord is not guaranteed in v1 — email us to request an invite or discuss licensing.">
+          <a
+            className="btn btn-sm btn-secondary"
+            href={`${PRODUCT.supportMailto}?subject=${encodeURIComponent('SHOGUN — community / Discord')}`}
           >
-            Join Discord
+            Email community
+          </a>
+        </Row>
+        <Row
+          title="Check for updates / 更新を確認"
+          desc="Desktop: Tauri updater (see tauri.conf.json — endpoints + pubkey). Replace YOUR_ORG/YOUR_REPO before shipping. Browser mock: no update."
+        >
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => void onCheckUpdates()}>
+            Check / 確認
           </button>
         </Row>
         <Row title="Report Performance Issues" desc="Experiencing slowdowns or high resource usage? Create a 5-second diagnostic snapshot to help us troubleshoot the issue." last>

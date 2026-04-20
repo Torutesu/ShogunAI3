@@ -1,5 +1,26 @@
 /* global Icon, Kamon, React */
-const { useState: useStateB, useEffect: useEffectB } = React;
+const { useState: useStateB, useEffect: useEffectB, useRef: useRefB } = React;
+
+/** One-shot Memory assembly overrides from `shogun-chat-composer-seed` (Memory / Agents). */
+function normalizeSeedMemoryAssembly(d) {
+  if (!d || typeof d !== 'object') return null;
+  if (d.memoryAssemblyPreset && typeof d.memoryAssemblyPreset === 'object') {
+    const p = d.memoryAssemblyPreset;
+    const q = String(p.query || '').trim().slice(0, 480);
+    const limRaw = p.limit != null ? Number(p.limit) : 12;
+    const lim = Number.isFinite(limRaw) ? Math.min(80, Math.max(1, Math.floor(limRaw))) : 12;
+    const semantic = p.semantic !== false;
+    return { query: q, limit: lim, semantic };
+  }
+  if (d.memoryAssemblyQuery != null && String(d.memoryAssemblyQuery).trim()) {
+    const q = String(d.memoryAssemblyQuery).trim().slice(0, 480);
+    const limRaw = d.memoryAssemblyLimit != null ? Number(d.memoryAssemblyLimit) : 12;
+    const lim = Number.isFinite(Number(limRaw)) ? Math.min(80, Math.max(1, Math.floor(Number(limRaw)))) : 12;
+    const semantic = d.memoryAssemblySemantic !== false;
+    return { query: q, limit: lim, semantic };
+  }
+  return null;
+}
 
 function runRuntimeActionB(key, payload, options) {
   if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok:false });
@@ -17,6 +38,12 @@ function ScreenChat() {
   const [memoryTotal, setMemoryTotal] = useStateB(0);
   const [modelHint, setModelHint] = useStateB('');
   const [chatMax, setChatMax] = useStateB(false);
+  const [webSearchOn, setWebSearchOn] = useStateB(true);
+  /** Server-side Memory assembly (`memoryAssembly` on `chat.complete`); desktop runs search / semantic rerank. */
+  const [assembleMemoryOn, setAssembleMemoryOn] = useStateB(false);
+  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateB(true);
+  const pendingMemoryAssemblyRef = useRefB(null);
 
   useEffectB(() => {
     let cancelled = false;
@@ -32,11 +59,28 @@ function ScreenChat() {
     let cancelled = false;
     (async () => {
       const r = await runRuntimeActionB('settings.load', {}, { silentError: true });
-      if (cancelled || !r.ok || !r.data?.settings?.sections?.llm) return;
-      const m = r.data.settings.sections.llm.model;
-      if (m) setModelHint(String(m));
+      if (cancelled || !r.ok || !r.data?.settings?.sections) return;
+      const llm = r.data.settings.sections.llm;
+      if (llm && typeof llm === 'object' && llm.model) setModelHint(String(llm.model));
+      const priv = r.data.settings.sections.privacy;
+      if (priv && typeof priv === 'object') {
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+      }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffectB(() => {
+    const onPrivacy = () => {
+      void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
+        const priv = r?.ok && r.data?.settings?.sections?.privacy;
+        if (priv && typeof priv === 'object') {
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        }
+      });
+    };
+    window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
+    return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
   }, []);
 
   const toast = (msg, kind) => {
@@ -71,8 +115,13 @@ function ScreenChat() {
   useEffectB(() => {
     const onMax = () => setChatMax((v) => !v);
     const onComposerSeed = (ev) => {
-      const t = ev && ev.detail && ev.detail.text != null ? String(ev.detail.text) : '';
-      if (t) setComposerText(t);
+      const d = ev && ev.detail ? ev.detail : {};
+      if (d.text != null) setComposerText(String(d.text));
+      if (typeof d.webSearch === 'boolean') setWebSearchOn(d.webSearch);
+      if (typeof d.assembleMemory === 'boolean') setAssembleMemoryOn(d.assembleMemory);
+      const preset = normalizeSeedMemoryAssembly(d);
+      if (preset) pendingMemoryAssemblyRef.current = preset;
+      else if (d.clearMemoryAssemblyPreset) pendingMemoryAssemblyRef.current = null;
     };
     window.addEventListener('shogun-chat-toggle-max', onMax);
     window.addEventListener('shogun-chat-composer-seed', onComposerSeed);
@@ -88,7 +137,9 @@ function ScreenChat() {
       toast('No memory items to attach', 'warn');
       return;
     }
-    const block = r.data.hits.map((h) => (h.title || '') + ': ' + (h.snippet || '')).join('\n');
+    const block = r.data.hits
+      .map((h) => '[' + (h.provenance || 'user') + '] ' + (h.title || '') + ': ' + (h.snippet || ''))
+      .join('\n');
     setMemoryContext(block.slice(0, 12000));
     toast('Memory snippets attached for the next message', 'success');
   };
@@ -101,10 +152,43 @@ function ScreenChat() {
     setMessages(next);
     setComposerText('');
     setLoading(true);
-    const res = await runRuntimeActionB('chat.complete', {
+    const payload = {
       messages: next,
       memoryContext: memoryContext || undefined,
-    }, { silentError: true });
+      webSearch: webSearchOn,
+    };
+    const preset = pendingMemoryAssemblyRef.current;
+    const usePreset = preset && typeof preset.query === 'string';
+    const shouldAssemble = assembleMemoryOn || usePreset;
+    const assemblyAllowed = shouldAssemble && allowServerMemoryAssembly;
+    if (assemblyAllowed) {
+      if (usePreset) {
+        payload.memoryAssembly = {
+          query: preset.query,
+          limit: preset.limit != null ? preset.limit : 12,
+          semantic: preset.semantic !== false,
+        };
+        pendingMemoryAssemblyRef.current = null;
+      } else {
+        payload.memoryAssembly = {
+          query: text.slice(0, 480),
+          limit: 12,
+          semantic: true,
+        };
+      }
+    }
+    const manualCtx = (memoryContext || '').trim();
+    if (global.BriefTelemetry && global.BriefTelemetry.log && global.BriefTelemetry.EVENTS) {
+      global.BriefTelemetry.log(global.BriefTelemetry.EVENTS.CHAT_COMPLETION_CONTEXT, {
+        hasManualMemoryContext: manualCtx.length > 0,
+        manualMemoryContextChars: manualCtx.length,
+        memoryAssemblyRequested: shouldAssemble,
+        memoryAssemblySent: assemblyAllowed && Boolean(payload.memoryAssembly),
+        memoryAssemblyPreset: usePreset,
+        privacyAllowsServerAssembly: allowServerMemoryAssembly,
+      });
+    }
+    const res = await runRuntimeActionB('chat.complete', payload, { silentError: true });
     setLoading(false);
     if (!res.ok) {
       toast(res.error?.message || 'Chat request failed', 'error');
@@ -124,6 +208,7 @@ function ScreenChat() {
     setMessages([]);
     setMemoryContext('');
     setComposerText('');
+    pendingMemoryAssemblyRef.current = null;
   };
 
   const openLlmSettings = () => {
@@ -157,7 +242,7 @@ function ScreenChat() {
           >
             {messages.length === 0 && (
               <div style={{textAlign:'center', color:'var(--text-mute)', fontSize:14, marginBottom:8}}>
-                Ask anything. Attach local memory with <strong>Memory</strong>, then send. API key: Settings → Model & API.
+                Ask anything. Use <strong>Memory</strong> for pasted snippets, <strong>Assemble</strong> for server-side index pull, or open from <strong>Memory / Agents</strong> with a one-shot preset. API key: Settings → Model & API.
               </div>
             )}
             {messages.map((m, i) => (
@@ -213,6 +298,30 @@ function ScreenChat() {
               />
               <div className="row" style={{gap:8, marginTop:8}}>
                 <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  type="button"
+                  style={{
+                    padding: '0 8px',
+                    color: webSearchOn ? 'var(--gold)' : 'var(--text-mute)',
+                  }}
+                  title="Web research mode (prompts the model for current-style answers; no live browse unless you paste URLs)"
+                  onClick={() => setWebSearchOn((v) => !v)}
+                >
+                  <Icon name="globe" size={13} /> Web
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  type="button"
+                  style={{
+                    padding: '0 8px',
+                    color: assembleMemoryOn ? 'var(--gold)' : 'var(--text-mute)',
+                  }}
+                  title="memoryAssembly: server assembles context from local Memory (semantic search when API key is set)"
+                  onClick={() => setAssembleMemoryOn((v) => !v)}
+                >
+                  <Icon name="memory" size={13} /> Assemble
+                </button>
                 <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
                 <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
                 <span className="spacer"/>
@@ -304,26 +413,150 @@ function ScreenChat() {
 // L4 · AGENTS — execution layer
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenAgents() {
+  const [runPrompt, setRunPrompt] = React.useState('');
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
+      if (cancelled || !r?.ok || !r.data?.settings?.sections?.privacy) return;
+      const priv = r.data.settings.sections.privacy;
+      if (priv && typeof priv === 'object') {
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const onPrivacy = () => {
+      void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
+        const priv = r?.ok && r.data?.settings?.sections?.privacy;
+        if (priv && typeof priv === 'object') {
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        }
+      });
+    };
+    window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
+    return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
+  }, []);
+
+  const draftWithMemory = React.useCallback(() => {
+    const raw = runPrompt.trim();
+    const prompt =
+      raw ||
+      'Summarize actionable items from my recent local memory index. Output Markdown: bullets, owners if known, and open questions.';
+    const payload = {
+      target: 'agent_run',
+      source: 'agents_playground',
+      prompt,
+    };
+    if (allowServerMemoryAssembly) {
+      payload.memoryAssembly = {
+        query: raw.slice(0, 480) || '',
+        limit: 14,
+        semantic: true,
+      };
+    }
+    return runRuntimeActionB('draft.create', payload, { successMessage: 'Draft ready', silentError: true }).then((r) => {
+      if (!r.ok && window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.pushToast) {
+        window.SHOGUN_RUNTIME.pushToast(r.error && r.error.message ? r.error.message : 'Draft failed', 'warn');
+      }
+    });
+  }, [runPrompt, allowServerMemoryAssembly]);
+
+  const openChatWithMemory = React.useCallback(() => {
+    const raw = runPrompt.trim();
+    const text =
+      raw ||
+      'You are my execution agent. Use local memory context to propose the next 3 concrete steps (bullets).';
+    const q = raw.slice(0, 480) || '';
+    const detail = { text, webSearch: false, assembleMemory: allowServerMemoryAssembly };
+    if (allowServerMemoryAssembly) {
+      detail.memoryAssemblyPreset = { query: q, limit: 14, semantic: true };
+    } else {
+      detail.clearMemoryAssemblyPreset = true;
+    }
+    window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
+    window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+  }, [runPrompt, allowServerMemoryAssembly]);
+
+  const applyQuick = (line) => {
+    setRunPrompt(line);
+  };
+
   return (
     <div className="content-inner">
       <div className="page-head">
         <div>
           <div className="t-mono" style={{marginBottom:8}}>EXECUTION LAYER</div>
           <h1>Agents <span className="jp">家臣</span></h1>
-          <div className="sub">Automations and MCP-backed agents are not listed in this preview. Use the desktop app to register and run them.</div>
+          <div className="sub">
+            <span className="en-only">Playground: drafts and Chat can pull </span>
+            <code className="t-mono" style={{ fontSize: 11 }}>memoryAssembly</code>
+            <span className="en-only"> from your local index. Register real agents in the desktop app.</span>
+            <span className="jp" style={{ display: 'block', fontSize: 12, marginTop: 6, color: 'var(--text-dim)' }}>
+              下書き・チャットはローカル Memory を検索して文脈を足せます。本番のエージェントはデスクトップで登録してください。
+            </span>
+          </div>
         </div>
-      </div>
-      <div className="card" style={{padding:32, maxWidth:560}}>
-        <p style={{fontSize:14, color:'var(--text-mute)', lineHeight:1.65, margin:0}}>
-          No agents are connected here. For tools and OAuth, open Settings → Integrations from the user menu, or use Chat for one-off tasks.
-        </p>
-        <div className="row" style={{gap:10, marginTop:22, flexWrap:'wrap'}}>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" type="button" onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}>
             <Icon name="plug" size={14}/> Integrations
           </button>
           <button className="btn btn-ghost" type="button" onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('chat')}>
             <Icon name="chat" size={14}/> Chat
           </button>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 24, maxWidth: 640 }}>
+        <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', marginBottom: 8 }}>GOAL · 指示</div>
+        <textarea
+          className="s-input"
+          style={{
+            width: '100%',
+            minHeight: 88,
+            resize: 'vertical',
+            fontSize: 14,
+            fontFamily: 'inherit',
+            background: 'var(--surface)',
+            border: '1px solid var(--border-hi)',
+            borderRadius: 'var(--radius-md)',
+            padding: 12,
+            color: 'var(--text)',
+          }}
+          placeholder="例: 今週のリスクを Memory から洗い出して / 投資家向けに1段落…"
+          value={runPrompt}
+          onChange={(e) => setRunPrompt(e.target.value)}
+        />
+        <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" type="button" onClick={draftWithMemory}>
+            <Icon name="edit" size={14}/> Draft + Memory
+          </button>
+          <button className="btn btn-secondary" type="button" onClick={openChatWithMemory}>
+            <Icon name="chat" size={14}/> Open in Chat
+          </button>
+        </div>
+        <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text-dim)' }}>
+          <span className="t-mono" style={{ marginRight: 8 }}>QUICK</span>
+          {[
+            '今週のブロッカーを Memory から列挙',
+            'カレンダー関連メモのフォローアップ案',
+            '会議メモに出てくる名前の整理',
+          ].map((q) => (
+            <button
+              key={q}
+              type="button"
+              className="btn btn-sm btn-ghost"
+              style={{ marginRight: 6, marginBottom: 6 }}
+              onClick={() => applyQuick(q)}
+            >
+              {q.length > 28 ? q.slice(0, 28) + '…' : q}
+            </button>
+          ))}
         </div>
       </div>
     </div>

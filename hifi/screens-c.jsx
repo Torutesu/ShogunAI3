@@ -8,8 +8,44 @@ function runRuntimeAction(key, payload, options) {
 // ═══════════════════════════════════════════════════════════════════════════
 // L5 · WORK — documents, tasks generated from memory
 // ═══════════════════════════════════════════════════════════════════════════
+function workProvenanceLabel(prov) {
+  const p = prov || 'user';
+  if (p === 'screen') return '画面';
+  if (p === 'connector') return '連携';
+  if (p === 'meeting') return '会議';
+  return '手動';
+}
+
 function ScreenWork() {
   const [hits, setHits] = React.useState([]);
+  const [draftWithMemory, setDraftWithMemory] = React.useState(true);
+  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
+  React.useEffect(() => {
+    let cancelled = false;
+    void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
+      if (cancelled || !r?.ok || !r.data?.settings?.sections?.privacy) return;
+      const priv = r.data.settings.sections.privacy;
+      if (priv && typeof priv === 'object') {
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  React.useEffect(() => {
+    const onPrivacy = () => {
+      void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
+        const priv = r?.ok && r.data?.settings?.sections?.privacy;
+        if (priv && typeof priv === 'object') {
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        }
+      });
+    };
+    window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
+    return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
+  }, []);
   const refresh = React.useCallback(() => {
     runRuntimeAction('memory.search', { query: '', limit: 24 }, { silentError: true }).then((res) => {
       if (!res?.ok || !Array.isArray(res.data?.hits)) return;
@@ -17,17 +53,51 @@ function ScreenWork() {
     });
   }, []);
   React.useEffect(() => { refresh(); }, [refresh]);
+
+  const buildDraftPayload = React.useCallback((prompt, memoryQuery) => {
+    const payload = {
+      target: 'work_document',
+      source: 'work_screen',
+      prompt,
+    };
+    if (draftWithMemory && allowServerMemoryAssembly) {
+      payload.memoryAssembly = {
+        query: String(memoryQuery || '').slice(0, 480),
+        limit: 12,
+        semantic: true,
+      };
+    }
+    return payload;
+  }, [draftWithMemory, allowServerMemoryAssembly]);
+
   return (
     <div className="content-inner">
       <div className="page-head">
         <div>
           <div className="t-mono" style={{marginBottom:8}}>OPERATIONS LAYER</div>
           <h1>Work <span className="jp">任務</span></h1>
-          <div className="sub">Recent items from your local memory index. Open Chat to turn them into drafts or tasks.</div>
+          <div className="sub">Recent items from your local memory index. Drafts can include <code className="t-mono" style={{fontSize:11}}>memoryAssembly</code> for extra local context.</div>
         </div>
-        <div className="row">
+        <div className="row" style={{flexWrap:'wrap', gap:8}}>
+          <label className="row" style={{gap:6, alignItems:'center', fontSize:12, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+            <input
+              type="checkbox"
+              checked={draftWithMemory}
+              onChange={(e) => setDraftWithMemory(e.target.checked)}
+            />
+            <span>Memory を下書きに取り込む</span>
+          </label>
           <button className="btn btn-secondary" type="button" onClick={refresh}><Icon name="filter" size={14}/>Refresh</button>
-          <button className="btn btn-primary" type="button" onClick={()=>runRuntimeAction('draft.create', { target:'work_document', prompt:'Create new document shell' }, { successMessage:'Draft ready' })}><Icon name="plus" size={14}/>New document</button>
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() =>
+              runRuntimeAction(
+                'draft.create',
+                buildDraftPayload('Create new document shell', ''),
+                { successMessage: 'Draft ready' },
+              )}
+          ><Icon name="plus" size={14}/>New document</button>
         </div>
       </div>
 
@@ -41,12 +111,29 @@ function ScreenWork() {
         <div className="shogun-grid-cards">
           {hits.map((h) => (
             <div key={h.id || h.title} className="card card-interactive" style={{padding:18}}>
-              <div className="row" style={{gap:10, marginBottom:10}}>
+              <div className="row" style={{gap:10, marginBottom:10, flexWrap:'wrap'}}>
                 <Icon name="file" size={14} className="gold"/>
                 <span className="t-mono" style={{fontSize:10}}>{String(h.source || 'memory')}</span>
+                {h.provenance && (
+                  <span className="label" style={{fontSize:10, borderColor:'var(--gold-dim)', color:'var(--gold)'}}>
+                    {workProvenanceLabel(h.provenance)}
+                  </span>
+                )}
               </div>
               <div style={{fontSize:15, fontWeight:500, marginBottom:8}}>{h.title || 'Untitled'}</div>
-              <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.5}}>{h.snippet || '—'}</div>
+              <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.5, marginBottom:12}}>{h.snippet || '—'}</div>
+              <button
+                type="button"
+                className="btn btn-sm btn-secondary"
+                onClick={() => {
+                  const prompt =
+                    'Expand this memory into a structured Markdown work note (headings + bullets).\n\n**Title:** ' +
+                    (h.title || '') +
+                    '\n\n**Snippet:**\n' +
+                    String(h.snippet || '').slice(0, 4000);
+                  runRuntimeAction('draft.create', buildDraftPayload(prompt, h.title || ''), { successMessage: 'Draft ready' });
+                }}
+              ><Icon name="edit" size={12}/> Draft from memory</button>
             </div>
           ))}
         </div>

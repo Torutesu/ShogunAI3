@@ -1,7 +1,19 @@
 //! OpenAI-compatible Chat Completions (HTTPS from Rust only).
 
-use crate::{memory_store, secrets, settings_store};
+use crate::{context_assembly, secrets, settings_store};
 use serde_json::{json, Value};
+use url::Url;
+
+fn privacy_allows_chat_server_memory_assembly() -> bool {
+  settings_store::load()
+    .ok()
+    .and_then(|doc| {
+      doc
+        .pointer("/sections/privacy/allowChatServerMemoryAssembly")
+        .and_then(|v| v.as_bool())
+    })
+    .unwrap_or(true)
+}
 
 pub fn read_llm_prefs() -> Result<(String, String, u64), String> {
   let doc = settings_store::load()?;
@@ -36,6 +48,27 @@ fn chat_completions_url(base: &str) -> String {
   format!("{}/chat/completions", root)
 }
 
+fn validate_llm_base_url(base: &str) -> Result<(), String> {
+  let trimmed = base.trim();
+  if trimmed.is_empty() {
+    return Ok(());
+  }
+  let parsed =
+    Url::parse(trimmed).map_err(|_| "Invalid LLM base URL. Use a full URL (e.g. https://api.openai.com/v1).".to_string())?;
+  match parsed.scheme() {
+    "https" => Ok(()),
+    "http" => {
+      let host = parsed.host_str().unwrap_or("");
+      if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+        Ok(())
+      } else {
+        Err("Insecure LLM base URL. Use HTTPS (HTTP is allowed only for localhost).".to_string())
+      }
+    }
+    _ => Err("Unsupported LLM base URL scheme. Use HTTPS (or localhost HTTP).".to_string()),
+  }
+}
+
 pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
   let key = secrets::get_llm_api_key()?
     .filter(|k| !k.trim().is_empty())
@@ -43,6 +76,7 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
       "LLM API key is not set. Open Settings → Model & API and save your key.".to_string()
     })?;
   let (base, default_model, max_tokens) = read_llm_prefs()?;
+  validate_llm_base_url(&base)?;
   let model = payload
     .get("model")
     .and_then(|m| m.as_str())
@@ -68,6 +102,47 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
         ),
       }));
     }
+  }
+  if privacy_allows_chat_server_memory_assembly() {
+    if let Some(ma) = payload.get("memoryAssembly").and_then(|x| x.as_object()) {
+      let q = ma
+        .get("query")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim();
+      let limit = ma
+        .get("limit")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(12)
+        .clamp(1, 80);
+      let semantic = ma.get("semantic").and_then(|x| x.as_bool()).unwrap_or(false);
+      let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+        query: q,
+        limit,
+        semantic,
+      })
+      .await?;
+      let block = context_assembly::format_hits_draft_context(&hits, 10_000);
+      if !block.is_empty() {
+        messages.push(json!({
+          "role": "system",
+          "content": format!(
+            "Additional context assembled from the local memory index (provenance tags in brackets):\n\n{}\n\nUse when helpful.",
+            block
+          ),
+        }));
+      }
+    }
+  }
+  if payload
+    .get("webSearch")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false)
+  {
+    messages.push(json!({
+      "role": "system",
+      "content": "The user enabled web-research mode. This runtime does not perform live HTTP browsing: answer from training knowledge, pasted URLs, and memory context above. If freshness matters, state that you cannot verify live web results and suggest the user paste a link or check a source.",
+    }));
   }
   for m in messages_in {
     let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
@@ -130,10 +205,41 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     .get("source")
     .and_then(|s| s.as_str())
     .unwrap_or("");
-  let user = format!(
-    "Produce a concise Markdown draft for this request.\nTarget: {}\nIntent / prompt: {}\nContext source: {}\n\nOutput only Markdown (headings and bullets allowed). No preamble or closing remarks.",
-    target, prompt, source
-  );
+  let mut memory_block = String::new();
+  if privacy_allows_chat_server_memory_assembly() {
+    if let Some(ma) = payload.get("memoryAssembly").and_then(|x| x.as_object()) {
+      let q = ma
+        .get("query")
+        .and_then(|x| x.as_str())
+        .unwrap_or(prompt)
+        .trim();
+      let limit = ma
+        .get("limit")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(8)
+        .clamp(1, 40);
+      let semantic = ma.get("semantic").and_then(|x| x.as_bool()).unwrap_or(false);
+      let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+        query: q,
+        limit,
+        semantic,
+      })
+      .await
+      .unwrap_or_else(|_| Vec::new());
+      memory_block = context_assembly::format_hits_draft_context(&hits, 6000);
+    }
+  }
+  let user = if memory_block.is_empty() {
+    format!(
+      "Produce a concise Markdown draft for this request.\nTarget: {}\nIntent / prompt: {}\nContext source: {}\n\nOutput only Markdown (headings and bullets allowed). No preamble or closing remarks.",
+      target, prompt, source
+    )
+  } else {
+    format!(
+      "Produce a concise Markdown draft for this request.\nTarget: {}\nIntent / prompt: {}\nContext source: {}\n\n## Local memory\n{}\n\nOutput only Markdown (headings and bullets allowed). No preamble or closing remarks.",
+      target, prompt, source, memory_block
+    )
+  };
   let wrapped = json!({
     "messages": [
       {
@@ -163,20 +269,13 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
 }
 
 pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
-  let search_payload = json!({ "query": "", "limit": 15 });
-  let mem = memory_store::search(&search_payload)?;
-  let hits = mem
-    .get("hits")
-    .and_then(|h| h.as_array())
-    .cloned()
-    .unwrap_or_default();
-  let mut lines = Vec::new();
-  for h in hits.iter().take(15) {
-    let title = h.get("title").and_then(|t| t.as_str()).unwrap_or("");
-    let snippet = h.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
-    lines.push(format!("- {}: {}", title, snippet));
-  }
-  let block: String = lines.join("\n").chars().take(10_000).collect();
+  let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+    query: "",
+    limit: 15,
+    semantic: false,
+  })
+  .await?;
+  let block = context_assembly::format_hits_brief_json_prompt(&hits, 10_000);
   let user_prompt = format!(
     "From these local memory items, output ONLY valid JSON with shape {{\"sections\":[{{\"title\":string,\"body\":string}}]}}. No markdown code fences. If there are no items, use {{\"sections\":[]}}.\n\nMemories:\n{}",
     block
@@ -225,24 +324,14 @@ pub async fn draft_reply_for_brief(payload: &Value) -> Result<Value, String> {
     }
   }
   let q: String = what.chars().take(160).collect();
-  let mem = match memory_store::search_with_semantics(&json!({
-    "query": q,
-    "limit": 12,
-    "semantic": true,
-  }))
+  let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+    query: &q,
+    limit: 12,
+    semantic: true,
+  })
   .await
-  {
-    Ok(v) => v,
-    Err(_) => json!({ "hits": [] }),
-  };
-  let mut mem_block = String::new();
-  if let Some(hits) = mem.get("hits").and_then(|h| h.as_array()) {
-    for h in hits {
-      let t = h.get("title").and_then(|x| x.as_str()).unwrap_or("");
-      let s = h.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
-      mem_block.push_str(&format!("- {} — {}\n", t, s));
-    }
-  }
+  .unwrap_or_else(|_| Vec::new());
+  let mem_block = context_assembly::format_hits_reply_draft(&hits);
   let user = format!(
     "Prepare the operator's **next concrete message** (email, chat, or meeting talking points — infer from context).\n\n\
 ## Brief\n**What:** {}\n**Why now:** {}\n**Linked:**\n{}\n\n## Local memory (top FTS hits)\n{}\n\n\

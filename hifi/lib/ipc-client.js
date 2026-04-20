@@ -83,7 +83,8 @@
       case "app_integration_toggle":
       case "app_integration_import_credentials":
       case "app_integration_credentials_status":
-      case "shogun_google_calendar_sync": {
+      case "shogun_google_calendar_sync":
+      case "shogun_gmail_sync": {
         const C = global.ShogunIntegrationConnectors;
         if (C && typeof C.mockIntegrationPayload === "function") {
           const payload = C.mockIntegrationPayload(command, echo);
@@ -91,13 +92,24 @@
         }
         return notImpl("Integration mock unavailable.", echo);
       }
-      case "shogun_draft":
+      case "shogun_draft": {
+        const mas = echo && echo.memoryAssembly;
+        let memNote = "";
+        if (mas && typeof mas === "object") {
+          const q = String(mas.query || "").trim();
+          memNote =
+            "\n\n_memoryAssembly (mock): desktop injects local hits — query " +
+            JSON.stringify(q.slice(0, 100)) +
+            "._\n";
+        }
         return {
-          content: "# Draft\n\n_Mock Markdown from browser transport. Tauri uses your LLM key._\n",
+          content:
+            "# Draft\n\n_Mock Markdown from browser transport. Tauri uses your LLM key._\n" + memNote,
           title: echo.target ? `Draft · ${echo.target}` : "Draft",
           stub: false,
           echo: echo,
         };
+      }
       case "shogun_schedule_action":
         return {
           scheduled: true,
@@ -127,17 +139,25 @@
             echo: echo,
           },
         };
-      case "shogun_draft_reply":
+      case "shogun_draft_reply": {
+        const emailFmt =
+          echo &&
+          (echo.format === "email" || echo.draftKind === "email" || echo.channel === "email");
+        const src = String((echo && echo.sourceText) || "").trim();
+        const meetTitle = String((echo && echo.meetingTitle) || "Meeting").trim();
+        const content = emailFmt
+          ? `# 件名: ${meetTitle} · フォローアップ\n\nチームの皆様\n\n先ほどの打ち合わせの共有です。下記メモをベースにご確認ください。\n\n---\n\n${src || "（本文なし）"}\n\n---\n\n_Desktop + API キーで本番の下書き生成に接続されます。_`
+          : "# Draft reply (browser mock)\n\nUse Tauri + LLM key for Brief-aware drafts.\n";
         return {
           ok: true,
           data: {
-            content:
-              "# Draft reply (browser mock)\n\nUse Tauri + LLM key for Brief-aware drafts.\n",
-            title: "Reply draft · mock",
+            content,
+            title: emailFmt ? `Email draft · ${meetTitle}` : "Reply draft · mock",
             stub: false,
             echo: echo,
           },
         };
+      }
       case "app_capture_pause":
         return {
           paused: true,
@@ -267,11 +287,32 @@
         const userText =
           last && last.role === "user" ? String(last.content || "") : "";
         const preview = userText.length > 120 ? userText.slice(0, 120) + "…" : userText;
+        const ws =
+          echo && echo.webSearch
+            ? "\n\n[Web research mode: on — desktop app adds a system hint; live browse still requires a search API or pasted URLs.]"
+            : "";
+        let ma = "";
+        const mas = echo && echo.memoryAssembly;
+        if (mas && typeof mas === "object") {
+          const q = String(mas.query || "").trim();
+          const lim = mas.limit != null ? Number(mas.limit) : 12;
+          const sem = !!mas.semantic;
+          ma =
+            "\n\n[memoryAssembly — mock: desktop `chat.complete` would attach a system block from local Memory: query " +
+            JSON.stringify(q.slice(0, 100)) +
+            ", limit " +
+            lim +
+            ", semantic " +
+            sem +
+            ".]";
+        }
         return {
           message:
             "[Demo — set an API key in the desktop app for real completions.]\n\nYou asked: " +
             (preview || "(empty)") +
-            "\n\nFor **Kitazawa / Aurora**, a sensible next step is to pin the beta scope (DPIA + onboarding) and keep investor slides to three proof points until metrics land.",
+            "\n\nFor **Kitazawa / Aurora**, a sensible next step is to pin the beta scope (DPIA + onboarding) and keep investor slides to three proof points until metrics land." +
+            ws +
+            ma,
           stub: false,
           echo: echo,
         };
@@ -282,13 +323,35 @@
           stub: false,
           echo: echo,
         };
-      case "app_create_share_link":
+      case "app_create_share_link": {
+        const mode = (echo && echo.mode) || "private";
+        const rt = echo && echo.resourceType;
+        let url = null;
+        let shareId = null;
+        const origin =
+          typeof global.window !== "undefined" &&
+          global.window.location &&
+          global.window.location.origin
+            ? global.window.location.origin
+            : "https://shogun.app";
+        if (rt === "meeting_note" && echo && echo.storageKey) {
+          const raw = String(echo.storageKey).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48);
+          shareId = raw || "mtg-local";
+          const access = mode === "public" ? "view" : "restricted";
+          url = `${origin}/share/mtg/${encodeURIComponent(shareId)}?access=${access}`;
+        } else if (echo && echo.chatId != null) {
+          shareId = "chat-" + String(echo.chatId);
+          url = `${origin}/share/chat/${encodeURIComponent(shareId)}`;
+        }
         return {
           exported: true,
           path: "/mock/shogun-share-export.md",
+          url: url || undefined,
+          shareId: shareId || undefined,
           stub: false,
           echo: echo,
         };
+      }
       case "app_settings_load":
         return {
           settings: { sections: readMockSettingsSections() },
@@ -328,6 +391,13 @@
           stub: false,
           echo: echo,
         };
+      case "app_privacy_pick_app":
+        return {
+          cancelled: true,
+          stub: false,
+          note: "Native .app picker is available in the macOS desktop build.",
+          echo: echo,
+        };
       case "app_diagnostics_report":
         return {
           reportId: "diag-mock",
@@ -349,6 +419,12 @@
           stub: false,
           echo: echo,
         };
+      case "app_frontend_error_report":
+        return { logged: true, stub: false, echo: echo };
+      case "app_updates_check":
+        return { available: false, stub: true, echo: echo };
+      case "app_updates_download_install":
+        return { installed: true, stub: true, echo: echo };
       case "app_delete_data_range":
         return {
           deleted: true,
@@ -417,6 +493,33 @@
         };
       case "auth_biometric_authenticate":
         return { ok: true, stub: true, echo: echo };
+      case "shogun_meeting_enhance": {
+        const notes = String((echo && echo.notes) || "").trim();
+        const tx = String((echo && echo.transcript) || "").trim();
+        const title = String((echo && echo.title) || "Meeting").trim();
+        const minutesMarkdown = [
+          "## AI 議事録（Hi-Fi モック）",
+          "",
+          "### 要約",
+          "録音の文字起こしとあなたのメモを統合したドラフトです。デスクトップアプリではモデルが本番生成します。",
+          "",
+          "### メモより",
+          notes ? notes.slice(0, 1200) : "（メモなし）",
+          "",
+          "### 文字起こしより",
+          tx ? tx.slice(0, 2000) : "（文字起こしなし — 録音を反映すると精度が上がります）",
+          "",
+          "### 次のアクション",
+          "- [ ] フォローアップを確認",
+          "",
+          "_Meeting: " + title + "_",
+        ].join("\n");
+        return {
+          minutesMarkdown: minutesMarkdown,
+          stub: true,
+          echo: echo,
+        };
+      }
       default:
         return {
           stub: true,

@@ -1,7 +1,7 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
 use crate::{
-  auth, biometric, brief, brief_actions, embed_backfill, google_calendar, integration_secrets,
+  auth, biometric, brief, brief_actions, embed_backfill, gmail, google_calendar, integration_secrets,
   integrations, llm, macos_ax, memory_store, secrets, settings_store,
 };
 use crate::paths;
@@ -10,6 +10,39 @@ use serde_json::{json, Value};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_updater::UpdaterExt;
+
+fn redact_sensitive_text(input: &str) -> String {
+  let mut out = input.to_string();
+  for marker in [
+    "sk-",
+    "Bearer ",
+    "\"apiKey\":\"",
+    "\"accessToken\":\"",
+    "\"refreshToken\":\"",
+    "\"oauthClientSecret\":\"",
+    "access_token=",
+    "refresh_token=",
+  ] {
+    loop {
+      let Some(pos) = out.find(marker) else {
+        break;
+      };
+      let start = pos + marker.len();
+      let bytes = out.as_bytes();
+      let mut end = start;
+      while end < out.len() {
+        let b = bytes[end];
+        if b == b'"' || b == b' ' || b == b'\n' || b == b'&' {
+          break;
+        }
+        end += 1;
+      }
+      out.replace_range(start..end, "[REDACTED]");
+    }
+  }
+  out
+}
 
 fn ts() -> u64 {
   SystemTime::now()
@@ -75,7 +108,7 @@ pub async fn shogun_brief_get(payload: Value) -> Result<Value, String> {
     let user_tz = payload
       .get("user_tz")
       .and_then(|v| v.as_str())
-      .unwrap_or("Asia/Tokyo");
+      .unwrap_or("UTC");
     let ms = ts();
     return Ok(brief::morning_brief_v2_stub(ms, user_tz, &payload));
   }
@@ -281,6 +314,29 @@ pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
     .and_then(|p| p.as_str())
     .unwrap_or("");
   let slug = integrations::normalize_provider(raw);
+  if slug == "gmail" {
+    let configured = integration_secrets::get_credentials("gmail")?.is_some();
+    if configured {
+      settings_store::upsert_integration_provider(
+        &slug,
+        &json!({ "connected": true, "mode": "oauth_via_agent" }),
+      )?;
+      return Ok(json!({
+        "connected": true,
+        "provider": slug,
+        "stub": false,
+        "echo": payload,
+      }));
+    }
+    return Ok(json!({
+      "connected": false,
+      "needsCredentials": true,
+      "provider": slug,
+      "message": "Gmail requires OAuth tokens imported via app_integration_import_credentials (provider: gmail). Scopes must include https://www.googleapis.com/auth/gmail.readonly (or broader Gmail).",
+      "stub": false,
+      "echo": payload,
+    }));
+  }
   if integrations::allows_local_connect(&slug) {
     settings_store::upsert_integration_provider(
       &slug,
@@ -347,7 +403,7 @@ pub(crate) fn persist_integration_credentials_inner(payload: &Value) -> Result<S
   }
 
   integration_secrets::set_credentials(&slug, &doc)?;
-  if slug == "google_calendar" {
+  if slug == "google_calendar" || slug == "gmail" {
     settings_store::upsert_integration_provider(
       &slug,
       &json!({ "connected": true, "mode": "oauth_via_agent" }),
@@ -367,7 +423,6 @@ pub fn app_integration_import_credentials(app: AppHandle, payload: Value) -> Res
     "saved": true,
     "provider": slug,
     "stub": false,
-    "echo": payload,
   }))
 }
 
@@ -382,6 +437,7 @@ pub fn app_integration_credentials_status(payload: Value) -> Result<Value, Strin
   let configured = creds.is_some();
   let token_refresh_ready = match creds.as_ref() {
     Some(doc) if slug == "google_calendar" => google_calendar::credentials_can_refresh(doc),
+    Some(doc) if slug == "gmail" => crate::google_oauth::credentials_can_refresh(doc),
     _ => false,
   };
   Ok(json!({
@@ -405,6 +461,16 @@ pub async fn shogun_google_calendar_sync(payload: Value) -> Result<Value, String
     .unwrap_or(25)
     .clamp(1, 50) as usize;
   google_calendar::sync_events_to_memory(cal, max).await
+}
+
+#[tauri::command]
+pub async fn shogun_gmail_sync(payload: Value) -> Result<Value, String> {
+  let max = payload
+    .get("maxResults")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(20)
+    .clamp(1, 50) as usize;
+  gmail::sync_inbox_to_memory(max).await
 }
 
 #[tauri::command]
@@ -487,6 +553,44 @@ pub fn app_permissions_manage(payload: Value) -> Result<Value, String> {
   }))
 }
 
+/// Native file picker for a `.app` bundle (Privacy → exclude list). Cancel returns `cancelled: true`.
+#[tauri::command]
+pub fn app_privacy_pick_app(payload: Value) -> Result<Value, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let path = rfd::FileDialog::new()
+      .set_title("Choose an application to exclude")
+      .add_filter("Application", &["app"])
+      .pick_file();
+    match path {
+      None => Ok(json!({
+        "cancelled": true,
+        "stub": false,
+        "echo": payload,
+      })),
+      Some(p) => {
+        let name = p
+          .file_stem()
+          .and_then(|s| s.to_str())
+          .map(str::to_string)
+          .filter(|s| !s.is_empty())
+          .unwrap_or_else(|| "Application".to_string());
+        Ok(json!({
+          "cancelled": false,
+          "name": name,
+          "path": p.display().to_string(),
+          "stub": false,
+          "echo": payload,
+        }))
+      }
+    }
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("app_privacy_pick_app is only available on macOS.".to_string())
+  }
+}
+
 #[tauri::command]
 pub fn app_diagnostics_report(payload: Value) -> Result<Value, String> {
   let dir = paths::app_data_dir()?;
@@ -552,6 +656,61 @@ pub fn app_diagnostics_report(payload: Value) -> Result<Value, String> {
     "stub": false,
     "echo": payload,
   }))
+}
+
+#[tauri::command]
+pub fn app_frontend_error_report(payload: Value) -> Result<(), String> {
+  let kind = payload
+    .get("kind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("unknown");
+  let message = payload
+    .get("message")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  let stack = payload
+    .get("stack")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  let msg: String = message.chars().take(2000).collect();
+  let stk: String = stack.chars().take(1500).collect();
+  let safe_msg = redact_sensitive_text(&msg);
+  let safe_stk = redact_sensitive_text(&stk);
+  eprintln!("[shogun-frontend:{}] {}", kind, safe_msg);
+  if !safe_stk.is_empty() {
+    eprintln!("[shogun-frontend:{}] stack {}", kind, safe_stk);
+  }
+  log::warn!(target: "shogun::frontend", "[{}] {} — {}", kind, safe_msg, safe_stk);
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn app_updates_check(app: AppHandle) -> Result<Value, String> {
+  let updater = app.updater().map_err(|e| e.to_string())?;
+  match updater.check().await {
+    Ok(Some(u)) => Ok(json!({
+      "available": true,
+      "version": u.version,
+      "body": u.body,
+      "currentVersion": u.current_version,
+    })),
+    Ok(None) => Ok(json!({ "available": false })),
+    Err(e) => Err(e.to_string()),
+  }
+}
+
+/// Download signature-verified update and restart the app (macOS / Windows / Linux updater bundles).
+#[tauri::command]
+pub async fn app_updates_download_install(app: AppHandle) -> Result<(), String> {
+  let updater = app.updater().map_err(|e| e.to_string())?;
+  let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+    return Err("No update is available.".to_string());
+  };
+  update
+    .download_and_install(|_chunk_len, _total| {}, || {})
+    .await
+    .map_err(|e| e.to_string())?;
+  app.restart();
 }
 
 #[tauri::command]

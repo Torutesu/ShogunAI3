@@ -23,7 +23,14 @@ function profileStateFromSections(sections) {
   const g = sections && sections.general;
   const name = g && g.name != null ? String(g.name).trim() : '';
   const avatarGlyph = g && g.avatarGlyph != null ? String(g.avatarGlyph).trim() : '';
-  return { name, avatarGlyph };
+  const rawImg = g && g.avatarImageDataUrl != null ? String(g.avatarImageDataUrl).trim() : '';
+  const avatarImageDataUrl = rawImg && /^data:image\//i.test(rawImg) ? rawImg : '';
+  return { name, avatarGlyph, avatarImageDataUrl };
+}
+
+function isProfilePhotoDataUrl(s) {
+  const t = s != null ? String(s).trim() : '';
+  return t.length > 0 && /^data:image\//i.test(t);
 }
 
 /** One grapheme for sidebar / menu avatar: optional override, else first letter of display name. */
@@ -48,6 +55,8 @@ const INITIAL_CHAT_HISTORY =
   Array.isArray(window.SHOGUN_DEMO_SEED.chats)
     ? window.SHOGUN_DEMO_SEED.chats
     : [];
+
+const CHAT_CONTEXT_TELEMETRY_LS = 'shogun.hifi.telemetry.chat_context.v1';
 
 /** Fallback when `ipc-client.js` is absent — keep in sync with `hifi/lib/ipc-client.js` mockTransport. */
 function mockIpcInvoke(command, payload) {
@@ -102,7 +111,8 @@ function mockIpcInvoke(command, payload) {
     case 'app_integration_toggle':
     case 'app_integration_import_credentials':
     case 'app_integration_credentials_status':
-    case 'shogun_google_calendar_sync': {
+    case 'shogun_google_calendar_sync':
+    case 'shogun_gmail_sync': {
       const C = typeof window !== 'undefined' && window.ShogunIntegrationConnectors;
       if (C && typeof C.mockIntegrationPayload === 'function') {
         const payload = C.mockIntegrationPayload(command, echo);
@@ -110,16 +120,26 @@ function mockIpcInvoke(command, payload) {
       }
       return notImpl('Integration mock unavailable.');
     }
-    case 'shogun_draft':
+    case 'shogun_draft': {
+      const mas = echo && echo.memoryAssembly;
+      let memNote = '';
+      if (mas && typeof mas === 'object') {
+        const q = String(mas.query || '').trim();
+        memNote =
+          '\n\n_memoryAssembly (mock): desktop injects local hits — query ' +
+          JSON.stringify(q.slice(0, 100)) +
+          '._\n';
+      }
       return {
         ok: true,
         data: {
-          content: '# Draft\n\n_Mock Markdown (fallback mock)._',
+          content: '# Draft\n\n_Mock Markdown (fallback mock)._' + memNote,
           title: echo.target ? `Draft · ${echo.target}` : 'Draft',
           stub: false,
           echo,
         },
       };
+    }
     case 'shogun_schedule_action':
       return { ok: true, data: { scheduled: true, id: 'sch-mock', stub: false, echo } };
     case 'shogun_open_pack':
@@ -144,17 +164,25 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
-    case 'shogun_draft_reply':
+    case 'shogun_draft_reply': {
+      const emailFmt =
+        echo &&
+        (echo.format === 'email' || echo.draftKind === 'email' || echo.channel === 'email');
+      const src = String((echo && echo.sourceText) || '').trim();
+      const meetTitle = String((echo && echo.meetingTitle) || 'Meeting').trim();
+      const content = emailFmt
+        ? `# 件名: ${meetTitle} · フォローアップ\n\nチームの皆様\n\n先ほどの打ち合わせの共有です。下記メモをベースにご確認ください。\n\n---\n\n${src || '（本文なし）'}\n\n---\n\n_Desktop + API キーで本番の下書き生成に接続されます。_`
+        : '# Draft reply (browser mock)\n\n_Use the desktop app with an LLM API key for a real draft from your Brief + Memory._\n';
       return {
         ok: true,
         data: {
-          content:
-            '# Draft reply (browser mock)\n\n_Use the desktop app with an LLM API key for a real draft from your Brief + Memory._\n',
-          title: 'Reply draft · mock',
+          content,
+          title: emailFmt ? `Email draft · ${meetTitle}` : 'Reply draft · mock',
           stub: false,
           echo,
         },
       };
+    }
     case 'app_capture_pause':
       return {
         ok: true,
@@ -281,13 +309,31 @@ function mockIpcInvoke(command, payload) {
       const last = msgs[msgs.length - 1];
       const userText = last && last.role === 'user' ? String(last.content || '') : '';
       const preview = userText.length > 120 ? userText.slice(0, 120) + '…' : userText;
+      const ws = echo && echo.webSearch ? '\n\n[Web research mode: on — real builds add a system hint to the model; still no live browse without an API.]' : '';
+      let ma = '';
+      const mas = echo && echo.memoryAssembly;
+      if (mas && typeof mas === 'object') {
+        const q = String(mas.query || '').trim();
+        const lim = mas.limit != null ? Number(mas.limit) : 12;
+        const sem = !!mas.semantic;
+        ma =
+          '\n\n[memoryAssembly — mock: desktop would attach local Memory (query ' +
+          JSON.stringify(q.slice(0, 100)) +
+          ', limit ' +
+          lim +
+          ', semantic ' +
+          sem +
+          ').]';
+      }
       return {
         ok: true,
         data: {
           message:
             '[Demo — set an API key in the desktop app for real completions.]\n\nYou asked: ' +
             (preview || '(empty)') +
-            '\n\n_Mock reply (fallback transport)._',
+            '\n\n_Mock reply (fallback transport)._' +
+            ws +
+            ma,
           stub: false,
           echo,
         },
@@ -305,16 +351,36 @@ function mockIpcInvoke(command, payload) {
       };
     case 'app_open_hummingbird':
       return { ok: true, data: { opened: true, stub: false, echo } };
-    case 'app_create_share_link':
+    case 'app_create_share_link': {
+      const mode = (echo && echo.mode) || 'private';
+      const rt = echo && echo.resourceType;
+      let url = null;
+      let shareId = null;
+      const origin =
+        typeof window !== 'undefined' && window.location && window.location.origin
+          ? window.location.origin
+          : 'https://shogun.app';
+      if (rt === 'meeting_note' && echo && echo.storageKey) {
+        const raw = String(echo.storageKey).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48);
+        shareId = raw || 'mtg-local';
+        const access = mode === 'public' ? 'view' : 'restricted';
+        url = `${origin}/share/mtg/${encodeURIComponent(shareId)}?access=${access}`;
+      } else if (echo && echo.chatId != null) {
+        shareId = 'chat-' + String(echo.chatId);
+        url = `${origin}/share/chat/${encodeURIComponent(shareId)}`;
+      }
       return {
         ok: true,
         data: {
           exported: true,
           path: '/mock/shogun-share-export.md',
+          url: url || undefined,
+          shareId: shareId || undefined,
           stub: false,
           echo,
         },
       };
+    }
     case 'app_permissions_manage':
       return {
         ok: true,
@@ -322,6 +388,16 @@ function mockIpcInvoke(command, payload) {
           opened: true,
           note: 'Opened System Settings (Screen Recording) when supported.',
           stub: false,
+          echo,
+        },
+      };
+    case 'app_privacy_pick_app':
+      return {
+        ok: true,
+        data: {
+          cancelled: true,
+          stub: false,
+          note: 'Native .app picker is available in the macOS desktop build.',
           echo,
         },
       };
@@ -349,6 +425,12 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'app_frontend_error_report':
+      return { ok: true, data: { logged: true, stub: false, echo } };
+    case 'app_updates_check':
+      return { ok: true, data: { available: false, stub: true, echo } };
+    case 'app_updates_download_install':
+      return { ok: true, data: { installed: true, stub: true, echo } };
     case 'app_delete_data_range':
       return {
         ok: true,
@@ -452,6 +534,36 @@ function mockIpcInvoke(command, payload) {
       };
     case 'auth_biometric_authenticate':
       return { ok: true, data: { ok: true, stub: true, echo } };
+    case 'shogun_meeting_enhance': {
+      const notes = String((echo && echo.notes) || '').trim();
+      const tx = String((echo && echo.transcript) || '').trim();
+      const title = String((echo && echo.title) || 'Meeting').trim();
+      const minutesMarkdown = [
+        '## AI 議事録（Hi-Fi モック）',
+        '',
+        '### 要約',
+        '録音の文字起こしとあなたのメモを統合したドラフトです。デスクトップアプリではモデルが本番生成します。',
+        '',
+        '### メモより',
+        notes ? notes.slice(0, 1200) : '（メモなし）',
+        '',
+        '### 文字起こしより',
+        tx ? tx.slice(0, 2000) : '（文字起こしなし — 録音を反映すると精度が上がります）',
+        '',
+        '### 次のアクション',
+        '- [ ] フォローアップを確認',
+        '',
+        '_Meeting: ' + title + '_',
+      ].join('\n');
+      return {
+        ok: true,
+        data: {
+          minutesMarkdown,
+          stub: true,
+          echo,
+        },
+      };
+    }
     case 'shogun_memory_embed_backfill': {
       const lim = echo && echo.limit != null ? Number(echo.limit) : 40;
       const clamped = Number.isFinite(lim) ? Math.min(200, Math.max(1, Math.floor(lim))) : 40;
@@ -505,10 +617,15 @@ function ensureRuntimeDeps() {
           client.invoke('app_integration_credentials_status', input),
         integrationToggle: (input) => client.invoke('app_integration_toggle', input),
         googleCalendarSync: (input) => client.invoke('shogun_google_calendar_sync', input),
+        gmailSync: (input) => client.invoke('shogun_gmail_sync', input),
         capturePause: (input) => client.invoke('app_capture_pause', input),
         captureResume: (input) => client.invoke('app_capture_resume', input),
         permissionsManage: (input) => client.invoke('app_permissions_manage', input),
+        privacyPickApp: (input) => client.invoke('app_privacy_pick_app', input || {}),
         diagnosticsReport: (input) => client.invoke('app_diagnostics_report', input),
+        updatesCheck: (input) => client.invoke('app_updates_check', input),
+        updatesDownloadInstall: (input) => client.invoke('app_updates_download_install', input),
+        frontendErrorReport: (input) => client.invoke('app_frontend_error_report', input),
         accountDeleteData: (input) => client.invoke('app_delete_data_range', input),
         accountDeleteAll: (input) => client.invoke('app_delete_all_data', input),
         accountDeleteSelf: (input) => client.invoke('app_delete_account', input),
@@ -570,10 +687,14 @@ function ensureRuntimeDeps() {
           'integrations.credentials_status': api.integrationCredentialsStatus,
           'integrations.toggle': api.integrationToggle,
           'calendar.sync': api.googleCalendarSync,
+          'gmail.sync': api.gmailSync,
           'capture.pause': api.capturePause,
           'capture.resume': api.captureResume,
           'permissions.manage': api.permissionsManage,
+          'privacy.pick_app': api.privacyPickApp,
           'diagnostics.report': api.diagnosticsReport,
+          'updates.check': api.updatesCheck,
+          'updates.download_install': api.updatesDownloadInstall,
           'data.delete_range': api.accountDeleteData,
           'data.delete_all': api.accountDeleteAll,
           'account.delete': api.accountDeleteSelf,
@@ -723,8 +844,9 @@ function App() {
   const [userOpen, setUserOpen] = useState(false);
   const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220});
   const userBtnRef = React.useRef(null);
-  const [profileDisplayName, setProfileDisplayName] = useState('Toru Tano');
+  const [profileDisplayName, setProfileDisplayName] = useState('');
   const [profileAvatarGlyph, setProfileAvatarGlyph] = useState('');
+  const [profileAvatarImageDataUrl, setProfileAvatarImageDataUrl] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(null); // null | 'general' | 'system' | 'appearance' | 'privacy' | 'data' | 'hummingbird' | 'meetings' | 'chat' | 'integrations' | 'shortcuts' | 'subscription' | 'team' | 'support' | 'api' | 'upgrade' | 'changelog' | 'feedback'
   const [toast, setToast] = useState(null);
   const [writeConfirm, setWriteConfirm] = useState({ open:false, actionKey:null, payload:null, title:null, description:null });
@@ -763,6 +885,8 @@ function App() {
         title: d.title || 'Untitled',
         startedAt: d.startedAt || Date.now(),
       });
+      // Title updates during recording emit hudPhase "tick"; only "begin" should steal focus / reopen tabs.
+      if (d.hudPhase !== 'begin') return;
       setActive('meetings');
       window.setTimeout(() => {
         try {
@@ -956,6 +1080,59 @@ function App() {
     };
     return () => { delete window.SHOGUN_RUNTIME; };
   }, [activeChat, chats]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    /**
+     * Sink for `BriefTelemetry` chat context events.
+     * - Keeps a tiny local ring buffer for quick inspection in browser/mock.
+     * - Also ingests a compact telemetry row into local Memory (`source: telemetry_chat_context`).
+     */
+    window.shogunBriefTelemetrySink = (row) => {
+      try {
+        if (!row || row.name !== 'chat.completion.context') return;
+        const payload = row && typeof row.payload === 'object' ? row.payload : {};
+        const compact = {
+          t: row.t || new Date().toISOString(),
+          hasManualMemoryContext: payload.hasManualMemoryContext === true,
+          manualMemoryContextChars: Number(payload.manualMemoryContextChars) || 0,
+          memoryAssemblyRequested: payload.memoryAssemblyRequested === true,
+          memoryAssemblySent: payload.memoryAssemblySent === true,
+          memoryAssemblyPreset: payload.memoryAssemblyPreset === true,
+          privacyAllowsServerAssembly: payload.privacyAllowsServerAssembly !== false,
+        };
+        try {
+          if (typeof localStorage !== 'undefined') {
+            const prevRaw = localStorage.getItem(CHAT_CONTEXT_TELEMETRY_LS);
+            const prev = prevRaw ? JSON.parse(prevRaw) : [];
+            const arr = Array.isArray(prev) ? prev : [];
+            arr.push(compact);
+            while (arr.length > 100) arr.shift();
+            localStorage.setItem(CHAT_CONTEXT_TELEMETRY_LS, JSON.stringify(arr));
+          }
+        } catch (_) {
+          /* ignore localStorage failures */
+        }
+        void executeAction(
+          'memory.ingest',
+          {
+            title: 'Telemetry: chat context routing',
+            snippet: JSON.stringify(compact).slice(0, 4000),
+            source: 'telemetry_chat_context',
+            kinds: ['telemetry', 'chat'],
+            provenance: 'user',
+          },
+          { silentError: true },
+        );
+      } catch (_) {
+        /* never throw from telemetry sink */
+      }
+    };
+    return () => {
+      try {
+        delete window.shogunBriefTelemetrySink;
+      } catch (_) {}
+    };
+  }, [executeAction]);
 
   const createNewChat = useCallback(() => {
     const id = `c${Date.now()}`;
@@ -1159,8 +1336,9 @@ function App() {
       const sec = r.data.settings.sections;
       applySavedAppearance(sec);
       const p = profileStateFromSections(sec);
-      setProfileDisplayName(p.name || 'Toru Tano');
+      setProfileDisplayName(p.name);
       setProfileAvatarGlyph(p.avatarGlyph);
+      setProfileAvatarImageDataUrl(p.avatarImageDataUrl);
       if (window.ShogunKeyboardShortcuts) {
         shortcutBindingsRef.current = window.ShogunKeyboardShortcuts.mergeShortcutBindings(
           sec.shortcuts && sec.shortcuts.bindings,
@@ -1178,10 +1356,16 @@ function App() {
   useEffect(() => {
     const onProfile = (e) => {
       const d = e && e.detail;
-      if (d && typeof d === 'object') {
-        if (d.name != null) setProfileDisplayName(String(d.name).trim() || 'Toru Tano');
-        if (d.avatarGlyph != null) setProfileAvatarGlyph(String(d.avatarGlyph).trim());
-        return;
+      if (!d || typeof d !== 'object') return;
+      if (Object.prototype.hasOwnProperty.call(d, 'name')) {
+        setProfileDisplayName(d.name == null ? '' : String(d.name).trim());
+      }
+      if (Object.prototype.hasOwnProperty.call(d, 'avatarGlyph')) {
+        setProfileAvatarGlyph(d.avatarGlyph == null ? '' : String(d.avatarGlyph).trim());
+      }
+      if (Object.prototype.hasOwnProperty.call(d, 'avatarImageDataUrl')) {
+        const u = d.avatarImageDataUrl == null ? '' : String(d.avatarImageDataUrl).trim();
+        setProfileAvatarImageDataUrl(isProfilePhotoDataUrl(u) ? u : '');
       }
     };
     window.addEventListener('shogun-profile-changed', onProfile);
@@ -1353,7 +1537,7 @@ function App() {
       setMeetingHud(null);
       return;
     }
-    if (M.isRecording && M.isRecording()) {
+    if (M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting()) {
       M.stop();
     } else {
       setMeetingHud(null);
@@ -1660,7 +1844,7 @@ function App() {
                           <span className="dot"/>
                           <span className="chat-sub-title">{it.title}</span>
                           {it.time && <span className="t-mono chat-sub-time">{it.time}</span>}
-                          <button type="button" draggable={false} className="chat-fav-btn fav-hover" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Favorite">☆</button>
+                          <button type="button" draggable={false} className="chat-fav-btn fav-hover" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Favorite">＋</button>
                         </div>
                       ))}
                     </div>
@@ -1680,8 +1864,28 @@ function App() {
             <span className="s-field-hint" style={{fontSize:10}}><span className="en-only">Local preview</span><span className="jp">ローカル</span></span>
           </div>
           <div ref={userBtnRef} className="user-row user-pill" onClick={openUser}>
-            <div className="avatar" style={{width:26, height:26, fontSize:11}}>
-              {shellAvatarChar(profileAvatarGlyph, profileDisplayName)}
+            <div
+              className="avatar"
+              style={{
+                width: 26,
+                height: 26,
+                fontSize: 11,
+                overflow: 'hidden',
+                padding: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {isProfilePhotoDataUrl(profileAvatarImageDataUrl) ? (
+                <img
+                  src={profileAvatarImageDataUrl}
+                  alt=""
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                shellAvatarChar(profileAvatarGlyph, profileDisplayName)
+              )}
             </div>
             <div style={{flex:1, minWidth:0}}>
               <div style={{fontSize:12, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
@@ -1986,8 +2190,19 @@ function App() {
             </div>
             {/* Profile chip at bottom, like reference */}
             <div className="user-float-profile">
-              <div className="avatar">
-                {shellAvatarChar(profileAvatarGlyph, profileDisplayName)}
+              <div
+                className="avatar"
+                style={{ overflow: 'hidden', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                {isProfilePhotoDataUrl(profileAvatarImageDataUrl) ? (
+                  <img
+                    src={profileAvatarImageDataUrl}
+                    alt=""
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  shellAvatarChar(profileAvatarGlyph, profileDisplayName)
+                )}
               </div>
               <div style={{flex:1, minWidth:0}}>
                 <div style={{fontSize:12, fontWeight:500}}>{profileDisplayName.trim() || 'You'}</div>
@@ -2012,8 +2227,9 @@ function App() {
                 const sec = r.data.settings.sections;
                 applySavedAppearance(sec);
                 const p = profileStateFromSections(sec);
-                setProfileDisplayName(p.name || 'Toru Tano');
+                setProfileDisplayName(p.name);
                 setProfileAvatarGlyph(p.avatarGlyph);
+                setProfileAvatarImageDataUrl(p.avatarImageDataUrl);
               }
             })();
           }}
@@ -2228,7 +2444,9 @@ function App() {
           background:var(--surface-2); border:1px solid var(--border);
           display:flex; align-items:center; justify-content:center;
           font-size:11px; font-weight:500; color:var(--text);
+          overflow:hidden;
         }
+        .user-float-profile .avatar img { display:block; }
         /* Share modal */
         .share-modal {
           position:fixed; top:56px; right:16px;
@@ -2413,4 +2631,75 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+class ShogunErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, err: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, err: error };
+  }
+  componentDidCatch(error, info) {
+    try {
+      if (
+        window.ShogunErrorReporting &&
+        typeof window.ShogunErrorReporting.reportReactError === 'function'
+      ) {
+        window.ShogunErrorReporting.reportReactError(error, info);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  render() {
+    if (this.state.hasError && this.state.err) {
+      const e = this.state.err;
+      const msg = e && e.message ? String(e.message) : String(e);
+      return (
+        <div
+          style={{
+            padding: 32,
+            fontFamily: 'var(--font-sans, system-ui, sans-serif)',
+            maxWidth: 520,
+            margin: '8vh auto',
+            color: 'var(--text, #e8e8e8)',
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Something went wrong</div>
+          <div
+            className="en-only"
+            style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--text-dim, rgba(255,255,255,0.65))' }}
+          >
+            {msg}
+          </div>
+          <div
+            className="jp"
+            style={{
+              fontSize: 13,
+              lineHeight: 1.55,
+              color: 'var(--text-dim, rgba(255,255,255,0.65))',
+              marginTop: 8,
+            }}
+          >
+            予期しないエラーが発生しました。下部のボタンで再試行できます。
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ marginTop: 20 }}
+            onClick={() => this.setState({ hasError: false, err: null })}
+          >
+            Try again / 再試行
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ShogunErrorBoundary>
+    <App />
+  </ShogunErrorBoundary>,
+);
