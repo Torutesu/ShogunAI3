@@ -13,15 +13,14 @@ const SETTINGS_NAV = [
   {id:'llm',          label:'Model & API',        jp:'モデル', icon:'key'},
   {id:'integrations', label:'Integrations',       jp:'連携', icon:'plug'},
   {id:'shortcuts',    label:'Keyboard Shortcuts', jp:'捷径', icon:'keyboard'},
-  {id:'subscription', label:'Subscription',       jp:'契約', icon:'gift'},
   {id:'team',         label:'Team',               jp:'組',   icon:'users'},
   {id:'support',      label:'Support',            jp:'支援', icon:'info'},
 ];
 
 // Alias panes from quick menu to the canonical settings panes
 const PANE_ALIAS = {
-  upgrade:'subscription', feedback:'support', download:'general',
-  referral:'subscription', changelog:'general', api:'llm',
+  upgrade:'general', feedback:'support', download:'general',
+  referral:'general', changelog:'general', api:'llm',
   brief: 'general',
 };
 
@@ -362,7 +361,7 @@ function PaneGeneral() {
         try {
           window.dispatchEvent(
             new CustomEvent('shogun-profile-changed', {
-              detail: { name, avatarGlyph, avatarImageDataUrl },
+              detail: { name, email, avatarGlyph, avatarImageDataUrl },
             }),
           );
         } catch (_) {
@@ -433,15 +432,15 @@ function PaneGeneral() {
             that yourself.
           </li>
           <li>
-            <strong className="en-only">Integrations:</strong> many &quot;Connect&quot; rows are <strong>preview / not wired</strong> in v1 — expect
+            <strong className="en-only">Integrations:</strong> many &quot;Connect&quot; rows are <strong>preview (not connected)</strong> in v1 — expect
             warnings where OAuth is unavailable.
           </li>
           <li>
-            <strong className="en-only">Billing UI:</strong> subscription screens may be <strong>illustrative</strong> until checkout is connected — see Terms.
+            <strong className="en-only">Billing UI:</strong> billing-related screens are <strong>preview (not connected)</strong> until checkout is connected — see Terms.
           </li>
         </ul>
         <div className="jp" style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
-          Morning Brief は環境によりスタブまたはご自身の LLM 経由の生成です。連携の Connect は v1 では未接続のことがあります。契約画面の金額はイメージの場合があります（利用規約参照）。
+          Morning Brief は環境によりスタブまたはご自身の LLM 経由の生成です。連携の Connect は v1 ではプレビュー（未接続）です。課金関連画面もプレビュー（未接続）のため、表示価格はイメージの場合があります（利用規約参照）。
         </div>
         <ProductLegalLinks />
       </div>
@@ -547,7 +546,7 @@ function PaneGeneral() {
                 try {
                   window.dispatchEvent(
                     new CustomEvent('shogun-profile-changed', {
-                      detail: { name, avatarGlyph, avatarImageDataUrl: res.dataUrl },
+                      detail: { name, email, avatarGlyph, avatarImageDataUrl: res.dataUrl },
                     }),
                   );
                 } catch (_) {
@@ -632,7 +631,7 @@ function PaneGeneral() {
                   try {
                     window.dispatchEvent(
                       new CustomEvent('shogun-profile-changed', {
-                        detail: { name, avatarGlyph, avatarImageDataUrl: '' },
+                        detail: { name, email, avatarGlyph, avatarImageDataUrl: '' },
                       }),
                     );
                   } catch (_) {
@@ -668,7 +667,7 @@ function PaneGeneral() {
                   try {
                     window.dispatchEvent(
                       new CustomEvent('shogun-profile-changed', {
-                        detail: { name, avatarGlyph: '', avatarImageDataUrl },
+                        detail: { name, email, avatarGlyph: '', avatarImageDataUrl },
                       }),
                     );
                   } catch (_) {
@@ -850,6 +849,9 @@ function PanePrivacy() {
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateS(true);
 
   const [bioLock, setBioLock] = useStateS(!!secSecurity.biometricLockEnabled);
+  const [requireImportApproval, setRequireImportApproval] = useStateS(
+    !!secSecurity.requireIntegrationImportApproval,
+  );
   const [bioStatus, setBioStatus] = useStateS(null);
 
   const persistPrivacy = React.useCallback(
@@ -881,7 +883,8 @@ function PanePrivacy() {
 
   React.useEffect(() => {
     setBioLock(!!secSecurity.biometricLockEnabled);
-  }, [secSecurity.biometricLockEnabled]);
+    setRequireImportApproval(!!secSecurity.requireIntegrationImportApproval);
+  }, [secSecurity.biometricLockEnabled, secSecurity.requireIntegrationImportApproval]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1112,6 +1115,37 @@ function PanePrivacy() {
       </div>
       <div className="s-card" style={{marginBottom:14}}>
         <Row
+          title={
+            <span>
+              <span className="en-only">Integration import approval</span>
+              <span className="jp">連携インポートに承認トークン必須</span>
+            </span>
+          }
+          desc="Require a short-lived approval token before external agents can import OAuth credentials (invoke / deep-link code issue). Keeps legacy behavior when off."
+        >
+          <Toggle
+            on={requireImportApproval}
+            onClick={async () => {
+              const next = !requireImportApproval;
+              setRequireImportApproval(next);
+              const r = await run(
+                'settings.save',
+                {
+                  section: 'security',
+                  biometricLockEnabled: bioLock,
+                  requireIntegrationImportApproval: next,
+                },
+                {
+                  successMessage: next
+                    ? '連携インポート保護を有効にしました'
+                    : '連携インポート保護をオフにしました',
+                },
+              );
+              if (r && r.ok && refreshSections) await refreshSections();
+            }}
+          />
+        </Row>
+        <Row
           title={<span><span className="en-only">Biometric app lock</span><span className="jp">生体認証でロック</span></span>}
           desc="Device-level protection (no cloud passkey): Touch ID or Face ID after launch and when returning from the background. Pair with Clerk sign-in above for account identity. Requires the Tauri desktop app on a supported Mac."
           last
@@ -1134,7 +1168,11 @@ function PanePrivacy() {
               setBioLock(next);
               const r = await run(
                 'settings.save',
-                { section: 'security', biometricLockEnabled: next },
+                {
+                  section: 'security',
+                  biometricLockEnabled: next,
+                  requireIntegrationImportApproval: requireImportApproval,
+                },
                 { successMessage: next ? '生体ロックを有効にしました' : '生体ロックをオフにしました' },
               );
               if (r && r.ok && refreshSections) await refreshSections();
@@ -1332,13 +1370,13 @@ function PaneData() {
           <button className="btn btn-sm btn-secondary" onClick={()=>confirmWrite('data.delete_range', { range:'custom' }, 'Delete custom range', 'This permanently deletes local memory for a custom range.')}>Select</button>
         </Row>
         <Row title="Delete All Context" desc="Permanently remove all context collected. This action cannot be undone." last>
-          <button className="btn btn-sm" style={{background:'transparent', border:'1px solid #8a4a4a', color:'#d9857a'}} onClick={()=>confirmWrite('data.delete_all', {}, 'Delete all context', 'This deletes all locally stored events and embeddings.')}>Delete</button>
+          <button className="btn btn-sm btn-danger-ghost" onClick={()=>confirmWrite('data.delete_all', {}, 'Delete all context', 'This deletes all locally stored events and embeddings.')}>Delete</button>
         </Row>
       </div>
       <div className="s-field-label" style={{marginTop:22}}>Manage your Account</div>
       <div className="s-card">
         <Row title="Delete Your Account" desc="Permanently delete your account and all associated data" last>
-          <button className="btn btn-sm" style={{background:'transparent', border:'1px solid #8a4a4a', color:'#d9857a'}} onClick={()=>confirmWrite('account.delete', {}, 'Delete account', 'This action removes the account identity and local mappings.')}>Delete</button>
+          <button className="btn btn-sm btn-danger-ghost" onClick={()=>confirmWrite('account.delete', {}, 'Delete account', 'This action removes the account identity and local mappings.')}>Delete</button>
         </Row>
       </div>
     </Pane>
@@ -1375,10 +1413,10 @@ function PaneHummingbird() {
               <button type="button" className="btn btn-sm btn-ghost" onClick={()=>{ setMode('meeting'); run('settings.save', { section:'hummingbird', mode:'meeting', enabled, alwaysNew, globalShortcut }, { silentError:true }); }}>Ongoing meeting</button>
               <button type="button" className="btn btn-sm btn-ghost" onClick={()=>{ setMode('selection'); run('settings.save', { section:'hummingbird', mode:'selection', enabled, alwaysNew, globalShortcut }, { silentError:true }); }}>Selected text</button>
             </div>
-            <div style={{margin:'0 16px 16px', border:'1px solid var(--border)', borderRadius:'var(--radius-md)', background:'#f4f1ea', padding:'40px 30px', fontFamily:'Georgia, serif', color:'#2a2420', position:'relative', minHeight:180}}>
+            <div style={{margin:'0 16px 16px', border:'1px solid var(--border)', borderRadius:'var(--radius-md)', background:'var(--surface-2)', padding:'40px 30px', fontFamily:'var(--font-en)', color:'var(--text)', position:'relative', minHeight:180}}>
               <div style={{fontSize:22, fontWeight:500, marginBottom:8}}>Creativity Is a Process, Not an Event</div>
-              <div style={{fontSize:10, letterSpacing:'0.15em', color:'#6a5a4a', marginBottom:20}}>WRITTEN BY JAMES CLEAR · CREATIVITY</div>
-              <div style={{fontSize:13, lineHeight:1.7, color:'#4a3a2a'}}>In 1666, one of the most influential scientists in history was strolling through a garden when he was struck with a flash of creative brilliance that would change the world.</div>
+              <div style={{fontSize:10, letterSpacing:'0.15em', color:'var(--text-dim)', marginBottom:20}}>WRITTEN BY JAMES CLEAR · CREATIVITY</div>
+              <div style={{fontSize:13, lineHeight:1.7, color:'var(--text-mute)'}}>In 1666, one of the most influential scientists in history was strolling through a garden when he was struck with a flash of creative brilliance that would change the world.</div>
               <div style={{position:'absolute', bottom:20, left:'50%', transform:'translateX(-50%)', width:'70%', maxWidth:380, background:'var(--surface-2)', border:'1px solid var(--gold-dim)', borderRadius:'var(--radius-md)', padding:'10px 14px', display:'flex', alignItems:'center', gap:10, boxShadow:'0 8px 24px rgba(0,0,0,0.3)'}}>
                 <Kamon size={12} color="var(--gold)"/>
                 <span style={{fontSize:12, color:'var(--text-mute)'}}>Summarize this article about creativity</span>
@@ -1719,7 +1757,7 @@ function PaneLLM() {
       subtitle="OpenAI-compatible chat/completions and /v1/embeddings (Memory semantic search). Endpoint and models are saved locally; the API key stays in the macOS Keychain."
     >
       <div className="s-card" style={{padding:20, marginBottom:16}}>
-        <Field label="Base URL" hint="Trusted hosts only (api.openai.com, api.anthropic.com, openrouter.ai, api.x.ai, generativelanguage.googleapis.com, *.openai.azure.com) or localhost HTTP for local gateways. If the path has no /v1, it is appended automatically.">
+        <Field label="Base URL" hint="Trusted hosts only. Allowlist is enforced by desktop security policy (sections.security.llmAllowedHosts / llmAllowedHostSuffixes) or localhost HTTP for local gateways. If the path has no /v1, it is appended automatically.">
           <input
             className="s-input"
             value={baseUrl}
@@ -1975,12 +2013,17 @@ function PaneLLM() {
 
 function PaneIntegrations() {
   const { run } = useRuntimeActions();
+  const { setPane } = React.useContext(SettingsHydrationContext);
   const [googleCalCred, setGoogleCalCred] = useStateS(false);
   const [googleCalRefresh, setGoogleCalRefresh] = useStateS(false);
   const [gmailCred, setGmailCred] = useStateS(false);
   const [gmailRefresh, setGmailRefresh] = useStateS(false);
   const [calAutoSync, setCalAutoSync] = useStateS(false);
   const [calSyncMins, setCalSyncMins] = useStateS(15);
+  const [importGuardOn, setImportGuardOn] = useStateS(false);
+  const [auditRows, setAuditRows] = useStateS([]);
+  const [auditFilter, setAuditFilter] = useStateS('all');
+  const [auditProviderFilter, setAuditProviderFilter] = useStateS('all');
 
   const refreshGoogleCalStatus = React.useCallback(async () => {
     const r = await run('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true });
@@ -2006,11 +2049,14 @@ function PaneIntegrations() {
   React.useEffect(() => {
     void (async () => {
       const r = await run('settings.load', {}, { silentError: true });
-      const integ = r.ok && r.data?.settings?.sections?.integrations;
+      const sections = r.ok && r.data?.settings?.sections;
+      const integ = sections && sections.integrations;
+      const sec = sections && sections.security;
       if (!integ || typeof integ !== 'object') return;
       setCalAutoSync(!!integ.googleCalendarAutoSync);
       const m = Number(integ.googleCalendarSyncIntervalMins);
       if (Number.isFinite(m)) setCalSyncMins(Math.min(1440, Math.max(5, m)));
+      setImportGuardOn(!!(sec && sec.requireIntegrationImportApproval));
     })();
   }, [run]);
 
@@ -2023,15 +2069,204 @@ function PaneIntegrations() {
     return () => window.removeEventListener('shogun-credentials-updated', onCred);
   }, [refreshGoogleCalStatus, refreshGmailStatus]);
 
+  React.useEffect(() => {
+    const key = 'shogun.integration.audit.v1';
+    try {
+      const raw = localStorage.getItem(key);
+      const arr = raw ? JSON.parse(raw) : [];
+      setAuditRows(Array.isArray(arr) ? arr.slice(0, 20) : []);
+    } catch (_) {
+      setAuditRows([]);
+    }
+    const onAudit = (ev) => {
+      const d = ev && ev.detail ? ev.detail : null;
+      if (!d || typeof d !== 'object') return;
+      setAuditRows((prev) => [d].concat(Array.isArray(prev) ? prev : []).slice(0, 20));
+    };
+    window.addEventListener('shogun-integration-security-audit', onAudit);
+    return () => window.removeEventListener('shogun-integration-security-audit', onAudit);
+  }, []);
+
+  const fmtAuditTime = (t) => {
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    try {
+      return new Date(n).toLocaleString();
+    } catch (_) {
+      return '—';
+    }
+  };
+  const auditEventLabel = (event) => {
+    switch (String(event || '')) {
+      case 'integration_import_attempt':
+        return '取り込み試行';
+      case 'integration_import_success':
+        return '取り込み成功';
+      case 'integration_import_rejected':
+        return '取り込み拒否';
+      default:
+        return String(event || 'unknown');
+    }
+  };
+  const auditReasonLabel = (reason) => {
+    switch (String(reason || '')) {
+      case 'raw_token_query':
+        return 'URLに生トークンが含まれていたため拒否';
+      case 'invalid_or_expired_code':
+        return 'ワンタイムコードが無効または期限切れ';
+      case 'provider_code_mismatch':
+        return 'provider と code が不一致';
+      case 'code_state_error':
+        return 'コード状態の読み取りエラー';
+      case 'persist_failed':
+        return '資格情報保存に失敗';
+      default:
+        return String(reason || '');
+    }
+  };
+  const auditViaLabel = (via) => {
+    switch (String(via || '')) {
+      case 'invoke':
+        return '直接API';
+      case 'deep-link':
+        return 'ディープリンク';
+      default:
+        return String(via || 'unknown');
+    }
+  };
+  const filteredAuditRows = React.useMemo(() => {
+    let rows = auditRows;
+    if (auditFilter === 'success') {
+      rows = rows.filter((r) => String(r && r.event) === 'integration_import_success');
+    } else if (auditFilter === 'rejected') {
+      rows = rows.filter((r) => String(r && r.event) === 'integration_import_rejected');
+    }
+    if (auditProviderFilter !== 'all') {
+      rows = rows.filter((r) => String((r && r.provider) || '') === auditProviderFilter);
+    }
+    return rows;
+  }, [auditRows, auditFilter, auditProviderFilter]);
+  const auditProviderOptions = React.useMemo(() => {
+    const set = new Set();
+    auditRows.forEach((r) => {
+      const p = String((r && r.provider) || '').trim();
+      if (p) set.add(p);
+    });
+    return ['all'].concat(Array.from(set).sort());
+  }, [auditRows]);
+  const exportAuditJson = React.useCallback(() => {
+    try {
+      const now = new Date();
+      const stamp = now
+        .toISOString()
+        .replace(/[:]/g, '-')
+        .replace(/\..+$/, 'Z');
+      const payload = {
+        exportedAt: now.toISOString(),
+        count: auditRows.length,
+        rows: auditRows,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `shogun-integration-audit-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (_) {
+      /* ignore */
+    }
+  }, [auditRows]);
+
   return (
     <Pane title="All Integrations" jp="連携" subtitle="v1: In-app OAuth is not wired. Google Calendar tokens can be imported by an external agent (Keychain); use Refresh / Sync below. Other Connect rows show an honest notice where applicable.">
       <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
-        Workspace Integrations screen has the same agent contract. Tauri invoke: <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code> or <code style={{fontSize:11}}>&quot;gmail&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh). Gmail needs scope <code style={{fontSize:11}}>gmail.readonly</code> or broader.
+        <div style={{ marginBottom: 8 }}>
+          <span className={'label ' + (importGuardOn ? 'label-success' : 'label-gold')}>
+            Import Guard: {importGuardOn ? 'ON' : 'OFF'}
+          </span>
+          <span className="jp" style={{ marginLeft: 8, color: 'var(--text-dim)' }}>
+            連携インポート保護: {importGuardOn ? '有効' : '無効'}
+          </span>
+          <button
+            type="button"
+            className="btn btn-xs btn-ghost"
+            style={{ marginLeft: 10, padding: '2px 8px' }}
+            onClick={() => setPane && setPane('privacy')}
+          >
+            Open Privacy Controls
+          </button>
+        </div>
+        Workspace Integrations screen has the same agent contract. Preferred path: Tauri invoke <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code> or <code style={{fontSize:11}}>&quot;gmail&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh). For deep-link handoff, issue a short-lived code via <code style={{fontSize:11}}>app_integration_issue_import_code</code> then open <code style={{fontSize:11}}>shogun-ai://credentials/import?provider=...&amp;code=...</code>. Raw token query params are blocked. Gmail needs scope <code style={{fontSize:11}}>gmail.readonly</code> or broader.
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><IntegrationLogo slug="apple_calendar" size={30} title="Apple Calendar" /><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
           <button className="btn btn-sm btn-secondary" type="button" onClick={()=>run('integrations.connect', { provider:'apple_calendar' }, { silentError:true })}>Connect</button>
         </Row>
+      </div>
+      <div className="s-card" style={{marginBottom:10}}>
+        <div className="row" style={{padding:'12px 16px', borderBottom:'1px solid var(--border)'}}>
+          <div style={{fontSize:13, fontWeight:600}}>Integration Security Audit</div>
+          <span className="spacer"/>
+          <button
+            type="button"
+            className="btn btn-xs btn-ghost"
+            style={{ marginRight: 8, padding: '2px 8px' }}
+            onClick={exportAuditJson}
+          >
+            Export audit (JSON)
+          </button>
+          <select
+            className="s-select"
+            style={{ minWidth: 120, marginRight: 8 }}
+            value={auditFilter}
+            onChange={(e) => setAuditFilter(String(e.target.value || 'all'))}
+          >
+            <option value="all">全件</option>
+            <option value="success">成功のみ</option>
+            <option value="rejected">拒否のみ</option>
+          </select>
+          <select
+            className="s-select"
+            style={{ minWidth: 140, marginRight: 8 }}
+            value={auditProviderFilter}
+            onChange={(e) => setAuditProviderFilter(String(e.target.value || 'all'))}
+          >
+            {auditProviderOptions.map((p) => (
+              <option key={p} value={p}>
+                {p === 'all' ? 'プロバイダ: 全て' : `プロバイダ: ${p}`}
+              </option>
+            ))}
+          </select>
+          <span className="s-field-hint" style={{margin:0}}>Last 20 events</span>
+        </div>
+        {filteredAuditRows.length === 0 ? (
+          <div className="s-field-hint" style={{padding:'12px 16px'}}>
+            No audit events yet.
+          </div>
+        ) : (
+          <div style={{maxHeight:220, overflow:'auto'}}>
+            {filteredAuditRows.map((r, i) => (
+              <div
+                key={`${r.ts || 'na'}-${r.event || 'evt'}-${i}`}
+                className={'s-row' + (i === filteredAuditRows.length - 1 ? ' last' : '')}
+                style={{fontSize:12}}
+              >
+                <div style={{width:130, color:'var(--text-dim)'}}>{fmtAuditTime(r.ts)}</div>
+                <div style={{width:160}} title={String(r.event || '')}>{auditEventLabel(r.event)}</div>
+                <div style={{width:120, color:'var(--text-dim)'}}>{r.provider || 'unknown'}</div>
+                <div style={{width:90, color:'var(--text-dim)'}} title={String(r.via || '')}>
+                  {auditViaLabel(r.via)}
+                </div>
+                <div style={{flex:1, color:'var(--text-dim)'}} title={String(r.reason || '')}>
+                  {auditReasonLabel(r.reason)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><IntegrationLogo slug="apple_reminders" size={30} title="Apple Reminders" /><div><div style={{fontSize:13, fontWeight:500}}>Apple Reminders <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your reminders and tasks in Apple Reminders</div></div></div>} last>
@@ -2284,244 +2519,13 @@ function PaneShortcuts() {
   );
 }
 
-/** Shown prices are UI copy; billing is finalized at checkout. Annual = 15% off vs list monthly. */
-const SUB_PLUS_MONTHLY_USD = 20;
-const SUB_PRO_5X_MONTHLY_USD = 100;
-const SUB_PRO_12X_MONTHLY_USD = 200;
-const SUB_ANNUAL_OFF_PCT = 15;
-
-function subscriptionAnnualEquivMonthly(monthlyUsd) {
-  return Math.round(monthlyUsd * (100 - SUB_ANNUAL_OFF_PCT)) / 100;
-}
-
-function PaneSubscription() {
-  const { run } = useRuntimeActions();
-  const { sections } = React.useContext(SettingsHydrationContext);
-  const [billingCycle, setBillingCycle] = useStateS('annual');
-  const [referralCode, setReferralCode] = useStateS('');
-  React.useEffect(() => {
-    const s = sections.subscription;
-    if (s && s.billingCycle != null) setBillingCycle(String(s.billingCycle));
-    if (s && s.referralCodeDraft != null) setReferralCode(String(s.referralCodeDraft));
-  }, [sections]);
-
-  const isAnnual = billingCycle === 'annual';
-  const plusListMo = SUB_PLUS_MONTHLY_USD;
-  const plusEffMo = subscriptionAnnualEquivMonthly(SUB_PLUS_MONTHLY_USD);
-  const plusAnnualCharge = Math.round(plusEffMo * 12);
-  const pro5Mo = isAnnual ? subscriptionAnnualEquivMonthly(SUB_PRO_5X_MONTHLY_USD) : SUB_PRO_5X_MONTHLY_USD;
-  const pro12Mo = isAnnual ? subscriptionAnnualEquivMonthly(SUB_PRO_12X_MONTHLY_USD) : SUB_PRO_12X_MONTHLY_USD;
-  const pro5AnnualCharge = Math.round(subscriptionAnnualEquivMonthly(SUB_PRO_5X_MONTHLY_USD) * 12);
-  const pro12AnnualCharge = Math.round(subscriptionAnnualEquivMonthly(SUB_PRO_12X_MONTHLY_USD) * 12);
-
-  const persistBilling = (cycle) => {
-    setBillingCycle(cycle);
-    run('settings.save', { section: 'subscription', billingCycle: cycle }, { silentError: true });
-  };
-
-  const plusFeatures = [
-    'Higher chat & model limits vs Basic',
-    'Full Memory search, ingest, and timeline',
-    'Meetings: transcription, notes, and calendar-aware context',
-    'Hummingbird: screen-aware quick ask',
-    'Standard image generation tier',
-    'Email support',
-  ];
-  const proFeatures = [
-    '5× or 12× usage multiplier vs Plus (pick a tier)',
-    'Larger context windows and batch jobs',
-    'Premium / max-intelligence model routing',
-    'Premium image generation tier',
-    'Early access to new SHOGUN features',
-  ];
-
-  return (
-    <Pane title="Subscription" jp="契約">
-      <div
-        className="s-field-hint"
-        style={{
-          marginBottom: 14,
-          padding: 12,
-          background: 'var(--surface-2)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: 12,
-          lineHeight: 1.55,
-        }}
-      >
-        <strong className="en-only">Important:</strong>
-        <strong className="jp">重要:</strong> Prices and plan buttons below are <strong>UI / product design</strong> until a payment
-        provider is connected. Actions may only persist preferences locally. See{' '}
-        <TermsNoticeAnchor>Terms of Service</TermsNoticeAnchor>.
-        <div className="jp" style={{ marginTop: 8, fontSize: 11, color: 'var(--text-dim)' }}>
-          表示価格・「トライアル」「プラン選択」等は、決済基盤が接続されるまで<strong>画面イメージまたはローカル保存のみ</strong>の場合があります。課金が発生する前に必ず利用規約を確認してください。
-        </div>
-      </div>
-      <div className="s-subscription-grid">
-        <div className="s-card" style={{padding:20}}>
-          <div className="row">
-            <div style={{fontSize:16, fontWeight:500}}>Plus</div>
-            <span className="spacer"/>
-            <div style={{display:'flex', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', overflow:'hidden'}}>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                style={{borderRadius:0, background:billingCycle==='monthly'?'var(--surface-2)':'transparent', color:billingCycle==='monthly'?'var(--text)':'var(--text-mute)'}}
-                onClick={() => persistBilling('monthly')}
-              >
-                Monthly
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                style={{borderRadius:0, background:billingCycle==='annual'?'var(--surface-2)':'transparent', color:billingCycle==='annual'?'var(--text)':'var(--text-mute)'}}
-                onClick={() => persistBilling('annual')}
-              >
-                Annual
-              </button>
-            </div>
-          </div>
-          <div style={{fontSize:36, fontWeight:600, marginTop:16, letterSpacing:'-0.02em', lineHeight:1.15}}>
-            ${isAnnual ? plusEffMo : plusListMo}
-            <span style={{fontSize:14, color:'var(--text-dim)', fontWeight:400}}>/mo</span>
-            {isAnnual ? (
-              <span className="label label-gold" style={{marginLeft:8, verticalAlign:'middle'}}>-{SUB_ANNUAL_OFF_PCT}%</span>
-            ) : null}
-          </div>
-          <div className="s-field-hint" style={{marginTop:8, fontSize:12, lineHeight:1.5}}>
-            {isAnnual
-              ? `Equivalent monthly rate · $${plusAnnualCharge} billed once per year (vs $${plusListMo}/mo on Monthly).`
-              : `Billed $${plusListMo} every month · switch to Annual for −${SUB_ANNUAL_OFF_PCT}% (≈ $${plusEffMo}/mo).`}
-          </div>
-          <div style={{marginTop:18, fontSize:12, color:'var(--text-mute)'}}>Everything in Basic, plus:</div>
-          <ul style={{margin:'8px 0 0', padding:0, listStyle:'none', fontSize:12, lineHeight:1.9}}>
-            {plusFeatures.map((f) => (
-              <li key={f}><Icon name="check" size={11} className="gold" style={{marginRight:8}}/>{f}</li>
-            ))}
-          </ul>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            style={{width:'100%', marginTop:18}}
-            onClick={() =>
-              run(
-                'settings.save',
-                { section: 'subscription', plan: 'plus_trial', billingCycle },
-                { successMessage: 'Trial request submitted' },
-              )
-            }
-          >
-            Start 14-day free trial
-          </button>
-        </div>
-        <div className="s-card" style={{padding:20}}>
-          <div className="row" style={{alignItems:'flex-start'}}>
-            <div>
-              <div style={{fontSize:16, fontWeight:500}}>Pro</div>
-              <div className="s-field-hint" style={{marginTop:4, fontSize:11, maxWidth:280}}>
-                Same billing toggle as Plus ({isAnnual ? 'Annual' : 'Monthly'}) — prices below update automatically.
-              </div>
-            </div>
-          </div>
-          <div style={{fontSize:36, fontWeight:600, marginTop:12, letterSpacing:'-0.02em'}}>
-            From ${pro5Mo}<span style={{fontSize:14, color:'var(--text-dim)', fontWeight:400}}>/mo</span>
-            {isAnnual ? (
-              <span className="label label-gold" style={{marginLeft:8, verticalAlign:'middle', fontSize:11}}>5× tier · annual</span>
-            ) : null}
-          </div>
-          <div className="s-field-hint" style={{marginTop:6, fontSize:12, lineHeight:1.5}}>
-            {isAnnual
-              ? `5×: $${pro5AnnualCharge}/yr · 12×: $${pro12AnnualCharge}/yr when paid annually.`
-              : `5×: $${SUB_PRO_5X_MONTHLY_USD}/mo · 12×: $${SUB_PRO_12X_MONTHLY_USD}/mo billed monthly.`}
-          </div>
-          <div style={{marginTop:18, fontSize:12, color:'var(--text-mute)'}}>Everything in Plus, plus:</div>
-          <ul style={{margin:'8px 0 0', padding:0, listStyle:'none', fontSize:12, lineHeight:1.9}}>
-            {proFeatures.map((f) => (
-              <li key={f}><Icon name="check" size={11} className="gold" style={{marginRight:8}}/>{f}</li>
-            ))}
-          </ul>
-          <button
-            type="button"
-            className="s-tier-btn"
-            onClick={() =>
-              run(
-                'settings.save',
-                { section: 'subscription', plan: 'pro_5x', billingCycle },
-                { successMessage: 'Plan selection submitted' },
-              )
-            }
-          >
-            <span>Choose Pro 5×</span>
-            <span style={{color:'var(--text-dim)'}}>
-              ${pro5Mo}/mo{isAnnual ? ` · $${pro5AnnualCharge}/yr` : ''}
-            </span>
-          </button>
-          <button
-            type="button"
-            className="s-tier-btn"
-            onClick={() =>
-              run(
-                'settings.save',
-                { section: 'subscription', plan: 'pro_12x', billingCycle },
-                { successMessage: 'Plan selection submitted' },
-              )
-            }
-          >
-            <span>Choose Pro 12×</span>
-            <span style={{color:'var(--text-dim)'}}>
-              ${pro12Mo}/mo{isAnnual ? ` · $${pro12AnnualCharge}/yr` : ''}
-            </span>
-          </button>
-        </div>
-      </div>
-      <div className="s-card" style={{marginTop:14, padding:16}}>
-        <div style={{fontSize:13, fontWeight:500}}>Have a referral code?</div>
-        <div className="s-field-hint" style={{marginTop:2}}>Enter a code to unlock referral rewards</div>
-        <div className="row" style={{gap:8, marginTop:10}}>
-          <input
-            className="s-input"
-            placeholder="Enter referral code"
-            style={{flex:1}}
-            value={referralCode}
-            onChange={(e) => setReferralCode(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn btn-sm btn-secondary"
-            onClick={() =>
-              run(
-                'settings.save',
-                {
-                  section: 'subscription',
-                  action: 'apply_referral',
-                  referralCode: referralCode.trim(),
-                  referralCodeDraft: referralCode.trim(),
-                },
-                { successMessage: 'Referral code submitted' },
-              )
-            }
-          >
-            Apply
-          </button>
-        </div>
-      </div>
-      <div style={{marginTop:14, textAlign:'center', fontSize:12, color:'var(--text-dim)'}}>
-        Want SHOGUN for your team or business?{' '}
-        <a className="s-link" href={PRODUCT.supportMailto}>
-          Contact support <Icon name="arrowUpRight" size={10} />
-        </a>
-      </div>
-    </Pane>
-  );
-}
-
 function PaneTeam() {
   const { run } = useRuntimeActions();
   return (
     <Pane title="Team" jp="組">
       <div className="s-card" style={{padding:20}}>
         <div className="s-field-hint" style={{ marginBottom: 12, fontSize: 11, lineHeight: 1.5 }}>
-          Team checkout and seat billing are <strong>not connected</strong> in v1 — this pane is a product preview. Contact{' '}
+          Team checkout and seat billing are <strong>preview (not connected)</strong> in v1. Contact{' '}
           <a className="s-link" href={PRODUCT.supportMailto}>
             support
           </a>{' '}
@@ -2536,9 +2540,7 @@ function PaneTeam() {
         </ul>
         <div style={{borderTop:'1px solid var(--border)', marginTop:16, paddingTop:14}} className="row">
           <button className="btn btn-secondary" onClick={()=>run('settings.save', { section:'team', action:'create' }, { successMessage:'Team creation flow started' })}>Create a Team</button>
-          <span className="s-field-hint" style={{marginLeft:12}}>
-            {`Starting at $${subscriptionAnnualEquivMonthly(SUB_PLUS_MONTHLY_USD)}/seat/mo billed annually (vs $${SUB_PLUS_MONTHLY_USD} on monthly)`}
-          </span>
+          <span className="s-field-hint" style={{marginLeft:12}}>Pricing and checkout will appear here after billing is connected.</span>
         </div>
       </div>
     </Pane>
@@ -2621,7 +2623,7 @@ const PANES = {
   general: PaneGeneral, system: PaneSystem, appearance: PaneAppearance,
   privacy: PanePrivacy, data: PaneData, hummingbird: PaneHummingbird,
   meetings: PaneMeetings, chat: PaneChat, llm: PaneLLM, integrations: PaneIntegrations,
-  shortcuts: PaneShortcuts, subscription: PaneSubscription,
+  shortcuts: PaneShortcuts,
   team: PaneTeam, support: PaneSupport,
 };
 
@@ -2655,8 +2657,8 @@ function SettingsModal({pane, setPane, close}) {
     return () => window.removeEventListener('keydown', onKey);
   }, [close]);
   const hydrationCtxValue = React.useMemo(
-    () => ({ sections: hydratedSections, refreshSections }),
-    [hydratedSections, refreshSections],
+    () => ({ sections: hydratedSections, refreshSections, setPane }),
+    [hydratedSections, refreshSections, setPane],
   );
   const tree = (
     <SettingsHydrationContext.Provider value={hydrationCtxValue}>
@@ -2740,11 +2742,6 @@ function SettingsModal({pane, setPane, close}) {
           grid-template-columns:repeat(3, minmax(0, 1fr));
           gap:14px;
           margin-bottom:24px;
-        }
-        .s-subscription-grid {
-          display:grid;
-          grid-template-columns:repeat(2, minmax(0, 1fr));
-          gap:14px;
         }
         .s-nav {
           display:flex; align-items:center; gap:8px;
@@ -2881,16 +2878,6 @@ function SettingsModal({pane, setPane, close}) {
           color:var(--text-mute);
         }
 
-        .s-tier-btn {
-          display:flex; justify-content:space-between; align-items:center;
-          width:100%; margin-top:10px;
-          padding:10px 14px;
-          background:var(--surface-2); border:1px solid var(--border);
-          border-radius:var(--radius-sm);
-          font-size:13px; color:var(--text); cursor:pointer;
-        }
-        .s-tier-btn:hover { border-color:var(--gold-dim); }
-
         @media (max-width: 1024px) {
           .s-modal {
             width:min(1440px, calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
@@ -2955,9 +2942,6 @@ function SettingsModal({pane, setPane, close}) {
           .s-appearance-grid {
             grid-template-columns:1fr;
             gap:12px;
-          }
-          .s-subscription-grid {
-            grid-template-columns:1fr;
           }
         }
 

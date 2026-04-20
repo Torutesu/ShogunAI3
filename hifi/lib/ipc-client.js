@@ -13,11 +13,83 @@
     return Boolean(global.__TAURI__ && global.__TAURI__.core && typeof global.__TAURI__.core.invoke === "function");
   }
 
+  const HTTP_BACKEND_BASE_LS = "shogun.hifi.backend.baseUrl.v1";
+  const HTTP_BACKEND_TOKEN_LS = "shogun.hifi.backend.token.v1";
+
+  function readHttpBackendBase() {
+    try {
+      if (typeof global.SHOGUN_HTTP_BACKEND_BASE === "string") {
+        const s = global.SHOGUN_HTTP_BACKEND_BASE.trim();
+        if (s) return s.replace(/\/+$/, "");
+      }
+      if (!global.localStorage) return "";
+      const raw = global.localStorage.getItem(HTTP_BACKEND_BASE_LS);
+      const s = String(raw || "").trim();
+      return s ? s.replace(/\/+$/, "") : "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function readHttpBackendToken() {
+    try {
+      if (typeof global.SHOGUN_HTTP_BACKEND_TOKEN === "string") {
+        const s = global.SHOGUN_HTTP_BACKEND_TOKEN.trim();
+        if (s) return s;
+      }
+      if (!global.localStorage) return "";
+      return String(global.localStorage.getItem(HTTP_BACKEND_TOKEN_LS) || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
   async function tauriTransport(command, payload) {
     if (!hasTauriInvoke()) {
       throw createError("TRANSPORT_UNAVAILABLE", "Tauri invoke is unavailable");
     }
     return global.__TAURI__.core.invoke(command, payload || {});
+  }
+
+  async function httpTransport(command, payload, timeoutMs) {
+    const base = readHttpBackendBase();
+    if (!base) {
+      throw createError("TRANSPORT_UNAVAILABLE", "HTTP backend base URL is missing");
+    }
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = controller
+      ? setTimeout(() => controller.abort(), Math.max(500, Number(timeoutMs) || DEFAULT_TIMEOUT_MS))
+      : null;
+    const token = readHttpBackendToken();
+    const headers = { "content-type": "application/json" };
+    if (token) headers["x-shogun-token"] = token;
+    try {
+      const res = await fetch(base + "/ipc/invoke", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ command: command, payload: payload || {} }),
+        signal: controller ? controller.signal : undefined,
+      });
+      if (!res.ok) {
+        throw createError("HTTP_ERROR", "HTTP transport failed: " + res.status, { status: res.status });
+      }
+      const json = await res.json();
+      if (!json || json.ok !== true) {
+        throw createError(
+          "HTTP_BACKEND_ERROR",
+          (json && json.error && json.error.message) || "HTTP backend returned an error",
+          json && json.error ? json.error : null,
+        );
+      }
+      return json.data;
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        throw createError("TIMEOUT", "HTTP request timed out");
+      }
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**
@@ -35,7 +107,17 @@
         const raw = global.localStorage.getItem(MOCK_SETTINGS_LS);
         if (!raw) return {};
         const o = JSON.parse(raw);
-        return o && typeof o === "object" ? o : {};
+        if (!o || typeof o !== "object") return {};
+        if (Object.prototype.hasOwnProperty.call(o, "subscription")) {
+          const { subscription: _legacySubscription, ...rest } = o;
+          try {
+            global.localStorage.setItem(MOCK_SETTINGS_LS, JSON.stringify(rest));
+          } catch (_) {
+            /* ignore */
+          }
+          return rest;
+        }
+        return o;
       } catch (_) {
         return {};
       }
@@ -49,6 +131,7 @@
     }
 
     const MOCK_LLM_KEY_LS = "shogun.hifi.mock.llm.keyConfigured.v1";
+    const MOCK_MEMORY_INDEX_LS = "shogun.hifi.mock.memory.index.v1";
     function readMockLlmKeyConfigured() {
       try {
         if (!global.localStorage) return false;
@@ -65,6 +148,115 @@
       } catch (_) {
         /* ignore */
       }
+    }
+
+    function nowIso() {
+      return new Date().toISOString();
+    }
+
+    function clampLimit(raw, fallback) {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.min(80, Math.max(1, Math.floor(n)));
+    }
+
+    function scoreMemoryHit(hit, queryLower) {
+      if (!queryLower) return 0;
+      const title = String(hit && hit.title ? hit.title : "").toLowerCase();
+      const snippet = String(hit && hit.snippet ? hit.snippet : "").toLowerCase();
+      let score = 0;
+      if (title.includes(queryLower)) score += 10;
+      if (snippet.includes(queryLower)) score += 6;
+      const terms = queryLower.split(/\s+/).filter(Boolean);
+      for (let i = 0; i < terms.length; i += 1) {
+        const t = terms[i];
+        if (title.includes(t)) score += 2;
+        if (snippet.includes(t)) score += 1;
+      }
+      return score;
+    }
+
+    function readMemoryIndex() {
+      try {
+        if (!global.localStorage) {
+          return DEMO && Array.isArray(DEMO.memoryHits) ? DEMO.memoryHits.slice() : [];
+        }
+        const raw = global.localStorage.getItem(MOCK_MEMORY_INDEX_LS);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed;
+        }
+        const seed = DEMO && Array.isArray(DEMO.memoryHits) ? DEMO.memoryHits.slice() : [];
+        global.localStorage.setItem(MOCK_MEMORY_INDEX_LS, JSON.stringify(seed));
+        return seed;
+      } catch (_) {
+        return DEMO && Array.isArray(DEMO.memoryHits) ? DEMO.memoryHits.slice() : [];
+      }
+    }
+
+    function writeMemoryIndex(items) {
+      try {
+        if (!global.localStorage) return;
+        global.localStorage.setItem(MOCK_MEMORY_INDEX_LS, JSON.stringify(Array.isArray(items) ? items : []));
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    function normalizeMemoryHit(hit, fallbackId) {
+      const source = String((hit && hit.source) || "note");
+      return {
+        id: String((hit && hit.id) || fallbackId || ("mock-" + Date.now())),
+        title: String((hit && hit.title) || "Untitled memory"),
+        snippet: String((hit && hit.snippet) || ""),
+        source: source,
+        provenance: String((hit && hit.provenance) || source),
+        kinds: Array.isArray(hit && hit.kinds) ? hit.kinds.slice(0, 8) : ["input"],
+        ts: String((hit && hit.ts) || nowIso()),
+        entity_id: hit && hit.entity_id != null ? String(hit.entity_id) : null,
+      };
+    }
+
+    function searchMemoryIndex(query, limit, semantic) {
+      const items = readMemoryIndex().map((h, i) => normalizeMemoryHit(h, "mock-seed-" + i));
+      const q = String(query || "").trim().toLowerCase();
+      let filtered = items;
+      if (q) {
+        filtered = items.filter((h) => scoreMemoryHit(h, q) > 0);
+      }
+      if (semantic && q) {
+        filtered = filtered
+          .slice()
+          .sort((a, b) => scoreMemoryHit(b, q) - scoreMemoryHit(a, q));
+      }
+      const lim = clampLimit(limit, 40);
+      return {
+        hits: filtered.slice(0, lim),
+        total: filtered.length,
+      };
+    }
+
+    function buildMemoryAssemblyBlock(memoryAssembly) {
+      if (!memoryAssembly || typeof memoryAssembly !== "object") return null;
+      const q = String(memoryAssembly.query || "").trim();
+      if (!q) return null;
+      const limit = clampLimit(memoryAssembly.limit, 12);
+      const semantic = memoryAssembly.semantic !== false;
+      const res = searchMemoryIndex(q, limit, semantic);
+      const lines = res.hits.map((h, idx) => {
+        const label = h.provenance || h.source || "memory";
+        return `${idx + 1}. [${label}] ${h.title}: ${h.snippet}`;
+      });
+      return {
+        query: q,
+        limit: limit,
+        semantic: semantic,
+        total: res.total,
+        hits: res.hits,
+        text: lines.length
+          ? lines.join("\n")
+          : "(no relevant local memory hits)",
+      };
     }
 
     if (command === "shogun_brief_get" && global.ShogunMorningBrief) {
@@ -93,14 +285,13 @@
         return notImpl("Integration mock unavailable.", echo);
       }
       case "shogun_draft": {
-        const mas = echo && echo.memoryAssembly;
+        const asb = buildMemoryAssemblyBlock(echo && echo.memoryAssembly);
         let memNote = "";
-        if (mas && typeof mas === "object") {
-          const q = String(mas.query || "").trim();
+        if (asb) {
           memNote =
-            "\n\n_memoryAssembly (mock): desktop injects local hits — query " +
-            JSON.stringify(q.slice(0, 100)) +
-            "._\n";
+            "\n\n_Local Memory context (assembled)_\n\n" +
+            asb.text +
+            "\n";
         }
         return {
           content:
@@ -177,40 +368,57 @@
           echo: echo,
         };
       case "shogun_memory_search": {
-        if (!DEMO || !Array.isArray(DEMO.memoryHits)) {
-          return { hits: [], total: 0, echo: echo, stub: false };
-        }
-        let hits = DEMO.memoryHits.slice();
-        const q = String((echo && echo.query) || "")
-          .trim()
-          .toLowerCase();
-        if (q) {
-          hits = hits.filter((h) =>
-            `${h.title || ""} ${h.snippet || ""}`.toLowerCase().includes(q),
-          );
-        }
-        const limit = Math.min(80, Math.max(1, Number(echo.limit) || 40));
+        const q = String((echo && echo.query) || "");
+        const semantic = !!(echo && echo.semantic);
+        const result = searchMemoryIndex(q, echo && echo.limit, semantic);
         return {
-          hits: hits.slice(0, limit),
-          total: hits.length,
-          semanticRerank: !!(echo && echo.semantic),
+          hits: result.hits,
+          total: result.total,
+          semanticRerank: semantic,
           echo: echo,
           stub: false,
         };
       }
       case "shogun_memory_fetch":
         return {
-          items: [],
+          items: readMemoryIndex().map((h, i) => normalizeMemoryHit(h, "mock-fetch-" + i)),
           echo: echo,
           stub: false,
         };
       case "shogun_memory_ingest":
+        {
+          const cur = readMemoryIndex().map((h, i) => normalizeMemoryHit(h, "mock-cur-" + i));
+          const id = String((echo && echo.id) || ("mock-" + Date.now()));
+          const item = normalizeMemoryHit(
+            {
+              id: id,
+              title: (echo && echo.title) || "Quick memory",
+              snippet: (echo && echo.snippet) || "",
+              source: (echo && echo.source) || "note",
+              provenance: (echo && echo.provenance) || (echo && echo.source) || "note",
+              kinds: echo && echo.kinds,
+              entity_id: echo && echo.entity_id,
+              ts: nowIso(),
+            },
+            id,
+          );
+          cur.unshift(item);
+          writeMemoryIndex(cur);
+        }
         return {
           ingested: true,
           echo: echo,
           stub: false,
         };
       case "shogun_memory_delete":
+        {
+          const id = String((echo && echo.id) || "").trim();
+          if (id) {
+            const cur = readMemoryIndex().map((h, i) => normalizeMemoryHit(h, "mock-del-" + i));
+            const next = cur.filter((h) => String(h.id) !== id);
+            writeMemoryIndex(next);
+          }
+        }
         return {
           deleted: true,
           echo: echo,
@@ -279,6 +487,9 @@
         if (echo && echo.section === "storage") {
           base.memories = base.memories || String(base.memoryTotal || 0);
         }
+        const liveTotal = readMemoryIndex().length;
+        base.memoryTotal = liveTotal;
+        base.memories = String(liveTotal);
         return base;
       }
       case "shogun_chat_complete": {
@@ -292,19 +503,20 @@
             ? "\n\n[Web research mode: on — desktop app adds a system hint; live browse still requires a search API or pasted URLs.]"
             : "";
         let ma = "";
-        const mas = echo && echo.memoryAssembly;
-        if (mas && typeof mas === "object") {
-          const q = String(mas.query || "").trim();
-          const lim = mas.limit != null ? Number(mas.limit) : 12;
-          const sem = !!mas.semantic;
+        const asb = buildMemoryAssemblyBlock(echo && echo.memoryAssembly);
+        if (asb) {
           ma =
-            "\n\n[memoryAssembly — mock: desktop `chat.complete` would attach a system block from local Memory: query " +
-            JSON.stringify(q.slice(0, 100)) +
-            ", limit " +
-            lim +
-            ", semantic " +
-            sem +
-            ".]";
+            "\n\n[Local Memory context assembled]\n" +
+            asb.text +
+            "\n\n(query: " +
+            JSON.stringify(asb.query.slice(0, 100)) +
+            ", limit: " +
+            asb.limit +
+            ", semantic: " +
+            asb.semantic +
+            ", hits: " +
+            asb.total +
+            ")";
         }
         return {
           message:
@@ -313,6 +525,15 @@
             "\n\nFor **Kitazawa / Aurora**, a sensible next step is to pin the beta scope (DPIA + onboarding) and keep investor slides to three proof points until metrics land." +
             ws +
             ma,
+          memoryAssembly: asb
+            ? {
+                query: asb.query,
+                limit: asb.limit,
+                semantic: asb.semantic,
+                total: asb.total,
+                hits: asb.hits,
+              }
+            : null,
           stub: false,
           echo: echo,
         };
@@ -543,7 +764,8 @@
   function createIpcClient(options) {
     const opts = options || {};
     const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
-    const transport = opts.transport || (hasTauriInvoke() ? "tauri" : "mock");
+    const autoTransport = hasTauriInvoke() ? "tauri" : (readHttpBackendBase() ? "http" : "mock");
+    const transport = opts.transport || autoTransport;
 
     async function invoke(command, payload, invokeOpts) {
       if (!command) {
@@ -563,6 +785,8 @@
       try {
         const raw = transport === "tauri"
           ? await withTimeout(tauriTransport(command, payload), perTimeoutMs)
+          : transport === "http"
+            ? await withTimeout(httpTransport(command, payload, perTimeoutMs), perTimeoutMs)
           : await withTimeout(mockTransport(command, payload), perTimeoutMs);
         return { ok: true, data: raw, request: request };
       } catch (error) {

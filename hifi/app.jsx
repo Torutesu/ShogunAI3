@@ -22,10 +22,11 @@ const REMOVED_NAV_IDS = new Set(['morning_brief', 'capture', 'integrations', 'se
 function profileStateFromSections(sections) {
   const g = sections && sections.general;
   const name = g && g.name != null ? String(g.name).trim() : '';
+  const email = g && g.email != null ? String(g.email).trim() : '';
   const avatarGlyph = g && g.avatarGlyph != null ? String(g.avatarGlyph).trim() : '';
   const rawImg = g && g.avatarImageDataUrl != null ? String(g.avatarImageDataUrl).trim() : '';
   const avatarImageDataUrl = rawImg && /^data:image\//i.test(rawImg) ? rawImg : '';
-  return { name, avatarGlyph, avatarImageDataUrl };
+  return { name, email, avatarGlyph, avatarImageDataUrl };
 }
 
 function isProfilePhotoDataUrl(s) {
@@ -57,6 +58,10 @@ const INITIAL_CHAT_HISTORY =
     : [];
 
 const CHAT_CONTEXT_TELEMETRY_LS = 'shogun.hifi.telemetry.chat_context.v1';
+const CHAT_WORKSPACE_LS = 'shogun.hifi.chat.workspace.v1';
+const SIDEBAR_WIDTH_LS = 'shogun.hifi.sidebar.width.v1';
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 420;
 
 /** Fallback when `ipc-client.js` is absent — keep in sync with `hifi/lib/ipc-client.js` mockTransport. */
 function mockIpcInvoke(command, payload) {
@@ -69,7 +74,17 @@ function mockIpcInvoke(command, payload) {
       const raw = localStorage.getItem(MOCK_SETTINGS_LS);
       if (!raw) return {};
       const o = JSON.parse(raw);
-      return o && typeof o === 'object' ? o : {};
+      if (!o || typeof o !== 'object') return {};
+      if (Object.prototype.hasOwnProperty.call(o, 'subscription')) {
+        const { subscription: _legacySubscription, ...rest } = o;
+        try {
+          localStorage.setItem(MOCK_SETTINGS_LS, JSON.stringify(rest));
+        } catch (_) {
+          /* ignore */
+        }
+        return rest;
+      }
+      return o;
     } catch (_) {
       return {};
     }
@@ -843,11 +858,28 @@ function App() {
   const [hummingbirdInput, setHummingbirdInput] = useState('');
   const [userOpen, setUserOpen] = useState(false);
   const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220});
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [contextPanelAnchor, setContextPanelAnchor] = useState({ left: 0, bottom: 0, width: 320 });
+  const [chatMenu, setChatMenu] = useState({ open:false, chatId:null, x:0, y:0, width:240 });
+  const [chatRenameModal, setChatRenameModal] = useState({ open:false, chatId:null, value:'' });
+  const [chatDeleteModal, setChatDeleteModal] = useState({ open:false, chatId:null });
+  const [chatWorkModal, setChatWorkModal] = useState({ open:false, chatId:null, query:'' });
+  const [chatGroupsOpen, setChatGroupsOpen] = useState({ favorite: true, chats: true });
+  const [workProjects, setWorkProjects] = useState([
+    { id:'w-steal', name:'スチールカウント' },
+    { id:'w-grop', name:'GROP Internal Chatbot Project' },
+    { id:'w-cluely', name:'cluely' },
+    { id:'w-kakei', name:'家系図OCR' },
+    { id:'w-hojo', name:'補助金,助成金' },
+    { id:'w-chrome', name:'chrome自動化' },
+  ]);
+  const chatWorkspaceHydratedRef = useRef(false);
   const userBtnRef = React.useRef(null);
+  const contextBtnRef = React.useRef(null);
   const [profileDisplayName, setProfileDisplayName] = useState('');
   const [profileAvatarGlyph, setProfileAvatarGlyph] = useState('');
   const [profileAvatarImageDataUrl, setProfileAvatarImageDataUrl] = useState('');
-  const [settingsOpen, setSettingsOpen] = useState(null); // null | 'general' | 'system' | 'appearance' | 'privacy' | 'data' | 'hummingbird' | 'meetings' | 'chat' | 'integrations' | 'shortcuts' | 'subscription' | 'team' | 'support' | 'api' | 'upgrade' | 'changelog' | 'feedback'
+  const [settingsOpen, setSettingsOpen] = useState(null); // null | 'general' | 'system' | 'appearance' | 'privacy' | 'data' | 'hummingbird' | 'meetings' | 'chat' | 'integrations' | 'shortcuts' | 'team' | 'support' | 'api' | 'upgrade' | 'changelog' | 'feedback'
   const [toast, setToast] = useState(null);
   const [writeConfirm, setWriteConfirm] = useState({ open:false, actionKey:null, payload:null, title:null, description:null });
   const [writePending, setWritePending] = useState(false);
@@ -856,6 +888,17 @@ function App() {
   const bioWantLockRef = useRef(false);
   const [bioGate, setBioGate] = useState({ ready: false, open: false });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const raw = Number(localStorage.getItem(SIDEBAR_WIDTH_LS));
+      if (Number.isFinite(raw)) return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(raw)));
+    } catch (_) {
+      /* ignore */
+    }
+    return 240;
+  });
+  const [sidebarResizeHint, setSidebarResizeHint] = useState(false);
+  const resizeStateRef = useRef({ active: false, moved: false, startX: 0, startWidth: 240 });
   const [meetingHud, setMeetingHud] = useState(null);
   const [meetingHudTick, setMeetingHudTick] = useState(0);
   const navHistRef = useRef(null);
@@ -869,10 +912,32 @@ function App() {
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
     if (r) setUserAnchor({left: r.left, bottom: window.innerHeight - r.top + 8, width: r.width});
+    setContextPanelOpen(false);
     setUserOpen(v => !v);
   };
 
+  const openContextPanel = () => {
+    const r = contextBtnRef.current?.getBoundingClientRect();
+    if (r) {
+      const targetWidth = Math.round(r.width);
+      setContextPanelAnchor({
+        left: Math.max(12, r.left),
+        bottom: window.innerHeight - r.top + 10,
+        width: targetWidth,
+      });
+    }
+    setUserOpen(false);
+    setContextPanelOpen((v) => !v);
+  };
+
   useEffect(() => { localStorage.setItem('shogun-active', active); }, [active]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_LS, String(sidebarWidth));
+    } catch (_) {
+      /* ignore */
+    }
+  }, [sidebarWidth]);
 
   useEffect(() => {
     const onHud = (e) => {
@@ -936,6 +1001,15 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [hummingbirdOpen]);
 
+  useEffect(() => {
+    if (!contextPanelOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setContextPanelOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [contextPanelOpen]);
+
   const pushToast = (message, kind='info') => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     setToast({ message, kind });
@@ -965,6 +1039,48 @@ function App() {
             const err = typeof p.error === 'string' ? p.error : '不明なエラー';
             const via = p.via === 'deep-link' ? 'Deep link' : '';
             pushToastRef.current(`${via ? `${via}: ` : ''}取り込み失敗 — ${err}`, 'error');
+          }
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      if (typeof unlisten === 'function') unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten;
+    const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') return undefined;
+    const AUDIT_LS_KEY = 'shogun.integration.audit.v1';
+    (async () => {
+      try {
+        unlisten = await listen('integration-security-audit', (e) => {
+          const p = (e && e.payload) || {};
+          const row = {
+            event: String(p.event || ''),
+            provider: String(p.provider || ''),
+            via: String(p.via || ''),
+            reason: String(p.reason || ''),
+            ts: Date.now(),
+          };
+          try {
+            const raw = localStorage.getItem(AUDIT_LS_KEY);
+            const prev = raw ? JSON.parse(raw) : [];
+            const arr = Array.isArray(prev) ? prev : [];
+            const next = [row].concat(arr).slice(0, 20);
+            localStorage.setItem(AUDIT_LS_KEY, JSON.stringify(next));
+          } catch (_) {
+            /* ignore */
+          }
+          try {
+            window.dispatchEvent(
+              new CustomEvent('shogun-integration-security-audit', { detail: row }),
+            );
+          } catch (_) {
+            /* ignore */
           }
         });
       } catch (_) {
@@ -1067,6 +1183,61 @@ function App() {
       requestWriteAction,
       pushToast,
       getActiveChat: () => chats.find(c => c.id === activeChat) || null,
+      getChats: () => chats.slice(),
+      getWorkProjects: () => workProjects.slice(),
+      renameWorkProject: (projectId, nextName) => {
+        const id = String(projectId || '').trim();
+        const name = String(nextName || '').trim();
+        if (!id || !name) return false;
+        setWorkProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)));
+        setChats((prev) => prev.map((c) => (
+          c.workProjectId === id ? { ...c, workProjectName: name } : c
+        )));
+        pushToast(`Work名を変更: ${name}`, 'success');
+        return true;
+      },
+      deleteWorkProject: (projectId) => {
+        const id = String(projectId || '').trim();
+        if (!id) return false;
+        setWorkProjects((prev) => prev.filter((p) => p.id !== id));
+        setChats((prev) => prev.map((c) => (
+          c.workProjectId === id
+            ? { ...c, workProjectId: null, workProjectName: null }
+            : c
+        )));
+        pushToast('Workプロジェクトを削除しました', 'success');
+        return true;
+      },
+      archiveWorkProject: (projectId, archivedOn) => {
+        const id = String(projectId || '').trim();
+        if (!id) return false;
+        const on = archivedOn !== false;
+        setWorkProjects((prev) => prev.map((p) => (
+          p.id === id ? { ...p, archived: on } : p
+        )));
+        pushToast(on ? 'Workプロジェクトをアーカイブしました' : 'Workプロジェクトを復元しました', 'success');
+        return true;
+      },
+      moveWorkProject: (projectId, direction) => {
+        const id = String(projectId || '').trim();
+        const dir = Number(direction);
+        if (!id || !Number.isFinite(dir) || (dir !== -1 && dir !== 1)) return false;
+        let moved = false;
+        setWorkProjects((prev) => {
+          const idx = prev.findIndex((p) => p.id === id);
+          if (idx < 0) return prev;
+          const to = idx + dir;
+          if (to < 0 || to >= prev.length) return prev;
+          const out = prev.slice();
+          const item = out[idx];
+          out.splice(idx, 1);
+          out.splice(to, 0, item);
+          moved = true;
+          return out;
+        });
+        if (moved) pushToast('Workプロジェクトの順序を更新しました', 'success');
+        return moved;
+      },
       __activeChatId: activeChat,
       openSettingsPane: (paneId) => setSettingsOpen(paneId || 'general'),
       setActiveScreen: (id) => {
@@ -1079,7 +1250,81 @@ function App() {
       },
     };
     return () => { delete window.SHOGUN_RUNTIME; };
-  }, [activeChat, chats]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeChat, chats, workProjects]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-chats-changed', { detail: { chats } }));
+    } catch (_) {
+      /* ignore */
+    }
+  }, [chats]);
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-work-projects-changed', { detail: { workProjects } }));
+    } catch (_) {
+      /* ignore */
+    }
+  }, [workProjects]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let loaded = false;
+      try {
+        const r = await executeAction('settings.load', {}, { silentError: true });
+        const sec = r && r.ok && r.data && r.data.settings && r.data.settings.sections
+          ? r.data.settings.sections
+          : null;
+        const ws = sec && sec.chat_workspace && typeof sec.chat_workspace === 'object' ? sec.chat_workspace : null;
+        if (ws) {
+          if (Array.isArray(ws.chats)) {
+            setChats(ws.chats);
+            loaded = true;
+          }
+          if (Array.isArray(ws.workProjects)) {
+            setWorkProjects(ws.workProjects);
+            loaded = true;
+          }
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      if (!loaded) {
+        try {
+          const raw = localStorage.getItem(CHAT_WORKSPACE_LS);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+              if (Array.isArray(parsed.chats)) {
+                setChats(parsed.chats);
+                loaded = true;
+              }
+              if (Array.isArray(parsed.workProjects)) {
+                setWorkProjects(parsed.workProjects);
+                loaded = true;
+              }
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      if (!cancelled) chatWorkspaceHydratedRef.current = true;
+    })();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!chatWorkspaceHydratedRef.current) return;
+    const payload = { section:'chat_workspace', chats, workProjects };
+    try {
+      localStorage.setItem(CHAT_WORKSPACE_LS, JSON.stringify({ chats, workProjects }));
+    } catch (_) {
+      /* ignore */
+    }
+    void executeAction('settings.save', payload, { silentError: true });
+  }, [chats, workProjects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     /**
@@ -1136,11 +1381,11 @@ function App() {
 
   const createNewChat = useCallback(() => {
     const id = `c${Date.now()}`;
-    const item = { id, title: 'New conversation', time: '', when: 'TODAY', jp: '今日', favorite: false };
+    const item = { id, title: 'New Chat', time: '', when: 'TODAY', jp: '今日', favorite: false };
     setChats((prev) => [item, ...prev]);
     setActiveChat(id);
     setActive('chat');
-    pushToast('New conversation created', 'success');
+    pushToast('New Chat created', 'success');
   }, []);
 
   useLayoutEffect(() => {
@@ -1163,6 +1408,119 @@ function App() {
   }, [active]);
 
   const toggleFav = (id) => setChats(cs => cs.map(c => c.id===id ? {...c, favorite: !c.favorite} : c));
+  const openChatMenuAt = useCallback((chatId, x, y) => {
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 800;
+    let menuW = 248;
+    const menuH = 220;
+    const edgePad = 8;
+    let minX = edgePad;
+    let maxX = vw - menuW - edgePad;
+    let minY = edgePad;
+    let maxY = vh - menuH - edgePad;
+    const sidebarEl = document.querySelector('.sidebar');
+    if (sidebarEl && typeof sidebarEl.getBoundingClientRect === 'function') {
+      const r = sidebarEl.getBoundingClientRect();
+      const availableW = Math.max(180, Math.floor(r.width) - edgePad * 2);
+      menuW = Math.min(menuW, availableW);
+      minX = Math.max(edgePad, Math.floor(r.left) + edgePad);
+      maxX = Math.min(vw - menuW - edgePad, Math.floor(r.right) - menuW - edgePad);
+      minY = Math.max(edgePad, Math.floor(r.top) + edgePad);
+      maxY = Math.min(vh - menuH - edgePad, Math.floor(r.bottom) - menuH - edgePad);
+    }
+    if (maxX < minX) maxX = minX;
+    if (maxY < minY) maxY = minY;
+    const clampedX = Math.max(minX, Math.min(x, maxX));
+    const clampedY = Math.max(minY, Math.min(y, maxY));
+    setChatMenu({ open:true, chatId, x:clampedX, y:clampedY, width:menuW });
+  }, []);
+  const closeChatMenu = useCallback(() => setChatMenu({ open:false, chatId:null, x:0, y:0, width:240 }), []);
+  const openRenameModal = useCallback((id) => {
+    const current = chats.find((c) => c.id === id);
+    if (!current) return;
+    setChatRenameModal({ open:true, chatId:id, value:current.title || '' });
+  }, [chats]);
+  const submitRenameModal = useCallback(() => {
+    const id = chatRenameModal.chatId;
+    const trimmed = String(chatRenameModal.value || '').trim();
+    if (!id || !trimmed) return;
+    setChats((cs) => cs.map((c) => (c.id === id ? { ...c, title: trimmed } : c)));
+    setChatRenameModal({ open:false, chatId:null, value:'' });
+    pushToast('チャット名を更新しました', 'success');
+  }, [chatRenameModal]);
+  const openDeleteModal = useCallback((id) => {
+    const target = chats.find((c) => c.id === id);
+    if (!target) return;
+    setChatDeleteModal({ open:true, chatId:id });
+  }, [chats]);
+  const confirmDeleteChat = useCallback(() => {
+    const id = chatDeleteModal.chatId;
+    if (!id) return;
+    setChats((cs) => {
+      const next = cs.filter((c) => c.id !== id);
+      if (activeChat === id) {
+        setActiveChat(next[0] ? next[0].id : null);
+      }
+      return next;
+    });
+    setChatDeleteModal({ open:false, chatId:null });
+    pushToast('チャットを削除しました', 'success');
+  }, [activeChat, chatDeleteModal.chatId]);
+  const openWorkModal = useCallback((id) => {
+    const target = chats.find((c) => c.id === id);
+    if (!target) return;
+    setChatWorkModal({ open:true, chatId:id, query:'' });
+  }, [chats]);
+  const assignChatToWork = useCallback((workId, workName) => {
+    const id = chatWorkModal.chatId;
+    if (!id) return;
+    setChats((cs) => cs.map((c) => (c.id === id ? { ...c, workProjectId:workId, workProjectName:workName } : c)));
+    setChatWorkModal({ open:false, chatId:null, query:'' });
+    setActive('work');
+    pushToast(`Workに追加: ${workName}`, 'success');
+  }, [chatWorkModal.chatId]);
+  const createAndAssignWork = useCallback(() => {
+    const name = String(chatWorkModal.query || '').trim();
+    if (!name) return;
+    const id = `w-${Date.now()}`;
+    setWorkProjects((prev) => [...prev, { id, name }]);
+    assignChatToWork(id, name);
+  }, [assignChatToWork, chatWorkModal.query]);
+  const toggleWorkArchiveForChat = useCallback((id) => {
+    const target = chats.find((c) => c.id === id);
+    if (!target || !target.workProjectId) return;
+    let nextArchived = false;
+    setWorkProjects((prev) => prev.map((p) => {
+      if (p.id !== target.workProjectId) return p;
+      nextArchived = p.archived !== true;
+      return { ...p, archived: nextArchived };
+    }));
+    pushToast(nextArchived ? 'Workをアーカイブしました' : 'Workを復元しました', 'success');
+  }, [chats]);
+  const runChatMenuAction = useCallback((action, id) => {
+    if (!id) return;
+    if (action === 'pin') {
+      toggleFav(id);
+      pushToast('Favoriteを更新しました', 'success');
+    } else if (action === 'rename') {
+      openRenameModal(id);
+    } else if (action === 'work') {
+      openWorkModal(id);
+    } else if (action === 'workArchive') {
+      toggleWorkArchiveForChat(id);
+    } else if (action === 'delete') {
+      openDeleteModal(id);
+    }
+    closeChatMenu();
+  }, [closeChatMenu, openDeleteModal, openRenameModal, openWorkModal, toggleWorkArchiveForChat]);
+  useEffect(() => {
+    if (!chatMenu.open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') closeChatMenu();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [chatMenu.open, closeChatMenu]);
   const clearChatDrag = () => {
     dragIdRef.current = null;
     dragOverRef.current = null;
@@ -1416,6 +1774,18 @@ function App() {
         setActive(h.entries[h.cursor]);
       };
 
+      // Keep native undo in text fields; outside fields, Cmd/Ctrl+Z navigates one step back.
+      const plainUndoCombo =
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        String(e.key || '').toLowerCase() === 'z';
+      if (!inField && plainUndoCombo) {
+        e.preventDefault();
+        goBack();
+        return;
+      }
+
       if (!Kbd) {
         if (inField) return;
         return;
@@ -1499,11 +1869,24 @@ function App() {
   };
 
   const sections = [
-    {id:'main', label:'Core', jp:'核'},
-    {id:'workspace', label:'Workspace', jp:'作業'},
+    {id:'main', label:'', jp:''},
+    {id:'workspace', label:'', jp:''},
   ];
+  const toggleChatGroup = (groupKey) => {
+    setChatGroupsOpen((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
+  };
   const favChats = chats.filter(c => c.favorite);
   const restChats = chats.filter(c => !c.favorite);
+  const chatMenuTarget = chats.find((c) => c.id === chatMenu.chatId) || null;
+  const chatMenuTargetWork = chatMenuTarget && chatMenuTarget.workProjectId
+    ? workProjects.find((p) => p.id === chatMenuTarget.workProjectId) || null
+    : null;
+  const chatDeleteTarget = chats.find((c) => c.id === chatDeleteModal.chatId) || null;
+  const workQuery = String(chatWorkModal.query || '').trim().toLowerCase();
+  const filteredWorkProjects = workProjects.filter((p) => {
+    if (!workQuery) return true;
+    return String(p.name || '').toLowerCase().indexOf(workQuery) !== -1;
+  });
 
   const Screen = {
     home: ScreenHome,
@@ -1544,8 +1927,51 @@ function App() {
     }
   };
 
+  const beginSidebarResize = (e) => {
+    if (!e || typeof e.clientX !== 'number') return;
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    resizeStateRef.current = { active: true, moved: false, startX, startWidth };
+    setSidebarResizeHint(true);
+    const prevBodySelect = document.body.style.userSelect;
+    const prevBodyCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+
+    const onMove = (ev) => {
+      if (!resizeStateRef.current.active || !ev || typeof ev.clientX !== 'number') return;
+      const dx = ev.clientX - resizeStateRef.current.startX;
+      if (Math.abs(dx) > 3) resizeStateRef.current.moved = true;
+      const next = Math.max(
+        SIDEBAR_MIN_WIDTH,
+        Math.min(SIDEBAR_MAX_WIDTH, Math.round(resizeStateRef.current.startWidth + dx)),
+      );
+      setSidebarWidth(next);
+      if (sidebarCollapsed && next > SIDEBAR_MIN_WIDTH) setSidebarCollapsed(false);
+    };
+    const endResize = () => {
+      const moved = resizeStateRef.current.moved;
+      resizeStateRef.current.active = false;
+      document.body.style.userSelect = prevBodySelect;
+      document.body.style.cursor = prevBodyCursor;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', endResize);
+      window.removeEventListener('pointercancel', endResize);
+      if (!moved) setSidebarCollapsed((v) => !v);
+      setSidebarResizeHint(false);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', endResize);
+    window.addEventListener('pointercancel', endResize);
+  };
+
   return (
-    <div className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')} data-screen-label={active}>
+    <div
+      className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}
+      data-screen-label={active}
+      style={{ gridTemplateColumns: sidebarCollapsed ? '0 minmax(0, 1fr)' : `${sidebarWidth}px minmax(0, 1fr)` }}
+    >
       {bioGate.ready && bioGate.open && (
         <div
           className="bio-lock-overlay"
@@ -1672,6 +2098,18 @@ function App() {
       )}
       {/* Topbar */}
       <div className="topbar">
+        <button
+          type="button"
+          className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
+          onClick={() => setSidebarCollapsed((v) => !v)}
+          aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+          title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+        >
+          <span className="sidebar-toggle-glyph" aria-hidden="true">
+            <span className="pane" />
+            <span className="divider" />
+          </span>
+        </button>
         <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Shogun AI · Home">
           <Kamon size={26} color="var(--text)"/>
           <div>
@@ -1748,7 +2186,9 @@ function App() {
       <div className="sidebar" data-screen-label="sidebar">
         {sections.map(sec => (
           <div key={sec.id}>
-            <div className="section-label"><span className="en-only">{sec.label}</span><span className="en-only"> · </span><span className="jp">{sec.jp}</span></div>
+            {(sec.label || sec.jp) && (
+              <div className="section-label"><span className="en-only">{sec.label}</span><span className="en-only"> · </span><span className="jp">{sec.jp}</span></div>
+            )}
             {NAV.filter(n => n.section === sec.id).map(n => (
               <React.Fragment key={n.id}>
                 <div className={'nav-item '+(active===n.id?'active':'')} onClick={() => setActive(n.id)}>
@@ -1765,31 +2205,48 @@ function App() {
                       className="btn btn-sm btn-secondary"
                       style={{width:'calc(100% - 14px)', margin:'6px 7px 10px', justifyContent:'flex-start'}}
                       onClick={createNewChat}
-                    ><Icon name="plus" size={12}/>New conversation</button>
+                    ><Icon name="plus" size={12}/>New Chat</button>
 
                     {/* Favorites bucket */}
                     <div
                       className={'chat-bucket '+(dragOver?.pos==='fav'?'drop':'')}
                       data-chat-bucket="fav"
                     >
-                      <div className="chat-subgroup t-mono">
-                        <span className="gold" style={{fontSize:9, marginRight:4}}>★</span>
-                        <span className="en-only">FAVORITES</span>
+                      <button
+                        type="button"
+                        className="chat-subgroup chat-subgroup-header"
+                        onClick={() => toggleChatGroup('favorite')}
+                        aria-expanded={chatGroupsOpen.favorite}
+                        aria-label="Toggle Favorite"
+                      >
+                        <span className="chat-subgroup-toggle" aria-hidden="true">
+                          <Icon
+                            name="chevronDown"
+                            size={12}
+                            style={{ transform: chatGroupsOpen.favorite ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+                          />
+                        </span>
+                        <span className="en-only">Favorite</span>
                         <span className="jp" style={{marginLeft:6}}>お気に入り</span>
                         <span className="spacer"/>
                         <span style={{fontSize:9, color:'var(--text-dim)'}}>{favChats.length}</span>
-                      </div>
-                      {favChats.length===0 && (
+                      </button>
+                      {chatGroupsOpen.favorite && favChats.length===0 && (
                         <div className="chat-empty">
                           <span className="en-only">Drop a chat here</span>
                           <span className="jp">ここへ</span>
                         </div>
                       )}
-                      {favChats.map(it => (
+                      {chatGroupsOpen.favorite && favChats.map(it => (
                         <div
                           key={it.id}
                           data-chat-row={it.id}
                           onPointerDown={onChatRowPointerDown(it.id)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openChatMenuAt(it.id, e.clientX, e.clientY);
+                          }}
                           className={'chat-sub-item '+(activeChat===it.id?'active':'')+(dragId===it.id?' dragging':'')+(dragOver?.id===it.id?(' dz-'+dragOver.pos):'')}
                           onClick={() => {
                             if (suppressChatRowClickRef.current) {
@@ -1801,9 +2258,21 @@ function App() {
                           title={it.title}
                         >
                           <Icon name="grip" size={10} className="grip"/>
-                          <span className="gold dot-fav">★</span>
                           <span className="chat-sub-title">{it.title}</span>
-                          <button type="button" draggable={false} className="chat-fav-btn" onClick={(e)=>{e.stopPropagation(); toggleFav(it.id);}} title="Unfavorite">★</button>
+                          <button
+                            type="button"
+                            draggable={false}
+                            className="chat-row-menu-btn"
+                            onClick={(e)=>{
+                              e.stopPropagation();
+                              const r = e.currentTarget.getBoundingClientRect();
+                              openChatMenuAt(it.id, r.right - 6, r.bottom + 6);
+                            }}
+                            title="Chat options"
+                            aria-label="Chat options"
+                          >
+                            <span className="chat-row-menu-dots" aria-hidden="true">⋮</span>
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -1813,23 +2282,41 @@ function App() {
                       className={'chat-bucket '+(dragOver?.pos==='chats'?'drop':'')}
                       data-chat-bucket="chats"
                     >
-                      <div className="chat-subgroup t-mono">
-                        <span className="en-only">CHATS</span>
+                      <button
+                        type="button"
+                        className="chat-subgroup chat-subgroup-header"
+                        onClick={() => toggleChatGroup('chats')}
+                        aria-expanded={chatGroupsOpen.chats}
+                        aria-label="Toggle Chats"
+                      >
+                        <span className="chat-subgroup-toggle" aria-hidden="true">
+                          <Icon
+                            name="chevronDown"
+                            size={12}
+                            style={{ transform: chatGroupsOpen.chats ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+                          />
+                        </span>
+                        <span className="en-only">Chats</span>
                         <span className="jp" style={{marginLeft:6}}>対話</span>
                         <span className="spacer"/>
                         <span style={{fontSize:9, color:'var(--text-dim)'}}>{restChats.length}</span>
-                      </div>
-                      {restChats.length === 0 && (
+                      </button>
+                      {chatGroupsOpen.chats && restChats.length === 0 && (
                         <div className="chat-empty" style={{padding:'6px 10px 10px'}}>
-                          <span className="en-only">New conversation to start</span>
+                          <span className="en-only">New Chat to start</span>
                           <span className="jp">新しい対話</span>
                         </div>
                       )}
-                      {restChats.map(it => (
+                      {chatGroupsOpen.chats && restChats.map(it => (
                         <div
                           key={it.id}
                           data-chat-row={it.id}
                           onPointerDown={onChatRowPointerDown(it.id)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openChatMenuAt(it.id, e.clientX, e.clientY);
+                          }}
                           className={'chat-sub-item '+(activeChat===it.id?'active':'')+(dragId===it.id?' dragging':'')+(dragOver?.id===it.id?(' dz-'+dragOver.pos):'')}
                           onClick={() => {
                             if (suppressChatRowClickRef.current) {
@@ -1841,9 +2328,21 @@ function App() {
                           title={it.title}
                         >
                           <Icon name="grip" size={10} className="grip"/>
-                          <span className="dot"/>
                           <span className="chat-sub-title">{it.title}</span>
-                          {it.time && <span className="t-mono chat-sub-time">{it.time}</span>}
+                          <button
+                            type="button"
+                            draggable={false}
+                            className="chat-row-menu-btn"
+                            onClick={(e)=>{
+                              e.stopPropagation();
+                              const r = e.currentTarget.getBoundingClientRect();
+                              openChatMenuAt(it.id, r.right - 6, r.bottom + 6);
+                            }}
+                            title="Chat options"
+                            aria-label="Chat options"
+                          >
+                            <span className="chat-row-menu-dots" aria-hidden="true">⋮</span>
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -1859,8 +2358,20 @@ function App() {
 
         {/* User cluster */}
         <div className="user-cluster">
-          <div className="user-row" style={{padding:'0 8px 6px'}}>
-            <span className="s-field-hint" style={{fontSize:10}}><span className="en-only">Local preview</span><span className="jp">ローカル</span></span>
+          <button
+            type="button"
+            ref={contextBtnRef}
+            className="context-enabled-pill"
+            aria-live="polite"
+            aria-expanded={contextPanelOpen}
+            onClick={openContextPanel}
+          >
+            <span className="en-only">Context enabled</span>
+            <span className="jp">コンテキスト有効</span>
+            <span className="context-enabled-dot" aria-hidden="true" />
+          </button>
+          <div className="user-row local-preview-row">
+            <span className="s-field-hint local-preview-label" style={{fontSize:10}}><span className="en-only">Local preview</span><span className="jp">ローカルプレビュー</span></span>
           </div>
           <div ref={userBtnRef} className="user-row user-pill" onClick={openUser}>
             <div
@@ -1896,6 +2407,28 @@ function App() {
           </div>
         </div>
       </div>
+      <button
+        type="button"
+        className={'sidebar-resizer' + (sidebarResizeHint ? ' show-hint' : '')}
+        aria-label="Sidebar width resizer"
+        onMouseEnter={() => setSidebarResizeHint(true)}
+        onMouseLeave={() => {
+          if (!resizeStateRef.current.active) setSidebarResizeHint(false);
+        }}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          beginSidebarResize(e);
+        }}
+      >
+        <span className="sidebar-resizer-hit" />
+        {sidebarResizeHint && (
+          <span className="sidebar-resizer-tip">
+            クリックして折りたたむ <span className="sidebar-resizer-kbd">⌘B</span>
+            <br />
+            ドラッグしてサイズ変更
+          </span>
+        )}
+      </button>
 
       {/* Content — chat needs a flex column parent so L3 fills the viewport */}
       <div
@@ -1951,8 +2484,8 @@ function App() {
             </div>
             <button
               type="button"
-              className="btn"
-              style={{width:'100%', marginTop:18, background:'var(--gold-bg, #EFE5D3)', color:'#151212', borderColor:'var(--gold-dim)', height:44, fontSize:14}}
+              className="btn btn-primary"
+              style={{width:'100%', marginTop:18, height:'var(--control-lg)', fontSize:'var(--text-md)'}}
               onClick={async () => {
                 const chatTitle = chats.find(c => c.id === activeChat)?.title || 'Untitled chat';
                 const res = await executeAction('app.create_share_link', {
@@ -2154,37 +2687,36 @@ function App() {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="user-float-head">
-              <div style={{fontSize:12, color:'var(--text-dim)'}}>kazu@shogun.local</div>
+              <div style={{fontSize:13, color:'var(--text-dim)'}}>
+                {profileDisplayName.trim() || 'You'}
+              </div>
             </div>
             <div className="user-float-section">
               <div className="user-float-row" onClick={()=>{setSettingsOpen('general'); setUserOpen(false);}}>
-                <Icon name="settings" size={13}/><span className="en-only">Settings</span><span className="jp">設定</span>
+                <Icon name="settings" size={16}/><span className="en-only">Settings</span><span className="jp">設定</span>
                 <span className="spacer"/><span className="kbd-mini">⌘,</span>
               </div>
-              <div className="user-float-row" onClick={()=>{setSettingsOpen('subscription'); setUserOpen(false);}}>
-                <Icon name="arrowUpRight" size={13}/><span className="en-only">Upgrade Plan</span><span className="jp">昇格</span>
-              </div>
               <div className="user-float-row" onClick={()=>{setSettingsOpen('download'); setUserOpen(false);}}>
-                <Icon name="download" size={13}/><span className="en-only">Download Mobile App</span><span className="jp">携帯</span>
+                <Icon name="download" size={16}/><span className="en-only">Download Mobile App</span><span className="jp">モバイルアプリ</span>
               </div>
             </div>
             <div className="user-float-section" style={{borderTop:'1px solid var(--border)'}}>
               <div className="user-float-row" onClick={()=>{setSettingsOpen('feedback'); setUserOpen(false);}}>
-                <Icon name="chat" size={13}/><span className="en-only">Give Feedback</span><span className="jp">意見</span>
+                <Icon name="chat" size={16}/><span className="en-only">Give Feedback</span><span className="jp">フィードバック</span>
               </div>
               <div className="user-float-row" onClick={()=>{setSettingsOpen('support'); setUserOpen(false);}}>
-                <Icon name="info" size={13}/><span className="en-only">Help Center</span><span className="jp">案内</span>
+                <Icon name="info" size={16}/><span className="en-only">Help Center</span><span className="jp">ヘルプ</span>
               </div>
               <div className="user-float-row" onClick={()=>{setSettingsOpen('changelog'); setUserOpen(false);}}>
-                <Icon name="clock" size={13}/><span className="en-only">Changelog</span><span className="jp">更新</span>
+                <Icon name="clock" size={16}/><span className="en-only">Changelog</span><span className="jp">更新履歴</span>
               </div>
               <div className="user-float-row gold" onClick={()=>{setSettingsOpen('referral'); setUserOpen(false);}}>
-                <Icon name="gift" size={13}/><span className="en-only">Get 2 Months Free</span><span className="jp">贈</span>
+                <Icon name="gift" size={16}/><span className="en-only">Get 2 Months Free</span><span className="jp">2か月無料</span>
               </div>
             </div>
             <div className="user-float-section" style={{borderTop:'1px solid var(--border)'}}>
               <div className="user-float-row" style={{color:'var(--text-mute)'}}>
-                <Icon name="logout" size={13}/><span className="en-only">Logout</span><span className="jp">退出</span>
+                <Icon name="logout" size={16}/><span className="en-only">Logout</span><span className="jp">ログアウト</span>
               </div>
             </div>
             {/* Profile chip at bottom, like reference */}
@@ -2210,6 +2742,180 @@ function App() {
             </div>
           </div>
         </>,
+        document.body,
+      )}
+
+      {contextPanelOpen && ReactDOM.createPortal(
+        <>
+          <div
+            role="presentation"
+            style={{ position: 'fixed', inset: 0, zIndex: 1078 }}
+            onMouseDown={() => setContextPanelOpen(false)}
+          />
+          <div
+            className="context-panel"
+            style={{ left: contextPanelAnchor.left, bottom: contextPanelAnchor.bottom, width: contextPanelAnchor.width }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="context-panel-title">Data and Privacy</div>
+            <div className="context-awareness-card">
+              <button type="button" className="context-awareness-close" onClick={() => setContextPanelOpen(false)} aria-label="Close">
+                <Icon name="x" size={16} />
+              </button>
+              <div style={{ fontSize: 22, fontWeight: 520, marginBottom: 6 }}>Context Awareness</div>
+              <div className="context-panel-body-copy">
+                Littlebird remembers your work across apps,
+                <br />
+                no integrations needed.
+              </div>
+              <button type="button" className="context-link-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
+                Learn more <Icon name="arrowUpRight" size={14} />
+              </button>
+            </div>
+            <button type="button" className="context-panel-row" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
+              <span>Pause Context Awareness</span>
+              <Icon name="chevronRight" size={14} />
+            </button>
+            <button type="button" className="context-panel-row" onClick={() => { setSettingsOpen('data'); setContextPanelOpen(false); }}>
+              <span>Delete Data</span>
+              <Icon name="chevronRight" size={14} />
+            </button>
+            <div className="context-panel-foot">
+              <span className="context-panel-body-copy" style={{ fontSize: 14 }}>
+                Exclude apps and websites Littlebird
+                <br />
+                can access context from
+              </span>
+              <button type="button" className="context-manage-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
+                Manage
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+
+      {chatMenu.open && ReactDOM.createPortal(
+        <>
+          <div
+            role="presentation"
+            style={{ position:'fixed', inset:0, zIndex:1090 }}
+            onMouseDown={closeChatMenu}
+          />
+          <div
+            className="chat-row-menu"
+            style={{ left: chatMenu.x, top: chatMenu.y, width: chatMenu.width }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('pin', chatMenu.chatId)}>
+              <Icon name="pin" size={16}/>
+              <span>{chatMenuTarget?.favorite ? 'Favoriteから外す' : 'Favoriteに追加'}</span>
+            </button>
+            <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('rename', chatMenu.chatId)}>
+              <Icon name="edit" size={16}/>
+              <span>名前を変更</span>
+            </button>
+            <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('work', chatMenu.chatId)}>
+              <Icon name="folder" size={16}/>
+              <span>Workに追加</span>
+            </button>
+            {chatMenuTargetWork && (
+              <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('workArchive', chatMenu.chatId)}>
+                <Icon name={chatMenuTargetWork.archived === true ? 'eye' : 'folder'} size={16}/>
+                <span>{chatMenuTargetWork.archived === true ? 'Workを復元' : 'Workをアーカイブ'}</span>
+              </button>
+            )}
+            <div className="chat-row-menu-sep"/>
+            <button type="button" className="chat-row-menu-item danger" onClick={() => runChatMenuAction('delete', chatMenu.chatId)}>
+              <Icon name="trash" size={16}/>
+              <span>削除</span>
+            </button>
+          </div>
+        </>,
+        document.body,
+      )}
+
+      {chatDeleteModal.open && ReactDOM.createPortal(
+        <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatDeleteModal({ open:false, chatId:null })}>
+          <div className="chat-dialog" role="dialog" aria-modal="true" aria-label="チャット削除確認" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="chat-dialog-title">チャットを削除</div>
+            <div className="chat-dialog-desc">
+              {chatDeleteTarget ? `「${chatDeleteTarget.title}」を削除してもよろしいですか？` : 'このチャットを削除してもよろしいですか？'}
+            </div>
+            <div className="chat-dialog-actions">
+              <button type="button" className="chat-dialog-btn ghost" onClick={() => setChatDeleteModal({ open:false, chatId:null })}>Cancel</button>
+              <button type="button" className="chat-dialog-btn danger" onClick={confirmDeleteChat}>削除</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {chatRenameModal.open && ReactDOM.createPortal(
+        <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatRenameModal({ open:false, chatId:null, value:'' })}>
+          <div className="chat-dialog rename" role="dialog" aria-modal="true" aria-label="チャット名変更" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="chat-dialog-title small">チャットの名前を変更</div>
+            <input
+              type="text"
+              className="chat-dialog-input"
+              value={chatRenameModal.value}
+              autoFocus
+              onChange={(e) => setChatRenameModal((s) => ({ ...s, value: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitRenameModal();
+                if (e.key === 'Escape') setChatRenameModal({ open:false, chatId:null, value:'' });
+              }}
+            />
+            <div className="chat-dialog-actions">
+              <button type="button" className="chat-dialog-btn ghost" onClick={() => setChatRenameModal({ open:false, chatId:null, value:'' })}>キャンセル</button>
+              <button type="button" className="chat-dialog-btn solid" onClick={submitRenameModal}>保存</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {chatWorkModal.open && ReactDOM.createPortal(
+        <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatWorkModal({ open:false, chatId:null, query:'' })}>
+          <div className="chat-dialog work" role="dialog" aria-modal="true" aria-label="Workに追加" onMouseDown={(e) => e.stopPropagation()}>
+            <button type="button" className="chat-dialog-close" onClick={() => setChatWorkModal({ open:false, chatId:null, query:'' })} aria-label="閉じる">
+              <Icon name="x" size={16}/>
+            </button>
+            <div className="chat-dialog-title">チャットを移動</div>
+            <div className="chat-dialog-desc">このチャットを移動するプロジェクトを選択してください。</div>
+            <div className="work-search-wrap">
+              <Icon name="search" size={16}/>
+              <input
+                type="text"
+                className="work-search-input"
+                placeholder="プロジェクトを検索または作成"
+                value={chatWorkModal.query}
+                autoFocus
+                onChange={(e) => setChatWorkModal((s) => ({ ...s, query: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (filteredWorkProjects[0]) assignChatToWork(filteredWorkProjects[0].id, filteredWorkProjects[0].name);
+                    else createAndAssignWork();
+                  }
+                }}
+              />
+            </div>
+            <div className="work-list">
+              {filteredWorkProjects.map((p) => (
+                <button key={p.id} type="button" className="work-list-item" onClick={() => assignChatToWork(p.id, p.name)}>
+                  <Icon name="folder" size={16}/>
+                  <span>{p.name}</span>
+                </button>
+              ))}
+              {filteredWorkProjects.length === 0 && (
+                <button type="button" className="work-list-item create" onClick={createAndAssignWork}>
+                  <Icon name="plus" size={16}/>
+                  <span>「{chatWorkModal.query.trim()}」を作成して追加</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
         document.body,
       )}
 
@@ -2311,7 +3017,24 @@ function App() {
 
         /* Chat sub-nav under Chat */
         .chat-subnav { margin:2px 0 8px 8px; padding-left:10px; border-left:1px solid var(--border); }
-        .chat-subgroup { padding:10px 0 4px 8px; font-size:9px; display:flex; align-items:center; }
+        .chat-subgroup { padding:10px 0 4px 8px; font-size:12px; display:flex; align-items:center; gap:4px; color:var(--text-dim); }
+        .chat-subgroup-header {
+          width:100%;
+          border:0;
+          background:transparent;
+          cursor:pointer;
+          text-align:left;
+          border-radius:6px;
+          padding-right:6px;
+        }
+        .chat-subgroup-header:hover { color:var(--text); background:var(--surface-1); }
+        .chat-subgroup-toggle {
+          width:16px; height:16px; min-width:16px;
+          background:transparent; color:var(--text-dim);
+          border-radius:4px; display:flex; align-items:center; justify-content:center;
+          padding:0; margin-right:2px;
+        }
+        .chat-subgroup-header:hover .chat-subgroup-toggle { color:var(--text); background:var(--surface-2); }
         body.chat-reorder-active { user-select:none; -webkit-user-select:none; cursor:grabbing; }
         body.chat-reorder-active .chat-sub-item { cursor:grabbing; }
         .chat-bucket { border-radius:var(--radius-sm); padding:2px 0 6px; transition:background 120ms; }
@@ -2329,21 +3052,118 @@ function App() {
         }
         .chat-sub-item.dz-before::before { top:-1px; }
         .chat-sub-item.dz-after::after { bottom:-1px; }
-        .chat-fav-btn {
-          background:transparent; border:0; color:var(--text-dim); cursor:pointer;
-          font-size:11px; padding:2px 4px; border-radius:3px; flex-shrink:0;
-          transition:color 120ms, opacity 120ms;
-        }
-        .chat-fav-btn.fav-hover { opacity:0; }
-        .chat-sub-item:hover .chat-fav-btn.fav-hover { opacity:1; }
-        .chat-fav-btn:hover { color:var(--gold); background:var(--surface-2); }
-        .chat-sub-item { display:flex; align-items:center; gap:8px; padding:6px 8px; margin:1px 0; border-radius:var(--radius-sm); cursor:pointer; color:var(--text-mute); font-size:12px; }
+        .chat-sub-item { display:flex; align-items:center; gap:6px; padding:6px 6px; margin:1px 0; border-radius:var(--radius-sm); cursor:pointer; color:var(--text-mute); font-size:12px; }
         .chat-sub-item:hover { background:var(--surface-2); color:var(--text); }
         .chat-sub-item.active { background:var(--surface-2); color:var(--text); }
-        .chat-sub-item.active .dot { background:var(--gold); box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 25%, transparent); }
-        .chat-sub-item .dot { width:5px; height:5px; border-radius:50%; background:var(--border-hi); flex-shrink:0; }
         .chat-sub-title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-        .chat-sub-time { font-size:9px; color:var(--text-dim); flex-shrink:0; }
+        .chat-row-menu-btn {
+          width:16px; height:20px; min-width:16px;
+          border:0; background:transparent; color:var(--text-dim);
+          border-radius:6px; display:flex; align-items:center; justify-content:center;
+          cursor:pointer; opacity:0.3; transition:opacity 120ms, color 120ms, background 120ms;
+        }
+        .chat-row-menu-dots {
+          font-size:14px;
+          line-height:1;
+          transform: translateY(-0.5px);
+        }
+        .chat-sub-item:hover .chat-row-menu-btn, .chat-row-menu-btn:focus-visible { opacity:1; }
+        .chat-row-menu-btn:hover { color:var(--text); background:var(--surface-2); }
+        .chat-row-menu {
+          position:fixed; z-index:1091;
+          padding:4px;
+          border-radius:var(--radius-lg);
+          background:var(--surface);
+          border:1px solid var(--border-hi);
+          box-shadow:0 24px 48px -12px rgba(0,0,0,0.6), 0 2px 0 rgba(0,0,0,0.3);
+          overflow:hidden;
+        }
+        .chat-row-menu-item {
+          width:100%; border:0; background:transparent; color:var(--text);
+          font-size:12.5px;
+          display:flex; align-items:center; gap:10px;
+          padding:7px 10px; border-radius:var(--radius-sm); cursor:pointer; text-align:left;
+        }
+        .chat-row-menu-item span { font-size:12.5px; line-height:1.2; }
+        .chat-row-menu-item:hover { background:var(--surface-2); }
+        .chat-row-menu-item.danger { color:var(--danger-soft); }
+        .chat-row-menu-item.danger:hover { background:color-mix(in srgb, var(--danger-soft) 10%, transparent); }
+        .chat-row-menu-sep { height:1px; background:var(--border); margin:4px; }
+        .chat-modal-backdrop {
+          position:fixed; inset:0; z-index:1120;
+          background:rgba(5, 6, 9, 0.56);
+          backdrop-filter: blur(1.5px);
+          display:flex; align-items:center; justify-content:center;
+          padding:18px;
+        }
+        .chat-dialog {
+          width:min(620px, calc(100vw - 36px));
+          background:color-mix(in srgb, var(--surface) 90%, #272727 10%);
+          border:1px solid var(--border-hi);
+          border-radius:24px;
+          box-shadow:0 30px 70px -12px rgba(0,0,0,0.7), 0 4px 14px rgba(0,0,0,0.35);
+          padding:34px 38px 30px;
+          position:relative;
+        }
+        .chat-dialog.rename { width:min(560px, calc(100vw - 36px)); border-radius:16px; padding:24px 22px 18px; }
+        .chat-dialog.work { width:min(760px, calc(100vw - 36px)); border-radius:22px; padding:30px 28px 24px; }
+        .chat-dialog-title {
+          font-size:21px; line-height:1.2; letter-spacing:-0.01em; color:var(--text); font-weight:600;
+        }
+        .chat-dialog.rename .chat-dialog-title { font-size:18px; letter-spacing:0; }
+        .chat-dialog.work .chat-dialog-title { font-size:42px; line-height:1.08; letter-spacing:-0.02em; }
+        .chat-dialog-desc {
+          margin-top:14px; color:var(--text-dim); font-size:14px; line-height:1.45;
+        }
+        .chat-dialog-actions {
+          margin-top:30px; display:flex; gap:12px; justify-content:flex-end;
+        }
+        .chat-dialog-btn {
+          min-width:122px; height:52px; border-radius:14px; border:1px solid transparent;
+          cursor:pointer; font-size:16px; font-weight:550; color:var(--text);
+          background:var(--surface-2);
+        }
+        .chat-dialog-btn.ghost { border-color:var(--border-hi); background:transparent; }
+        .chat-dialog-btn.solid { background:var(--text); color:var(--bg); }
+        .chat-dialog-btn.danger { background:var(--danger); color:var(--white); }
+        .chat-dialog-input {
+          width:100%; margin-top:14px; height:50px; border-radius:12px;
+          border:1px solid color-mix(in srgb, var(--gold) 35%, var(--border-hi));
+          background:color-mix(in srgb, var(--surface-2) 86%, #101010 14%);
+          color:var(--text); font-size:14px; padding:0 14px;
+          outline:none;
+        }
+        .chat-dialog-input:focus {
+          border-color:var(--gold);
+          box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 30%, transparent);
+        }
+        .chat-dialog-close {
+          position:absolute; right:18px; top:16px; width:30px; height:30px;
+          border:0; background:transparent; color:var(--text-dim); border-radius:8px; cursor:pointer;
+          display:flex; align-items:center; justify-content:center;
+        }
+        .chat-dialog-close:hover { color:var(--text); background:var(--surface-2); }
+        .work-search-wrap {
+          margin-top:18px; height:56px; border-radius:14px;
+          border:1px solid var(--border);
+          display:flex; align-items:center; gap:10px; padding:0 14px;
+          color:var(--text-dim); background:var(--surface-2);
+        }
+        .work-search-input {
+          flex:1; min-width:0; border:0; background:transparent; outline:none; color:var(--text); font-size:17px;
+        }
+        .work-list {
+          margin-top:0; border:1px solid var(--border); border-top:0;
+          border-radius:0 0 14px 14px; overflow:auto; max-height:320px; background:var(--surface);
+        }
+        .work-list-item {
+          width:100%; border:0; border-top:1px solid color-mix(in srgb, var(--border) 85%, transparent);
+          background:transparent; color:var(--text); cursor:pointer; text-align:left;
+          display:flex; align-items:center; gap:12px; padding:13px 14px; font-size:16px;
+        }
+        .work-list-item:first-child { border-top:0; }
+        .work-list-item:hover { background:var(--surface-2); }
+        .work-list-item.create { color:var(--gold); }
 
         /* Floating system menu */
         .system-float {
@@ -2381,6 +3201,138 @@ function App() {
 
         /* User cluster (bottom-left sidebar) */
         .user-cluster { padding:10px; border-top:1px solid var(--border); margin-top:8px; }
+        .context-enabled-pill {
+          display:flex; align-items:center; justify-content:space-between; gap:10px;
+          min-height:44px; padding:0 16px;
+          border-radius:13px;
+          border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
+          background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
+          box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);
+          color:color-mix(in srgb, var(--text) 92%, #dfe3ea 8%);
+          font-size:13px;
+          font-weight:480;
+          letter-spacing:0.01em;
+          margin:2px 6px 12px;
+          width:calc(100% - 12px);
+          text-align:left;
+          cursor:pointer;
+          transition:border-color 120ms, background 120ms;
+        }
+        .context-enabled-pill:hover {
+          border-color:color-mix(in srgb, var(--border-hi) 88%, #8ea8ff 12%);
+          background:color-mix(in srgb, var(--surface) 72%, #101726 28%);
+        }
+        .context-enabled-dot {
+          width:9px; height:9px; border-radius:50%;
+          background:#1bcf6e;
+          box-shadow:0 0 0 1px rgba(27, 207, 110, 0.2), 0 0 8px rgba(27, 207, 110, 0.32);
+          flex-shrink:0;
+        }
+        .context-panel {
+          position:fixed;
+          z-index:1079;
+          max-width:min(420px, calc(100vw - 24px));
+          background:color-mix(in srgb, var(--surface) 86%, #070b13 14%);
+          border:1px solid color-mix(in srgb, var(--border-hi) 78%, transparent);
+          border-radius:16px;
+          box-shadow:0 26px 54px -16px rgba(0,0,0,0.65), 0 4px 12px rgba(0,0,0,0.36);
+          padding:14px;
+          animation:contextPanelIn 140ms var(--ease-out);
+        }
+        @keyframes contextPanelIn {
+          from { opacity:0; transform:translateY(8px) scale(0.985); }
+          to { opacity:1; transform:translateY(0) scale(1); }
+        }
+        .context-panel-title {
+          color:var(--text-dim);
+          font-size:11px;
+          margin-bottom:10px;
+        }
+        .context-awareness-card {
+          position:relative;
+          border-radius:12px;
+          border:1px solid color-mix(in srgb, var(--border-hi) 70%, transparent);
+          background:linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 80%, #111827 20%), color-mix(in srgb, var(--surface) 86%, #111827 14%));
+          padding:12px 14px 10px;
+          margin-bottom:8px;
+        }
+        .context-awareness-close {
+          position:absolute;
+          right:10px;
+          top:10px;
+          width:24px;
+          height:24px;
+          border:0;
+          border-radius:8px;
+          background:transparent;
+          color:var(--text-mute);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          cursor:pointer;
+        }
+        .context-awareness-close:hover { background:var(--surface-2); color:var(--text); }
+        .context-panel-body-copy {
+          color:var(--text-mute);
+          line-height:1.45;
+          font-size:13px;
+        }
+        .context-link-btn {
+          margin-top:8px;
+          padding:0;
+          border:0;
+          background:transparent;
+          color:var(--text);
+          display:inline-flex;
+          gap:6px;
+          align-items:center;
+          font-size:13px;
+          font-weight:500;
+          cursor:pointer;
+        }
+        .context-link-btn:hover { color:var(--gold); }
+        .context-panel-row {
+          width:100%;
+          border:0;
+          background:transparent;
+          color:var(--text);
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          font-size:13px;
+          padding:11px 4px;
+          cursor:pointer;
+        }
+        .context-panel-row:hover { color:var(--gold); }
+        .context-panel-foot {
+          margin-top:4px;
+          padding-top:12px;
+          border-top:1px solid var(--border);
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+        }
+        .context-manage-btn {
+          border:1px solid var(--border-hi);
+          background:var(--surface-2);
+          color:var(--text);
+          font-size:13px;
+          border-radius:12px;
+          padding:8px 12px;
+          cursor:pointer;
+        }
+        .context-manage-btn:hover { border-color:var(--gold-dim); color:var(--gold); }
+        .local-preview-row {
+          padding:11px 12px 8px;
+          margin:0 6px 8px;
+          border-top:1px solid color-mix(in srgb, var(--border) 88%, #1b1f27 12%);
+        }
+        .local-preview-label {
+          font-size:13px;
+          letter-spacing:0.01em;
+          color:color-mix(in srgb, var(--text) 88%, #d7dce4 12%);
+        }
         .user-row { display:flex; align-items:center; gap:6px; padding:2px 0; }
         .user-row + .user-row { margin-top:8px; }
         .capturing-pill {
@@ -2409,9 +3361,9 @@ function App() {
         .user-float {
           position:fixed; z-index:1081;
           background:var(--surface); border:1px solid var(--border-hi);
-          border-radius:var(--radius-lg);
-          box-shadow:0 24px 48px -12px rgba(0,0,0,0.6), 0 2px 0 rgba(0,0,0,0.3);
-          padding:4px 0;
+          border-radius:18px;
+          box-shadow:0 26px 56px -16px rgba(0,0,0,0.62), 0 2px 0 rgba(0,0,0,0.32);
+          padding:6px 0;
           overflow:hidden;
           min-width:220px;
         }
@@ -2419,23 +3371,23 @@ function App() {
           from { opacity:0; transform:translateY(8px) scale(0.98); }
           to { opacity:1; transform:translateY(0) scale(1); }
         }
-        .user-float-head { padding:10px 12px 8px; border-bottom:1px solid var(--border); }
-        .user-float-section { padding:4px 4px; }
+        .user-float-head { padding:12px 14px 10px; border-bottom:1px solid var(--border); }
+        .user-float-section { padding:6px; }
         .user-float-row {
-          display:flex; align-items:center; gap:10px;
-          padding:7px 10px; border-radius:var(--radius-sm);
-          color:var(--text); font-size:12.5px; cursor:pointer;
+          display:flex; align-items:center; gap:12px;
+          padding:10px 12px; border-radius:12px;
+          color:var(--text); font-size:13.5px; line-height:1.25; cursor:pointer;
         }
-        .user-float-row:hover { background:var(--surface-2); }
+        .user-float-row:hover { background:color-mix(in srgb, var(--surface-2) 85%, #1a202a 15%); }
         .user-float-row.gold { color:var(--gold); }
         .user-float-row .jp { font-family:var(--font-jp); font-weight:300; font-size:10.5px; color:var(--text-dim); margin-left:-4px; }
         .user-float-row .kbd-mini {
           font-family:var(--font-mono); font-size:10px;
-          color:var(--text-dim); letter-spacing:0.05em;
+          color:color-mix(in srgb, var(--text-dim) 80%, #a7adba 20%); letter-spacing:0.05em;
         }
         .user-float-profile {
           display:flex; align-items:center; gap:10px;
-          padding:10px 12px; border-top:1px solid var(--border);
+          padding:12px 14px; border-top:1px solid var(--border);
           background:var(--bg);
         }
         .user-float-profile .avatar {
