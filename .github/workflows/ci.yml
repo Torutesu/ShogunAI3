@@ -71,7 +71,24 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       - name: E2E (Playwright)
-        run: npm run test:e2e
+        run: |
+          set -o pipefail
+          npm run test:e2e 2>&1 | tee /tmp/e2e.log
+        shell: bash
+
+      - name: Upload E2E log on failure
+        if: failure()
+        run: |
+          if [ -f /tmp/e2e.log ]; then
+            echo "::group::playwright output (tail)"
+            tail -200 /tmp/e2e.log
+            echo "::endgroup::"
+            # Surface each failed-test header as a workflow annotation.
+            grep -E '^\s*[0-9]+ failed|^\s*[0-9]+\)\s|✘|Error:|expected|Timeout' /tmp/e2e.log | head -30 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+        shell: bash
 
       - name: Tauri production build (bundle)
         run: npm run build:desktop
