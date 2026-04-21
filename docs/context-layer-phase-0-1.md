@@ -50,7 +50,7 @@ FTS5 は `title`, `snippet`, `source` のみ。新列は検索対象外（意図
 | 経路 | デフォルトで Memory を LLM に渡すか | 備考 |
 |------|--------------------------------------|------|
 | `chat.complete` | **いいえ** | クライアントが設定した `memoryContext`（文字列）のみをシステムメッセージに追加。空なら Memory なし。 |
-| `chat.complete` + privacy フラグ | **任意** | オプション `memoryAssembly`（オブジェクト）が付き、かつ `settings.sections.privacy.allowChatServerMemoryAssembly !== false` のときのみ、サーバ側で `memory.search` 相当を実行しブロックを合成。 |
+| `chat.complete` + privacy フラグ | **任意** | オプション `memoryAssembly`（オブジェクト）が付き、かつ `settings.sections.privacy.allowChatServerMemoryAssembly === true`（明示オプトイン。未設定・`false` は拒否）のときのみ、サーバ側で `memory.search` 相当を実行しブロックを合成。 |
 | `brief.get`（LLM 経路） | **はい** | ローカル Memory 上位ヒットを要約プロンプトに含める（実装は `context_assembly` に集約）。 |
 | `shogun.draft_reply` | **はい** | Brief アイテム + セマンティック検索ヒット。 |
 | `shogun.open_pack` | **はい**（ファイル化） | FTS で関連 Memory を `memory_hits.md` に出力。 |

@@ -19,15 +19,15 @@ function workProvenanceLabel(prov) {
 function ScreenWork() {
   const [hits, setHits] = React.useState([]);
   const [draftWithMemory, setDraftWithMemory] = React.useState(true);
-  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
+  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default false; opt-in). */
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(false);
   React.useEffect(() => {
     let cancelled = false;
     void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
       if (cancelled || !r?.ok || !r.data?.settings?.sections?.privacy) return;
       const priv = r.data.settings.sections.privacy;
       if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
       }
     });
     return () => {
@@ -39,7 +39,7 @@ function ScreenWork() {
       void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
         if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
         }
       });
     };

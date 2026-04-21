@@ -845,8 +845,8 @@ function PanePrivacy() {
   const [siteFilter, setSiteFilter] = useStateS('all');
   const [siteDraft, setSiteDraft] = useStateS('');
 
-  /** When true, `chat.complete` may run local Memory search server-side (`memoryAssembly`). Default on for backward compatibility. */
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateS(true);
+  /** When true, `chat.complete` may run local Memory search server-side (`memoryAssembly`). Default off (opt-in). */
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateS(false);
 
   const [bioLock, setBioLock] = useStateS(!!secSecurity.biometricLockEnabled);
   const [requireImportApproval, setRequireImportApproval] = useStateS(
@@ -878,7 +878,7 @@ function PanePrivacy() {
     const { excludedApps, excludedSites } = normalizePrivacyFromSettings(privacySec);
     setApps(excludedApps);
     setSites(excludedSites);
-    setAllowServerMemoryAssembly(privacySec.allowChatServerMemoryAssembly !== false);
+    setAllowServerMemoryAssembly(privacySec.allowChatServerMemoryAssembly === true);
   }, [privacyKey]);
 
   React.useEffect(() => {

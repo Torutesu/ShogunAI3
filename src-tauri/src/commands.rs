@@ -12,33 +12,84 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
+const REDACT_MARKERS: &[&str] = &[
+  // API key / OAuth token prefixes (token body follows immediately).
+  "sk-",
+  "ya29.",
+  "ghp_",
+  "gho_",
+  "ghu_",
+  "ghs_",
+  "ghr_",
+  "github_pat_",
+  "xoxb-",
+  "xoxp-",
+  "xoxa-",
+  "xoxs-",
+  "xoxo-",
+  // HTTP auth header value.
+  "Bearer ",
+  // JSON body keys (value follows the opening quote).
+  "\"apiKey\":\"",
+  "\"api_key\":\"",
+  "\"accessToken\":\"",
+  "\"access_token\":\"",
+  "\"refreshToken\":\"",
+  "\"refresh_token\":\"",
+  "\"oauthClientSecret\":\"",
+  "\"clientSecret\":\"",
+  "\"client_secret\":\"",
+  "\"password\":\"",
+  "\"token\":\"",
+  // URL query keys (value follows `=`).
+  "access_token=",
+  "refresh_token=",
+  "client_secret=",
+  "password=",
+  "api_key=",
+  "apikey=",
+];
+
+fn is_redact_terminator(b: u8) -> bool {
+  matches!(
+    b,
+    b'"' | b' ' | b'\n' | b'\r' | b'\t' | b'&' | b',' | b'}' | b']' | b';' | b'<' | b'>'
+  )
+}
+
+/// Scans left-to-right once, redacting the token body after any known marker.
+/// Non-ASCII bytes outside a match are preserved on char boundaries.
 fn redact_sensitive_text(input: &str) -> String {
-  let mut out = input.to_string();
-  for marker in [
-    "sk-",
-    "Bearer ",
-    "\"apiKey\":\"",
-    "\"accessToken\":\"",
-    "\"refreshToken\":\"",
-    "\"oauthClientSecret\":\"",
-    "access_token=",
-    "refresh_token=",
-  ] {
-    loop {
-      let Some(pos) = out.find(marker) else {
+  if input.is_empty() {
+    return String::new();
+  }
+  let bytes = input.as_bytes();
+  let mut out = String::with_capacity(input.len());
+  let mut i = 0usize;
+  while i < bytes.len() {
+    let mut match_len: Option<usize> = None;
+    for m in REDACT_MARKERS {
+      let mb = m.as_bytes();
+      if bytes.len() - i >= mb.len() && &bytes[i..i + mb.len()] == mb {
+        match_len = Some(mb.len());
         break;
-      };
-      let start = pos + marker.len();
-      let bytes = out.as_bytes();
-      let mut end = start;
-      while end < out.len() {
-        let b = bytes[end];
-        if b == b'"' || b == b' ' || b == b'\n' || b == b'&' {
-          break;
-        }
-        end += 1;
       }
-      out.replace_range(start..end, "[REDACTED]");
+    }
+    if let Some(len) = match_len {
+      out.push_str(&input[i..i + len]);
+      i += len;
+      let start = i;
+      while i < bytes.len() && !is_redact_terminator(bytes[i]) {
+        i += 1;
+      }
+      if i > start {
+        out.push_str("[REDACTED]");
+      }
+    } else {
+      let ch = input[i..].chars().next().expect("non-empty remainder");
+      let clen = ch.len_utf8();
+      out.push(ch);
+      i += clen;
     }
   }
   out
@@ -858,5 +909,144 @@ pub fn auth_biometric_authenticate(payload: Value) -> Result<Value, String> {
       "stub": false,
       "echo": payload,
     })),
+  }
+}
+
+#[cfg(test)]
+mod redact_tests {
+  use super::redact_sensitive_text;
+
+  #[test]
+  fn empty_input_stays_empty() {
+    assert_eq!(redact_sensitive_text(""), "");
+  }
+
+  #[test]
+  fn passes_through_text_without_secrets() {
+    let s = "hello world — 日本語テキスト — no secrets here";
+    assert_eq!(redact_sensitive_text(s), s);
+  }
+
+  #[test]
+  fn redacts_openai_style_key() {
+    let out = redact_sensitive_text("key=sk-abc123XYZ other");
+    assert_eq!(out, "key=sk-[REDACTED] other");
+  }
+
+  #[test]
+  fn redacts_anthropic_style_key_via_sk_prefix() {
+    let out = redact_sensitive_text("token sk-ant-api03-abcDEF end");
+    assert_eq!(out, "token sk-[REDACTED] end");
+  }
+
+  #[test]
+  fn redacts_bearer_header_value() {
+    let out = redact_sensitive_text("Authorization: Bearer abc.def.ghi\nnext");
+    assert_eq!(out, "Authorization: Bearer [REDACTED]\nnext");
+  }
+
+  #[test]
+  fn bearer_header_does_not_infinite_loop() {
+    let out = redact_sensitive_text("Bearer sk-abc");
+    assert_eq!(out, "Bearer [REDACTED]");
+  }
+
+  #[test]
+  fn redacts_json_api_key_variants() {
+    let out = redact_sensitive_text(r#"{"apiKey":"sk-abc","api_key":"zzz"}"#);
+    assert!(out.contains(r#""apiKey":"[REDACTED]""#));
+    assert!(out.contains(r#""api_key":"[REDACTED]""#));
+    assert!(!out.contains("sk-abc"));
+    assert!(!out.contains("zzz"));
+  }
+
+  #[test]
+  fn redacts_json_oauth_tokens() {
+    let out = redact_sensitive_text(
+      r#"{"accessToken":"ya29.FOO","refreshToken":"1//refBAR","oauthClientSecret":"GOCSPX-xyz"}"#,
+    );
+    assert!(out.contains(r#""accessToken":"[REDACTED]""#));
+    assert!(out.contains(r#""refreshToken":"[REDACTED]""#));
+    assert!(out.contains(r#""oauthClientSecret":"[REDACTED]""#));
+    assert!(!out.contains("ya29.FOO"));
+    assert!(!out.contains("1//refBAR"));
+    assert!(!out.contains("GOCSPX-xyz"));
+  }
+
+  #[test]
+  fn redacts_snake_case_json_oauth_tokens() {
+    let out = redact_sensitive_text(
+      r#"{"access_token":"t1","refresh_token":"t2","client_secret":"s1"}"#,
+    );
+    assert!(!out.contains("t1"));
+    assert!(!out.contains("t2"));
+    assert!(!out.contains("s1"));
+    assert!(out.contains("\"access_token\":\"[REDACTED]\""));
+    assert!(out.contains("\"refresh_token\":\"[REDACTED]\""));
+    assert!(out.contains("\"client_secret\":\"[REDACTED]\""));
+  }
+
+  #[test]
+  fn redacts_password_and_generic_token_fields() {
+    let out = redact_sensitive_text(r#"{"password":"hunter2","token":"opaque"}"#);
+    assert!(!out.contains("hunter2"));
+    assert!(!out.contains("\"opaque\""));
+    assert!(out.contains("\"password\":\"[REDACTED]\""));
+    assert!(out.contains("\"token\":\"[REDACTED]\""));
+  }
+
+  #[test]
+  fn redacts_url_query_secrets() {
+    let out = redact_sensitive_text(
+      "https://api.example.com/cb?access_token=ABC&refresh_token=DEF&state=xyz",
+    );
+    assert!(!out.contains("ABC"));
+    assert!(!out.contains("DEF"));
+    assert!(out.contains("access_token=[REDACTED]"));
+    assert!(out.contains("refresh_token=[REDACTED]"));
+    assert!(out.contains("state=xyz"));
+  }
+
+  #[test]
+  fn redacts_github_tokens() {
+    for prefix in ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"] {
+      let raw = format!("prefix {}AAAAAAAAAA suffix", prefix);
+      let out = redact_sensitive_text(&raw);
+      assert_eq!(out, format!("prefix {}[REDACTED] suffix", prefix));
+    }
+    let out = redact_sensitive_text("pat github_pat_1122AABB end");
+    assert_eq!(out, "pat github_pat_[REDACTED] end");
+  }
+
+  #[test]
+  fn redacts_slack_tokens() {
+    let out = redact_sensitive_text("x xoxb-1-2-ABC x xoxp-9-foo ok");
+    assert_eq!(out, "x xoxb-[REDACTED] x xoxp-[REDACTED] ok");
+  }
+
+  #[test]
+  fn marker_with_no_body_does_not_emit_redacted() {
+    let out = redact_sensitive_text(r#"{"apiKey":"","other":"v"}"#);
+    assert!(!out.contains("[REDACTED]"));
+    assert!(out.contains(r#""apiKey":"""#));
+  }
+
+  #[test]
+  fn preserves_unicode_between_secrets() {
+    let out = redact_sensitive_text("鍵: sk-abc 、次: ya29.XYZ 終");
+    assert_eq!(out, "鍵: sk-[REDACTED] 、次: ya29.[REDACTED] 終");
+  }
+
+  #[test]
+  fn multiple_occurrences_all_redacted() {
+    let out = redact_sensitive_text("a=sk-one b=sk-two c=sk-three");
+    assert_eq!(out, "a=sk-[REDACTED] b=sk-[REDACTED] c=sk-[REDACTED]");
+  }
+
+  #[test]
+  fn json_object_close_terminates_value() {
+    let out = redact_sensitive_text(r#"{"token":"abc}def"}"#);
+    // The `}` before `def` is a terminator; anything after stays in place.
+    assert_eq!(out, r#"{"token":"[REDACTED]}def"}"#);
   }
 }

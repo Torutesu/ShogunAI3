@@ -12,7 +12,7 @@ fn privacy_allows_chat_server_memory_assembly() -> bool {
         .pointer("/sections/privacy/allowChatServerMemoryAssembly")
         .and_then(|v| v.as_bool())
     })
-    .unwrap_or(true)
+    .unwrap_or(false)
 }
 
 pub fn read_llm_prefs() -> Result<(String, String, u64), String> {

@@ -41,8 +41,8 @@ function ScreenChat() {
   const [webSearchOn, setWebSearchOn] = useStateB(true);
   /** Server-side Memory assembly (`memoryAssembly` on `chat.complete`); desktop runs search / semantic rerank. */
   const [assembleMemoryOn, setAssembleMemoryOn] = useStateB(false);
-  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateB(true);
+  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default false; opt-in). */
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateB(false);
   const pendingMemoryAssemblyRef = useRefB(null);
 
   useEffectB(() => {
@@ -64,7 +64,7 @@ function ScreenChat() {
       if (llm && typeof llm === 'object' && llm.model) setModelHint(String(llm.model));
       const priv = r.data.settings.sections.privacy;
       if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
       }
     })();
     return () => { cancelled = true; };
@@ -75,7 +75,7 @@ function ScreenChat() {
       void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
         if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
         }
       });
     };
@@ -414,7 +414,7 @@ function ScreenChat() {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenAgents() {
   const [runPrompt, setRunPrompt] = React.useState('');
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -422,7 +422,7 @@ function ScreenAgents() {
       if (cancelled || !r?.ok || !r.data?.settings?.sections?.privacy) return;
       const priv = r.data.settings.sections.privacy;
       if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
       }
     });
     return () => {
@@ -435,7 +435,7 @@ function ScreenAgents() {
       void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
         if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
         }
       });
     };

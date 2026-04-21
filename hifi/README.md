@@ -33,7 +33,7 @@ See **`action-map.md`** for the full UI ↔ command matrix. Summary:
 
 ## Privacy guardrail
 
-- `settings.sections.privacy.allowChatServerMemoryAssembly` (default `true`) explicitly controls whether server-side `memoryAssembly` is honored on `chat.complete` / `draft.create`.
+- `settings.sections.privacy.allowChatServerMemoryAssembly` (default `false`; opt-in) explicitly controls whether server-side `memoryAssembly` is honored on `chat.complete` / `draft.create`. When unset or `false`, Rust ignores client-sent `memoryAssembly`.
 - Settings save emits `shogun-privacy-settings-changed`; Chat / Memory / Work / Meetings / Agents reload this flag via `settings.load` without remount.
 - `window.shogunBriefTelemetrySink` now persists `chat.completion.context` events to a local ring buffer (`localStorage`) and ingests compact telemetry rows to Memory (`source: telemetry_chat_context`).
 

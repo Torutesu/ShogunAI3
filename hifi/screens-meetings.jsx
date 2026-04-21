@@ -152,8 +152,8 @@ function ScreenMeetings() {
   const [mtgShareOwner, setMtgShareOwner] = useState({ displayName: '', email: '' });
   const [mtgLinkBusy, setMtgLinkBusy] = useState(false);
   const [mtgLinkAccessMenuOpen, setMtgLinkAccessMenuOpen] = useState(false);
-  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
+  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default false; opt-in). */
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(false);
 
   granolaRef.current = granola;
 
@@ -176,7 +176,7 @@ function ScreenMeetings() {
       if (cancelled || !r || !r.ok || !r.data || !r.data.settings || !r.data.settings.sections) return;
       var priv = r.data.settings.sections.privacy;
       if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
       }
     });
     return function () { cancelled = true; };
@@ -187,7 +187,7 @@ function ScreenMeetings() {
       runRuntimeActionM('settings.load', {}, { silentError: true }).then(function (r) {
         var priv = r && r.ok && r.data && r.data.settings && r.data.settings.sections && r.data.settings.sections.privacy;
         if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
         }
       });
     }

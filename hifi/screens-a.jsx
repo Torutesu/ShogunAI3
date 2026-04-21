@@ -1116,7 +1116,7 @@ function ScreenMemory() {
       }
       const priv = r?.ok && r.data?.settings?.sections?.privacy;
       if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
       }
       setMemorySettingsLoaded(true);
     })();
@@ -1127,7 +1127,7 @@ function ScreenMemory() {
       void runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
         if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly === true);
         }
       });
     };
