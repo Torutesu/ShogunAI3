@@ -54,3 +54,6 @@ jobs:
       - name: Tauri production build (bundle)
         run: npm run build:desktop
         timeout-minutes: 45
+
+      - name: Verify amc-pipeline bundling
+        run: node scripts/check-bundle-amc.mjs

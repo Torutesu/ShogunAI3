@@ -7,7 +7,7 @@
 //! to three `related_kioku_hits` from a local FTS5 search over the
 //! candidate's title (synthetic relevance scores: 0.95 / 0.80 / 0.65).
 
-use crate::{meeting_store, memory_store};
+use crate::{meeting_store, memory_store, paths};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{json, Value};
 
@@ -187,6 +187,54 @@ pub fn memory_row_to_candidate(row: &Value) -> Option<Value> {
   }))
 }
 
+/// Pure: map an `active_focus.json` document into a `focus_block`
+/// candidate. Returns `None` when required fields (`started_at_ms`,
+/// `ends_at_ms`) are missing or non-numeric. The candidate id is
+/// `focus_active_<started_at_ms>` so repeated reads of the same
+/// active session collapse to one entry.
+pub fn active_focus_to_candidate(active: &Value) -> Option<Value> {
+  let started_at_ms = active.get("started_at_ms").and_then(|v| v.as_u64())?;
+  let ends_at_ms = active.get("ends_at_ms").and_then(|v| v.as_u64())?;
+  let task = active
+    .get("task")
+    .and_then(|v| v.as_str())
+    .unwrap_or("focus")
+    .to_string();
+  let start = epoch_ms_to_rfc3339(started_at_ms).unwrap_or_default();
+  let end = epoch_ms_to_rfc3339(ends_at_ms).unwrap_or_default();
+  Some(json!({
+    "candidate_id": format!("focus_active_{}", started_at_ms),
+    "trigger_source": "focus_block",
+    "raw_data": {
+      "focus_block": {
+        "start": start,
+        "end": end,
+      },
+      "weekly_brief": {
+        "stuck_label": task,
+      },
+    },
+    "related_kioku_hits": [],
+    "decision_graph_hits": [],
+    "available_mcp_tools": [
+      "shogun.start_focus_session",
+      "shogun.open_pack",
+    ],
+  }))
+}
+
+/// Read `active_focus.json` from the app data dir if present.
+/// Errors (missing file, invalid JSON) collapse to `None` so the
+/// caller stays robust.
+fn read_active_focus() -> Option<Value> {
+  let path = paths::app_data_dir().ok()?.join("active_focus.json");
+  if !path.exists() {
+    return None;
+  }
+  let raw = std::fs::read_to_string(&path).ok()?;
+  serde_json::from_str(&raw).ok()
+}
+
 /// Pure: map one `meeting_store::list_meetings` row into a
 /// `MorningBriefCandidate`. Treats meetings as `calendar` triggers
 /// (the pipeline has no dedicated meeting bucket; meetings ARE
@@ -274,7 +322,18 @@ pub fn build_candidates() -> Vec<Value> {
       }
     }
   }
+  if let Some(active) = read_active_focus() {
+    if let Some(c) = active_focus_to_candidate(&active) {
+      out.push(c);
+    }
+  }
   out.truncate(TOTAL_CAP);
+  // NOTE: candidate fields `decision_graph_hits` and `weekly_brief.stuck_days`
+  // are intentionally left empty / unset. We have no reliable local signal
+  // for either today: there is no decision graph store, and `created_at` on
+  // memory rows is the ingest timestamp (not the upstream "received" /
+  // "last touched" time), so deriving stuck-days from row age would
+  // mislead the composer. Ship them once an upstream signal lands.
   enrich_with_related_hits(&mut out);
   out
 }
@@ -429,6 +488,64 @@ mod tests {
       c["raw_data"]["calendar_event"]["title"].as_str(),
       Some("Meeting")
     );
+  }
+
+  // ---- active_focus_to_candidate ----
+
+  #[test]
+  fn active_focus_becomes_focus_block_candidate() {
+    let active = json!({
+      "task": "lp_v2_copy",
+      "duration_minutes": 60,
+      "started_at_ms": 1_776_900_225_000u64,
+      "ends_at_ms": 1_776_903_825_000u64,
+    });
+    let c = active_focus_to_candidate(&active).expect("candidate");
+    assert_eq!(c["candidate_id"].as_str(), Some("focus_active_1776900225000"));
+    assert_eq!(c["trigger_source"].as_str(), Some("focus_block"));
+    assert_eq!(
+      c["raw_data"]["focus_block"]["start"].as_str(),
+      Some("2026-04-22T23:23:45Z")
+    );
+    assert_eq!(
+      c["raw_data"]["focus_block"]["end"].as_str(),
+      Some("2026-04-23T00:23:45Z")
+    );
+    assert_eq!(
+      c["raw_data"]["weekly_brief"]["stuck_label"].as_str(),
+      Some("lp_v2_copy")
+    );
+    // `decision_graph_hits` and `stuck_days` deliberately absent / empty.
+    assert_eq!(c["decision_graph_hits"].as_array().unwrap().len(), 0);
+    assert!(c.get("stuck_days").is_none());
+  }
+
+  #[test]
+  fn active_focus_missing_timestamps_returns_none() {
+    let active = json!({ "task": "x" });
+    assert!(active_focus_to_candidate(&active).is_none());
+  }
+
+  #[test]
+  fn active_focus_missing_task_falls_back_to_focus() {
+    let active = json!({
+      "started_at_ms": 1_776_900_225_000u64,
+      "ends_at_ms": 1_776_903_825_000u64,
+    });
+    let c = active_focus_to_candidate(&active).unwrap();
+    assert_eq!(
+      c["raw_data"]["weekly_brief"]["stuck_label"].as_str(),
+      Some("focus")
+    );
+  }
+
+  #[test]
+  fn active_focus_non_numeric_timestamps_returns_none() {
+    let active = json!({
+      "started_at_ms": "not-a-number",
+      "ends_at_ms": 1_776_903_825_000u64,
+    });
+    assert!(active_focus_to_candidate(&active).is_none());
   }
 
   // ---- attach_related_hits / synthetic_relevance ----
