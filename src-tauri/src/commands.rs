@@ -1,8 +1,9 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
 use crate::{
-  auth, biometric, brief, brief_actions, embed_backfill, gmail, google_calendar, integration_secrets,
-  integrations, llm, macos_ax, memory_store, secrets, settings_store,
+  auth, biometric, brief, brief_actions, diagnostics, embed_backfill, gmail, google_calendar,
+  integration_secrets, integrations, llm, macos_ax, meeting_store, memory_store, secrets,
+  settings_store,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -675,6 +676,7 @@ pub fn app_diagnostics_report(payload: Value) -> Result<Value, String> {
       .unwrap_or(15)
       .clamp(5, 1440),
   });
+  let recent_errors = diagnostics::snapshot();
   let summary = json!({
     "capture": capture,
     "macosAccessibilityTrusted": ax_trusted,
@@ -682,6 +684,7 @@ pub fn app_diagnostics_report(payload: Value) -> Result<Value, String> {
       "google_calendar": google_calendar_summary,
       "calendarAutoSync": calendar_auto,
     },
+    "recentErrors": recent_errors,
   });
   let report = json!({
     "id": id,
@@ -693,6 +696,7 @@ pub fn app_diagnostics_report(payload: Value) -> Result<Value, String> {
       "google_calendar": google_calendar_summary,
       "calendarAutoSync": calendar_auto,
     },
+    "recentErrors": recent_errors,
     "echo": payload,
   });
   std::fs::write(
@@ -764,52 +768,114 @@ pub async fn app_updates_download_install(app: AppHandle) -> Result<(), String> 
   app.restart();
 }
 
+/// Translate a supported `range` token into a cutoff (epoch ms). Rows with
+/// `created_at >= cutoff` (or `started_at >= cutoff`) are removed. `now_ms`
+/// is passed in to keep the logic pure and testable.
+pub(crate) fn compute_range_cutoff_ms(range: &str, now_ms: u64) -> Result<u64, String> {
+  match range {
+    "last_hour" => Ok(now_ms.saturating_sub(3_600_000)),
+    "last_day" => Ok(now_ms.saturating_sub(86_400_000)),
+    "custom" => Err("Custom range deletion is not implemented in v1.".to_string()),
+    _ => Err(format!("Unknown range: {}", range)),
+  }
+}
+
+/// Delete data produced within `range` from the local stores.
+///
+/// **Scope (deleted):**
+/// - `mem_items` rows with `created_at >= cutoff` (FTS5 trigger keeps index in sync).
+/// - `meetings` rows with `started_at >= cutoff`. Cascades via FK
+///   `ON DELETE CASCADE` to `meeting_transcript_segments` and
+///   `meeting_note_blocks`.
+///
+/// **Not affected:** `settings.json`, `schedule_queue.json`, Keychain entries
+/// (LLM API key, integration credentials, Clerk session snapshot),
+/// material packs under `packs/`, meeting templates, and any rows
+/// outside the range.
 #[tauri::command]
 pub fn app_delete_data_range(payload: Value) -> Result<Value, String> {
   let range = payload
     .get("range")
     .and_then(|r| r.as_str())
     .unwrap_or("");
-  let now = ts();
-  let cutoff = match range {
-    "last_hour" => now.saturating_sub(3_600_000),
-    "last_day" => now.saturating_sub(86_400_000),
-    "custom" => {
-      return Err("Custom range deletion is not implemented in v1.".to_string());
-    }
-    _ => return Err(format!("Unknown range: {}", range)),
-  };
+  let cutoff = compute_range_cutoff_ms(range, ts())?;
   memory_store::delete_items_created_since(cutoff)?;
+  let meetings_removed = meeting_store::delete_meetings_started_since(cutoff)?;
   Ok(json!({
     "deleted": true,
     "range": range,
+    "meetingsRemoved": meetings_removed,
     "stub": false,
     "echo": payload,
   }))
 }
 
+fn clear_schedule_queue_file() -> Result<bool, String> {
+  let path = paths::app_data_dir()?.join("schedule_queue.json");
+  if path.exists() {
+    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    Ok(true)
+  } else {
+    Ok(false)
+  }
+}
+
+/// Delete **all** local application data on this machine.
+///
+/// **Scope (deleted):**
+/// - Every regular file directly under the app data directory — this
+///   includes `memory.db` (dropping both `mem_items` and meeting tables),
+///   `settings.json`, `schedule_queue.json`, and any legacy JSON.
+/// - The `packs/` directory (material packs + focus notes).
+/// - Keychain: LLM API key (`ai.shogun.desktop`), Clerk session snapshot,
+///   and every known integration credential (Google Calendar, Gmail, ...).
+///
+/// **Not affected:** the app data directory itself (recreated on next
+/// write); nested subdirectories other than `packs/`.
+///
+/// Keychain failures are reported as `keychainErrors` in the response
+/// rather than aborting, so users can still re-run this command after
+/// a partial failure.
 #[tauri::command]
 pub fn app_delete_all_data(payload: Value) -> Result<Value, String> {
   paths::clear_app_data_files()?;
-  let _ = secrets::clear_llm_api_key();
-  let _ = secrets::clear_clerk_snapshot();
+  let _ = clear_schedule_queue_file(); // best-effort; files pass above may have already removed it.
+  let mut keychain_errors: Vec<String> = Vec::new();
+  if let Err(e) = secrets::clear_llm_api_key() {
+    keychain_errors.push(format!("llm_api_key: {}", e));
+  }
+  if let Err(e) = secrets::clear_clerk_snapshot() {
+    keychain_errors.push(format!("clerk_snapshot: {}", e));
+  }
   integration_secrets::clear_all_known();
   Ok(json!({
     "deleted": true,
+    "keychainErrors": keychain_errors,
     "stub": false,
     "echo": payload,
   }))
 }
 
+/// Delete all local data and surface any Keychain LLM-key failure as an
+/// error (the LLM key is treated as account-critical). Clerk snapshot
+/// removal failures are reported via `keychainErrors` and do not abort.
+///
+/// Scope is otherwise identical to [`app_delete_all_data`]; no cloud
+/// account is associated with this build.
 #[tauri::command]
 pub fn app_delete_account(payload: Value) -> Result<Value, String> {
   paths::clear_app_data_files()?;
+  let _ = clear_schedule_queue_file();
   secrets::clear_llm_api_key()?;
-  let _ = secrets::clear_clerk_snapshot();
+  let mut keychain_errors: Vec<String> = Vec::new();
+  if let Err(e) = secrets::clear_clerk_snapshot() {
+    keychain_errors.push(format!("clerk_snapshot: {}", e));
+  }
   integration_secrets::clear_all_known();
   Ok(json!({
     "deleted": true,
     "note": "Local data cleared. No cloud account is associated with this build.",
+    "keychainErrors": keychain_errors,
     "stub": false,
     "echo": payload,
   }))
@@ -1048,5 +1114,47 @@ mod redact_tests {
     let out = redact_sensitive_text(r#"{"token":"abc}def"}"#);
     // The `}` before `def` is a terminator; anything after stays in place.
     assert_eq!(out, r#"{"token":"[REDACTED]}def"}"#);
+  }
+}
+
+#[cfg(test)]
+mod range_cutoff_tests {
+  use super::compute_range_cutoff_ms;
+
+  #[test]
+  fn last_hour_subtracts_one_hour() {
+    let now = 10_000_000_000u64;
+    let cutoff = compute_range_cutoff_ms("last_hour", now).unwrap();
+    assert_eq!(cutoff, now - 3_600_000);
+  }
+
+  #[test]
+  fn last_day_subtracts_one_day() {
+    let now = 10_000_000_000u64;
+    let cutoff = compute_range_cutoff_ms("last_day", now).unwrap();
+    assert_eq!(cutoff, now - 86_400_000);
+  }
+
+  #[test]
+  fn saturates_at_zero_for_small_now() {
+    let cutoff = compute_range_cutoff_ms("last_day", 1000).unwrap();
+    assert_eq!(cutoff, 0);
+  }
+
+  #[test]
+  fn custom_range_is_not_yet_supported() {
+    let err = compute_range_cutoff_ms("custom", 1).unwrap_err();
+    assert!(err.contains("Custom range"));
+  }
+
+  #[test]
+  fn unknown_range_returns_error_with_token() {
+    let err = compute_range_cutoff_ms("last_week", 1).unwrap_err();
+    assert!(err.contains("last_week"));
+  }
+
+  #[test]
+  fn empty_range_is_rejected() {
+    assert!(compute_range_cutoff_ms("", 1).is_err());
   }
 }

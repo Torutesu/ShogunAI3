@@ -7,6 +7,7 @@ mod capture_sampler;
 mod context_assembly;
 mod commands;
 mod deep_link_credentials;
+mod diagnostics;
 mod embed_backfill;
 mod embeddings;
 mod gmail;

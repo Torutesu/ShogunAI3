@@ -1,6 +1,6 @@
 //! Periodic Google Calendar → Memory sync when enabled in settings and credentials exist.
 
-use crate::{google_calendar, integration_secrets, settings_store};
+use crate::{diagnostics, google_calendar, integration_secrets, settings_store};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::async_runtime::spawn;
@@ -66,7 +66,10 @@ pub fn spawn_background_calendar_sync() {
             *last = Some(now_ms());
           }
         }
-        Err(e) => log::warn!("calendar auto-sync failed: {}", e),
+        Err(e) => {
+          log::warn!("calendar auto-sync failed: {}", e);
+          diagnostics::record("calendar_sync.auto", e);
+        }
       }
     }
   });

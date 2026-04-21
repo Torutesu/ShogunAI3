@@ -376,6 +376,20 @@ pub fn purge_meeting(meeting_id: &str) -> Result<(), String> {
   Ok(())
 }
 
+/// Delete meetings (and cascade transcript segments + note blocks via FK)
+/// with `started_at >= cutoff_ms`. Returns the number of meeting rows removed.
+pub fn delete_meetings_started_since(cutoff_ms: u64) -> Result<usize, String> {
+  let conn = memory_store::open_conn()?;
+  let cutoff = cutoff_ms as i64;
+  let removed = conn
+    .execute(
+      "DELETE FROM meetings WHERE started_at >= ?1",
+      params![cutoff],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(removed)
+}
+
 fn row_meeting_list(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
   let participants_raw: String = r.get(6)?;
   let participants: Value = serde_json::from_str(&participants_raw).unwrap_or(json!([]));

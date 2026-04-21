@@ -1,7 +1,7 @@
 //! Background sampler: macOS frontmost app name ingested as memory (no screenshots).
 //! Optional Accessibility-rich snapshot when `sections.capture.axRichCapture` is true.
 
-use crate::{macos_ax, memory_store, settings_store};
+use crate::{diagnostics, macos_ax, memory_store, settings_store};
 use serde_json::json;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -126,7 +126,9 @@ fn maybe_ingest_focus(app: &str) {
     "source": "capture_sampler",
     "kinds": ["screen"],
   });
-  let _ = memory_store::ingest(&payload);
+  if let Err(e) = memory_store::ingest(&payload) {
+    diagnostics::record("capture_sampler.focus_ingest", e);
+  }
 }
 
 fn maybe_ingest_ax(text: &str) {
@@ -163,7 +165,9 @@ fn maybe_ingest_ax(text: &str) {
     "source": "capture_ax",
     "kinds": ["screen", "accessibility"],
   });
-  let _ = memory_store::ingest(&payload);
+  if let Err(e) = memory_store::ingest(&payload) {
+    diagnostics::record("capture_sampler.ax_ingest", e);
+  }
 }
 
 pub fn start_background_sampler() {
