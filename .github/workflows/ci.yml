@@ -28,6 +28,9 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Install amc-pipeline deps (needed at cargo check time for tauri.conf.json bundle.resources glob)
+        run: npm --prefix hifi/amc-pipeline ci --omit=dev
+
       - name: Action wiring check
         run: npm run check:actions
 
