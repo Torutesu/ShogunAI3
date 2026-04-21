@@ -50,8 +50,10 @@ See **`action-map.md`** for the full UI ↔ command matrix. Summary:
 
 - On Home mount, calls `brief.get` and renders `data.brief` when present.
 - Primary CTA per row: `next_action.mcp_tool.tool_name` (e.g. `shogun.open_pack`) with `arguments`.
-- When the v2 gate is on (payload `forceV2`, `version: "2" | "2.0"`, or `sections.brief.morningBriefVersion === "2"`), Rust spawns the Node **`amc-pipeline`** as a one-shot subprocess (`node <repo>/hifi/amc-pipeline/src/cli.js --dry`), parses its **v1** JSON, and maps it to the **v2** shape (`morning-brief-v2.schema.json`) via `src-tauri/src/brief_v2_adapter.rs`. On any sidecar or mapping failure, Rust falls back to the built-in v2 stub and annotates the response with `fallbackReason`; the failure is also logged into `diagnostics::record` so it shows up under `app_diagnostics_report.recentErrors`.
-- **Phase B.1** runs the pipeline on its bundled fixture; **Phase B.2** will pass real candidates (memory / calendar / meetings) and call Anthropic.
+- When the v2 gate is on (payload `forceV2`, `version: "2" | "2.0"`, or `sections.brief.morningBriefVersion === "2"`), Rust builds `MorningBriefCandidate` objects from local memory (`google_calendar` + `gmail` rows within ~3 days, cap 20) via `amc_candidates::build_candidates`, then spawns the Node **`amc-pipeline`** as a one-shot subprocess (`node <repo>/hifi/amc-pipeline/src/cli.js --stdin`) and pipes the JSON array into its stdin. The v1 response is mapped to **v2** (`morning-brief-v2.schema.json`) via `brief_v2_adapter`. When no local candidates are available, Rust falls back to the pipeline's bundled fixture (`--dry`).
+- The pipeline itself decides `--dry` vs. live Anthropic LLM based on `ANTHROPIC_API_KEY` (passed through from the user's environment). There is no Settings UI for the Anthropic key yet; dev users can `export ANTHROPIC_API_KEY=...`.
+- On any sidecar / mapping failure, or when the pipeline responds with `{skipped: true}`, Rust returns the built-in v2 stub annotated with `fallbackReason` and records the error via `diagnostics::record` (surfaced under `app_diagnostics_report.recentErrors`).
+- v2 responses also carry `sourceMode: "stdin_candidates" | "fixture_dry"` and `candidateCount` so callers can tell whether the brief was composed from real local data or the fixture.
 
 ## AMC pipeline (Node)
 

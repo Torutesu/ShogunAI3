@@ -1,3 +1,4 @@
+mod amc_candidates;
 mod amc_sidecar;
 mod auth;
 mod biometric;

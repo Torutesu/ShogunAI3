@@ -4,6 +4,7 @@
  * Usage:
  *   node src/cli.js --dry [--fixture path]
  *   node src/cli.js --validate-only
+ *   node src/cli.js --stdin [--dry]      # JSON array of MorningBriefCandidate on stdin
  */
 import fs from "fs";
 import path from "path";
@@ -26,22 +27,40 @@ function readFixture(p) {
   return Array.isArray(j) ? j : j.candidates || [];
 }
 
+async function readStdin() {
+  const chunks = [];
+  for await (const c of process.stdin) chunks.push(c);
+  const buf = Buffer.concat(chunks).toString("utf8").trim();
+  if (!buf) return [];
+  const parsed = JSON.parse(buf);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && Array.isArray(parsed.candidates)) return parsed.candidates;
+  throw new Error(
+    "--stdin expected a JSON array of MorningBriefCandidate or `{candidates: [...]}`"
+  );
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const dry = argv.includes("--dry") || !process.env.ANTHROPIC_API_KEY;
   const validateOnly = argv.includes("--validate-only");
+  const useStdin = argv.includes("--stdin");
   const fi = argv.indexOf("--fixture");
   const fixturePath =
     fi >= 0 && argv[fi + 1]
       ? path.resolve(argv[fi + 1])
       : path.join(__dirname, "../fixtures/mock-candidates.json");
 
-  if (!fs.existsSync(fixturePath)) {
-    console.error("Fixture not found:", fixturePath);
-    process.exit(1);
+  let candidates;
+  if (useStdin) {
+    candidates = await readStdin();
+  } else {
+    if (!fs.existsSync(fixturePath)) {
+      console.error("Fixture not found:", fixturePath);
+      process.exit(1);
+    }
+    candidates = readFixture(fixturePath);
   }
-
-  const candidates = readFixture(fixturePath);
   if (validateOnly) {
     const res = await runMorningBriefPipeline(candidates, { dryRun: true });
     if (res.skipped) {

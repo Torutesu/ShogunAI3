@@ -1,15 +1,19 @@
 //! Spawns the Node-based AMC (`hifi/amc-pipeline`) as a one-shot subprocess
 //! and returns its v1 Morning Brief JSON.
 //!
-//! **Scope (Phase B.1):** dev-mode fixture dry-run only. Live LLM-backed
-//! candidate ingestion (memory / calendar / meetings) is left to Phase B.2.
-//! Production bundling of the pipeline + `node_modules` is also follow-up.
+//! Supports two input modes:
+//! - **fixture** (`run_pipeline_dry`): the pipeline reads its bundled mock.
+//! - **stdin** (`run_pipeline_with_candidates`): Rust builds
+//!   `MorningBriefCandidate` JSON locally (see `amc_candidates`) and pipes
+//!   it to the pipeline's `--stdin` reader.
+//!
+//! Production bundling of the pipeline + `node_modules` is follow-up.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::{Child, Command};
 use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
@@ -44,8 +48,7 @@ impl std::fmt::Display for SidecarError {
 ///
 /// In `tauri dev`, the compiled binary carries `CARGO_MANIFEST_DIR` from
 /// `src-tauri/`, so `../hifi/amc-pipeline/src/cli.js` resolves correctly.
-/// Production bundles will need a different strategy (Tauri resource dir);
-/// see Phase B.2.
+/// Production bundles will need a different strategy (Tauri resource dir).
 pub(crate) fn resolve_pipeline_path() -> PathBuf {
   let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
   manifest.join("../hifi/amc-pipeline/src/cli.js")
@@ -55,30 +58,17 @@ fn node_binary() -> String {
   std::env::var("SHOGUN_NODE_BIN").unwrap_or_else(|_| "node".to_string())
 }
 
-/// Run the pipeline in `--dry` mode on its bundled fixture and return the
-/// parsed v1 JSON object.
-pub async fn run_pipeline_dry() -> Result<Value, SidecarError> {
-  run_pipeline_dry_with(DEFAULT_TIMEOUT_MS, resolve_pipeline_path()).await
-}
-
-/// Test seam: allow overriding timeout + script path.
-pub(crate) async fn run_pipeline_dry_with(
-  timeout_ms: u64,
-  script: PathBuf,
-) -> Result<Value, SidecarError> {
-  if !script.exists() {
-    return Err(SidecarError::PipelineNotFound(script));
-  }
-
-  let mut child = Command::new(node_binary())
-    .arg(&script)
-    .arg("--dry")
+fn base_command(script: &Path) -> Command {
+  let mut cmd = Command::new(node_binary());
+  cmd
+    .arg(script)
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::piped())
-    .kill_on_drop(true)
-    .spawn()
-    .map_err(|e| SidecarError::NodeSpawnFailed(e.to_string()))?;
+    .kill_on_drop(true);
+  cmd
+}
 
+async fn collect_output(mut child: Child, timeout_ms: u64) -> Result<Value, SidecarError> {
   let mut stdout = child.stdout.take().expect("stdout piped");
   let mut stderr = child.stderr.take().expect("stderr piped");
 
@@ -90,29 +80,25 @@ pub(crate) async fn run_pipeline_dry_with(
     let mut stderr_open = true;
     loop {
       tokio::select! {
-        r = stdout.read(&mut out_buf) => {
-          match r {
-            Ok(0) => break,
-            Ok(n) => {
-              if out.len() + n > MAX_STDOUT_BYTES {
-                return Err(SidecarError::StdoutTooLarge);
-              }
-              out.extend_from_slice(&out_buf[..n]);
+        r = stdout.read(&mut out_buf) => match r {
+          Ok(0) => break,
+          Ok(n) => {
+            if out.len() + n > MAX_STDOUT_BYTES {
+              return Err(SidecarError::StdoutTooLarge);
             }
-            Err(e) => return Err(SidecarError::NodeSpawnFailed(e.to_string())),
+            out.extend_from_slice(&out_buf[..n]);
           }
-        }
-        r = stderr.read(&mut err_buf), if stderr_open => {
-          match r {
-            Ok(0) => { stderr_open = false; }
-            Ok(n) => {
-              if err.len() < 8192 {
-                let take = n.min(8192 - err.len());
-                err.extend_from_slice(&err_buf[..take]);
-              }
+          Err(e) => return Err(SidecarError::NodeSpawnFailed(e.to_string())),
+        },
+        r = stderr.read(&mut err_buf), if stderr_open => match r {
+          Ok(0) => { stderr_open = false; }
+          Ok(n) => {
+            if err.len() < 8192 {
+              let take = n.min(8192 - err.len());
+              err.extend_from_slice(&err_buf[..take]);
             }
-            Err(_) => { stderr_open = false; }
           }
+          Err(_) => { stderr_open = false; }
         }
       }
     }
@@ -141,8 +127,75 @@ pub(crate) async fn run_pipeline_dry_with(
   }
 
   let text = String::from_utf8_lossy(&stdout_bytes);
-  let value: Value = serde_json::from_str(&text).map_err(|e| SidecarError::InvalidJson(e.to_string()))?;
-  Ok(value)
+  serde_json::from_str(&text).map_err(|e| SidecarError::InvalidJson(e.to_string()))
+}
+
+/// Run the pipeline in `--dry` mode on its bundled fixture.
+pub async fn run_pipeline_dry() -> Result<Value, SidecarError> {
+  run_pipeline_dry_with(DEFAULT_TIMEOUT_MS, resolve_pipeline_path()).await
+}
+
+/// Test seam: explicit timeout + script path for the fixture path.
+pub(crate) async fn run_pipeline_dry_with(
+  timeout_ms: u64,
+  script: PathBuf,
+) -> Result<Value, SidecarError> {
+  if !script.exists() {
+    return Err(SidecarError::PipelineNotFound(script));
+  }
+  let child = base_command(&script)
+    .arg("--dry")
+    .spawn()
+    .map_err(|e| SidecarError::NodeSpawnFailed(e.to_string()))?;
+  collect_output(child, timeout_ms).await
+}
+
+/// Run the pipeline with a locally-built candidate list piped to stdin.
+/// When `dry` is true the composer runs its heuristic only; otherwise
+/// the pipeline itself decides based on `ANTHROPIC_API_KEY` (see
+/// `hifi/amc-pipeline/src/cli.js`). `candidates` may be empty; the
+/// pipeline then emits `{skipped: true}`.
+pub async fn run_pipeline_with_candidates(
+  candidates: &[Value],
+  dry: bool,
+) -> Result<Value, SidecarError> {
+  run_pipeline_with_candidates_inner(candidates, dry, DEFAULT_TIMEOUT_MS, resolve_pipeline_path())
+    .await
+}
+
+pub(crate) async fn run_pipeline_with_candidates_inner(
+  candidates: &[Value],
+  dry: bool,
+  timeout_ms: u64,
+  script: PathBuf,
+) -> Result<Value, SidecarError> {
+  if !script.exists() {
+    return Err(SidecarError::PipelineNotFound(script));
+  }
+  let payload = serde_json::to_vec(&Value::Array(candidates.to_vec()))
+    .map_err(|e| SidecarError::InvalidJson(e.to_string()))?;
+
+  let mut cmd = base_command(&script);
+  cmd.arg("--stdin");
+  if dry {
+    cmd.arg("--dry");
+  }
+  cmd.stdin(std::process::Stdio::piped());
+
+  let mut child = cmd
+    .spawn()
+    .map_err(|e| SidecarError::NodeSpawnFailed(e.to_string()))?;
+
+  if let Some(mut stdin) = child.stdin.take() {
+    if let Err(e) = stdin.write_all(&payload).await {
+      let _ = child.kill().await;
+      return Err(SidecarError::NodeSpawnFailed(e.to_string()));
+    }
+    let _ = stdin.shutdown().await;
+    drop(stdin);
+  }
+
+  collect_output(child, timeout_ms).await
 }
 
 #[cfg(test)]
@@ -157,7 +210,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn missing_script_returns_not_found() {
+  async fn missing_script_returns_not_found_for_dry() {
     let bogus = PathBuf::from("/tmp/definitely-not-a-path-shogun/cli.js");
     let err = run_pipeline_dry_with(1000, bogus.clone()).await.unwrap_err();
     match err {
@@ -166,10 +219,20 @@ mod tests {
     }
   }
 
+  #[tokio::test]
+  async fn missing_script_returns_not_found_for_stdin() {
+    let bogus = PathBuf::from("/tmp/definitely-not-a-path-shogun/cli.js");
+    let err = run_pipeline_with_candidates_inner(&[], true, 1000, bogus.clone())
+      .await
+      .unwrap_err();
+    match err {
+      SidecarError::PipelineNotFound(p) => assert_eq!(p, bogus),
+      other => panic!("expected PipelineNotFound, got {:?}", other),
+    }
+  }
+
   #[test]
   fn node_binary_honors_env_override() {
-    // Unsafe only on test threads sharing env; this project runs tests single-threaded
-    // for cross-crate safety but here we just verify the default path.
     let current = std::env::var("SHOGUN_NODE_BIN").ok();
     assert_eq!(current.unwrap_or_else(|| "node".into()), node_binary());
   }

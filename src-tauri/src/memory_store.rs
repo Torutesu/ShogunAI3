@@ -506,6 +506,40 @@ fn search_recent(conn: &Connection, kinds_want: &[String], limit: usize) -> Resu
   Ok((out, total))
 }
 
+/// Recent rows with `source = ?` and `created_at >= since_ms`, newest first.
+/// Returns the same item shape as [`search`] (`id`, `title`, `snippet`,
+/// `source`, `kinds`, `created_at`). `limit` is clamped to 1..=100.
+pub fn recent_by_source(
+  source: &str,
+  since_ms: u64,
+  limit: usize,
+) -> Result<Vec<Value>, String> {
+  let conn = open_conn()?;
+  let limit = limit.clamp(1, 100) as i64;
+  let since = since_ms as i64;
+  let mut stmt = conn
+    .prepare(
+      "SELECT id, title, snippet, source, kinds_json, created_at \
+       FROM mem_items \
+       WHERE source = ?1 AND created_at >= ?2 \
+       ORDER BY created_at DESC LIMIT ?3",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map(params![source, since, limit], |r| {
+      Ok(row_to_item(
+        r.get::<_, String>(0)?,
+        r.get::<_, String>(1)?,
+        r.get::<_, String>(2)?,
+        r.get::<_, String>(3)?,
+        r.get::<_, String>(4)?,
+        r.get::<_, i64>(5)?,
+      ))
+    })
+    .map_err(|e| e.to_string())?;
+  Ok(rows.filter_map(Result::ok).collect())
+}
+
 /// Append a memory item. Payload: `{ title, snippet?, kinds?, source? }` (WRITE).
 pub fn ingest(payload: &Value) -> Result<Value, String> {
   let conn = open_conn()?;

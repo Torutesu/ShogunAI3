@@ -3,6 +3,7 @@
 //! Stub copy is English to keep the source ASCII-safe; localized AMC text
 //! comes from the composer pipeline.
 
+use crate::amc_candidates;
 use crate::amc_sidecar;
 use crate::brief_v2_adapter;
 use crate::diagnostics;
@@ -143,19 +144,45 @@ pub fn should_use_v2(settings: &Value, payload: &Value) -> bool {
   payload_wants_v2(payload) || settings_use_v2(settings)
 }
 
-/// Produce a v2 Morning Brief. Tries the Node AMC pipeline as a one-shot
-/// subprocess; on any failure, falls back to the built-in stub annotated
-/// with `fallbackReason` so the UI can surface a toast and diagnostics
-/// can show the underlying error.
+/// Produce a v2 Morning Brief. Gathers local candidates (calendar /
+/// gmail memory rows) and pipes them to the Node AMC pipeline on
+/// stdin. When no candidates are available locally, falls back to the
+/// pipeline's bundled fixture (dry) so the UI still gets a realistic
+/// shape. Any sidecar or adapter failure is recorded in
+/// `diagnostics::record` and surfaced via a `fallbackReason` on the
+/// built-in stub.
 ///
-/// Phase B.1 wiring: the pipeline runs on its bundled fixture in `--dry`
-/// mode. Live candidate ingestion + LLM calls are Phase B.2.
+/// The pipeline itself decides `--dry` vs. live LLM based on
+/// `ANTHROPIC_API_KEY`; Rust does not force the mode here.
 pub async fn get_morning_brief_v2(user_tz: &str, payload: &Value) -> Value {
-  match amc_sidecar::run_pipeline_dry().await {
+  let candidates = amc_candidates::build_candidates();
+  let (run_result, mode) = if candidates.is_empty() {
+    (amc_sidecar::run_pipeline_dry().await, "fixture_dry")
+  } else {
+    (
+      amc_sidecar::run_pipeline_with_candidates(&candidates, false).await,
+      "stdin_candidates",
+    )
+  };
+
+  match run_result {
     Ok(v1_raw) => {
+      if v1_raw.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let reason = v1_raw
+          .get("reason")
+          .and_then(|v| v.as_str())
+          .unwrap_or("pipeline_skipped")
+          .to_string();
+        diagnostics::record("amc_sidecar.skipped", reason.clone());
+        return fallback_stub(user_tz, payload, &format!("skipped: {}", reason));
+      }
       let v1 = v1_raw.get("brief").cloned().unwrap_or(v1_raw);
       match brief_v2_adapter::v1_to_v2(&v1, user_tz, payload) {
-        Ok(v2) => v2,
+        Ok(mut v2) => {
+          v2["sourceMode"] = json!(mode);
+          v2["candidateCount"] = json!(candidates.len());
+          v2
+        }
         Err(e) => {
           diagnostics::record("amc_sidecar.adapter", e.clone());
           fallback_stub(user_tz, payload, &format!("adapter_failed: {}", e))
