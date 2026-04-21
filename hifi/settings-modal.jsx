@@ -1926,7 +1926,7 @@ function PaneLLM() {
                 }
               }}
             >
-              Remove
+              Remove Anthropic
             </button>
             <button
               className="btn btn-sm btn-secondary"
@@ -1948,7 +1948,7 @@ function PaneLLM() {
                 }
               }}
             >
-              Save key
+              Save Anthropic key
             </button>
           </div>
         </Field>
