@@ -68,6 +68,7 @@ function mockIpcInvoke(command, payload) {
   const echo = payload || {};
   const MOCK_SETTINGS_LS = 'shogun.hifi.mock.settings.sections.v1';
   const MOCK_LLM_KEY_LS = 'shogun.hifi.mock.llm.keyConfigured.v1';
+  const MOCK_ANTHROPIC_KEY_LS = 'shogun.hifi.mock.anthropic.keyConfigured.v1';
   function readMockSettingsSections() {
     try {
       if (typeof localStorage === 'undefined') return {};
@@ -113,6 +114,23 @@ function mockIpcInvoke(command, payload) {
       if (typeof localStorage === 'undefined') return;
       if (on) localStorage.setItem(MOCK_LLM_KEY_LS, '1');
       else localStorage.removeItem(MOCK_LLM_KEY_LS);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  function readMockAnthropicKeyConfigured() {
+    try {
+      if (typeof localStorage === 'undefined') return false;
+      return localStorage.getItem(MOCK_ANTHROPIC_KEY_LS) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+  function writeMockAnthropicKeyConfigured(on) {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      if (on) localStorage.setItem(MOCK_ANTHROPIC_KEY_LS, '1');
+      else localStorage.removeItem(MOCK_ANTHROPIC_KEY_LS);
     } catch (_) {
       /* ignore */
     }
@@ -479,6 +497,23 @@ function mockIpcInvoke(command, payload) {
       };
     case 'app_llm_api_key_clear':
       writeMockLlmKeyConfigured(false);
+      return { ok: true, data: { cleared: true, echo, stub: false } };
+    case 'app_anthropic_api_key_set': {
+      const hasKey = String((echo && echo.apiKey) || '').trim().length > 0;
+      writeMockAnthropicKeyConfigured(hasKey);
+      return { ok: true, data: { saved: true, stub: false, echo } };
+    }
+    case 'app_anthropic_api_key_status':
+      return {
+        ok: true,
+        data: {
+          configured: readMockAnthropicKeyConfigured(),
+          stub: false,
+          echo,
+        },
+      };
+    case 'app_anthropic_api_key_clear':
+      writeMockAnthropicKeyConfigured(false);
       return { ok: true, data: { cleared: true, echo, stub: false } };
     case 'shogun_entity_query': {
       const DEMO = typeof window !== 'undefined' ? window.SHOGUN_DEMO_SEED : null;

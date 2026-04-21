@@ -9,6 +9,7 @@
 //!
 //! Production bundling of the pipeline + `node_modules` is follow-up.
 
+use crate::secrets;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -65,6 +66,21 @@ fn base_command(script: &Path) -> Command {
     .stdout(std::process::Stdio::piped())
     .stderr(std::process::Stdio::piped())
     .kill_on_drop(true);
+  // If the user hasn't already exported ANTHROPIC_API_KEY, inject it from
+  // the Keychain so the pipeline composer can reach Anthropic. Failures to
+  // read the keychain are silent — the pipeline already gracefully falls
+  // back to its heuristic dry path when the env var is missing or empty.
+  if std::env::var_os("ANTHROPIC_API_KEY")
+    .map(|v| v.is_empty())
+    .unwrap_or(true)
+  {
+    if let Ok(Some(key)) = secrets::get_anthropic_api_key() {
+      let trimmed = key.trim();
+      if !trimmed.is_empty() {
+        cmd.env("ANTHROPIC_API_KEY", trimmed);
+      }
+    }
+  }
   cmd
 }
 

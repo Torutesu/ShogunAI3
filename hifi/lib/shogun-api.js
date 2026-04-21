@@ -52,6 +52,9 @@
       llmApiKeySet: (input) => call("app_llm_api_key_set", input, WRITE),
       llmApiKeyStatus: (input) => call("app_llm_api_key_status", input, READ),
       llmApiKeyClear: (input) => call("app_llm_api_key_clear", input, WRITE),
+      anthropicApiKeySet: (input) => call("app_anthropic_api_key_set", input, WRITE),
+      anthropicApiKeyStatus: (input) => call("app_anthropic_api_key_status", input, READ),
+      anthropicApiKeyClear: (input) => call("app_anthropic_api_key_clear", input, WRITE),
       integrationConnect: (input) => call("app_integration_connect", input, WRITE),
       integrationImportCredentials: (input) =>
         call("app_integration_import_credentials", input, WRITE),

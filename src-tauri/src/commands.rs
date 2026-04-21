@@ -359,6 +359,35 @@ pub fn app_llm_api_key_clear(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub fn app_anthropic_api_key_set(payload: Value) -> Result<Value, String> {
+  let key = payload
+    .get("apiKey")
+    .and_then(|k| k.as_str())
+    .ok_or_else(|| "apiKey is required".to_string())?;
+  secrets::set_anthropic_api_key(key)?;
+  Ok(json!({ "saved": true, "stub": false }))
+}
+
+#[tauri::command]
+pub fn app_anthropic_api_key_status(payload: Value) -> Result<Value, String> {
+  Ok(json!({
+    "configured": secrets::anthropic_api_key_configured()?,
+    "echo": payload,
+    "stub": false,
+  }))
+}
+
+#[tauri::command]
+pub fn app_anthropic_api_key_clear(payload: Value) -> Result<Value, String> {
+  secrets::clear_anthropic_api_key()?;
+  Ok(json!({
+    "cleared": true,
+    "echo": payload,
+    "stub": false,
+  }))
+}
+
+#[tauri::command]
 pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
   let raw = payload
     .get("provider")
@@ -826,8 +855,9 @@ fn clear_schedule_queue_file() -> Result<bool, String> {
 ///   includes `memory.db` (dropping both `mem_items` and meeting tables),
 ///   `settings.json`, `schedule_queue.json`, and any legacy JSON.
 /// - The `packs/` directory (material packs + focus notes).
-/// - Keychain: LLM API key (`ai.shogun.desktop`), Clerk session snapshot,
-///   and every known integration credential (Google Calendar, Gmail, ...).
+/// - Keychain: LLM API key (`ai.shogun.desktop`), Anthropic API key
+///   (AMC pipeline composer), Clerk session snapshot, and every known
+///   integration credential (Google Calendar, Gmail, ...).
 ///
 /// **Not affected:** the app data directory itself (recreated on next
 /// write); nested subdirectories other than `packs/`.
@@ -842,6 +872,9 @@ pub fn app_delete_all_data(payload: Value) -> Result<Value, String> {
   let mut keychain_errors: Vec<String> = Vec::new();
   if let Err(e) = secrets::clear_llm_api_key() {
     keychain_errors.push(format!("llm_api_key: {}", e));
+  }
+  if let Err(e) = secrets::clear_anthropic_api_key() {
+    keychain_errors.push(format!("anthropic_api_key: {}", e));
   }
   if let Err(e) = secrets::clear_clerk_snapshot() {
     keychain_errors.push(format!("clerk_snapshot: {}", e));
@@ -867,6 +900,9 @@ pub fn app_delete_account(payload: Value) -> Result<Value, String> {
   let _ = clear_schedule_queue_file();
   secrets::clear_llm_api_key()?;
   let mut keychain_errors: Vec<String> = Vec::new();
+  if let Err(e) = secrets::clear_anthropic_api_key() {
+    keychain_errors.push(format!("anthropic_api_key: {}", e));
+  }
   if let Err(e) = secrets::clear_clerk_snapshot() {
     keychain_errors.push(format!("clerk_snapshot: {}", e));
   }

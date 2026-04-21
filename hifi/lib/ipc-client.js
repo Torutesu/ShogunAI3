@@ -131,6 +131,7 @@
     }
 
     const MOCK_LLM_KEY_LS = "shogun.hifi.mock.llm.keyConfigured.v1";
+    const MOCK_ANTHROPIC_KEY_LS = "shogun.hifi.mock.anthropic.keyConfigured.v1";
     const MOCK_MEMORY_INDEX_LS = "shogun.hifi.mock.memory.index.v1";
     function readMockLlmKeyConfigured() {
       try {
@@ -145,6 +146,23 @@
         if (!global.localStorage) return;
         if (on) global.localStorage.setItem(MOCK_LLM_KEY_LS, "1");
         else global.localStorage.removeItem(MOCK_LLM_KEY_LS);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    function readMockAnthropicKeyConfigured() {
+      try {
+        if (!global.localStorage) return false;
+        return global.localStorage.getItem(MOCK_ANTHROPIC_KEY_LS) === "1";
+      } catch (_) {
+        return false;
+      }
+    }
+    function writeMockAnthropicKeyConfigured(on) {
+      try {
+        if (!global.localStorage) return;
+        if (on) global.localStorage.setItem(MOCK_ANTHROPIC_KEY_LS, "1");
+        else global.localStorage.removeItem(MOCK_ANTHROPIC_KEY_LS);
       } catch (_) {
         /* ignore */
       }
@@ -604,6 +622,20 @@
         };
       case "app_llm_api_key_clear":
         writeMockLlmKeyConfigured(false);
+        return { cleared: true, echo: echo, stub: false };
+      case "app_anthropic_api_key_set": {
+        const hasKey = String((echo && echo.apiKey) || "").trim().length > 0;
+        writeMockAnthropicKeyConfigured(hasKey);
+        return { saved: true, stub: false, echo: echo };
+      }
+      case "app_anthropic_api_key_status":
+        return {
+          configured: readMockAnthropicKeyConfigured(),
+          echo: echo,
+          stub: false,
+        };
+      case "app_anthropic_api_key_clear":
+        writeMockAnthropicKeyConfigured(false);
         return { cleared: true, echo: echo, stub: false };
       case "app_permissions_manage":
         return {
