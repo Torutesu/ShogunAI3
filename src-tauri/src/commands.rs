@@ -161,8 +161,7 @@ pub async fn shogun_brief_get(payload: Value) -> Result<Value, String> {
       .get("user_tz")
       .and_then(|v| v.as_str())
       .unwrap_or("UTC");
-    let ms = ts();
-    return Ok(brief::morning_brief_v2_stub(ms, user_tz, &payload));
+    return Ok(brief::get_morning_brief_v2(user_tz, &payload).await);
   }
   llm::brief_generate(&payload).await
 }

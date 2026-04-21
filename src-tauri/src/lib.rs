@@ -1,7 +1,9 @@
+mod amc_sidecar;
 mod auth;
 mod biometric;
 mod brief;
 mod brief_actions;
+mod brief_v2_adapter;
 mod calendar_sync;
 mod capture_sampler;
 mod context_assembly;

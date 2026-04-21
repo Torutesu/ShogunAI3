@@ -1,6 +1,11 @@
-//! Morning Brief v2 fixture and version gating. v2 JSON matches `hifi/schemas/morning-brief-v2.schema.json`.
-//! Stub copy is English to keep the source ASCII-safe; localized AMC text comes from the composer pipeline.
+//! Morning Brief v2 orchestration, fixture, and version gating.
+//! v2 JSON matches `hifi/schemas/morning-brief-v2.schema.json`.
+//! Stub copy is English to keep the source ASCII-safe; localized AMC text
+//! comes from the composer pipeline.
 
+use crate::amc_sidecar;
+use crate::brief_v2_adapter;
+use crate::diagnostics;
 use crate::meeting_store;
 use crate::memory_store;
 use chrono::{SecondsFormat, Utc};
@@ -136,4 +141,37 @@ fn settings_use_v2(settings: &Value) -> bool {
 
 pub fn should_use_v2(settings: &Value, payload: &Value) -> bool {
   payload_wants_v2(payload) || settings_use_v2(settings)
+}
+
+/// Produce a v2 Morning Brief. Tries the Node AMC pipeline as a one-shot
+/// subprocess; on any failure, falls back to the built-in stub annotated
+/// with `fallbackReason` so the UI can surface a toast and diagnostics
+/// can show the underlying error.
+///
+/// Phase B.1 wiring: the pipeline runs on its bundled fixture in `--dry`
+/// mode. Live candidate ingestion + LLM calls are Phase B.2.
+pub async fn get_morning_brief_v2(user_tz: &str, payload: &Value) -> Value {
+  match amc_sidecar::run_pipeline_dry().await {
+    Ok(v1_raw) => {
+      let v1 = v1_raw.get("brief").cloned().unwrap_or(v1_raw);
+      match brief_v2_adapter::v1_to_v2(&v1, user_tz, payload) {
+        Ok(v2) => v2,
+        Err(e) => {
+          diagnostics::record("amc_sidecar.adapter", e.clone());
+          fallback_stub(user_tz, payload, &format!("adapter_failed: {}", e))
+        }
+      }
+    }
+    Err(e) => {
+      let msg = e.to_string();
+      diagnostics::record("amc_sidecar.run", msg.clone());
+      fallback_stub(user_tz, payload, &msg)
+    }
+  }
+}
+
+fn fallback_stub(user_tz: &str, payload: &Value, reason: &str) -> Value {
+  let mut out = morning_brief_v2_stub(memory_store::now_ms(), user_tz, payload);
+  out["fallbackReason"] = json!(reason);
+  out
 }

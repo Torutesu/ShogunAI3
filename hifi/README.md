@@ -50,7 +50,8 @@ See **`action-map.md`** for the full UI ↔ command matrix. Summary:
 
 - On Home mount, calls `brief.get` and renders `data.brief` when present.
 - Primary CTA per row: `next_action.mcp_tool.tool_name` (e.g. `shogun.open_pack`) with `arguments`.
-- Production: implement `shogun_brief_get` in Rust/Tauri to return the same JSON shape as `amc-pipeline` (`version`, `headline`, `posture`, `items`, `deferred_count`).
+- When the v2 gate is on (payload `forceV2`, `version: "2" | "2.0"`, or `sections.brief.morningBriefVersion === "2"`), Rust spawns the Node **`amc-pipeline`** as a one-shot subprocess (`node <repo>/hifi/amc-pipeline/src/cli.js --dry`), parses its **v1** JSON, and maps it to the **v2** shape (`morning-brief-v2.schema.json`) via `src-tauri/src/brief_v2_adapter.rs`. On any sidecar or mapping failure, Rust falls back to the built-in v2 stub and annotates the response with `fallbackReason`; the failure is also logged into `diagnostics::record` so it shows up under `app_diagnostics_report.recentErrors`.
+- **Phase B.1** runs the pipeline on its bundled fixture; **Phase B.2** will pass real candidates (memory / calendar / meetings) and call Anthropic.
 
 ## AMC pipeline (Node)
 
