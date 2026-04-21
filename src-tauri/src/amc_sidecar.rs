@@ -13,6 +13,7 @@ use crate::secrets;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio::time::timeout;
@@ -45,12 +46,43 @@ impl std::fmt::Display for SidecarError {
   }
 }
 
-/// Resolve the repo-relative path to `hifi/amc-pipeline/src/cli.js`.
+/// Resolve the path to `hifi/amc-pipeline/src/cli.js`. Tries, in order:
 ///
-/// In `tauri dev`, the compiled binary carries `CARGO_MANIFEST_DIR` from
-/// `src-tauri/`, so `../hifi/amc-pipeline/src/cli.js` resolves correctly.
-/// Production bundles will need a different strategy (Tauri resource dir).
-pub(crate) fn resolve_pipeline_path() -> PathBuf {
+/// 1. **`SHOGUN_AMC_PIPELINE_PATH`** env override (tests, power users).
+/// 2. **Tauri bundle resource dir** when an `AppHandle` is provided —
+///    requires `tauri.conf.json` `bundle.resources` to ship
+///    `hifi/amc-pipeline/` (production builds).
+/// 3. **`CARGO_MANIFEST_DIR/../hifi/amc-pipeline/src/cli.js`** —
+///    works in `tauri dev` because the binary carries the build host's
+///    manifest path; useless after `tauri build`.
+pub(crate) fn resolve_pipeline_path(app: Option<&AppHandle>) -> PathBuf {
+  if let Ok(p) = std::env::var("SHOGUN_AMC_PIPELINE_PATH") {
+    let pb = PathBuf::from(p);
+    if !pb.as_os_str().is_empty() {
+      return pb;
+    }
+  }
+  if let Some(handle) = app {
+    if let Ok(resource_root) = handle.path().resource_dir() {
+      // Tauri 2's `bundle.resources` may rewrite parent (`..`) segments
+      // to `_up_` in the destination layout, depending on whether each
+      // entry uses the array form or the explicit `{path, name}` form.
+      // Probe the most likely locations and use the first one found so
+      // packaging tweaks don't require a Rust change.
+      const PROBE: &[&str] = &[
+        "amc-pipeline/src/cli.js",
+        "hifi/amc-pipeline/src/cli.js",
+        "_up_/hifi/amc-pipeline/src/cli.js",
+        "resources/amc-pipeline/src/cli.js",
+      ];
+      for sub in PROBE {
+        let candidate = resource_root.join(sub);
+        if candidate.exists() {
+          return candidate;
+        }
+      }
+    }
+  }
   let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
   manifest.join("../hifi/amc-pipeline/src/cli.js")
 }
@@ -147,8 +179,8 @@ async fn collect_output(mut child: Child, timeout_ms: u64) -> Result<Value, Side
 }
 
 /// Run the pipeline in `--dry` mode on its bundled fixture.
-pub async fn run_pipeline_dry() -> Result<Value, SidecarError> {
-  run_pipeline_dry_with(DEFAULT_TIMEOUT_MS, resolve_pipeline_path()).await
+pub async fn run_pipeline_dry(app: Option<&AppHandle>) -> Result<Value, SidecarError> {
+  run_pipeline_dry_with(DEFAULT_TIMEOUT_MS, resolve_pipeline_path(app)).await
 }
 
 /// Test seam: explicit timeout + script path for the fixture path.
@@ -174,9 +206,15 @@ pub(crate) async fn run_pipeline_dry_with(
 pub async fn run_pipeline_with_candidates(
   candidates: &[Value],
   dry: bool,
+  app: Option<&AppHandle>,
 ) -> Result<Value, SidecarError> {
-  run_pipeline_with_candidates_inner(candidates, dry, DEFAULT_TIMEOUT_MS, resolve_pipeline_path())
-    .await
+  run_pipeline_with_candidates_inner(
+    candidates,
+    dry,
+    DEFAULT_TIMEOUT_MS,
+    resolve_pipeline_path(app),
+  )
+  .await
 }
 
 pub(crate) async fn run_pipeline_with_candidates_inner(
@@ -218,11 +256,34 @@ pub(crate) async fn run_pipeline_with_candidates_inner(
 mod tests {
   use super::*;
 
+  // The two env-driven tests share `SHOGUN_AMC_PIPELINE_PATH`; keep a Mutex
+  // so they don't race even if the test harness is multi-threaded.
+  static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
   #[test]
   fn resolves_pipeline_path_relative_to_manifest() {
-    let p = resolve_pipeline_path();
+    let _g = ENV_LOCK.lock().unwrap();
+    let prev = std::env::var_os("SHOGUN_AMC_PIPELINE_PATH");
+    std::env::remove_var("SHOGUN_AMC_PIPELINE_PATH");
+    let p = resolve_pipeline_path(None);
     let text = p.to_string_lossy();
     assert!(text.ends_with("hifi/amc-pipeline/src/cli.js"), "path was {}", text);
+    if let Some(v) = prev {
+      std::env::set_var("SHOGUN_AMC_PIPELINE_PATH", v);
+    }
+  }
+
+  #[test]
+  fn env_override_takes_precedence_over_manifest_fallback() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let prev = std::env::var_os("SHOGUN_AMC_PIPELINE_PATH");
+    std::env::set_var("SHOGUN_AMC_PIPELINE_PATH", "/custom/cli.js");
+    let p = resolve_pipeline_path(None);
+    assert_eq!(p, PathBuf::from("/custom/cli.js"));
+    match prev {
+      Some(v) => std::env::set_var("SHOGUN_AMC_PIPELINE_PATH", v),
+      None => std::env::remove_var("SHOGUN_AMC_PIPELINE_PATH"),
+    }
   }
 
   #[tokio::test]

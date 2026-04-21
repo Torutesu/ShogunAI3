@@ -154,14 +154,14 @@ pub fn shogun_entity_query(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn shogun_brief_get(payload: Value) -> Result<Value, String> {
+pub async fn shogun_brief_get(app: AppHandle, payload: Value) -> Result<Value, String> {
   let settings = settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
   if brief::should_use_v2(&settings, &payload) {
     let user_tz = payload
       .get("user_tz")
       .and_then(|v| v.as_str())
       .unwrap_or("UTC");
-    return Ok(brief::get_morning_brief_v2(user_tz, &payload).await);
+    return Ok(brief::get_morning_brief_v2(user_tz, &payload, Some(&app)).await);
   }
   llm::brief_generate(&payload).await
 }

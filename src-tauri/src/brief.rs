@@ -11,6 +11,7 @@ use crate::meeting_store;
 use crate::memory_store;
 use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
+use tauri::AppHandle;
 
 pub fn morning_brief_v2_stub(_generated_ms: u64, user_tz: &str, payload: &Value) -> Value {
   let now = Utc::now();
@@ -154,13 +155,17 @@ pub fn should_use_v2(settings: &Value, payload: &Value) -> bool {
 ///
 /// The pipeline itself decides `--dry` vs. live LLM based on
 /// `ANTHROPIC_API_KEY`; Rust does not force the mode here.
-pub async fn get_morning_brief_v2(user_tz: &str, payload: &Value) -> Value {
+pub async fn get_morning_brief_v2(
+  user_tz: &str,
+  payload: &Value,
+  app: Option<&AppHandle>,
+) -> Value {
   let candidates = amc_candidates::build_candidates();
   let (run_result, mode) = if candidates.is_empty() {
-    (amc_sidecar::run_pipeline_dry().await, "fixture_dry")
+    (amc_sidecar::run_pipeline_dry(app).await, "fixture_dry")
   } else {
     (
-      amc_sidecar::run_pipeline_with_candidates(&candidates, false).await,
+      amc_sidecar::run_pipeline_with_candidates(&candidates, false, app).await,
       "stdin_candidates",
     )
   };

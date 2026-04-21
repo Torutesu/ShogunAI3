@@ -141,6 +141,9 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `llm.save_api_key`
 - `llm.api_key_status`
 - `llm.clear_api_key`
+- `anthropic.save_api_key`
+- `anthropic.api_key_status`
+- `anthropic.clear_api_key`
 - `shogun.open_pack`
 - `shogun.draft_reply`
 - `shogun.start_focus_session`

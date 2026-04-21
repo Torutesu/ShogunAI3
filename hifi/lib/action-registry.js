@@ -59,6 +59,9 @@
     register("llm.save_api_key", (payload) => api.llmApiKeySet(payload));
     register("llm.api_key_status", (payload) => api.llmApiKeyStatus(payload));
     register("llm.clear_api_key", (payload) => api.llmApiKeyClear(payload));
+    register("anthropic.save_api_key", (payload) => api.anthropicApiKeySet(payload));
+    register("anthropic.api_key_status", (payload) => api.anthropicApiKeyStatus(payload));
+    register("anthropic.clear_api_key", (payload) => api.anthropicApiKeyClear(payload));
     register("shogun.open_pack", (payload) => api.openPack(payload));
     register("shogun.draft_reply", (payload) => api.draftReply(payload));
     register("shogun.start_focus_session", (payload) => api.startFocusSession(payload));

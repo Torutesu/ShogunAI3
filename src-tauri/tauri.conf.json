@@ -7,7 +7,7 @@
     "frontendDist": "../web-dist",
     "devUrl": "http://127.0.0.1:4173/SHOGUN%20Hi-Fi%20UI.html",
     "beforeDevCommand": "bash scripts/tauri-dev-static-server.sh",
-    "beforeBuildCommand": "npm run build:web-dist && npx tauri icon hifi/assets/app-icon-mac-1024.png"
+    "beforeBuildCommand": "npm --prefix hifi/amc-pipeline ci --omit=dev && npm run build:web-dist && npx tauri icon hifi/assets/app-icon-mac-1024.png"
   },
   "app": {
     "windows": [
@@ -33,6 +33,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../hifi/amc-pipeline/package.json",
+      "../hifi/amc-pipeline/src/**/*",
+      "../hifi/amc-pipeline/fixtures/**/*",
+      "../hifi/amc-pipeline/node_modules/**/*"
+    ],
     "macOS": {
       "hardenedRuntime": true,
       "entitlements": "Entitlements.plist",

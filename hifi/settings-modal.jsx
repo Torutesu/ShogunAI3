@@ -1684,6 +1684,8 @@ function PaneLLM() {
   const [maxTokens, setMaxTokens] = useStateS('');
   const [apiKeyDraft, setApiKeyDraft] = useStateS('');
   const [keyConfigured, setKeyConfigured] = useStateS(false);
+  const [anthropicKeyDraft, setAnthropicKeyDraft] = useStateS('');
+  const [anthropicKeyConfigured, setAnthropicKeyConfigured] = useStateS(false);
   const [backfillLimit, setBackfillLimit] = useStateS(40);
   const [backfillDelayMs, setBackfillDelayMs] = useStateS(0);
   const [backfillBusy, setBackfillBusy] = useStateS(false);
@@ -1720,9 +1722,17 @@ function PaneLLM() {
     }
   }, [run]);
 
+  const refreshAnthropicKeyStatus = React.useCallback(async () => {
+    const r = await run('anthropic.api_key_status', {}, { silentError: true });
+    if (r.ok && r.data && typeof r.data.configured === 'boolean') {
+      setAnthropicKeyConfigured(r.data.configured);
+    }
+  }, [run]);
+
   React.useEffect(() => {
     void refreshKeyStatus();
-  }, [refreshKeyStatus]);
+    void refreshAnthropicKeyStatus();
+  }, [refreshKeyStatus, refreshAnthropicKeyStatus]);
 
   const persistEmbedBackfillPrefs = React.useCallback(
     async (patch) => {
@@ -1875,6 +1885,66 @@ function PaneLLM() {
                 if (r.ok) {
                   setApiKeyDraft('');
                   await refreshKeyStatus();
+                }
+              }}
+            >
+              Save key
+            </button>
+          </div>
+        </Field>
+      </div>
+
+      <div className="s-card" style={{padding:20}}>
+        <Field
+          label="Anthropic API key (Morning Brief v2 composer)"
+          hint="Used by the local AMC pipeline (hifi/amc-pipeline) to compose Morning Brief items via Claude. When unset, the pipeline falls back to its heuristic dry path. Stored in the login keychain (service ai.shogun.desktop, account anthropic_api_key); never written to settings files. The pipeline still honors a SHELL-exported ANTHROPIC_API_KEY first if you have one."
+        >
+          <input
+            className="s-input"
+            type="password"
+            value={anthropicKeyDraft}
+            onChange={(e) => setAnthropicKeyDraft(e.target.value)}
+            placeholder={anthropicKeyConfigured ? '•••••••• (replace by typing a new key)' : 'sk-ant-…'}
+            autoComplete="off"
+          />
+          <div className="row" style={{marginTop:10}}>
+            <span className="s-field-hint" style={{marginTop:0}}>
+              Keychain: {anthropicKeyConfigured ? 'configured' : 'not set'}
+            </span>
+            <span className="spacer"/>
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              disabled={!anthropicKeyConfigured}
+              onClick={async () => {
+                const r = await run('anthropic.clear_api_key', {}, {
+                  successMessage: 'Anthropic API key removed from Keychain',
+                });
+                if (r.ok) {
+                  setAnthropicKeyDraft('');
+                  await refreshAnthropicKeyStatus();
+                }
+              }}
+            >
+              Remove
+            </button>
+            <button
+              className="btn btn-sm btn-secondary"
+              type="button"
+              onClick={async () => {
+                const k = anthropicKeyDraft.trim();
+                if (!k) {
+                  toast('Enter an Anthropic API key to save', 'error');
+                  return;
+                }
+                const r = await run(
+                  'anthropic.save_api_key',
+                  { apiKey: k },
+                  { successMessage: 'Anthropic API key saved to Keychain' },
+                );
+                if (r.ok) {
+                  setAnthropicKeyDraft('');
+                  await refreshAnthropicKeyStatus();
                 }
               }}
             >
