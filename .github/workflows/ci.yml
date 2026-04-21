@@ -35,7 +35,26 @@ jobs:
         run: npm run check:ipc-mock
 
       - name: Cargo check (Tauri / Rust)
-        run: npm run check:rust
+        run: |
+          set -o pipefail
+          cargo check --manifest-path src-tauri/Cargo.toml --color=never 2>&1 | tee /tmp/cargo-check.log
+        shell: bash
+
+      - name: Upload cargo check log on failure
+        if: failure()
+        run: |
+          if [ -f /tmp/cargo-check.log ]; then
+            echo "::group::cargo check output"
+            cat /tmp/cargo-check.log
+            echo "::endgroup::"
+            # Emit each rustc error line as a workflow annotation so it
+            # shows up under `check-runs/{id}/annotations` (log download
+            # needs admin; annotations do not).
+            grep -E '^error(\[E[0-9]+\])?: ' /tmp/cargo-check.log | head -20 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+        shell: bash
 
       - name: Sync web-dist bundle
         run: npm run build:web-dist
