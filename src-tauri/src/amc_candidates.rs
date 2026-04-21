@@ -22,6 +22,39 @@ fn strip_title_prefix<'a>(title: &'a str, prefix: &str) -> &'a str {
   title.strip_prefix(prefix).unwrap_or(title)
 }
 
+/// Pure: parse the `internalDate=<ms>` token Gmail ingest writes into
+/// the memory snippet. Returns `None` when the token is absent or
+/// unparseable.
+pub(crate) fn extract_gmail_internal_date_ms(snippet: &str) -> Option<u64> {
+  for line in snippet.lines() {
+    let t = line.trim();
+    if let Some(rest) = t.strip_prefix("internalDate=") {
+      if let Ok(n) = rest.trim().parse::<u64>() {
+        if n > 0 {
+          return Some(n);
+        }
+      }
+    }
+  }
+  None
+}
+
+/// Pure: days the upstream message has been waiting. Returns `None`
+/// when the upstream timestamp is in the future, equal to now, or
+/// missing — a 0-day delta isn't meaningful "stuck" signal.
+pub(crate) fn stuck_days_since(now_ms: u64, upstream_ms: u64) -> Option<u64> {
+  if upstream_ms == 0 || upstream_ms >= now_ms {
+    return None;
+  }
+  let delta = now_ms - upstream_ms;
+  let days = delta / 86_400_000;
+  if days == 0 {
+    None
+  } else {
+    Some(days)
+  }
+}
+
 /// Heuristic: pull an ISO-ish datetime token out of the calendar
 /// memory snippet (`google_calendar` rows are ingested with
 /// `Google Calendar · {start} · {link}`).
@@ -137,13 +170,17 @@ pub(crate) fn candidate_query_text(candidate: &Value) -> String {
 
 /// Pure: map one `memory_store` row into a `MorningBriefCandidate`
 /// JSON value. Returns `None` for sources we don't know how to
-/// normalise yet (capture, telemetry, ...).
-pub fn memory_row_to_candidate(row: &Value) -> Option<Value> {
+/// normalise yet (capture, telemetry, ...). `now_ms` is used to
+/// compute `stuck_days` from upstream signals (currently only
+/// Gmail `internalDate` embedded in the snippet); pass a
+/// deterministic value in tests.
+pub fn memory_row_to_candidate(row: &Value, now_ms: u64) -> Option<Value> {
   let id = row.get("id").and_then(|v| v.as_str())?;
   let title = row.get("title").and_then(|v| v.as_str()).unwrap_or("");
   let snippet = row.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
   let source = row.get("source").and_then(|v| v.as_str())?;
 
+  let mut stuck_days: Option<u64> = None;
   let (trigger, raw_data) = match source {
     "google_calendar" => {
       let clean = strip_title_prefix(title, "Calendar: ").to_string();
@@ -161,19 +198,19 @@ pub fn memory_row_to_candidate(row: &Value) -> Option<Value> {
     }
     "gmail" => {
       let clean = strip_title_prefix(title, "Gmail: ").to_string();
-      (
-        "email",
-        json!({
-          "email_thread": {
-            "subject": clean,
-          }
-        }),
-      )
+      let mut email_thread = json!({ "subject": clean });
+      if let Some(internal_ms) = extract_gmail_internal_date_ms(snippet) {
+        if let Some(days) = stuck_days_since(now_ms, internal_ms) {
+          stuck_days = Some(days);
+          email_thread["stuck_days"] = json!(days);
+        }
+      }
+      ("email", json!({ "email_thread": email_thread }))
     }
     _ => return None,
   };
 
-  Some(json!({
+  let mut candidate = json!({
     "candidate_id": id,
     "trigger_source": trigger,
     "raw_data": raw_data,
@@ -184,7 +221,11 @@ pub fn memory_row_to_candidate(row: &Value) -> Option<Value> {
       "shogun.start_focus_session",
       "shogun.draft_reply",
     ],
-  }))
+  });
+  if let Some(days) = stuck_days {
+    candidate["stuck_days"] = json!(days);
+  }
+  Some(candidate)
 }
 
 /// Pure: map an `active_focus.json` document into a `focus_block`
@@ -299,18 +340,19 @@ fn enrich_with_related_hits(out: &mut [Value]) {
 /// read error so the caller (brief orchestration) can cleanly fall
 /// back to the bundled fixture.
 pub fn build_candidates() -> Vec<Value> {
-  let since = memory_store::now_ms().saturating_sub(WINDOW_MS);
+  let now = memory_store::now_ms();
+  let since = now.saturating_sub(WINDOW_MS);
   let mut out: Vec<Value> = Vec::new();
   if let Ok(cal) = memory_store::recent_by_source("google_calendar", since, CALENDAR_LIMIT) {
     for row in cal {
-      if let Some(c) = memory_row_to_candidate(&row) {
+      if let Some(c) = memory_row_to_candidate(&row, now) {
         out.push(c);
       }
     }
   }
   if let Ok(mail) = memory_store::recent_by_source("gmail", since, GMAIL_LIMIT) {
     for row in mail {
-      if let Some(c) = memory_row_to_candidate(&row) {
+      if let Some(c) = memory_row_to_candidate(&row, now) {
         out.push(c);
       }
     }
@@ -328,12 +370,16 @@ pub fn build_candidates() -> Vec<Value> {
     }
   }
   out.truncate(TOTAL_CAP);
-  // NOTE: candidate fields `decision_graph_hits` and `weekly_brief.stuck_days`
-  // are intentionally left empty / unset. We have no reliable local signal
-  // for either today: there is no decision graph store, and `created_at` on
-  // memory rows is the ingest timestamp (not the upstream "received" /
-  // "last touched" time), so deriving stuck-days from row age would
-  // mislead the composer. Ship them once an upstream signal lands.
+  // `stuck_days` is now populated for Gmail candidates from the
+  // upstream `internalDate` token written into the snippet by
+  // `gmail::ingest_gmail_message` (Gmail v1's "received" timestamp).
+  // `decision_graph_hits` is still empty: we have no local decision
+  // store yet. Sketch for when one lands: a `decision_graph` SQLite
+  // table (id, summary, related_entity_ids, follow_ups_pending,
+  // created_at) populated by meeting enhancement (it already extracts
+  // commitments), then matched here against each candidate's
+  // entity_id / title. Until then, leaving the field as an empty
+  // array keeps the schema valid without misleading the composer.
   enrich_with_related_hits(&mut out);
   out
 }
@@ -358,6 +404,11 @@ mod tests {
     assert!(extract_calendar_start(s).is_none());
   }
 
+  /// `now_ms` shared by tests that need a deterministic anchor for
+  /// `stuck_days` arithmetic. Picked so subtracting a few days keeps
+  /// the result comfortably positive.
+  const TEST_NOW_MS: u64 = 1_777_000_000_000;
+
   #[test]
   fn calendar_row_becomes_calendar_candidate() {
     let row = json!({
@@ -368,7 +419,7 @@ mod tests {
       "kinds": ["calendar"],
       "created_at": 100u64,
     });
-    let c = memory_row_to_candidate(&row).expect("candidate");
+    let c = memory_row_to_candidate(&row, TEST_NOW_MS).expect("candidate");
     assert_eq!(c["candidate_id"].as_str(), Some("m_100"));
     assert_eq!(c["trigger_source"].as_str(), Some("calendar"));
     let ev = &c["raw_data"]["calendar_event"];
@@ -380,6 +431,8 @@ mod tests {
       .unwrap()
       .iter()
       .any(|v| v.as_str() == Some("shogun.open_pack")));
+    // Calendar candidates have no upstream stuck signal yet.
+    assert!(c.get("stuck_days").is_none());
   }
 
   #[test]
@@ -392,12 +445,59 @@ mod tests {
       "kinds": ["email"],
       "created_at": 200u64,
     });
-    let c = memory_row_to_candidate(&row).expect("candidate");
+    let c = memory_row_to_candidate(&row, TEST_NOW_MS).expect("candidate");
     assert_eq!(c["trigger_source"].as_str(), Some("email"));
     assert_eq!(
       c["raw_data"]["email_thread"]["subject"].as_str(),
       Some("Invoice from XYZ")
     );
+    // No internalDate token in the snippet → no stuck_days.
+    assert!(c.get("stuck_days").is_none());
+    assert!(c["raw_data"]["email_thread"].get("stuck_days").is_none());
+  }
+
+  #[test]
+  fn gmail_row_with_internal_date_emits_stuck_days() {
+    // 1_776_900_225_000 ms is ~1.16 days before TEST_NOW_MS.
+    let row = json!({
+      "id": "m_201",
+      "title": "Gmail: Term sheet follow-up",
+      "snippet": "Subject: Term sheet follow-up\nFrom: x@y\ninternalDate=1776900225000\nbody preview",
+      "source": "gmail",
+    });
+    let c = memory_row_to_candidate(&row, TEST_NOW_MS).expect("candidate");
+    assert_eq!(c["stuck_days"].as_u64(), Some(1));
+    assert_eq!(
+      c["raw_data"]["email_thread"]["stuck_days"].as_u64(),
+      Some(1)
+    );
+  }
+
+  #[test]
+  fn gmail_row_with_zero_day_delta_omits_stuck_days() {
+    // internalDate within the last day → days==0 → field omitted.
+    let recent = TEST_NOW_MS - 60_000;
+    let row = json!({
+      "id": "m_202",
+      "title": "Gmail: Just landed",
+      "snippet": format!("Subject: x\nFrom: x\ninternalDate={}\nbody", recent),
+      "source": "gmail",
+    });
+    let c = memory_row_to_candidate(&row, TEST_NOW_MS).expect("candidate");
+    assert!(c.get("stuck_days").is_none());
+  }
+
+  #[test]
+  fn gmail_row_with_future_internal_date_omits_stuck_days() {
+    let future = TEST_NOW_MS + 86_400_000;
+    let row = json!({
+      "id": "m_203",
+      "title": "Gmail: scheduled?",
+      "snippet": format!("internalDate={}\nbody", future),
+      "source": "gmail",
+    });
+    let c = memory_row_to_candidate(&row, TEST_NOW_MS).expect("candidate");
+    assert!(c.get("stuck_days").is_none());
   }
 
   #[test]
@@ -410,13 +510,15 @@ mod tests {
       "kinds": ["screen"],
       "created_at": 300u64,
     });
-    assert!(memory_row_to_candidate(&row).is_none());
+    assert!(memory_row_to_candidate(&row, TEST_NOW_MS).is_none());
   }
 
   #[test]
   fn missing_id_or_source_rejects_row() {
-    assert!(memory_row_to_candidate(&json!({ "title": "x" })).is_none());
-    assert!(memory_row_to_candidate(&json!({ "id": "m_x", "title": "x" })).is_none());
+    assert!(memory_row_to_candidate(&json!({ "title": "x" }), TEST_NOW_MS).is_none());
+    assert!(
+      memory_row_to_candidate(&json!({ "id": "m_x", "title": "x" }), TEST_NOW_MS).is_none()
+    );
   }
 
   #[test]
@@ -427,7 +529,7 @@ mod tests {
       "snippet": "Google Calendar · 2026-04-22T09:00:00Z · x",
       "source": "google_calendar",
     });
-    let c = memory_row_to_candidate(&row).unwrap();
+    let c = memory_row_to_candidate(&row, TEST_NOW_MS).unwrap();
     assert_eq!(
       c["raw_data"]["calendar_event"]["title"].as_str(),
       Some("Quarterly planning")
@@ -442,8 +544,44 @@ mod tests {
       "snippet": "Google Calendar · TBD · https://x",
       "source": "google_calendar",
     });
-    let c = memory_row_to_candidate(&row).unwrap();
+    let c = memory_row_to_candidate(&row, TEST_NOW_MS).unwrap();
     assert_eq!(c["raw_data"]["calendar_event"]["start"].as_str(), Some(""));
+  }
+
+  // ---- pure helper tests ----
+
+  #[test]
+  fn extracts_internal_date_token() {
+    let snippet = "Subject: x\nFrom: y\ninternalDate=1776900225000\nbody";
+    assert_eq!(extract_gmail_internal_date_ms(snippet), Some(1_776_900_225_000));
+  }
+
+  #[test]
+  fn extract_internal_date_returns_none_when_missing() {
+    assert!(extract_gmail_internal_date_ms("Subject: x\nbody").is_none());
+  }
+
+  #[test]
+  fn extract_internal_date_returns_none_when_unparseable() {
+    assert!(extract_gmail_internal_date_ms("internalDate=not-a-number").is_none());
+  }
+
+  #[test]
+  fn extract_internal_date_returns_none_for_zero() {
+    assert!(extract_gmail_internal_date_ms("internalDate=0").is_none());
+  }
+
+  #[test]
+  fn stuck_days_arithmetic() {
+    let now: u64 = 10_000_000_000;
+    assert_eq!(stuck_days_since(now, now - 86_400_001), Some(1));
+    assert_eq!(stuck_days_since(now, now - 5 * 86_400_000), Some(5));
+    // Less than a day → None.
+    assert_eq!(stuck_days_since(now, now - 60_000), None);
+    // Future / equal / zero / unset → None.
+    assert_eq!(stuck_days_since(now, now + 1000), None);
+    assert_eq!(stuck_days_since(now, now), None);
+    assert_eq!(stuck_days_since(now, 0), None);
   }
 
   // ---- meeting_row_to_candidate ----

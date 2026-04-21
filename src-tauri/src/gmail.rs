@@ -79,7 +79,14 @@ fn ingest_gmail_message(message_id: &str, msg: &Value) -> Result<(), String> {
     .get("snippet")
     .and_then(|s| s.as_str())
     .unwrap_or("");
-  let body = format!("Subject: {}\nFrom: {}\n{}", subject, from, snippet);
+  // `internalDate` is the upstream "received" timestamp (epoch ms) per
+  // Gmail v1. Embed it as a parsable token so candidate builders can
+  // derive `stuck_days` without needing a new memory_store column.
+  let internal_date = internal_date_token(msg);
+  let body = format!(
+    "Subject: {}\nFrom: {}\n{}{}",
+    subject, from, internal_date, snippet
+  );
   let ing = json!({
     "title": format!("Gmail: {}", subject.chars().take(200).collect::<String>()),
     "snippet": body.chars().take(4000).collect::<String>(),
@@ -89,6 +96,49 @@ fn ingest_gmail_message(message_id: &str, msg: &Value) -> Result<(), String> {
     "entity_id": message_id,
   });
   memory_store::ingest(&ing).map(|_| ())
+}
+
+/// Returns `"internalDate=<ms>\n"` when the Gmail metadata response has
+/// a parseable `internalDate` (string of epoch ms per the v1 API), or
+/// an empty string otherwise. Embedded in the memory snippet so
+/// downstream candidate builders can compute `stuck_days`.
+fn internal_date_token(msg: &Value) -> String {
+  let raw = msg.get("internalDate").and_then(|v| v.as_str());
+  let ms = raw.and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
+  if ms == 0 {
+    String::new()
+  } else {
+    format!("internalDate={}\n", ms)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::internal_date_token;
+  use serde_json::json;
+
+  #[test]
+  fn internal_date_token_emits_when_present() {
+    let msg = json!({ "internalDate": "1776816000000" });
+    assert_eq!(internal_date_token(&msg), "internalDate=1776816000000\n");
+  }
+
+  #[test]
+  fn internal_date_token_empty_when_missing() {
+    assert_eq!(internal_date_token(&json!({})), "");
+  }
+
+  #[test]
+  fn internal_date_token_empty_when_unparseable() {
+    let msg = json!({ "internalDate": "not-a-number" });
+    assert_eq!(internal_date_token(&msg), "");
+  }
+
+  #[test]
+  fn internal_date_token_empty_when_zero() {
+    let msg = json!({ "internalDate": "0" });
+    assert_eq!(internal_date_token(&msg), "");
+  }
 }
 
 async fn refresh_and_persist_creds(creds: &Value) -> Result<Value, String> {
