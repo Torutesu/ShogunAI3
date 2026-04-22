@@ -870,13 +870,6 @@ function ScreenMeetings() {
     return function () { window.removeEventListener('keydown', onKey); };
   }, [showDockRecipeOverlay]);
 
-  const meetingsDockHistory = useCallback(function () {
-    runRuntimeActionM('brief.get', briefPayloadWithUserTz({ span: 'week', source: 'meetings_dock_history' }), { silentError: true }).then(function (r) {
-      if (r && r.ok) toastM('\u6700\u8fd1\u306e\u30d6\u30ea\u30fc\u30d5\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f', 'success');
-      else toastM('\u5c65\u6b74\u306f Memory \u691c\u7d22\u3067\u78ba\u8a8d\u3067\u304d\u307e\u3059\uff08\u30e2\u30c3\u30af\uff09', 'info');
-    });
-  }, []);
-
   return (
     <div className="screen-meetings-root">
       <div className="screen-meetings-scroll">
@@ -1083,9 +1076,6 @@ function ScreenMeetings() {
             </div>
           )}
             <div className="mtg-chatdock-top">
-              <button type="button" className="mtg-chatdock-top-btn" title="History" aria-label="History" onMouseDown={function (e) { e.preventDefault(); }} onClick={meetingsDockHistory}>
-                <Icon name="history" size={16}/>
-              </button>
               <div className="mtg-chatdock-chips">
                 <button type="button" className="mtg-chatdock-chip" onMouseDown={function (e) { e.preventDefault(); }} onClick={function () { runDockSlashItem(MEETINGS_DOCK_SLASH_CATALOG[0]); }}>
                   <Icon name="edit" size={12}/>
@@ -1306,9 +1296,9 @@ function ScreenMeetings() {
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 5,
+                  justifyContent: 'center',
+                  width: 32,
                   height: 32,
-                  padding: '0 12px',
                   borderRadius: 999,
                   border: 'none',
                   background: mtgEnhanceBusy
@@ -1316,9 +1306,6 @@ function ScreenMeetings() {
                     : 'transparent',
                   color: 'var(--text-mute)',
                   cursor: mtgEnhanceBusy ? 'wait' : 'pointer',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                  fontWeight: 500,
                 }}
               >
                 {mtgEnhanceBusy ? (
@@ -1326,8 +1313,6 @@ function ScreenMeetings() {
                 ) : (
                   <Icon name="sparkles" size={15} />
                 )}
-                <span className="en-only">Enhance</span>
-                <span className="jp" style={{ fontSize: 11 }}>AI議事録</span>
               </button>
             </div>
             <div
