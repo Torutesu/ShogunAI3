@@ -1234,7 +1234,7 @@ function ScreenMemory() {
         </div>
         <span className="spacer"/>
         <div style={{display:'flex', border:'1px solid var(--border)', borderRadius:'var(--radius-md)', overflow:'hidden'}}>
-          {[['river','Timeline'],['stack','List']].map(([k,l])=>(
+          {[['river','River'],['stack','Kakejiku']].map(([k,l])=>(
             <button key={k} type="button" onClick={()=>setView(k)} className="btn btn-sm" style={{borderRadius:0, border:0, background: view===k?'var(--surface-2)':'transparent', color: view===k?'var(--gold)':'var(--text-mute)'}}>{l}</button>
           ))}
         </div>
