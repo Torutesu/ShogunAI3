@@ -59,7 +59,6 @@ pub fn run() {
     .manage(meeting_session::MeetingSessionState::default())
     .manage(meeting_mic::MeetingMicController::default())
     .plugin(tauri_plugin_deep_link::init())
-    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

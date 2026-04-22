@@ -10,7 +10,6 @@ use serde_json::{json, Value};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
-use tauri_plugin_updater::UpdaterExt;
 
 fn redact_sensitive_text(input: &str) -> String {
   let mut out = input.to_string();
@@ -685,32 +684,14 @@ pub fn app_frontend_error_report(payload: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn app_updates_check(app: AppHandle) -> Result<Value, String> {
-  let updater = app.updater().map_err(|e| e.to_string())?;
-  match updater.check().await {
-    Ok(Some(u)) => Ok(json!({
-      "available": true,
-      "version": u.version,
-      "body": u.body,
-      "currentVersion": u.current_version,
-    })),
-    Ok(None) => Ok(json!({ "available": false })),
-    Err(e) => Err(e.to_string()),
-  }
+pub async fn app_updates_check(_app: AppHandle) -> Result<Value, String> {
+  Ok(json!({ "available": false }))
 }
 
-/// Download signature-verified update and restart the app (macOS / Windows / Linux updater bundles).
+/// Placeholder — updater plugin is disabled in this build.
 #[tauri::command]
-pub async fn app_updates_download_install(app: AppHandle) -> Result<(), String> {
-  let updater = app.updater().map_err(|e| e.to_string())?;
-  let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
-    return Err("No update is available.".to_string());
-  };
-  update
-    .download_and_install(|_chunk_len, _total| {}, || {})
-    .await
-    .map_err(|e| e.to_string())?;
-  app.restart();
+pub async fn app_updates_download_install(_app: AppHandle) -> Result<(), String> {
+  Err("Updater is not available in this build.".to_string())
 }
 
 #[tauri::command]
