@@ -331,8 +331,8 @@ function ScreenChat() {
                 <button className="composer-send" type="button" aria-label="Send" disabled={loading} onClick={sendChat}><Icon name="arrowUp" size={16}/></button>
               </div>
             </div>
-            <div className="t-mono" style={{fontSize:9, marginTop:8, textAlign:'center', color:'var(--text-dim)'}}>
-              {memoryTotal} MEMORIES INDEXED · LOCAL
+            <div className="t-mono" style={{fontSize:11, marginTop:8, textAlign:'center', color:'var(--text-dim)', textTransform:'none', letterSpacing:'0.02em'}}>
+              {memoryTotal} memories indexed · Local
               <span style={{marginLeft:10}}>Return sends · Shift+Return new line · Cmd+Return also sends</span>
             </div>
           </div>
@@ -551,7 +551,7 @@ function ScreenAgents() {
     <div className="content-inner">
       <div className="page-head">
         <div>
-          <div className="t-mono" style={{marginBottom:8}}>EXECUTION LAYER</div>
+          <div className="t-mono" style={{marginBottom:8, textTransform:'none', letterSpacing:'0.02em'}}>Execution layer</div>
           <h1>Agents <span className="jp">家臣</span></h1>
           <div className="sub">
             <span className="en-only">Playground: drafts and Chat can pull </span>
@@ -573,7 +573,7 @@ function ScreenAgents() {
       </div>
 
       <div className="card" style={{ padding: 24, maxWidth: 640 }}>
-        <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', marginBottom: 8 }}>GOAL · 指示</div>
+        <div className="t-mono" style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, textTransform:'none', letterSpacing:'0.02em' }}>Goal · 指示</div>
         <textarea
           className="s-input"
           style={{
@@ -601,7 +601,7 @@ function ScreenAgents() {
           </button>
         </div>
         <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text-dim)' }}>
-          <span className="t-mono" style={{ marginRight: 8 }}>QUICK</span>
+          <span className="t-mono" style={{ marginRight: 8, textTransform:'none', letterSpacing:'0.02em' }}>Quick</span>
           {[
             '今週のブロッカーを Memory から列挙',
             'カレンダー関連メモのフォローアップ案',

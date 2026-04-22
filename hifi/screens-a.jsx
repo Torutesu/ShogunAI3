@@ -1007,7 +1007,7 @@ function ScreenHome() {
       {morningBrief && (
         <div className="card" style={{ width: '100%', maxWidth: 760, marginInline: 'auto', padding: 28, borderColor: 'var(--gold-dim)', marginTop: 32, background: 'var(--surface)' }}>
           <div className="row" style={{ marginBottom: 14, alignItems: 'baseline', gap: 12 }}>
-            <div className="t-mono gold">MORNING BRIEF · AMC</div>
+            <div className="t-mono gold" style={{textTransform:'none', letterSpacing:'0.02em'}}>Morning brief · AMC</div>
             <span className="pill" style={{ fontSize: 10 }}>{morningBrief.posture}</span>
             <span className="spacer" />
             <span className="t-mono xsmall muted">{briefGeneratedDisplay || '—'}</span>
@@ -1238,7 +1238,7 @@ function ScreenMemory() {
       {/* Header */}
       <div style={{padding:'24px 40px 0', display:'flex', alignItems:'flex-end', gap:20}}>
         <div>
-          <div className="t-mono" style={{marginBottom:6}}>MEMORY / TIMELINE</div>
+          <div className="t-mono" style={{marginBottom:6, textTransform:'none', letterSpacing:'0.02em'}}>Memory / Timeline</div>
           <h1 style={{margin:0, fontSize:28, fontWeight:600}}>{memoryHeadDate} <span className="jp muted" style={{fontSize:16, fontWeight:300, marginLeft:8}}>時間軸</span></h1>
           <div className="muted" style={{marginTop:8, fontSize:12, lineHeight:1.45, maxWidth:560}}>
             Memory index stays on this Mac in this build (no SHOGUN cloud sync).
@@ -1288,7 +1288,7 @@ function ScreenMemory() {
         data-testid="memory-entity-sources"
         style={{padding:'8px 40px 4px', borderBottom:'1px solid var(--border)'}}
       >
-        <div className="t-mono" style={{fontSize:10, color:'var(--text-mute)', marginBottom:6}}>SOURCES IN INDEX · カタログ別件数</div>
+        <div className="t-mono" style={{fontSize:11, color:'var(--text-mute)', marginBottom:6, textTransform:'none', letterSpacing:'0.02em'}}>Sources in index · カタログ別件数</div>
         <div style={{display:'flex', flexWrap:'wrap', gap:8, alignItems:'center'}}>
           {sourceEntities.length === 0 ? (
             <span style={{fontSize:12, color:'var(--text-dim)'}}>No indexed sources yet — ingest or sync to populate.</span>
@@ -1305,7 +1305,7 @@ function ScreenMemory() {
 
       {/* Hour distribution from index (click a bar to jump to that hour) */}
       <div style={{padding:'12px 40px 8px', display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
-        <span className="t-mono" style={{fontSize:10, color:'var(--text-mute)'}}>
+        <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', textTransform:'none', letterSpacing:'0.02em'}}>
           <span className="en-only">By hour</span>
           <span className="jp">時間帯</span>
         </span>
@@ -1390,7 +1390,7 @@ function ScreenMemory() {
                   <Icon name={srcIcon(scrubbed.src)} size={14} className="gold"/>
                 </div>
                 <div>
-                  <div className="t-mono" style={{fontSize:10}}>{srcLabel(scrubbed.src).toUpperCase()} · {scrubbed.t}</div>
+                  <div className="t-mono" style={{fontSize:11, textTransform:'none', letterSpacing:'0.02em'}}>{srcLabel(scrubbed.src)} · {scrubbed.t}</div>
                   <div style={{fontSize:18, fontWeight:500, marginTop:2, letterSpacing:'-0.01em'}}>
                     {timelineLoading ? (
                       <span className="muted">
@@ -1500,8 +1500,8 @@ function ScreenMemory() {
             </div>
 
             <div style={{flex:1, background:'var(--surface-2)', overflow:'auto', minWidth:0, padding:'24px 28px'}}>
-              <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginBottom:10}}>
-                PREVIEW · {timelineLoading ? '—' : scrubbed.t} ·{' '}
+              <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', marginBottom:10, textTransform:'none', letterSpacing:'0.02em'}}>
+                Preview · {timelineLoading ? '—' : scrubbed.t} ·{' '}
                 {timelineLoading ? '—' : events.length ? `${scrubIdx + 1}/${events.length}` : '—'}
               </div>
               <div style={{fontSize:16, fontWeight:600, marginBottom:12, letterSpacing:'-0.01em'}}>
@@ -1523,7 +1523,7 @@ function ScreenMemory() {
           {/* Scrubber strip */}
           <div className="card memory-scrubber">
             <div className="row" style={{padding:'10px 14px', borderBottom:'1px solid var(--border)', gap:10}}>
-              <span className="t-mono" style={{color:'var(--gold)'}}>TIMELINE</span>
+              <span className="t-mono" style={{color:'var(--gold)', textTransform:'none', letterSpacing:'0.02em'}}>Timeline</span>
               <span className="jp dim" style={{fontSize:10}}>さかのぼる</span>
               <span className="spacer"/>
               <div className="row" style={{gap:4}}>
