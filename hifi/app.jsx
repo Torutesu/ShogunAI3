@@ -3203,7 +3203,10 @@ function App() {
         .user-cluster { padding:10px; border-top:1px solid var(--border); margin-top:8px; }
         .context-enabled-pill {
           display:flex; align-items:center; justify-content:space-between; gap:10px;
-          min-height:44px; padding:0 16px;
+          box-sizing:border-box;
+          width:100%;
+          min-height:44px;
+          padding:0 14px;
           border-radius:13px;
           border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
           background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
@@ -3212,8 +3215,7 @@ function App() {
           font-size:13px;
           font-weight:480;
           letter-spacing:0.01em;
-          margin:2px 6px 12px;
-          width:calc(100% - 12px);
+          margin:0 0 8px;
           text-align:left;
           cursor:pointer;
           transition:border-color 120ms, background 120ms;
@@ -3324,8 +3326,8 @@ function App() {
         }
         .context-manage-btn:hover { border-color:var(--gold-dim); color:var(--gold); }
         .local-preview-row {
-          padding:10px 14px 4px;
-          margin:0 6px 2px;
+          padding:6px 2px 4px;
+          margin:0 0 4px;
           border:0;
         }
         .local-preview-label {
@@ -3334,7 +3336,7 @@ function App() {
           text-transform:uppercase;
           color:var(--text-dim);
         }
-        .user-row { display:flex; align-items:center; gap:6px; padding:2px 0; }
+        .user-row { display:flex; align-items:center; gap:6px; padding:0; }
         .user-row + .user-row { margin-top:0; }
         .capturing-pill {
           display:inline-flex; align-items:center; gap:6px;
@@ -3353,10 +3355,11 @@ function App() {
         }
         .mini-btn:hover { color:var(--text); border-color:var(--border-hi); background:var(--surface-2); }
         .user-pill {
+          box-sizing:border-box;
+          width:100%;
           min-height:44px;
-          padding:6px 16px;
-          margin:0 6px 2px;
-          width:calc(100% - 12px);
+          padding:6px 14px;
+          margin:0;
           background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
           border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
           border-radius:13px;
