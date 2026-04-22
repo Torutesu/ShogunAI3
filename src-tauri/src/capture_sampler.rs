@@ -2,19 +2,29 @@
 //! Optional Accessibility-rich snapshot when `sections.capture.axRichCapture` is true.
 //! Honors `sections.privacy.excludedApps` / `excludedSites` on every sample.
 
-use crate::{macos_ax, memory_store, settings_store};
+use crate::{memory_store, settings_store};
+#[cfg(target_os = "macos")]
+use crate::macos_ax;
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::AppHandle;
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
+
+const RATE_LIMIT_MS: u64 = 120_000;
 
 static LAST_SIG: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_AX_SIG: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_AX_INGEST_MS: Mutex<Option<u64>> = Mutex::new(None);
 #[cfg(target_os = "macos")]
 static LAST_AX_EMPTY_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
+#[cfg(target_os = "macos")]
+static LAST_AX_NOT_TRUSTED_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -23,17 +33,44 @@ fn now_ms() -> u64 {
     .unwrap_or(0)
 }
 
+/// Returns true and records `now` when at least `interval_ms` has passed since
+/// the stored timestamp (or it is missing). Returns false otherwise.
+fn should_trigger_now(last: &Mutex<Option<u64>>, now: u64, interval_ms: u64) -> bool {
+  let Ok(mut guard) = last.lock() else {
+    return false;
+  };
+  let ready = guard
+    .map(|t| now.saturating_sub(t) >= interval_ms)
+    .unwrap_or(true);
+  if ready {
+    *guard = Some(now);
+  }
+  ready
+}
+
 #[cfg(target_os = "macos")]
 fn maybe_log_ax_snapshot_empty() {
-  let now = now_ms();
-  if let Ok(mut last) = LAST_AX_EMPTY_LOG_MS.lock() {
-    if last.map(|t| now.saturating_sub(t) < 120_000).unwrap_or(false) {
-      return;
-    }
-    *last = Some(now);
+  if !should_trigger_now(&LAST_AX_EMPTY_LOG_MS, now_ms(), RATE_LIMIT_MS) {
+    return;
   }
   log::info!(
     "capture: axRichCapture on but AX snapshot empty — allow this app in System Settings → Privacy & Security → Accessibility, or there may be no focused AX element"
+  );
+}
+
+#[cfg(target_os = "macos")]
+fn maybe_warn_ax_not_trusted(app: &AppHandle) {
+  if !should_trigger_now(&LAST_AX_NOT_TRUSTED_LOG_MS, now_ms(), RATE_LIMIT_MS) {
+    return;
+  }
+  log::warn!(
+    "capture: axRichCapture is enabled but Accessibility trust is missing — allow this app in System Settings → Privacy & Security → Accessibility"
+  );
+  let _ = app.emit(
+    "shogun-capture-ax-not-trusted",
+    json!({
+      "message": "Accessibility permission is required for axRichCapture. Allow this app in System Settings → Privacy & Security → Accessibility.",
+    }),
   );
 }
 
@@ -254,8 +291,8 @@ fn maybe_ingest_ax(text: &str) {
   let _ = memory_store::ingest(&payload);
 }
 
-pub fn start_background_sampler() {
-  std::thread::spawn(|| loop {
+pub fn start_background_sampler(app: AppHandle) {
+  std::thread::spawn(move || loop {
     let wait = if pipeline_should_run() {
       sample_interval_secs()
     } else {
@@ -275,6 +312,9 @@ pub fn start_background_sampler() {
         }
       }
       if ax_rich_capture_enabled() {
+        if macos_ax::accessibility_trust_status() == Some(false) {
+          maybe_warn_ax_not_trusted(&app);
+        }
         match macos_ax::focused_ax_snapshot() {
           Some(ax) => {
             let t = ax.trim();
@@ -296,7 +336,7 @@ pub fn start_background_sampler() {
     }
     #[cfg(not(target_os = "macos"))]
     {
-      let _ = &filters;
+      let _ = (&filters, &app);
     }
   });
 }
@@ -432,5 +472,28 @@ mod tests {
   fn ax_text_excluded_returns_false_when_no_hosts() {
     let f = PrivacyFilters::default();
     assert!(!ax_text_excluded(&f, "anything"));
+  }
+
+  #[test]
+  fn should_trigger_now_fires_on_first_call() {
+    let slot: Mutex<Option<u64>> = Mutex::new(None);
+    assert!(should_trigger_now(&slot, 1_000, 120_000));
+    assert_eq!(*slot.lock().unwrap(), Some(1_000));
+  }
+
+  #[test]
+  fn should_trigger_now_suppresses_within_interval() {
+    let slot: Mutex<Option<u64>> = Mutex::new(None);
+    assert!(should_trigger_now(&slot, 1_000, 120_000));
+    assert!(!should_trigger_now(&slot, 1_000 + 119_999, 120_000));
+    assert_eq!(*slot.lock().unwrap(), Some(1_000));
+  }
+
+  #[test]
+  fn should_trigger_now_fires_again_after_interval() {
+    let slot: Mutex<Option<u64>> = Mutex::new(None);
+    assert!(should_trigger_now(&slot, 1_000, 120_000));
+    assert!(should_trigger_now(&slot, 1_000 + 120_000, 120_000));
+    assert_eq!(*slot.lock().unwrap(), Some(121_000));
   }
 }

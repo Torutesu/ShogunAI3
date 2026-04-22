@@ -87,7 +87,7 @@ pub fn run() {
           }
         }
       }
-      capture_sampler::start_background_sampler();
+      capture_sampler::start_background_sampler(app.handle().clone());
       calendar_sync::spawn_background_calendar_sync();
       Ok(())
     })
