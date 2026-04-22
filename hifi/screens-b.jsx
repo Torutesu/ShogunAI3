@@ -296,36 +296,28 @@ function ScreenChat() {
                   }
                 }}
               />
-              <div className="row" style={{gap:8, marginTop:8}}>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
+              <div className="row composer-actions" style={{gap:6, marginTop:8}}>
+                <button className="composer-pill" type="button" onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
                 <button
-                  className="btn btn-sm btn-ghost"
+                  className={'composer-pill' + (webSearchOn ? ' is-on' : '')}
                   type="button"
-                  style={{
-                    padding: '0 8px',
-                    color: webSearchOn ? 'var(--gold)' : 'var(--text-mute)',
-                  }}
                   title="Web research mode (prompts the model for current-style answers; no live browse unless you paste URLs)"
                   onClick={() => setWebSearchOn((v) => !v)}
                 >
                   <Icon name="globe" size={13} /> Web
                 </button>
                 <button
-                  className="btn btn-sm btn-ghost"
+                  className={'composer-pill' + (assembleMemoryOn ? ' is-on' : '')}
                   type="button"
-                  style={{
-                    padding: '0 8px',
-                    color: assembleMemoryOn ? 'var(--gold)' : 'var(--text-mute)',
-                  }}
                   title="memoryAssembly: server assembles context from local Memory (semantic search when API key is set)"
                   onClick={() => setAssembleMemoryOn((v) => !v)}
                 >
                   <Icon name="memory" size={13} /> Assemble
                 </button>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
+                <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
+                <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
                 <span className="spacer"/>
-                <button className="btn btn-sm btn-primary" type="button" disabled={loading} onClick={sendChat}><Icon name="arrowRight" size={13}/>Send</button>
+                <button className="composer-send" type="button" aria-label="Send" disabled={loading} onClick={sendChat}><Icon name="arrowUp" size={16}/></button>
               </div>
             </div>
             <div className="t-mono" style={{fontSize:9, marginTop:8, textAlign:'center', color:'var(--text-dim)'}}>
@@ -404,6 +396,49 @@ function ScreenChat() {
           box-shadow:0 1px 0 rgba(0,0,0,0.2);
         }
         .composer:focus-within { border-color:var(--gold-dim); }
+        .composer-actions { align-items:center; }
+        .composer-pill {
+          display:inline-flex; align-items:center; gap:6px;
+          height:30px; padding:0 12px;
+          border-radius:999px;
+          border:1px solid var(--border);
+          background:color-mix(in srgb, var(--surface) 65%, var(--bg) 35%);
+          color:var(--text-mute);
+          font-size:12.5px; font-weight:450; letter-spacing:0.01em;
+          font-family:inherit; cursor:pointer;
+          transition:border-color 120ms, background 120ms, color 120ms;
+        }
+        .composer-pill:hover {
+          border-color:var(--border-hi);
+          background:var(--surface);
+          color:var(--text);
+        }
+        .composer-pill.is-on {
+          color:var(--gold);
+          border-color:color-mix(in srgb, var(--gold-dim) 60%, var(--border) 40%);
+          background:color-mix(in srgb, var(--gold) 8%, var(--surface) 92%);
+        }
+        .composer-pill:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
+        .composer-send {
+          display:inline-flex; align-items:center; justify-content:center;
+          width:34px; height:34px;
+          border-radius:10px;
+          border:0;
+          background:var(--gold);
+          color:var(--bg);
+          cursor:pointer;
+          transition:background 120ms, transform 80ms;
+        }
+        .composer-send:hover:not(:disabled) { background:var(--gold-hover); }
+        .composer-send:active:not(:disabled) { transform:scale(0.96); }
+        .composer-send:disabled { opacity:0.5; cursor:not-allowed; }
+        .composer-send:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
         .shogun-chat-thread--empty { min-height:100%; justify-content:center; box-sizing:border-box; padding-block:12px; }
       `}</style>
     </div>

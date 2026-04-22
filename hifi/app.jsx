@@ -3324,17 +3324,18 @@ function App() {
         }
         .context-manage-btn:hover { border-color:var(--gold-dim); color:var(--gold); }
         .local-preview-row {
-          padding:11px 12px 8px;
-          margin:0 6px 8px;
-          border-top:1px solid color-mix(in srgb, var(--border) 88%, #1b1f27 12%);
+          padding:10px 14px 4px;
+          margin:0 6px 2px;
+          border:0;
         }
         .local-preview-label {
-          font-size:13px;
-          letter-spacing:0.01em;
-          color:color-mix(in srgb, var(--text) 88%, #d7dce4 12%);
+          font-size:10px;
+          letter-spacing:0.04em;
+          text-transform:uppercase;
+          color:var(--text-dim);
         }
         .user-row { display:flex; align-items:center; gap:6px; padding:2px 0; }
-        .user-row + .user-row { margin-top:8px; }
+        .user-row + .user-row { margin-top:0; }
         .capturing-pill {
           display:inline-flex; align-items:center; gap:6px;
           font-family:var(--font-mono); font-size:9px; letter-spacing:0.12em;
@@ -3352,10 +3353,21 @@ function App() {
         }
         .mini-btn:hover { color:var(--text); border-color:var(--border-hi); background:var(--surface-2); }
         .user-pill {
-          padding:8px 10px; background:var(--surface); border:1px solid var(--border);
-          border-radius:var(--radius-md); cursor:pointer; transition:all 120ms;
+          min-height:44px;
+          padding:6px 16px;
+          margin:0 6px 2px;
+          width:calc(100% - 12px);
+          background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
+          border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
+          border-radius:13px;
+          box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);
+          cursor:pointer;
+          transition:border-color 120ms, background 120ms;
         }
-        .user-pill:hover { border-color:var(--border-hi); background:var(--surface-2); }
+        .user-pill:hover {
+          border-color:color-mix(in srgb, var(--border-hi) 88%, #8ea8ff 12%);
+          background:color-mix(in srgb, var(--surface) 72%, #101726 28%);
+        }
 
         /* User floating menu */
         .user-float {

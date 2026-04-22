@@ -234,7 +234,6 @@ const HOME_PROMPT_ROWS = {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenHome() {
   const [morningBrief, setMorningBrief] = useState(null);
-  const [briefErr, setBriefErr] = useState(null);
   const [memoryTotal, setMemoryTotal] = useState(null);
   const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
@@ -369,7 +368,7 @@ function ScreenHome() {
       );
       if (cancelled) return;
       if (!res.ok || !res.data) {
-        setBriefErr("brief unavailable");
+        setMorningBrief(null);
         return;
       }
       const inner = res.data;
@@ -1068,9 +1067,6 @@ function ScreenHome() {
           </div>
         </div>
       )}
-      {briefErr && (
-        <div className="xsmall muted" style={{ marginTop: 16 }}>{briefErr}</div>
-      )}
     </div>
   );
 }
@@ -1296,7 +1292,7 @@ function ScreenMemory() {
           <span className="en-only">By hour</span>
           <span className="jp">時間帯</span>
         </span>
-        <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>
+        <span className="t-mono" style={{fontSize:11, color:'var(--text-dim)', textTransform:'none', letterSpacing:'0.01em'}}>
           {timelineLoading ? (
             <span className="muted">
               <span className="en-only">Loading…</span>
@@ -1304,7 +1300,7 @@ function ScreenMemory() {
             </span>
           ) : (
             <>
-              {events.length} {events.length === 1 ? 'event' : 'events'} · {timeSpanLabel}
+              {events.length} {events.length === 1 ? 'Event' : 'Events'} · {timeSpanLabel}
             </>
           )}
         </span>
@@ -1517,7 +1513,7 @@ function ScreenMemory() {
                 <button type="button" className="btn btn-sm btn-ghost" disabled={events.length===0} onClick={()=>setScrubIdx(Math.max(0, scrubIdx-1))} style={{padding:'0 6px'}}><Icon name="arrowLeft" size={12}/></button>
                 <button type="button" className="btn btn-sm btn-ghost" disabled={events.length===0} onClick={()=>setScrubIdx(Math.min(Math.max(events.length - 1, 0), scrubIdx+1))} style={{padding:'0 6px'}}><Icon name="arrowRight" size={12}/></button>
               </div>
-              <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-dim)', textTransform:'none', letterSpacing:'0.01em'}}>
                 {timelineLoading ? (
                   <span className="muted">
                     <span className="en-only">Loading…</span>
@@ -1525,7 +1521,7 @@ function ScreenMemory() {
                   </span>
                 ) : (
                   <>
-                    {events.length} {events.length === 1 ? 'EVENT' : 'EVENTS'} · {timeSpanLabel}
+                    {events.length} {events.length === 1 ? 'Event' : 'Events'} · {timeSpanLabel}
                   </>
                 )}
               </span>
