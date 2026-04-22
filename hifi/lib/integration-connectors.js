@@ -10,7 +10,6 @@
   const LS_CONNECTED = "shogun.hifi.mock.integrations.connected.v1";
   const LS_GCAL = "shogun.hifi.mock.integrations.google_calendar.v1";
   const LS_GMAIL = "shogun.hifi.mock.integrations.gmail.v1";
-  const LS_GMAIL = "shogun.hifi.mock.integrations.gmail.v1";
 
   /** @type {Record<string, string>} slug -> path under `hifi/assets/integrations/` */
   const ICON_BY_SLUG = {
