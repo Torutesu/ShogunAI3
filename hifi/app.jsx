@@ -2101,18 +2101,6 @@ function App() {
       )}
       {/* Topbar */}
       <div className="topbar">
-        <button
-          type="button"
-          className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
-          onClick={() => setSidebarCollapsed((v) => !v)}
-          aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-          title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-        >
-          <span className="sidebar-toggle-glyph" aria-hidden="true">
-            <span className="pane" />
-            <span className="divider" />
-          </span>
-        </button>
         <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Shogun AI · Home">
           <Kamon size={26} color="var(--text)"/>
           <div>
@@ -2138,6 +2126,18 @@ function App() {
           <span className="kbd">⌘K</span>
         </div>
         <div className="right">
+          <button
+            type="button"
+            className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
+            onClick={() => setSidebarCollapsed((v) => !v)}
+            aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+            title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+          >
+            <span className="sidebar-toggle-glyph" aria-hidden="true">
+              <span className="pane" />
+              <span className="divider" />
+            </span>
+          </button>
           {/* Hummingbird · favorite · share — chat screen only */}
           {active === 'chat' && (
           <div className="page-actions">

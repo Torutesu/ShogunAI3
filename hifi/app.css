@@ -109,13 +109,56 @@
   grid-column: 1 / -1;
   display:flex;
   align-items:center;
-  padding: 0 20px;
+  padding: 0 20px 0 22px;
   border-bottom:1px solid var(--border);
   gap: 20px;
   background:var(--bg);
   z-index:2;
 }
-.topbar .brand { display:flex; align-items:center; gap:10px; min-width:220px; max-width:280px; }
+.topbar .brand { display:flex; align-items:center; gap:10px; min-width:220px; max-width:280px; padding: 12px 0; }
+.sidebar-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background var(--dur-base, 160ms) ease, color var(--dur-base, 160ms) ease;
+}
+.sidebar-toggle-btn:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.sidebar-toggle-glyph {
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 13px;
+  border: 1.4px solid currentColor;
+  border-radius: 3px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.sidebar-toggle-glyph .pane {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 5px;
+  background: currentColor;
+}
+.sidebar-toggle-glyph .divider {
+  display: none;
+}
+.sidebar-toggle-btn.collapsed .sidebar-toggle-glyph .pane {
+  background: transparent;
+}
 .topbar .brand-title { font-size:15px; font-weight:600; letter-spacing:-0.02em; }
 .topbar .brand-jp { font-family:var(--font-jp); font-weight:300; color:var(--text-mute); font-size:12px; }
 .topbar .cmdk { flex:1; max-width:600px; display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); color:var(--text-dim); cursor:pointer; font-size:13px; transition:border-color var(--dur-base); }
