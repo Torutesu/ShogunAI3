@@ -89,20 +89,27 @@ Ship the generated `.dmg` or a stapled `.app`. Include or link: **[`PRIVACY.md`]
 
 `.github/workflows/ci.yml` runs `check:actions`, `check:ipc-mock`, `check:rust`, `build:web-dist`, Playwright E2E, and an **unsigned** `tauri build`.
 
-## 7. GitHub Actions: signed release (manual)
+## 7. GitHub Actions: signed release
 
-Workflow: [`.github/workflows/release-macos.yml`](../.github/workflows/release-macos.yml) — **Actions → Release macOS (signed) → Run workflow**.
+Workflow: [`.github/workflows/release-macos.yml`](../.github/workflows/release-macos.yml).
+
+**Triggers:**
+
+- **Tag push `v*`** — `tauri-action` builds, signs, (optionally) notarizes, and creates a **draft GitHub Release** with the DMG attached. When the Tauri updater plugin is enabled, `latest.json` is attached alongside so existing installs update automatically once the Release is published.
+- **Manual** — Actions → *Release macOS (signed)* → **Run workflow**. Produces a signed DMG as a workflow artifact; does not touch Releases. Use this to sanity-check the signing path without cutting a release.
+
+Day-to-day recommended flow: run `/release` from Claude Code (see [`.claude/commands/release.md`](../.claude/commands/release.md)) — it bumps the three version files, drafts brand-safe notes, tags, pushes, and watches the run. The manual dispatch stays as a fallback.
 
 | Repository secret | Required | Purpose |
 |-------------------|----------|---------|
 | `APPLE_CERTIFICATE` | **Yes** | Base64-encoded **Developer ID Application** `.p12` (export cert + private key from Keychain). |
 | `APPLE_CERTIFICATE_PASSWORD` | **Yes** | Password used when exporting the `.p12`. |
+| `TAURI_SIGNING_PRIVATE_KEY` | Yes once the updater plugin ships | Tauri updater signing key (generate with `npx tauri signer generate -w ~/.tauri/shogun.key`). Used to sign the `.app.tar.gz` so clients can verify `latest.json`. Env var is passed through now; the build emits no updater artifacts until the plugin is enabled. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Yes once the updater plugin ships | Passphrase for the updater signing key (blank string if you generated it without one). |
 | `APPLE_API_KEY_P8_BASE64` | No | Base64-encoded **App Store Connect API** private key (`.p8` contents). |
 | `APPLE_API_KEY_ID` | No | Key ID (e.g. `ABC123DEFG`) for notarization. |
 | `APPLE_API_ISSUER` | No | Issuer UUID from App Store Connect → Users and Access → Keys. |
 
-If the three `APPLE_API_*` optional secrets are all set, the workflow writes the `.p8` to a temp path and exports **`APPLE_API_KEY_PATH`**, **`APPLE_API_KEY`**, **`APPLE_API_ISSUER`** for Tauri’s notarization step (see Tauri changelog: API key auth for `notarytool`). Otherwise the build is **signed only**; staple or re-run notarization locally per §4 if needed.
+If the three `APPLE_API_*` optional secrets are all set, the workflow writes the `.p8` to a temp path and exports **`APPLE_API_KEY_PATH`**, **`APPLE_API_KEY`**, **`APPLE_API_ISSUER`** for Tauri's notarization step (see Tauri changelog: API key auth for `notarytool`). Otherwise the build is **signed only**; staple or re-run notarization locally per §4 if needed.
 
-The run uploads the generated **`.dmg`** as a workflow artifact.
-
-For day-to-day verification, use unsigned **`ci.yml`**; use **`release-macos.yml`** only when secrets are configured on the repository.
+For day-to-day verification, use unsigned **`ci.yml`**; use **`release-macos.yml`** only when the required secrets are configured on the repository.
