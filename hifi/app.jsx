@@ -2126,18 +2126,6 @@ function App() {
           <span className="kbd">⌘K</span>
         </div>
         <div className="right">
-          <button
-            type="button"
-            className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
-            onClick={() => setSidebarCollapsed((v) => !v)}
-            aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-            title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-          >
-            <span className="sidebar-toggle-glyph" aria-hidden="true">
-              <span className="pane" />
-              <span className="divider" />
-            </span>
-          </button>
           {/* Hummingbird · favorite · share — chat screen only */}
           {active === 'chat' && (
           <div className="page-actions">
@@ -2408,6 +2396,20 @@ function App() {
             </div>
             <Icon name={userOpen?'chevronDown':'chevronRight'} size={11} className="dim"/>
           </div>
+        </div>
+        <div className="sidebar-footer">
+          <button
+            type="button"
+            className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
+            onClick={() => setSidebarCollapsed((v) => !v)}
+            aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+            title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+          >
+            <span className="sidebar-toggle-glyph" aria-hidden="true">
+              <span className="pane" />
+              <span className="divider" />
+            </span>
+          </button>
         </div>
       </div>
       <button

@@ -1082,6 +1082,63 @@ function ScreenMemory() {
   const [view, setView] = useState('river');
   const [events, setEvents] = useState(() => []);
   const [scrubIdx, setScrubIdx] = useState(0);
+  const [timelineSpan, setTimelineSpan] = useState('week');
+  const [timelineCursor, setTimelineCursor] = useState(() => new Date());
+  const [selectedDayOffset, setSelectedDayOffset] = useState(0);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [activeFilters, setActiveFilters] = useState(() => ({ screen: true, audio: true, input: true }));
+  const timelineMsPerSpan = useMemo(() => {
+    if (timelineSpan === 'day') return 24 * 60 * 60 * 1000;
+    if (timelineSpan === 'week') return 7 * 24 * 60 * 60 * 1000;
+    if (timelineSpan === 'month') return 30 * 24 * 60 * 60 * 1000;
+    return 365 * 24 * 60 * 60 * 1000;
+  }, [timelineSpan]);
+  const shiftCursor = useCallback((dir) => {
+    setTimelineCursor((d) => new Date(d.getTime() + dir * timelineMsPerSpan));
+  }, [timelineMsPerSpan]);
+  const jumpToToday = useCallback(() => {
+    setTimelineCursor(new Date());
+    setSelectedDayOffset(0);
+  }, []);
+  const weekDays = useMemo(() => {
+    const out = [];
+    const base = new Date(timelineCursor);
+    base.setHours(0, 0, 0, 0);
+    for (let i = 6; i >= 0; i -= 1) {
+      out.push(new Date(base.getTime() - i * 24 * 60 * 60 * 1000));
+    }
+    return out;
+  }, [timelineCursor]);
+  const fmtMonthDay = (d) => d.toLocaleString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
+  const selectedDate = useMemo(() => {
+    const idx = Math.min(6, Math.max(0, 6 - selectedDayOffset));
+    return weekDays[idx] || timelineCursor;
+  }, [weekDays, selectedDayOffset, timelineCursor]);
+  const fmtFullDate = (d) => {
+    try { return d.toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }); }
+    catch (_e) { return d.toDateString(); }
+  };
+  const fmtFullDateJp = (d) => {
+    try { return d.toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' }); }
+    catch (_e) { return ''; }
+  };
+  const rangeLabel = useMemo(() => `${fmtMonthDay(weekDays[0])} – ${fmtMonthDay(weekDays[weekDays.length - 1])}`, [weekDays]);
+  const memoryTotals = useMemo(() => {
+    const seed = Math.abs(Math.floor(timelineCursor.getTime() / 86400000));
+    const counts = weekDays.map((_d, i) => 30 + (((seed + i * 13) * 37) % 46));
+    const total = counts.reduce((a, b) => a + b, 0);
+    return { counts, total };
+  }, [weekDays, timelineCursor]);
+  const activeFilterCount = Object.values(activeFilters).filter(Boolean).length;
+  const toggleFilter = useCallback((key) => {
+    setActiveFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+  const openInChat = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', {
+      detail: { text: 'Revenue-cat · pricing tiers', webSearch: false, assembleMemory: true },
+    }));
+    window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+  }, []);
   const [sourceEntities, setSourceEntities] = useState([]);
   const [semanticMemorySearch, setSemanticMemorySearch] = useState(true);
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
@@ -1227,8 +1284,8 @@ function ScreenMemory() {
         <div style={{flex:1, minWidth:240}}>
           <div className="t-mono" style={{fontSize:10, letterSpacing:'0.14em', color:'var(--text-dim)'}}>MEMORY / TIMELINE</div>
           <h1 style={{margin:'10px 0 0', fontSize:32, fontWeight:600, letterSpacing:'-0.02em'}}>
-            <span className="en-only">April 17 · Friday</span>
-            <span className="jp" style={{display:'block', fontSize:14, color:'var(--text-mute)', fontWeight:400, marginTop:4}}>4月17日（金）</span>
+            <span className="en-only">{fmtFullDate(selectedDate)}</span>
+            <span className="jp" style={{display:'block', fontSize:14, color:'var(--text-mute)', fontWeight:400, marginTop:4}}>{fmtFullDateJp(selectedDate)}</span>
           </h1>
         </div>
         <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
@@ -1242,27 +1299,55 @@ function ScreenMemory() {
               }}>{l}</button>
             ))}
           </div>
-          <button type="button" style={{
-            display:'inline-flex', alignItems:'center', gap:6,
-            padding:'7px 14px', borderRadius:999, border:'1px solid var(--border)',
-            background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit',
-          }} onClick={async ()=>{
-            const res = await runRuntimeActionA('memory.search', withSemantic({ query:'filters timeline', kinds:['screen','audio','input'], limit:50 }), { successMessage:'Filters applied' });
-            mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
-          }}>
-            <Icon name="filter" size={12}/>
-            Filters · 3
-          </button>
+          <div style={{position:'relative'}}>
+            <button type="button" aria-expanded={filtersOpen} style={{
+              display:'inline-flex', alignItems:'center', gap:6,
+              padding:'7px 14px', borderRadius:999, border:'1px solid var(--border)',
+              background: filtersOpen ? 'var(--surface-2)' : 'var(--surface)',
+              color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit',
+            }} onClick={()=>setFiltersOpen(v=>!v)}>
+              <Icon name="filter" size={12}/>
+              Filters{activeFilterCount>0 ? ` · ${activeFilterCount}` : ''}
+            </button>
+            {filtersOpen && (
+              <>
+                <div role="presentation" onMouseDown={()=>setFiltersOpen(false)} style={{position:'fixed', inset:0, zIndex:40}}/>
+                <div role="menu" onMouseDown={(e)=>e.stopPropagation()} style={{
+                  position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41,
+                  minWidth:220, padding:10, borderRadius:12,
+                  border:'1px solid var(--border-hi)', background:'var(--surface-2)',
+                  boxShadow:'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
+                }}>
+                  <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'2px 6px 6px', letterSpacing:'0.12em'}}>SOURCES</div>
+                  {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input']].map(([k,l])=>(
+                    <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
+                      <input type="checkbox" checked={!!activeFilters[k]} onChange={()=>toggleFilter(k)}/>
+                      <span>{l}</span>
+                    </label>
+                  ))}
+                  <div style={{display:'flex', gap:8, marginTop:8}}>
+                    <button type="button" onClick={async ()=>{
+                      const kinds = Object.entries(activeFilters).filter(([,on])=>on).map(([x])=>x);
+                      const res = await runRuntimeActionA('memory.search', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
+                      mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
+                      setFiltersOpen(false);
+                    }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
+                    <button type="button" onClick={()=>{ setActiveFilters({ screen:true, audio:true, input:true }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Toolbar */}
       <div style={{padding:'20px 40px 0', display:'flex', alignItems:'center', gap:16, flexWrap:'wrap'}}>
         <div style={{display:'inline-flex', border:'1px solid var(--border)', borderRadius:8, overflow:'hidden', background:'var(--surface)'}}>
-          {['Day','Week','Month','Year'].map((l)=>{
-            const on = l==='Week';
+          {[['day','Day'],['week','Week'],['month','Month'],['year','Year']].map(([k,l])=>{
+            const on = timelineSpan===k;
             return (
-              <button key={l} type="button" style={{
+              <button key={k} type="button" onClick={()=>setTimelineSpan(k)} style={{
                 padding:'7px 16px', border:'none',
                 background: on?'var(--surface-2)':'transparent',
                 color: on?'var(--text)':'var(--text-mute)',
@@ -1272,45 +1357,39 @@ function ScreenMemory() {
           })}
         </div>
         <div style={{display:'flex', alignItems:'center', gap:6}}>
-          <button type="button" style={{width:30, height:30, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={13}/></button>
-          <span className="t-mono" style={{fontSize:13, color:'var(--text)', padding:'0 8px'}}>APR 11 – APR 17</span>
-          <button type="button" style={{width:30, height:30, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={13}/></button>
+          <button type="button" onClick={()=>shiftCursor(-1)} aria-label="Previous range" style={{width:30, height:30, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={13}/></button>
+          <span className="t-mono" style={{fontSize:13, color:'var(--text)', padding:'0 8px'}}>{rangeLabel}</span>
+          <button type="button" onClick={()=>shiftCursor(1)} aria-label="Next range" style={{width:30, height:30, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={13}/></button>
         </div>
-        <button type="button" style={{
+        <button type="button" onClick={jumpToToday} style={{
           padding:'7px 14px', borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit',
         }}>
           <span className="en-only">Today</span>
           <span className="jp" style={{marginLeft:4, fontSize:11}}>· 今日</span>
         </button>
         <span style={{flex:1}}/>
-        <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>372 MEMORIES · 94H</span>
+        <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>{memoryTotals.total} MEMORIES · {Math.round(memoryTotals.total * 0.25)}H</span>
       </div>
 
       {/* 7-day week cards (no heatmap — just date + activity count) */}
       <div style={{padding:'18px 40px 0', display:'grid', gridTemplateColumns:'repeat(7, minmax(0, 1fr))', gap:10}}>
-        {[
-          {label:'APR 11', count:38},
-          {label:'APR 12', count:52},
-          {label:'APR 13', count:61},
-          {label:'APR 14', count:44},
-          {label:'APR 15', count:58},
-          {label:'APR 16', count:46},
-          {label:'APR 17', count:73},
-        ].map((d, i)=>{
-          const active = i===6;
+        {weekDays.map((d, i)=>{
+          const offset = 6 - i;
+          const active = offset === selectedDayOffset;
           return (
-            <div key={d.label} style={{
+            <button key={d.toISOString()} type="button" onClick={()=>setSelectedDayOffset(offset)} style={{
               padding:'14px 16px',
               borderRadius:14,
               border: active ? '1px solid color-mix(in srgb, var(--gold) 55%, var(--border))' : '1px solid var(--border)',
               background: active ? 'color-mix(in srgb, var(--gold) 10%, var(--surface))' : 'var(--surface)',
               minHeight:82,
-              display:'flex', flexDirection:'column', gap:8, cursor:'pointer',
+              display:'flex', flexDirection:'column', gap:8,
+              cursor:'pointer', fontFamily:'inherit', textAlign:'left',
             }}>
-              <div className="t-mono" style={{fontSize:10, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>{d.label}</div>
-              <div style={{fontSize:22, fontWeight:600, color: active ? 'var(--text)' : 'var(--text-mute)', letterSpacing:'-0.02em'}}>{d.count}</div>
+              <div className="t-mono" style={{fontSize:10, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>{fmtMonthDay(d)}</div>
+              <div style={{fontSize:22, fontWeight:600, color: active ? 'var(--text)' : 'var(--text-mute)', letterSpacing:'-0.02em'}}>{memoryTotals.counts[i]}</div>
               <div className="t-mono" style={{fontSize:9, color:'var(--text-dim)'}}>MEMORIES</div>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -1342,31 +1421,37 @@ function ScreenMemory() {
           <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em', marginBottom:12}}>3 MEMORIES WRITTEN · 2 ENTITIES LINKED</div>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
             {[
-              {label:'DECISION', body:'\"Pro tier = $62/mo, annual $49\"'},
-              {label:'QUOTE', body:'\"pricing shouldn\u2019t apologize for itself\"'},
-              {label:'TODO', body:'Send tiering doc to Matt by Friday'},
+              {label:'DECISION', body:'\"Pro tier = $62/mo, annual $49\"', query:'Pro tier 62 annual 49'},
+              {label:'QUOTE', body:'\"pricing shouldn\u2019t apologize for itself\"', query:'pricing apologize'},
+              {label:'TODO', body:'Send tiering doc to Matt by Friday', query:'tiering doc Matt Friday'},
             ].map(row=>(
-              <div key={row.label} style={{
+              <button key={row.label} type="button" onClick={async ()=>{
+                await runRuntimeActionA('memory.search', withSemantic({ query: row.query, limit: 10 }), { successMessage: row.label + ' opened' });
+              }} style={{
                 display:'flex', alignItems:'center', gap:14,
                 padding:'10px 14px', borderRadius:10,
                 background:'color-mix(in srgb, var(--surface-2) 50%, transparent)',
                 border:'1px solid var(--border)',
+                cursor:'pointer', fontFamily:'inherit', textAlign:'left', width:'100%',
               }}>
                 <span className="t-mono" style={{fontSize:10, color:'var(--gold)', letterSpacing:'0.14em', minWidth:78}}>{row.label}</span>
                 <span style={{flex:1, fontSize:13, color:'var(--text)'}}>{row.body}</span>
                 <Icon name="arrowUpRight" size={13}/>
-              </div>
+              </button>
             ))}
           </div>
           <div style={{display:'flex', gap:10, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)'}}>
-            <button type="button" style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>
+            <button type="button" onClick={openInChat} style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>
               <Icon name="chat" size={13}/>Open in Chat
             </button>
-            <button type="button" style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>
+            <button type="button" onClick={async ()=>{
+              const res = await runRuntimeActionA('memory.search', withSemantic({ query:'Revenue-cat pricing tiers', limit:10 }), { successMessage:'Source opened' });
+              mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
+            }} style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>
               <Icon name="link" size={13}/>Open source
             </button>
             <span style={{flex:1}}/>
-            <button type="button" style={{display:'inline-flex', alignItems:'center', justifyContent:'center', width:32, height:30, padding:0, borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer'}}>
+            <button type="button" onClick={()=>window.SHOGUN_RUNTIME?.pushToast?.('More actions (preview)', 'info')} style={{display:'inline-flex', alignItems:'center', justifyContent:'center', width:32, height:30, padding:0, borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer'}}>
               <Icon name="more" size={14}/>
             </button>
           </div>
@@ -1412,9 +1497,9 @@ function ScreenMemory() {
         <div style={{display:'flex', alignItems:'center', gap:14, marginBottom:12}}>
           <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>TIMELINE</span>
           <span style={{flex:1}}/>
-          <button type="button" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={12}/></button>
-          <button type="button" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
-          <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>57 EVENTS · 15H 02M</span>
+          <button type="button" onClick={()=>shiftCursor(-1)} aria-label="Previous day" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={12}/></button>
+          <button type="button" onClick={()=>shiftCursor(1)} aria-label="Next day" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
+          <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>{memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))]} EVENTS · {Math.round(memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 0.26)}H {Math.floor((memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 60 * 0.26) % 60)}M</span>
         </div>
         <div style={{position:'relative', height:64}}>
           <div style={{position:'absolute', inset:'0 0 22px 0', display:'flex', alignItems:'flex-end', gap:2}}>
