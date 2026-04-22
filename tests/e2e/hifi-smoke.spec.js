@@ -271,7 +271,15 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
     await expect(page.locator(".s-pane-head")).toContainText("Integrations");
 
-    await page.locator(".s-pane-body").getByRole("button", { name: "Sync to Memory" }).click();
+    // Integrations pane now shows a "Sync to Memory" button on both the
+    // Google Calendar card and the Gmail card. The success toast text
+    // below pins this to the Calendar card, so scope to that card too.
+    await page
+      .locator(".s-pane-body")
+      .locator(".s-card")
+      .filter({ hasText: "Google Calendar" })
+      .getByRole("button", { name: "Sync to Memory" })
+      .click();
     await expect(page.locator(".app-toast.success")).toContainText("Calendar synced to Memory", {
       timeout: 8000,
     });
