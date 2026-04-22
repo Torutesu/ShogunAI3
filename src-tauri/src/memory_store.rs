@@ -46,6 +46,7 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
     .map_err(|e| e.to_string())?;
   init_schema(&conn)?;
   ensure_embedding_column(&conn)?;
+  ensure_context_layer_columns(&conn)?;
   migrate_json_if_needed(&conn)?;
   Ok(conn)
 }
@@ -64,6 +65,82 @@ fn ensure_embedding_column(conn: &Connection) -> Result<(), String> {
       .execute("ALTER TABLE mem_items ADD COLUMN embedding BLOB", [])
       .map_err(|e| e.to_string())?;
   }
+  Ok(())
+}
+
+/// Phase-1 columns from `docs/context-layer-phase-0-1.md` §1. Added via ALTER
+/// TABLE on first run; `provenance` is backfilled from `source` once so that
+/// downstream code can rely on it being populated.
+fn ensure_context_layer_columns(conn: &Connection) -> Result<(), String> {
+  let mut stmt = conn
+    .prepare("PRAGMA table_info(mem_items)")
+    .map_err(|e| e.to_string())?;
+  let names: Vec<String> = stmt
+    .query_map([], |r| r.get::<_, String>(1))
+    .map_err(|e| e.to_string())?
+    .filter_map(|x| x.ok())
+    .collect();
+  drop(stmt);
+
+  let needs_provenance = !names.iter().any(|n| n == "provenance");
+  if needs_provenance {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN provenance TEXT", [])
+      .map_err(|e| e.to_string())?;
+  }
+  if !names.iter().any(|n| n == "entity_id") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN entity_id TEXT", [])
+      .map_err(|e| e.to_string())?;
+  }
+  if !names.iter().any(|n| n == "confidence") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN confidence REAL", [])
+      .map_err(|e| e.to_string())?;
+  }
+  if !names.iter().any(|n| n == "redaction") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN redaction TEXT", [])
+      .map_err(|e| e.to_string())?;
+  }
+
+  if needs_provenance {
+    backfill_provenance_from_source(conn)?;
+  }
+  Ok(())
+}
+
+/// One-shot: populate `provenance` for rows that never had it. Called only when
+/// the column has just been added; the `WHERE provenance IS NULL` clause makes
+/// it safe to re-run but it should only fire once in practice.
+fn backfill_provenance_from_source(conn: &Connection) -> Result<(), String> {
+  let mut stmt = conn
+    .prepare("SELECT id, source FROM mem_items WHERE provenance IS NULL")
+    .map_err(|e| e.to_string())?;
+  let rows: Vec<(String, String)> = stmt
+    .query_map([], |r| {
+      Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })
+    .map_err(|e| e.to_string())?
+    .filter_map(|x| x.ok())
+    .collect();
+  drop(stmt);
+  if rows.is_empty() {
+    return Ok(());
+  }
+  let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+  for (id, source) in &rows {
+    tx.execute(
+      "UPDATE mem_items SET provenance = ?1 WHERE id = ?2",
+      params![derive_provenance(source), id],
+    )
+    .map_err(|e| e.to_string())?;
+  }
+  tx.commit().map_err(|e| e.to_string())?;
+  log::info!(
+    "memory_store: backfilled provenance on {} row(s)",
+    rows.len()
+  );
   Ok(())
 }
 
