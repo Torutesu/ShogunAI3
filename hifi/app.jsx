@@ -2411,6 +2411,7 @@ function App() {
         type="button"
         className={'sidebar-resizer' + (sidebarResizeHint ? ' show-hint' : '')}
         aria-label="Sidebar width resizer"
+        style={{ left: (sidebarCollapsed ? 0 : sidebarWidth) - 3 }}
         onMouseEnter={() => setSidebarResizeHint(true)}
         onMouseLeave={() => {
           if (!resizeStateRef.current.active) setSidebarResizeHint(false);
@@ -3197,6 +3198,50 @@ function App() {
           font-size:11px; color:var(--text); white-space:nowrap;
           box-shadow:0 6px 16px rgba(0,0,0,0.4); z-index:60;
           pointer-events:none;
+        }
+
+        /* Sidebar resizer — pulled out of the grid flow so it never steals a cell */
+        .app { position:relative; }
+        .sidebar-resizer {
+          position:absolute;
+          top:56px;
+          bottom:0;
+          width:6px;
+          padding:0;
+          border:0;
+          background:transparent;
+          cursor:col-resize;
+          z-index:40;
+          display:block;
+        }
+        .app.sidebar-collapsed .sidebar-resizer { display:none; }
+        .sidebar-resizer-hit {
+          position:absolute; inset:0;
+          background:transparent;
+        }
+        .sidebar-resizer:hover .sidebar-resizer-hit,
+        .sidebar-resizer.show-hint .sidebar-resizer-hit {
+          background:color-mix(in srgb, var(--gold) 35%, transparent);
+        }
+        .sidebar-resizer-tip {
+          position:absolute; left:12px; top:20px;
+          padding:6px 10px;
+          background:var(--surface);
+          border:1px solid var(--border-hi);
+          border-radius:8px;
+          font-size:11px; color:var(--text-mute);
+          white-space:nowrap;
+          box-shadow:0 6px 18px rgba(0,0,0,0.4);
+          pointer-events:none;
+        }
+        .sidebar-resizer-kbd {
+          display:inline-block;
+          margin-left:4px;
+          padding:1px 5px;
+          border:1px solid var(--border);
+          border-radius:4px;
+          font-family:var(--font-mono);
+          font-size:10px;
         }
 
         /* User cluster (bottom-left sidebar) */
