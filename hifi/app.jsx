@@ -3200,6 +3200,51 @@ function App() {
           pointer-events:none;
         }
 
+        /* Sidebar toggle (left of the brand) */
+        .sidebar-toggle-btn {
+          display:inline-flex; align-items:center; justify-content:center;
+          width:32px; height:32px;
+          margin-right:4px;
+          padding:0;
+          border:1px solid transparent;
+          border-radius:var(--radius-sm);
+          background:transparent;
+          color:var(--text-mute);
+          cursor:pointer;
+          transition:background 120ms, color 120ms, border-color 120ms;
+        }
+        .sidebar-toggle-btn:hover {
+          color:var(--text);
+          background:var(--surface);
+          border-color:var(--border);
+        }
+        .sidebar-toggle-btn:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
+        .sidebar-toggle-glyph {
+          position:relative;
+          display:inline-block;
+          width:16px; height:14px;
+          border:1.5px solid currentColor;
+          border-radius:3px;
+        }
+        .sidebar-toggle-glyph .pane {
+          position:absolute; inset:0 auto 0 0;
+          width:5px;
+          background:currentColor;
+          border-top-left-radius:1.5px;
+          border-bottom-left-radius:1.5px;
+          opacity:0.9;
+        }
+        .sidebar-toggle-glyph .divider {
+          position:absolute; top:1px; bottom:1px; left:5px;
+          width:1.5px;
+          background:currentColor;
+          opacity:0.5;
+        }
+        .sidebar-toggle-btn.collapsed .sidebar-toggle-glyph .pane { opacity:0.35; }
+
         /* Sidebar resizer — pulled out of the grid flow so it never steals a cell */
         .app { position:relative; }
         .sidebar-resizer {
