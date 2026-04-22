@@ -862,7 +862,6 @@ function ScreenHome() {
                 <button
                   type="button"
                   aria-label="Send"
-                  disabled={!homeInput.trim()}
                   onClick={goAsk}
                   className="home-send-btn"
                 >
@@ -1091,19 +1090,8 @@ function ScreenHome() {
           cursor:pointer;
           transition:background 120ms, transform 80ms, box-shadow 120ms;
         }
-        .home-send-btn:hover:not(:disabled) {
-          background:var(--gold-hover);
-          box-shadow:
-            inset 0 1px 0 rgba(255,255,255,0.22),
-            0 1px 0 rgba(0,0,0,0.35),
-            0 4px 14px -2px color-mix(in srgb, var(--gold) 70%, transparent);
-        }
-        .home-send-btn:active:not(:disabled) { transform:scale(0.96); }
-        .home-send-btn:disabled {
-          opacity:0.45;
-          cursor:not-allowed;
-          box-shadow:none;
-        }
+        .home-send-btn:hover { background:var(--gold-hover); }
+        .home-send-btn:active { transform:scale(0.96); }
         .home-send-btn:focus-visible {
           outline:2px solid var(--gold);
           outline-offset:2px;
