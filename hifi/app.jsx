@@ -946,7 +946,20 @@ function App() {
 
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
-    if (r) setUserAnchor({left: r.left, bottom: window.innerHeight - r.top + 8, width: r.width});
+    if (r) {
+      // user-float anchors with `bottom` above the pill. Without a
+      // height cap it can grow past the viewport top (the dropdown is
+      // ~370px and tall sidebars leave little room above the pill);
+      // clamp to the space available so the first row ("Settings")
+      // is always clickable.
+      const spaceAbove = Math.max(160, Math.floor(r.top - 16));
+      setUserAnchor({
+        left: r.left,
+        bottom: window.innerHeight - r.top + 8,
+        width: r.width,
+        maxHeight: spaceAbove,
+      });
+    }
     setContextPanelOpen(false);
     setUserOpen(v => !v);
   };
@@ -2718,7 +2731,13 @@ function App() {
           />
           <div
             className="user-float"
-            style={{ left: userAnchor.left, bottom: userAnchor.bottom, width: userAnchor.width }}
+            style={{
+              left: userAnchor.left,
+              bottom: userAnchor.bottom,
+              width: userAnchor.width,
+              maxHeight: userAnchor.maxHeight,
+              overflowY: 'auto',
+            }}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="user-float-head">
