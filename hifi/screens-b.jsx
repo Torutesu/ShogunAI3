@@ -424,17 +424,31 @@ function ScreenChat() {
         }
         .composer-send {
           display:inline-flex; align-items:center; justify-content:center;
-          width:34px; height:34px;
-          border-radius:10px;
+          width:38px; height:38px;
+          border-radius:12px;
           border:0;
           background:var(--gold);
-          color:var(--bg);
+          color:#fff;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.18),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 2px 8px -2px color-mix(in srgb, var(--gold) 55%, transparent);
           cursor:pointer;
-          transition:background 120ms, transform 80ms;
+          transition:background 120ms, transform 80ms, box-shadow 120ms;
         }
-        .composer-send:hover:not(:disabled) { background:var(--gold-hover); }
+        .composer-send:hover:not(:disabled) {
+          background:var(--gold-hover);
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.22),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 4px 14px -2px color-mix(in srgb, var(--gold) 70%, transparent);
+        }
         .composer-send:active:not(:disabled) { transform:scale(0.96); }
-        .composer-send:disabled { opacity:0.5; cursor:not-allowed; }
+        .composer-send:disabled {
+          opacity:0.5;
+          cursor:not-allowed;
+          box-shadow:none;
+        }
         .composer-send:focus-visible {
           outline:2px solid var(--gold);
           outline-offset:2px;
