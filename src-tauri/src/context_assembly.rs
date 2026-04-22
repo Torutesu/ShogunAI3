@@ -160,9 +160,10 @@ pub fn format_hits_reply_draft(hits: &[Hit]) -> String {
   out
 }
 
-/// Markdown section for `packs/.../memory_hits.md`. Byte-for-byte parity with
-/// the inline generator previously in `brief_actions::open_pack` so the
-/// eventual refactor to delegate here is a pure no-op for users.
+/// Markdown section for `packs/.../memory_hits.md`. Called by
+/// `brief_actions::open_pack`; keeps byte-for-byte parity with the original
+/// inline generator (including the empty-state placeholder) so existing packs
+/// stay identical on disk.
 pub fn format_hits_pack_markdown(hits: &[Hit]) -> String {
   let mut out = String::from("## Related memories (local FTS index)\n\n");
   if hits.is_empty() {
@@ -309,9 +310,9 @@ mod tests {
 
   #[test]
   fn format_hits_pack_markdown_matches_open_pack_legacy_format() {
-    // Must stay byte-identical to the string previously built inline in
-    // brief_actions::open_pack (line 60-70). The eventual refactor to delegate
-    // here must produce the same file on disk.
+    // Must stay byte-identical to the string that was previously built inline
+    // in brief_actions::open_pack so existing memory_hits.md files on users'
+    // machines stay consistent after the delegation refactor.
     let hits = vec![mk_hit("abc123", "Kickoff", "Draft sent", "user")];
     let out = format_hits_pack_markdown(&hits);
     assert_eq!(

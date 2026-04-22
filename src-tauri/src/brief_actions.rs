@@ -1,6 +1,6 @@
 //! Morning Brief CTAs: material packs, focus sessions, draft replies — real filesystem + Memory hooks.
 
-use crate::{memory_store, paths};
+use crate::{context_assembly, memory_store, paths};
 use serde_json::{json, Value};
 use std::fs;
 
@@ -12,7 +12,7 @@ fn sanitize_pack_token(s: &str) -> String {
 }
 
 /// Build a folder of Markdown (+ related Memory hits) and reveal it in Finder / file manager.
-pub fn open_pack(payload: &Value) -> Result<Value, String> {
+pub async fn open_pack(payload: &Value) -> Result<Value, String> {
   let pack_id = payload
     .get("pack_id")
     .and_then(|x| x.as_str())
@@ -55,20 +55,14 @@ pub fn open_pack(payload: &Value) -> Result<Value, String> {
     .chars()
     .take(240)
     .collect::<String>();
-  let search_payload = json!({ "query": q, "limit": 16 });
-  let mem = memory_store::search(&search_payload).unwrap_or_else(|_| json!({ "hits": [] }));
-  let mut mem_md = String::from("## Related memories (local FTS index)\n\n");
-  if let Some(hits) = mem.get("hits").and_then(|x| x.as_array()) {
-    if hits.is_empty() {
-      mem_md.push_str("_No matching memories yet — ingest calendar or captures to populate._\n\n");
-    }
-    for h in hits {
-      let t = h.get("title").and_then(|x| x.as_str()).unwrap_or("");
-      let s = h.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
-      let id = h.get("id").and_then(|x| x.as_str()).unwrap_or("");
-      mem_md.push_str(&format!("### {} (`{}`)\n{}\n\n", t, id, s));
-    }
-  }
+  let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+    query: &q,
+    limit: 16,
+    semantic: false,
+  })
+  .await
+  .unwrap_or_default();
+  let mem_md = context_assembly::format_hits_pack_markdown(&hits);
 
   fs::write(dir.join("README.md"), readme).map_err(|e| e.to_string())?;
   fs::write(dir.join("memory_hits.md"), mem_md).map_err(|e| e.to_string())?;

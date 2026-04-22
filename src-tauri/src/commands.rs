@@ -765,8 +765,8 @@ pub fn app_delete_account(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn shogun_open_pack(payload: Value) -> Result<Value, String> {
-  brief_actions::open_pack(&payload)
+pub async fn shogun_open_pack(payload: Value) -> Result<Value, String> {
+  brief_actions::open_pack(&payload).await
 }
 
 #[tauri::command]
