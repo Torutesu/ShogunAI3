@@ -31,18 +31,6 @@ pub struct Hit {
   pub created_at: u64,
 }
 
-/// Map `source` → `provenance` per the Phase 0 / 1 source table. Used only as a
-/// fallback when the row did not carry provenance yet.
-fn derive_provenance(source: &str) -> &'static str {
-  match source {
-    "capture_sampler" | "capture_ax" => "screen",
-    "google_calendar" | "gmail" => "connector",
-    s if s == "meeting" || s.starts_with("meetings") || s.starts_with("meeting_") => "meeting",
-    "" => "user",
-    _ => "user",
-  }
-}
-
 fn hit_from_value(v: &Value) -> Option<Hit> {
   let id = v.get("id").and_then(|x| x.as_str())?.to_string();
   if id.is_empty() {
@@ -67,7 +55,7 @@ fn hit_from_value(v: &Value) -> Option<Hit> {
     .get("provenance")
     .and_then(|x| x.as_str())
     .map(str::to_string)
-    .unwrap_or_else(|| derive_provenance(&source).to_string());
+    .unwrap_or_else(|| memory_store::derive_provenance(&source).to_string());
   let created_at = v
     .get("created_at")
     .and_then(|x| x.as_u64())
@@ -186,25 +174,9 @@ mod tests {
       title: title.to_string(),
       snippet: snippet.to_string(),
       source: source.to_string(),
-      provenance: derive_provenance(source).to_string(),
+      provenance: memory_store::derive_provenance(source).to_string(),
       created_at: 0,
     }
-  }
-
-  #[test]
-  fn derive_provenance_covers_spec_table() {
-    assert_eq!(derive_provenance("capture_sampler"), "screen");
-    assert_eq!(derive_provenance("capture_ax"), "screen");
-    assert_eq!(derive_provenance("google_calendar"), "connector");
-    assert_eq!(derive_provenance("gmail"), "connector");
-    assert_eq!(derive_provenance("meeting"), "meeting");
-    assert_eq!(derive_provenance("meetings_granola"), "meeting");
-    assert_eq!(derive_provenance("meeting_zoom"), "meeting");
-    assert_eq!(derive_provenance("home_attachment"), "user");
-    assert_eq!(derive_provenance("capture"), "user");
-    assert_eq!(derive_provenance("focus_session"), "user");
-    assert_eq!(derive_provenance(""), "user");
-    assert_eq!(derive_provenance("unknown_source"), "user");
   }
 
   #[test]

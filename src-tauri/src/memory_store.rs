@@ -14,6 +14,18 @@ use tauri::{AppHandle, Emitter};
 const MEMORY_DB: &str = "memory.db";
 const LEGACY_JSON: &str = "memory_items.json";
 
+/// Map a `source` string to a `provenance` tag per `docs/context-layer-phase-0-1.md` §0.
+/// Used at ingest time to populate the row and at search time as a fallback when the
+/// persisted `provenance` column is absent (pre-migration rows, in-memory fixtures).
+pub fn derive_provenance(source: &str) -> &'static str {
+  match source {
+    "capture_sampler" | "capture_ax" => "screen",
+    "google_calendar" | "gmail" => "connector",
+    s if s == "meeting" || s.starts_with("meetings") || s.starts_with("meeting_") => "meeting",
+    _ => "user",
+  }
+}
+
 pub(crate) fn db_path() -> Result<std::path::PathBuf, String> {
   Ok(paths::app_data_dir()?.join(MEMORY_DB))
 }
@@ -1031,7 +1043,26 @@ pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-  use super::{decode_embedding_blob, encode_embedding_blob, is_transient_embed_error, truncate_api_error};
+  use super::{
+    decode_embedding_blob, derive_provenance, encode_embedding_blob, is_transient_embed_error,
+    truncate_api_error,
+  };
+
+  #[test]
+  fn derive_provenance_covers_spec_table() {
+    assert_eq!(derive_provenance("capture_sampler"), "screen");
+    assert_eq!(derive_provenance("capture_ax"), "screen");
+    assert_eq!(derive_provenance("google_calendar"), "connector");
+    assert_eq!(derive_provenance("gmail"), "connector");
+    assert_eq!(derive_provenance("meeting"), "meeting");
+    assert_eq!(derive_provenance("meetings_granola"), "meeting");
+    assert_eq!(derive_provenance("meeting_zoom"), "meeting");
+    assert_eq!(derive_provenance("home_attachment"), "user");
+    assert_eq!(derive_provenance("capture"), "user");
+    assert_eq!(derive_provenance("focus_session"), "user");
+    assert_eq!(derive_provenance(""), "user");
+    assert_eq!(derive_provenance("unknown_source"), "user");
+  }
 
   #[test]
   fn embedding_blob_roundtrip() {
