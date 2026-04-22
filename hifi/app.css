@@ -8,6 +8,7 @@
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
+  position: relative;
 }
 
 /* Sidebar toggle (Cmd+S) — wins over responsive .app column rules */
@@ -21,6 +22,69 @@
   pointer-events: none;
   border-right: 0;
   padding: 0;
+}
+
+/* Sidebar resizer — absolutely positioned so it does not consume a grid cell
+   (otherwise it auto-places into row 2 col 2 and pushes `.content` to row 3). */
+.sidebar-resizer {
+  position: absolute;
+  left: var(--sidebar-w, 240px);
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  margin-left: -5px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sidebar-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: transparent;
+  transition: background var(--dur-base, 160ms) ease;
+}
+.sidebar-resizer:hover::before,
+.sidebar-resizer.show-hint::before {
+  background: color-mix(in srgb, var(--gold) 45%, transparent);
+}
+.sidebar-resizer-hit {
+  position: absolute;
+  inset: 0;
+}
+.sidebar-resizer-tip {
+  position: absolute;
+  left: 14px;
+  top: 80px;
+  white-space: nowrap;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.18));
+}
+.sidebar-resizer-kbd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-left: 4px;
+}
+.app.sidebar-collapsed .sidebar-resizer {
+  left: 0;
+  margin-left: 0;
 }
 
 /* Global meeting recording HUD — all screens */

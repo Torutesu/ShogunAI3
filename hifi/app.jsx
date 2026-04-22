@@ -1970,7 +1970,10 @@ function App() {
     <div
       className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}
       data-screen-label={active}
-      style={{ gridTemplateColumns: sidebarCollapsed ? '0 minmax(0, 1fr)' : `${sidebarWidth}px minmax(0, 1fr)` }}
+      style={{
+        gridTemplateColumns: sidebarCollapsed ? '0 minmax(0, 1fr)' : `${sidebarWidth}px minmax(0, 1fr)`,
+        '--sidebar-w': sidebarCollapsed ? '0px' : `${sidebarWidth}px`,
+      }}
     >
       {bioGate.ready && bioGate.open && (
         <div
