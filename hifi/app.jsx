@@ -1134,6 +1134,29 @@ function App() {
     };
   }, [setActive]);
 
+  /** Desktop: Rust emits when axRichCapture is on but macOS Accessibility trust is missing. Backend rate-limits to once per 120s. */
+  useEffect(() => {
+    let unlisten;
+    const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') return undefined;
+    (async () => {
+      try {
+        unlisten = await listen('shogun-capture-ax-not-trusted', (e) => {
+          const p = (e && e.payload) || {};
+          const message =
+            (typeof p.message === 'string' && p.message) ||
+            'Accessibility permission is required for AX-rich capture. Open System Settings → Privacy & Security → Accessibility to allow SHOGUN.';
+          pushToastRef.current(message, 'warn');
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      if (typeof unlisten === 'function') unlisten();
+    };
+  }, []);
+
   if (!runtimeRef.current && ShogunIpcClient && ShogunAPI && ShogunActionRegistry) {
     const client = ShogunIpcClient.createIpcClient();
     const api = ShogunAPI.createApi(client);
