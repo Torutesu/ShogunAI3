@@ -1087,6 +1087,13 @@ function ScreenMemory() {
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState(() => ({ screen: true, audio: true, input: true }));
+  const timelineScrollRef = useRef(null);
+  const scrollTimeline = useCallback((dir) => {
+    const el = timelineScrollRef.current;
+    if (!el) return;
+    const step = Math.max(160, Math.floor(el.clientWidth * 0.6));
+    el.scrollBy({ left: dir * step, behavior: 'smooth' });
+  }, []);
   const timelineMsPerSpan = useMemo(() => {
     if (timelineSpan === 'day') return 24 * 60 * 60 * 1000;
     if (timelineSpan === 'week') return 7 * 24 * 60 * 60 * 1000;
@@ -1495,13 +1502,14 @@ function ScreenMemory() {
       {/* Timeline scrubber */}
       <div style={{marginTop:'auto', padding:'18px 40px 28px', borderTop:'1px solid var(--border)'}}>
         <div style={{display:'flex', alignItems:'center', gap:14, marginBottom:12}}>
-          <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>TIMELINE</span>
+          <span style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.08em', fontFamily:'inherit'}}>Timeline</span>
           <span style={{flex:1}}/>
-          <button type="button" onClick={()=>shiftCursor(-1)} aria-label="Previous day" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={12}/></button>
-          <button type="button" onClick={()=>shiftCursor(1)} aria-label="Next day" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
+          <button type="button" onClick={()=>scrollTimeline(-1)} aria-label="Scroll timeline left" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={12}/></button>
+          <button type="button" onClick={()=>scrollTimeline(1)} aria-label="Scroll timeline right" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
           <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>{memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))]} EVENTS · {Math.round(memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 0.26)}H {Math.floor((memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 60 * 0.26) % 60)}M</span>
         </div>
         <div
+          ref={timelineScrollRef}
           role="group"
           aria-label="Event timeline"
           style={{

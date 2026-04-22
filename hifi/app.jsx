@@ -3207,7 +3207,7 @@ function App() {
         .context-enabled-pill {
           display:flex; align-items:center; justify-content:space-between; gap:10px;
           min-height:44px; padding:0 16px;
-          border-radius:13px;
+          border-radius:var(--radius-lg);
           border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
           background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
           box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);
@@ -3355,8 +3355,8 @@ function App() {
         }
         .mini-btn:hover { color:var(--text); border-color:var(--border-hi); background:var(--surface-2); }
         .user-pill {
-          padding:8px 10px; background:var(--surface); border:1px solid var(--border);
-          border-radius:var(--radius-md); cursor:pointer; transition:all 120ms;
+          padding:10px 14px; background:var(--surface); border:1px solid var(--border);
+          border-radius:var(--radius-lg); cursor:pointer; transition:all 120ms;
         }
         .user-pill:hover { border-color:var(--border-hi); background:var(--surface-2); }
 
