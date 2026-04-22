@@ -305,7 +305,6 @@ function mockIpcInvoke(command, payload) {
               sampleIntervalSecs: 8,
               axMinIntervalSecs: 0,
               paused: false,
-              pipelineAvailable: true,
             },
             integrations: {
               googleCalendarAutoSync: false,

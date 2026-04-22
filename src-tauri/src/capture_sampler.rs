@@ -107,19 +107,26 @@ fn frontmost_app_name() -> Option<String> {
   None
 }
 
+/// Pure check on a loaded settings document: is the sampler allowed to run?
+///
+/// Reads only `sections.capture.paused`. Missing or `true` means the sampler
+/// stays off, which gives fresh installs a privacy-first default (the pause /
+/// resume commands are the user's explicit opt-in). The legacy
+/// `pipelineAvailable` key is intentionally ignored — it was always written in
+/// lockstep with `paused` so no existing user state relies on it alone.
+fn sampler_should_run_for(doc: &Value) -> bool {
+  let paused = doc
+    .pointer("/sections/capture/paused")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  !paused
+}
+
 fn pipeline_should_run() -> bool {
   let Ok(doc) = settings_store::load() else {
     return false;
   };
-  let paused = doc
-    .pointer("/sections/capture/paused")
-    .and_then(|v| v.as_bool())
-    .unwrap_or(false);
-  let pipe = doc
-    .pointer("/sections/capture/pipelineAvailable")
-    .and_then(|v| v.as_bool())
-    .unwrap_or(false);
-  !paused && pipe
+  sampler_should_run_for(&doc)
 }
 
 fn ax_rich_capture_enabled() -> bool {
@@ -507,5 +514,44 @@ mod tests {
     assert!(should_trigger_now(&slot, 1_000, 120_000));
     assert!(should_trigger_now(&slot, 1_000 + 120_000, 120_000));
     assert_eq!(*slot.lock().unwrap(), Some(121_000));
+  }
+
+  #[test]
+  fn sampler_off_on_fresh_install() {
+    // No capture section at all — privacy-first default wins.
+    assert!(!sampler_should_run_for(&json!({})));
+    assert!(!sampler_should_run_for(&json!({ "sections": {} })));
+    assert!(!sampler_should_run_for(
+      &json!({ "sections": { "capture": {} } })
+    ));
+  }
+
+  #[test]
+  fn sampler_respects_paused_flag() {
+    assert!(!sampler_should_run_for(
+      &json!({ "sections": { "capture": { "paused": true } } })
+    ));
+    assert!(sampler_should_run_for(
+      &json!({ "sections": { "capture": { "paused": false } } })
+    ));
+  }
+
+  #[test]
+  fn sampler_ignores_legacy_pipeline_available() {
+    // Legacy key should have no effect: user's `paused` decision governs.
+    assert!(sampler_should_run_for(&json!({
+      "sections": { "capture": { "paused": false, "pipelineAvailable": false } }
+    })));
+    assert!(!sampler_should_run_for(&json!({
+      "sections": { "capture": { "paused": true, "pipelineAvailable": true } }
+    })));
+  }
+
+  #[test]
+  fn sampler_off_when_paused_is_non_bool() {
+    // Unparseable value → treat as missing → privacy-first default (off).
+    assert!(!sampler_should_run_for(
+      &json!({ "sections": { "capture": { "paused": "yes" } } })
+    ));
   }
 }

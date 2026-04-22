@@ -499,10 +499,12 @@ pub fn app_integration_toggle(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn app_capture_pause(payload: Value) -> Result<Value, String> {
+  // `paused` is now the single source of truth for "should the capture sampler
+  // run?". Legacy `pipelineAvailable` keys in existing settings.json stay
+  // around but are ignored by the sampler — see capture_sampler::sampler_should_run_for.
   let _ = settings_store::save_patch(&json!({
     "section": "capture",
     "paused": true,
-    "pipelineAvailable": false,
   }))?;
   Ok(json!({
     "paused": true,
@@ -518,7 +520,6 @@ pub fn app_capture_resume(payload: Value) -> Result<Value, String> {
   let _ = settings_store::save_patch(&json!({
     "section": "capture",
     "paused": false,
-    "pipelineAvailable": true,
   }))?;
   Ok(json!({
     "paused": false,
