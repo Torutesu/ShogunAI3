@@ -25,6 +25,7 @@ static LAST_AX_INGEST_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_AX_EMPTY_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 #[cfg(target_os = "macos")]
 static LAST_AX_NOT_TRUSTED_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
+static LAST_INGEST_ERROR_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -72,6 +73,13 @@ fn maybe_warn_ax_not_trusted(app: &AppHandle) {
       "message": "Accessibility permission is required for axRichCapture. Allow this app in System Settings → Privacy & Security → Accessibility.",
     }),
   );
+}
+
+fn maybe_log_ingest_error(source: &str, err: &str) {
+  if !should_trigger_now(&LAST_INGEST_ERROR_LOG_MS, now_ms(), RATE_LIMIT_MS) {
+    return;
+  }
+  log::warn!("capture: memory ingest failed (source={}): {}", source, err);
 }
 
 fn fnv_hash(s: &str) -> u64 {
@@ -251,7 +259,9 @@ fn maybe_ingest_focus(app: &str) {
     "source": "capture_sampler",
     "kinds": ["screen"],
   });
-  let _ = memory_store::ingest(&payload);
+  if let Err(e) = memory_store::ingest(&payload) {
+    maybe_log_ingest_error("capture_sampler", &e);
+  }
 }
 
 fn maybe_ingest_ax(text: &str) {
@@ -288,7 +298,9 @@ fn maybe_ingest_ax(text: &str) {
     "source": "capture_ax",
     "kinds": ["screen", "accessibility"],
   });
-  let _ = memory_store::ingest(&payload);
+  if let Err(e) = memory_store::ingest(&payload) {
+    maybe_log_ingest_error("capture_ax", &e);
+  }
 }
 
 pub fn start_background_sampler(app: AppHandle) {
