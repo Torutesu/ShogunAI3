@@ -44,6 +44,7 @@ function ScreenChat() {
   /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateB(true);
   const pendingMemoryAssemblyRef = useRefB(null);
+  const pendingAutoSendRef = useRefB(false);
 
   useEffectB(() => {
     let cancelled = false;
@@ -122,6 +123,9 @@ function ScreenChat() {
       const preset = normalizeSeedMemoryAssembly(d);
       if (preset) pendingMemoryAssemblyRef.current = preset;
       else if (d.clearMemoryAssemblyPreset) pendingMemoryAssemblyRef.current = null;
+      if (d.autoSend && d.text != null && String(d.text).trim()) {
+        pendingAutoSendRef.current = true;
+      }
     };
     window.addEventListener('shogun-chat-toggle-max', onMax);
     window.addEventListener('shogun-chat-composer-seed', onComposerSeed);
@@ -218,6 +222,13 @@ function ScreenChat() {
       toast('Open Settings → Model & API', 'info');
     }
   };
+
+  useEffectB(() => {
+    if (!pendingAutoSendRef.current) return;
+    if (!composerText.trim() || loading) return;
+    pendingAutoSendRef.current = false;
+    void sendChat();
+  }, [composerText, loading]);
 
   return (
     <div className={'shogun-chat-layout' + (chatMax ? ' shogun-chat-max' : '')}>

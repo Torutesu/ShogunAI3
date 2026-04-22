@@ -418,11 +418,12 @@ function ScreenHome() {
     return () => document.removeEventListener('mousedown', close);
   }, [promptModal]);
 
-  const seedAndOpenChat = (text) => {
+  const seedAndOpenChat = (text, options) => {
     const t = String(text || '').trim();
+    const autoSend = !!(options && options.autoSend) && t.length > 0;
     window.dispatchEvent(
       new CustomEvent('shogun-chat-composer-seed', {
-        detail: { text: t, webSearch: webSearchOn, assembleMemory: assembleMemoryOn },
+        detail: { text: t, webSearch: webSearchOn, assembleMemory: assembleMemoryOn, autoSend },
       }),
     );
     window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
@@ -430,15 +431,9 @@ function ScreenHome() {
 
   const goAsk = () => {
     const t = homeInput.trim();
-    if (t) seedAndOpenChat(t);
-    else {
-      window.dispatchEvent(
-        new CustomEvent('shogun-chat-composer-seed', {
-          detail: { text: '', webSearch: webSearchOn, assembleMemory: assembleMemoryOn },
-        }),
-      );
-      window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
-    }
+    if (!t) return;
+    seedAndOpenChat(t, { autoSend: true });
+    setHomeInput('');
   };
 
   const ingestPlusFiles = useCallback(async (fileList) => {
@@ -842,25 +837,6 @@ function ScreenHome() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <button
                   type="button"
-                  onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('llm')}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '6px 10px',
-                    borderRadius: 999,
-                    border: '1px solid var(--border)',
-                    background: 'var(--surface-2)',
-                    color: 'var(--text-mute)',
-                    fontSize: 12,
-                    fontFamily: 'var(--font-mono)',
-                  }}
-                >
-                  {modelHint || 'Model'}
-                  <Icon name="chevronDown" size={14} />
-                </button>
-                <button
-                  type="button"
                   aria-label="Send"
                   onClick={goAsk}
                   className="home-send-btn"
@@ -1088,9 +1064,16 @@ function ScreenHome() {
             0 1px 0 rgba(0,0,0,0.35),
             0 2px 8px -2px color-mix(in srgb, var(--gold) 55%, transparent);
           cursor:pointer;
-          transition:background 120ms, transform 80ms, box-shadow 120ms;
+          transition:background 160ms, transform 80ms, box-shadow 160ms, filter 160ms;
         }
-        .home-send-btn:hover { background:var(--gold-hover); }
+        .home-send-btn:hover {
+          background:var(--gold-hover);
+          filter:saturate(1.35) brightness(1.06);
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.28),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 6px 18px -2px color-mix(in srgb, var(--gold) 80%, transparent);
+        }
         .home-send-btn:active { transform:scale(0.96); }
         .home-send-btn:focus-visible {
           outline:2px solid var(--gold);
