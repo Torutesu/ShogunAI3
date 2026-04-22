@@ -175,7 +175,7 @@
 .sidebar {
   border-right:1px solid var(--border);
   background:var(--bg);
-  padding: 16px 12px;
+  padding: 16px 12px 58px;
   overflow-y:auto;
   display:flex;
   flex-direction:column;

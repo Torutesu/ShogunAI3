@@ -1510,19 +1510,24 @@ function ScreenMemory() {
             paddingBottom:2,
             scrollbarWidth:'thin',
             WebkitOverflowScrolling:'touch',
+            width:'100%',
+            maxWidth:'100%',
+            minWidth:0,
           }}
         >
-          <div style={{position:'relative', minWidth: 16 * 96, height:64}}>
-            <div style={{position:'absolute', inset:'0 0 22px 0', display:'flex', alignItems:'flex-end', gap:3}}>
-              {[...Array(16 * 6)].map((_,i)=>{
-                const h = 6 + ((i * 37 + (i%7)*11 + (i%11)*5) % 24);
-                const nowMinute = (new Date().getHours() - 6) * 6 + Math.floor(new Date().getMinutes() / 10);
-                const now = i === nowMinute;
+          <div style={{position:'relative', width: 24 * 8 * 15, height:72, flexShrink:0}}>
+            <div style={{position:'absolute', inset:'0 0 26px 0', display:'flex', alignItems:'flex-end', gap:3}}>
+              {[...Array(24 * 8)].map((_,i)=>{
+                const h = 6 + ((i * 37 + (i%7)*11 + (i%11)*5) % 26);
+                const nowSlot = new Date().getHours() * 8 + Math.floor(new Date().getMinutes() / 7.5);
+                const now = i === nowSlot;
                 return <span key={i} style={{width:12, flexShrink:0, height: h, background: now? 'var(--gold)':'var(--border-hi)', opacity: now?0.95:0.48, borderRadius:2}}/>;
               })}
             </div>
-            <div className="t-mono" style={{position:'absolute', left:0, bottom:0, right:0, display:'flex', justifyContent:'space-between', fontSize:10, color:'var(--text-dim)'}}>
-              {['06','07','08','09','10','11','12','13','14','15','16','17','18','19','20','21','22'].map(h=><span key={h} style={{flex:1, textAlign:'center'}}>{h}</span>)}
+            <div className="t-mono" style={{position:'absolute', left:0, bottom:0, right:0, display:'grid', gridTemplateColumns:'repeat(24, minmax(0, 1fr))', fontSize:10, color:'var(--text-dim)'}}>
+              {[...Array(24)].map((_,h)=>(
+                <span key={h} style={{textAlign:'center'}}>{String(h).padStart(2,'0')}</span>
+              ))}
             </div>
           </div>
         </div>
