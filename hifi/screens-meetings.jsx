@@ -939,10 +939,6 @@ function ScreenMeetings() {
         <h1 style={{margin:0, width:'100%', textAlign:'center', fontSize:34, fontWeight:600, letterSpacing:'-0.02em', fontFamily:'var(--font-serif, var(--font-en))'}}>
           Meetings <span className="jp" style={{fontSize:22, fontWeight:300, marginLeft:10, color:'var(--text-mute)'}}>会議</span>
         </h1>
-        <div style={{marginTop:8, color:'var(--text-mute)', fontSize:13, display:'inline-flex', alignItems:'center', justifyContent:'center', gap:6, flexWrap:'wrap', textAlign:'center'}}>
-          <span>Your private meeting notes and recordings</span>
-          <span className="jp dim" style={{fontSize:11, marginLeft:4}}>個人</span>
-        </div>
       </div>
 
       {/* Coming up — filled when calendar.sync returns events (localStorage cache on success) */}
