@@ -859,6 +859,15 @@ function ScreenHome() {
                   {modelHint || 'Model'}
                   <Icon name="chevronDown" size={14} />
                 </button>
+                <button
+                  type="button"
+                  aria-label="Send"
+                  disabled={!homeInput.trim()}
+                  onClick={goAsk}
+                  className="home-send-btn"
+                >
+                  <Icon name="arrowUp" size={16} />
+                </button>
               </div>
             </div>
           </div>
@@ -1067,6 +1076,39 @@ function ScreenHome() {
           </div>
         </div>
       )}
+      <style>{`
+        .home-send-btn {
+          display:inline-flex; align-items:center; justify-content:center;
+          width:36px; height:36px;
+          border-radius:10px;
+          border:0;
+          background:var(--gold);
+          color:#fff;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.18),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 2px 8px -2px color-mix(in srgb, var(--gold) 55%, transparent);
+          cursor:pointer;
+          transition:background 120ms, transform 80ms, box-shadow 120ms;
+        }
+        .home-send-btn:hover:not(:disabled) {
+          background:var(--gold-hover);
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.22),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 4px 14px -2px color-mix(in srgb, var(--gold) 70%, transparent);
+        }
+        .home-send-btn:active:not(:disabled) { transform:scale(0.96); }
+        .home-send-btn:disabled {
+          opacity:0.45;
+          cursor:not-allowed;
+          box-shadow:none;
+        }
+        .home-send-btn:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
+      `}</style>
     </div>
   );
 }
