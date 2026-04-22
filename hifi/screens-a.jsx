@@ -632,13 +632,17 @@ function ScreenHome() {
     <div
       className="content-inner home-launch-root"
       style={{
-        maxWidth: 720,
-        margin: '0 auto',
-        padding: 'clamp(28px, 6vw, 56px) clamp(18px, 3vw, 32px) clamp(36px, 5vw, 64px)',
+        width: '100%',
+        maxWidth: 'none',
+        margin: 0,
+        padding: 'clamp(32px, 5vw, 64px) clamp(24px, 5vw, 72px) clamp(40px, 6vw, 80px)',
       }}
     >
       <div
         style={{
+          width: '100%',
+          maxWidth: 760,
+          marginInline: 'auto',
           minHeight: 'min(72vh, 620px)',
           display: 'flex',
           flexDirection: 'column',
@@ -1001,7 +1005,7 @@ function ScreenHome() {
       </div>
 
       {morningBrief && (
-        <div className="card" style={{ padding: 28, borderColor: 'var(--gold-dim)', marginTop: 32, background: 'var(--surface)' }}>
+        <div className="card" style={{ width: '100%', maxWidth: 760, marginInline: 'auto', padding: 28, borderColor: 'var(--gold-dim)', marginTop: 32, background: 'var(--surface)' }}>
           <div className="row" style={{ marginBottom: 14, alignItems: 'baseline', gap: 12 }}>
             <div className="t-mono gold">MORNING BRIEF · AMC</div>
             <span className="pill" style={{ fontSize: 10 }}>{morningBrief.posture}</span>
