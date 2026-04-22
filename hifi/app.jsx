@@ -947,18 +947,30 @@ function App() {
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
     if (r) {
-      // user-float anchors with `bottom` above the pill. Without a
-      // height cap it can grow past the viewport top (the dropdown is
-      // ~370px and tall sidebars leave little room above the pill);
-      // clamp to the space available so the first row ("Settings")
-      // is always clickable.
-      const spaceAbove = Math.max(160, Math.floor(r.top - 16));
-      setUserAnchor({
-        left: r.left,
-        bottom: window.innerHeight - r.top + 8,
-        width: r.width,
-        maxHeight: spaceAbove,
-      });
+      // Pop above or below the pill depending on which side has more
+      // room, and cap the float's height so it never overflows the
+      // viewport (the dropdown is ~370px and tall sidebars leave the
+      // pill high enough that a bottom-anchored float would push its
+      // top off-screen — breaking the first row's hit-testing).
+      const spaceAbove = r.top - 16;
+      const spaceBelow = window.innerHeight - r.bottom - 16;
+      if (spaceAbove >= spaceBelow) {
+        setUserAnchor({
+          placement: 'above',
+          left: r.left,
+          bottom: window.innerHeight - r.top + 8,
+          width: r.width,
+          maxHeight: Math.max(160, Math.floor(spaceAbove)),
+        });
+      } else {
+        setUserAnchor({
+          placement: 'below',
+          left: r.left,
+          top: r.bottom + 8,
+          width: r.width,
+          maxHeight: Math.max(160, Math.floor(spaceBelow)),
+        });
+      }
     }
     setContextPanelOpen(false);
     setUserOpen(v => !v);
@@ -2733,10 +2745,12 @@ function App() {
             className="user-float"
             style={{
               left: userAnchor.left,
-              bottom: userAnchor.bottom,
               width: userAnchor.width,
               maxHeight: userAnchor.maxHeight,
               overflowY: 'auto',
+              ...(userAnchor.placement === 'below'
+                ? { top: userAnchor.top }
+                : { bottom: userAnchor.bottom }),
             }}
             onMouseDown={(e) => e.stopPropagation()}
           >
