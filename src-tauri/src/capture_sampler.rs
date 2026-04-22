@@ -1,8 +1,9 @@
 //! Background sampler: macOS frontmost app name ingested as memory (no screenshots).
 //! Optional Accessibility-rich snapshot when `sections.capture.axRichCapture` is true.
+//! Honors `sections.privacy.excludedApps` / `excludedSites` on every sample.
 
 use crate::{macos_ax, memory_store, settings_store};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::process::Command;
@@ -110,6 +111,93 @@ fn ax_min_interval_secs() -> u64 {
     .clamp(0, 600)
 }
 
+/// Normalized privacy filters derived from `sections.privacy.excludedApps` /
+/// `excludedSites` with `enabled: true`. Empty collections mean "no filter".
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct PrivacyFilters {
+  pub excluded_apps: Vec<String>,
+  pub excluded_hosts: Vec<String>,
+}
+
+fn normalize_app(s: &str) -> String {
+  s.trim().to_ascii_lowercase()
+}
+
+fn normalize_host(s: &str) -> String {
+  s.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn row_enabled(row: &Value) -> bool {
+  // Treat missing `enabled` as true: rows without the key default to active.
+  row
+    .get("enabled")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true)
+}
+
+fn collect_enabled_strings(
+  arr: &[Value],
+  key: &str,
+  normalize: fn(&str) -> String,
+) -> Vec<String> {
+  arr
+    .iter()
+    .filter(|row| row_enabled(row))
+    .filter_map(|row| row.get(key).and_then(|v| v.as_str()))
+    .map(normalize)
+    .filter(|s| !s.is_empty())
+    .collect()
+}
+
+pub fn filters_from_settings(doc: &Value) -> PrivacyFilters {
+  let excluded_apps = doc
+    .pointer("/sections/privacy/excludedApps")
+    .and_then(|v| v.as_array())
+    .map(|arr| collect_enabled_strings(arr, "name", normalize_app))
+    .unwrap_or_default();
+  let excluded_hosts = doc
+    .pointer("/sections/privacy/excludedSites")
+    .and_then(|v| v.as_array())
+    .map(|arr| collect_enabled_strings(arr, "host", normalize_host))
+    .unwrap_or_default();
+  PrivacyFilters {
+    excluded_apps,
+    excluded_hosts,
+  }
+}
+
+fn load_privacy_filters() -> PrivacyFilters {
+  settings_store::load()
+    .ok()
+    .as_ref()
+    .map(filters_from_settings)
+    .unwrap_or_default()
+}
+
+pub fn app_excluded(filters: &PrivacyFilters, app_name: &str) -> bool {
+  let needle = normalize_app(app_name);
+  if needle.is_empty() {
+    return false;
+  }
+  filters.excluded_apps.iter().any(|a| a == &needle)
+}
+
+/// Checks whether any excluded host appears in the AX text. Matches bare
+/// occurrences as well as URLs: we lowercase both sides and look for a
+/// substring hit. To reduce false positives we only match hosts that contain a
+/// dot (which all real DNS names do).
+pub fn ax_text_excluded(filters: &PrivacyFilters, text: &str) -> bool {
+  if filters.excluded_hosts.is_empty() || text.is_empty() {
+    return false;
+  }
+  let lower = text.to_ascii_lowercase();
+  filters
+    .excluded_hosts
+    .iter()
+    .filter(|h| h.contains('.'))
+    .any(|host| lower.contains(host.as_str()))
+}
+
 fn maybe_ingest_focus(app: &str) {
   let sig = fnv_hash(app);
   if let Ok(mut last) = LAST_SIG.lock() {
@@ -177,13 +265,23 @@ pub fn start_background_sampler() {
     if !pipeline_should_run() {
       continue;
     }
+    let filters = load_privacy_filters();
     #[cfg(target_os = "macos")]
     {
+      let frontmost = frontmost_app_name();
+      if let Some(ref name) = frontmost {
+        if app_excluded(&filters, name) {
+          continue;
+        }
+      }
       if ax_rich_capture_enabled() {
         match macos_ax::focused_ax_snapshot() {
           Some(ax) => {
             let t = ax.trim();
             if !t.is_empty() {
+              if ax_text_excluded(&filters, t) {
+                continue;
+              }
               maybe_ingest_ax(t);
               continue;
             }
@@ -192,9 +290,147 @@ pub fn start_background_sampler() {
           None => maybe_log_ax_snapshot_empty(),
         }
       }
-      if let Some(app) = frontmost_app_name() {
-        maybe_ingest_focus(&app);
+      if let Some(name) = frontmost {
+        maybe_ingest_focus(&name);
       }
     }
+    #[cfg(not(target_os = "macos"))]
+    {
+      let _ = &filters;
+    }
   });
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  fn doc_with_privacy(privacy: Value) -> Value {
+    json!({ "sections": { "privacy": privacy } })
+  }
+
+  #[test]
+  fn filters_from_settings_reads_enabled_rows_only() {
+    let doc = doc_with_privacy(json!({
+      "excludedApps": [
+        { "name": "Finder", "enabled": true },
+        { "name": "1Password", "enabled": true },
+        { "name": "Banking", "enabled": false },
+        { "name": "", "enabled": true },
+      ],
+      "excludedSites": [
+        { "host": "internal.corp.example", "enabled": true },
+        { "host": "pay.vendor.example", "enabled": false },
+      ],
+    }));
+    let f = filters_from_settings(&doc);
+    assert_eq!(f.excluded_apps, vec!["finder", "1password"]);
+    assert_eq!(f.excluded_hosts, vec!["internal.corp.example"]);
+  }
+
+  #[test]
+  fn filters_from_settings_tolerates_missing_privacy() {
+    assert_eq!(
+      filters_from_settings(&json!({})),
+      PrivacyFilters::default()
+    );
+    assert_eq!(
+      filters_from_settings(&json!({ "sections": {} })),
+      PrivacyFilters::default()
+    );
+  }
+
+  #[test]
+  fn filters_from_settings_defaults_missing_enabled_to_true() {
+    let doc = doc_with_privacy(json!({
+      "excludedApps": [{ "name": "Finder" }],
+    }));
+    let f = filters_from_settings(&doc);
+    assert_eq!(f.excluded_apps, vec!["finder"]);
+  }
+
+  #[test]
+  fn app_excluded_matches_case_insensitive() {
+    let f = PrivacyFilters {
+      excluded_apps: vec!["finder".to_string()],
+      excluded_hosts: vec![],
+    };
+    assert!(app_excluded(&f, "Finder"));
+    assert!(app_excluded(&f, "  FINDER  "));
+    assert!(!app_excluded(&f, "Safari"));
+  }
+
+  #[test]
+  fn app_excluded_returns_false_for_empty_input() {
+    let f = PrivacyFilters {
+      excluded_apps: vec!["finder".to_string()],
+      excluded_hosts: vec![],
+    };
+    assert!(!app_excluded(&f, ""));
+    assert!(!app_excluded(&f, "   "));
+  }
+
+  #[test]
+  fn ax_text_excluded_matches_url_host() {
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(ax_text_excluded(
+      &f,
+      "role=AXTextField\nvalue=Visit https://Internal.Corp.Example/path today"
+    ));
+  }
+
+  #[test]
+  fn ax_text_excluded_matches_bare_host() {
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(ax_text_excluded(
+      &f,
+      "window=Internal docs — internal.corp.example"
+    ));
+  }
+
+  #[test]
+  fn ax_text_excluded_ignores_non_matching_host() {
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(!ax_text_excluded(&f, "role=AXButton\nvalue=github.com/foo"));
+  }
+
+  #[test]
+  fn ax_text_excluded_skips_dotless_hosts() {
+    // Dotless entries are rejected to avoid matching arbitrary words.
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal".to_string()],
+    };
+    assert!(!ax_text_excluded(&f, "internal notes about this project"));
+  }
+
+  #[test]
+  fn ax_text_excluded_respects_disabled_rows() {
+    let doc = doc_with_privacy(json!({
+      "excludedSites": [
+        { "host": "internal.corp.example", "enabled": false },
+      ],
+    }));
+    let f = filters_from_settings(&doc);
+    assert!(!ax_text_excluded(
+      &f,
+      "value=https://internal.corp.example/"
+    ));
+  }
+
+  #[test]
+  fn ax_text_excluded_returns_false_when_no_hosts() {
+    let f = PrivacyFilters::default();
+    assert!(!ax_text_excluded(&f, "anything"));
+  }
 }
