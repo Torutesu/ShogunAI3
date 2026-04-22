@@ -1501,16 +1501,29 @@ function ScreenMemory() {
           <button type="button" onClick={()=>shiftCursor(1)} aria-label="Next day" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
           <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>{memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))]} EVENTS · {Math.round(memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 0.26)}H {Math.floor((memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 60 * 0.26) % 60)}M</span>
         </div>
-        <div style={{position:'relative', height:64}}>
-          <div style={{position:'absolute', inset:'0 0 22px 0', display:'flex', alignItems:'flex-end', gap:2}}>
-            {[...Array(54)].map((_,i)=>{
-              const h = 8 + ((i * 37 + (i%7)*11) % 22);
-              const now = i===30;
-              return <span key={i} style={{flex:1, height: h, background: now? 'var(--gold)':'var(--border-hi)', opacity: now?0.95:0.48, borderRadius:2}}/>;
-            })}
-          </div>
-          <div className="t-mono" style={{position:'absolute', left:0, bottom:0, right:0, display:'flex', justifyContent:'space-between', fontSize:10, color:'var(--text-dim)'}}>
-            {['06','08','10','12','14','16','18','20','22'].map(h=><span key={h}>{h}</span>)}
+        <div
+          role="group"
+          aria-label="Event timeline"
+          style={{
+            overflowX:'auto',
+            overflowY:'hidden',
+            paddingBottom:2,
+            scrollbarWidth:'thin',
+            WebkitOverflowScrolling:'touch',
+          }}
+        >
+          <div style={{position:'relative', minWidth: 16 * 96, height:64}}>
+            <div style={{position:'absolute', inset:'0 0 22px 0', display:'flex', alignItems:'flex-end', gap:3}}>
+              {[...Array(16 * 6)].map((_,i)=>{
+                const h = 6 + ((i * 37 + (i%7)*11 + (i%11)*5) % 24);
+                const nowMinute = (new Date().getHours() - 6) * 6 + Math.floor(new Date().getMinutes() / 10);
+                const now = i === nowMinute;
+                return <span key={i} style={{width:12, flexShrink:0, height: h, background: now? 'var(--gold)':'var(--border-hi)', opacity: now?0.95:0.48, borderRadius:2}}/>;
+              })}
+            </div>
+            <div className="t-mono" style={{position:'absolute', left:0, bottom:0, right:0, display:'flex', justifyContent:'space-between', fontSize:10, color:'var(--text-dim)'}}>
+              {['06','07','08','09','10','11','12','13','14','15','16','17','18','19','20','21','22'].map(h=><span key={h} style={{flex:1, textAlign:'center'}}>{h}</span>)}
+            </div>
           </div>
         </div>
       </div>
