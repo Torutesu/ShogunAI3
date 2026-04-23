@@ -1,6 +1,7 @@
 //! Builtin recipes (LLM prompts over meeting transcript ± memory).
 
-use crate::{llm, meeting_store, memory_store};
+use crate::context_assembly::{assemble_memory_hits, format_hits_draft_context, AssembleParams, Hit};
+use crate::{llm, meeting_store};
 use serde_json::{json, Value};
 
 #[derive(Clone, Copy)]
@@ -66,24 +67,25 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
     .collect::<Vec<_>>()
     .join("\n---\n");
 
-  let mut memory_ctx = String::new();
-  if matches!(
+  let memory_hits: Vec<Hit> = if matches!(
     rid,
     RecipeId::FollowUpEmail | RecipeId::FeatureDigest | RecipeId::PrdDraft
   ) {
     let q: String = tr_text.chars().take(120).collect();
-    if !q.is_empty() {
-      if let Ok(mem) = memory_store::search(&json!({ "query": q, "limit": 8 })) {
-        if let Some(hits) = mem.get("hits").and_then(|h| h.as_array()) {
-          for h in hits {
-            let t = h.get("title").and_then(|x| x.as_str()).unwrap_or("");
-            let s = h.get("snippet").and_then(|x| x.as_str()).unwrap_or("");
-            memory_ctx.push_str(&format!("- {} — {}\n", t, s));
-          }
-        }
-      }
+    if q.is_empty() {
+      Vec::new()
+    } else {
+      assemble_memory_hits(AssembleParams {
+        query: &q,
+        limit: 8,
+        semantic: false,
+      })
+      .await
+      .unwrap_or_default()
     }
-  }
+  } else {
+    Vec::new()
+  };
 
   let (system, user) = match rid {
     RecipeId::CoachMe => (
@@ -100,7 +102,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
         "## Transcript\n{}\n\n## Notes\n{}\n\n## Related memory\n{}\n\nDraft a short follow-up email (greeting, thanks, commitments, next step).",
         tr_text.chars().take(14_000).collect::<String>(),
         notes_text.chars().take(6000).collect::<String>(),
-        memory_ctx.chars().take(6000).collect::<String>()
+        format_hits_draft_context(&memory_hits, 6000)
       ),
     ),
     RecipeId::ActionItems => (
@@ -116,7 +118,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
       format!(
         "## Transcript\n{}\n\n## Memory\n{}\n\nSummarize feature requests as bullets with customer pain.",
         tr_text.chars().take(14_000).collect::<String>(),
-        memory_ctx.chars().take(8000).collect::<String>()
+        format_hits_draft_context(&memory_hits, 8000)
       ),
     ),
     RecipeId::PrdDraft => (
@@ -125,7 +127,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
         "## Transcript\n{}\n\n## Notes\n{}\n\n## Memory\n{}\n\nDraft Problem, Goals, Non-goals, Success metrics — cite transcript only.",
         tr_text.chars().take(12_000).collect::<String>(),
         notes_text.chars().take(6000).collect::<String>(),
-        memory_ctx.chars().take(6000).collect::<String>()
+        format_hits_draft_context(&memory_hits, 6000)
       ),
     ),
     RecipeId::DecisionLog => (
