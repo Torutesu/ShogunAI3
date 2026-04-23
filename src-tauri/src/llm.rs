@@ -221,6 +221,7 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     .and_then(|s| s.as_str())
     .unwrap_or("");
   let mut memory_block = String::new();
+  let mut hits_count: usize = 0;
   if privacy_allows_chat_server_memory_assembly() {
     if let Some(ma) = payload.get("memoryAssembly").and_then(|x| x.as_object()) {
       let q = ma
@@ -241,6 +242,7 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
       })
       .await
       .unwrap_or_else(|_| Vec::new());
+      hits_count = hits.len();
       memory_block = context_assembly::format_hits_draft_context(&hits, 6000);
     }
   }
@@ -281,6 +283,7 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     "draft_from_payload_done",
     &[
       ("memory_used", memory_used.to_string()),
+      ("hits", hits_count.to_string()),
       ("block_chars", block_chars.to_string()),
       ("content_len", content.chars().count().to_string()),
       ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
@@ -326,7 +329,7 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
   crate::memory_obs::emit(
     "brief_generate_done",
     &[
-      ("hits_used", hits_count.to_string()),
+      ("hits", hits_count.to_string()),
       ("sections", sections_count.to_string()),
       ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
     ],
@@ -405,7 +408,7 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
   crate::memory_obs::emit(
     "draft_reply_done",
     &[
-      ("hits_used", hits.len().to_string()),
+      ("hits", hits.len().to_string()),
       ("content_len", content.chars().count().to_string()),
       ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
     ],

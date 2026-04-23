@@ -50,6 +50,7 @@ pub fn emit(event: &str, fields: &[(&'static str, String)]) {
 
 /// Clip a string for a `*_preview` field: take the first 40 **characters**
 /// (not bytes) and collapse newlines so one event is one line.
+#[allow(dead_code)] // Reserved for B-2's Memory Debugger ring buffer (query_preview field).
 pub fn clip_preview(s: &str) -> String {
     s.chars()
         .take(40)
