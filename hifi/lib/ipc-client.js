@@ -461,6 +461,36 @@
           echo: echo,
           stub: false,
         };
+      case "shogun_memory_debug_gate":
+        return { available: false, reason: "mock_browser" };
+      case "shogun_memory_debug_recent_calls":
+        return { calls: [], capacity: 50 };
+      case "shogun_memory_debug_query":
+        return {
+          hits: [],
+          draft_block: "",
+          brief_block: "",
+          reply_block: "",
+          query: (echo && echo.query) || "",
+          limit: (echo && echo.limit) || 12,
+          semantic: !!(echo && echo.semantic),
+        };
+      case "shogun_memory_debug_stats":
+        return {
+          total: 0,
+          fts_total: 0,
+          fts_integrity: true,
+          by_source: [],
+          by_provenance: [],
+          earliest_ms: null,
+          latest_ms: null,
+          db_bytes: 0,
+        };
+      case "shogun_memory_debug_sync_status":
+        return {
+          google_calendar: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
+          gmail: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
+        };
       case "shogun_entity_query":
         return {
           entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],

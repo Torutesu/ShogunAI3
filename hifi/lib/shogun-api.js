@@ -36,6 +36,11 @@
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),
       memoryEmbedBackfillCancel: (input) =>
         call("shogun_memory_embed_backfill_cancel", input || {}, WRITE),
+      memoryDebugRecentCalls: (input) => call("shogun_memory_debug_recent_calls", input || { limit: 50 }, READ),
+      memoryDebugQuery: (input) => call("shogun_memory_debug_query", input, READ),
+      memoryDebugStats: () => call("shogun_memory_debug_stats", {}, READ),
+      memoryDebugSyncStatus: () => call("shogun_memory_debug_sync_status", {}, READ),
+      memoryDebugGate: () => call("shogun_memory_debug_gate", {}, READ),
       entityQuery: (input) => call("shogun_entity_query", input, READ),
       briefGet: (input) => call("shogun_brief_get", input, READ),
       openPack: (input) => call("shogun_open_pack", input, WRITE),
