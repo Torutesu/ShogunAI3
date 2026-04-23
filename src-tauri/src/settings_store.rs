@@ -20,7 +20,18 @@ pub fn load() -> Result<Value, String> {
   }
   let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
   let v: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-  Ok(ensure_shape(v))
+  let mut shaped = ensure_shape(v);
+  // Best-effort one-shot cleanup: persist stripped legacy keys so re-opens stop
+  // finding them. A failure to write back is not fatal — the in-memory doc
+  // returned below is still clean, and subsequent save_patch calls will persist
+  // the next time settings are touched.
+  if strip_legacy_keys(&mut shaped) {
+    let _ = fs::write(
+      &path,
+      serde_json::to_string_pretty(&shaped).map_err(|e| e.to_string())?,
+    );
+  }
+  Ok(shaped)
 }
 
 fn ensure_shape(mut v: Value) -> Value {
@@ -39,6 +50,21 @@ fn ensure_shape(mut v: Value) -> Value {
     }
   }
   v
+}
+
+/// Remove keys that the current capture sampler no longer reads. Returns true
+/// when the document was actually modified (the caller may want to persist).
+fn strip_legacy_keys(v: &mut Value) -> bool {
+  let mut changed = false;
+  if let Some(capture) = v
+    .pointer_mut("/sections/capture")
+    .and_then(|s| s.as_object_mut())
+  {
+    if capture.remove("pipelineAvailable").is_some() {
+      changed = true;
+    }
+  }
+  changed
 }
 
 /// Merges `payload` into `sections[section]` using all keys except `section`.
@@ -77,6 +103,10 @@ pub fn save_patch(payload: &Value) -> Result<Value, String> {
   for (k, v) in patch_map {
     entry_obj.insert(k, v);
   }
+
+  // Defensive: callers (pause/resume in old clients) may still include the
+  // retired pipelineAvailable key in the patch; drop it before writing.
+  let _ = strip_legacy_keys(&mut doc);
 
   if let Some(obj) = doc.as_object_mut() {
     obj.insert("updatedAt".to_string(), json!(now_ms()));
@@ -156,3 +186,45 @@ pub fn upsert_integration_provider(slug: &str, patch: &Value) -> Result<Value, S
   Ok(doc)
 }
 
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn strip_removes_legacy_pipeline_available_and_reports_change() {
+    let mut doc = json!({
+      "sections": {
+        "capture": {
+          "paused": false,
+          "pipelineAvailable": true,
+          "axRichCapture": true,
+        },
+      },
+    });
+    assert!(strip_legacy_keys(&mut doc));
+    let capture = doc.pointer("/sections/capture").unwrap();
+    assert!(capture.get("pipelineAvailable").is_none());
+    assert_eq!(capture.get("paused").and_then(|v| v.as_bool()), Some(false));
+    assert_eq!(capture.get("axRichCapture").and_then(|v| v.as_bool()), Some(true));
+  }
+
+  #[test]
+  fn strip_is_noop_when_legacy_key_absent() {
+    let mut doc = json!({
+      "sections": { "capture": { "paused": true } },
+    });
+    assert!(!strip_legacy_keys(&mut doc));
+    assert_eq!(
+      doc,
+      json!({ "sections": { "capture": { "paused": true } } })
+    );
+  }
+
+  #[test]
+  fn strip_tolerates_missing_capture_section() {
+    let mut doc = json!({ "sections": {} });
+    assert!(!strip_legacy_keys(&mut doc));
+    let mut empty = json!({});
+    assert!(!strip_legacy_keys(&mut empty));
+  }
+}
