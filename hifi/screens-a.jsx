@@ -804,20 +804,20 @@ function ScreenHome() {
                     style={{
                       position: 'absolute',
                       left: 0,
-                      bottom: '100%',
-                      marginBottom: 8,
-                      width: 'min(340px, calc(100vw - 48px))',
+                      top: '100%',
+                      marginTop: 6,
+                      width: 'min(260px, calc(100vw - 48px))',
                       background: 'var(--surface)',
                       border: '1px solid var(--border-hi)',
-                      borderRadius: 'var(--radius-lg)',
+                      borderRadius: 'var(--radius-md)',
                       boxShadow: 'var(--shadow-lg)',
-                      padding: '6px 0',
+                      padding: '4px 0',
                       zIndex: 50,
                     }}
                   >
                     {plusMenuSections.map((section, si) => (
                       <div key={si}>
-                        {si > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '6px 0' }} />}
+                        {si > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />}
                         {section.map((row, ri) => (
                           <button
                             key={ri}
@@ -837,11 +837,11 @@ function ScreenHome() {
                             style={{
                               display: 'flex',
                               alignItems: 'center',
-                              gap: 12,
+                              gap: 10,
                               width: '100%',
                               textAlign: 'left',
-                              padding: '12px 14px',
-                              fontSize: 13,
+                              padding: '7px 12px',
+                              fontSize: 12.5,
                               border: 'none',
                               background: 'transparent',
                               color: row.active ? 'var(--gold)' : row.disabled ? 'var(--text-dim)' : 'var(--text)',
@@ -850,18 +850,18 @@ function ScreenHome() {
                               fontFamily: 'var(--font-jp), var(--font-en)',
                             }}
                           >
-                            <span style={{ flexShrink: 0, opacity: 0.9, display: 'inline-flex' }}>
-                              <Icon name={row.icon} size={16} />
+                            <span style={{ flexShrink: 0, opacity: 0.85, display: 'inline-flex' }}>
+                              <Icon name={row.icon} size={14} />
                             </span>
                             <span style={{ flex: 1 }}>{row.label}</span>
                             {row.chev && (
                               <span style={{ color: 'var(--text-dim)', display: 'inline-flex' }}>
-                                <Icon name="chevronRight" size={14} />
+                                <Icon name="chevronRight" size={12} />
                               </span>
                             )}
                             {row.active && (
                               <span style={{ color: 'var(--gold)', display: 'inline-flex' }}>
-                                <Icon name="check" size={16} />
+                                <Icon name="check" size={14} />
                               </span>
                             )}
                           </button>
