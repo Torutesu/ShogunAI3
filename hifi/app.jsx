@@ -305,7 +305,6 @@ function mockIpcInvoke(command, payload) {
               sampleIntervalSecs: 8,
               axMinIntervalSecs: 0,
               paused: false,
-              pipelineAvailable: true,
             },
             integrations: {
               googleCalendarAutoSync: false,
@@ -857,7 +856,7 @@ function App() {
   const [hummingbirdOpen, setHummingbirdOpen] = useState(false);
   const [hummingbirdInput, setHummingbirdInput] = useState('');
   const [userOpen, setUserOpen] = useState(false);
-  const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220});
+  const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220, maxHeight:600});
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [contextPanelAnchor, setContextPanelAnchor] = useState({ left: 0, bottom: 0, width: 320 });
   const [chatMenu, setChatMenu] = useState({ open:false, chatId:null, x:0, y:0, width:240 });
@@ -911,7 +910,20 @@ function App() {
 
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
-    if (r) setUserAnchor({left: r.left, bottom: window.innerHeight - r.top + 8, width: r.width});
+    if (r) {
+      // Cap the upward-growing menu at exactly the space between viewport top
+      // (with 8px margin) and the pill. With bottom = innerHeight - r.top + 8
+      // and maxHeight = r.top - 16, the menu's computed top is always 8px —
+      // so the first row (Settings) is guaranteed inside the viewport even
+      // when Playwright scrolls the sidebar so the pill is near viewport top.
+      // No hard floor here; when space is tiny the menu scrolls internally.
+      setUserAnchor({
+        left: r.left,
+        bottom: window.innerHeight - r.top + 8,
+        width: r.width,
+        maxHeight: Math.max(0, r.top - 16),
+      });
+    }
     setContextPanelOpen(false);
     setUserOpen(v => !v);
   };
@@ -1133,6 +1145,29 @@ function App() {
       if (typeof unlistenVideo === 'function') unlistenVideo();
     };
   }, [setActive]);
+
+  /** Desktop: Rust emits when axRichCapture is on but macOS Accessibility trust is missing. Backend rate-limits to once per 120s. */
+  useEffect(() => {
+    let unlisten;
+    const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') return undefined;
+    (async () => {
+      try {
+        unlisten = await listen('shogun-capture-ax-not-trusted', (e) => {
+          const p = (e && e.payload) || {};
+          const message =
+            (typeof p.message === 'string' && p.message) ||
+            'Accessibility permission is required for AX-rich capture. Open System Settings → Privacy & Security → Accessibility to allow SHOGUN.';
+          pushToastRef.current(message, 'warn');
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      if (typeof unlisten === 'function') unlisten();
+    };
+  }, []);
 
   if (!runtimeRef.current && ShogunIpcClient && ShogunAPI && ShogunActionRegistry) {
     const client = ShogunIpcClient.createIpcClient();
@@ -2683,7 +2718,12 @@ function App() {
           />
           <div
             className="user-float"
-            style={{ left: userAnchor.left, bottom: userAnchor.bottom, width: userAnchor.width }}
+            style={{
+              left: userAnchor.left,
+              bottom: userAnchor.bottom,
+              width: userAnchor.width,
+              maxHeight: userAnchor.maxHeight,
+            }}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="user-float-head">
@@ -3200,7 +3240,7 @@ function App() {
         }
 
         /* User cluster (bottom-left sidebar) */
-        .user-cluster { padding:10px; border-top:1px solid var(--border); margin-top:8px; }
+        .user-cluster { padding:10px; border-top:1px solid var(--border); margin-top:auto; }
         .context-enabled-pill {
           display:flex; align-items:center; justify-content:space-between; gap:10px;
           min-height:44px; padding:0 16px;
@@ -3364,7 +3404,8 @@ function App() {
           border-radius:18px;
           box-shadow:0 26px 56px -16px rgba(0,0,0,0.62), 0 2px 0 rgba(0,0,0,0.32);
           padding:6px 0;
-          overflow:hidden;
+          overflow-x:hidden;
+          overflow-y:auto;
           min-width:220px;
         }
         @keyframes userFloatIn {

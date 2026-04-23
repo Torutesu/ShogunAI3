@@ -63,6 +63,8 @@
 
 /* Sidebar */
 .sidebar {
+  position: relative;
+  z-index: 2;
   border-right:1px solid var(--border);
   background:var(--bg);
   padding: 16px 12px;

@@ -14,6 +14,18 @@ use tauri::{AppHandle, Emitter};
 const MEMORY_DB: &str = "memory.db";
 const LEGACY_JSON: &str = "memory_items.json";
 
+/// Map a `source` string to a `provenance` tag per `docs/context-layer-phase-0-1.md` §0.
+/// Used at ingest time to populate the row and at search time as a fallback when the
+/// persisted `provenance` column is absent (pre-migration rows, in-memory fixtures).
+pub fn derive_provenance(source: &str) -> &'static str {
+  match source {
+    "capture_sampler" | "capture_ax" => "screen",
+    "google_calendar" | "gmail" => "connector",
+    s if s == "meeting" || s.starts_with("meetings") || s.starts_with("meeting_") => "meeting",
+    _ => "user",
+  }
+}
+
 pub(crate) fn db_path() -> Result<std::path::PathBuf, String> {
   Ok(paths::app_data_dir()?.join(MEMORY_DB))
 }
@@ -34,6 +46,7 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
     .map_err(|e| e.to_string())?;
   init_schema(&conn)?;
   ensure_embedding_column(&conn)?;
+  ensure_context_layer_columns(&conn)?;
   migrate_json_if_needed(&conn)?;
   Ok(conn)
 }
@@ -52,6 +65,82 @@ fn ensure_embedding_column(conn: &Connection) -> Result<(), String> {
       .execute("ALTER TABLE mem_items ADD COLUMN embedding BLOB", [])
       .map_err(|e| e.to_string())?;
   }
+  Ok(())
+}
+
+/// Phase-1 columns from `docs/context-layer-phase-0-1.md` §1. Added via ALTER
+/// TABLE on first run; `provenance` is backfilled from `source` once so that
+/// downstream code can rely on it being populated.
+fn ensure_context_layer_columns(conn: &Connection) -> Result<(), String> {
+  let mut stmt = conn
+    .prepare("PRAGMA table_info(mem_items)")
+    .map_err(|e| e.to_string())?;
+  let names: Vec<String> = stmt
+    .query_map([], |r| r.get::<_, String>(1))
+    .map_err(|e| e.to_string())?
+    .filter_map(|x| x.ok())
+    .collect();
+  drop(stmt);
+
+  let needs_provenance = !names.iter().any(|n| n == "provenance");
+  if needs_provenance {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN provenance TEXT", [])
+      .map_err(|e| e.to_string())?;
+  }
+  if !names.iter().any(|n| n == "entity_id") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN entity_id TEXT", [])
+      .map_err(|e| e.to_string())?;
+  }
+  if !names.iter().any(|n| n == "confidence") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN confidence REAL", [])
+      .map_err(|e| e.to_string())?;
+  }
+  if !names.iter().any(|n| n == "redaction") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN redaction TEXT", [])
+      .map_err(|e| e.to_string())?;
+  }
+
+  if needs_provenance {
+    backfill_provenance_from_source(conn)?;
+  }
+  Ok(())
+}
+
+/// One-shot: populate `provenance` for rows that never had it. Called only when
+/// the column has just been added; the `WHERE provenance IS NULL` clause makes
+/// it safe to re-run but it should only fire once in practice.
+fn backfill_provenance_from_source(conn: &Connection) -> Result<(), String> {
+  let mut stmt = conn
+    .prepare("SELECT id, source FROM mem_items WHERE provenance IS NULL")
+    .map_err(|e| e.to_string())?;
+  let rows: Vec<(String, String)> = stmt
+    .query_map([], |r| {
+      Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })
+    .map_err(|e| e.to_string())?
+    .filter_map(|x| x.ok())
+    .collect();
+  drop(stmt);
+  if rows.is_empty() {
+    return Ok(());
+  }
+  let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+  for (id, source) in &rows {
+    tx.execute(
+      "UPDATE mem_items SET provenance = ?1 WHERE id = ?2",
+      params![derive_provenance(source), id],
+    )
+    .map_err(|e| e.to_string())?;
+  }
+  tx.commit().map_err(|e| e.to_string())?;
+  log::info!(
+    "memory_store: backfilled provenance on {} row(s)",
+    rows.len()
+  );
   Ok(())
 }
 
@@ -277,9 +366,10 @@ fn migrate_json_if_needed(conn: &Connection) -> Result<(), String> {
       .get("created_at")
       .and_then(|x| x.as_u64())
       .unwrap_or_else(|| now_ms()) as i64;
+    let provenance = derive_provenance(&source).to_string();
     tx.execute(
-      "INSERT OR REPLACE INTO mem_items (id, title, snippet, source, kinds_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-      params![id, title, snippet, source, kinds_json, created_at],
+      "INSERT OR REPLACE INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      params![id, title, snippet, source, kinds_json, created_at, provenance],
     )
     .map_err(|e| e.to_string())?;
   }
@@ -301,15 +391,47 @@ fn row_to_item(
   source: String,
   kinds_json: String,
   created_at: i64,
+  provenance: Option<String>,
+  entity_id: Option<String>,
+  confidence: Option<f64>,
+  redaction: Option<String>,
 ) -> Value {
-  json!({
+  let prov = provenance
+    .filter(|s| !s.is_empty())
+    .unwrap_or_else(|| derive_provenance(&source).to_string());
+  let mut obj = json!({
     "id": id,
     "title": title,
     "snippet": snippet,
     "source": source,
     "kinds": kinds_json_to_value(&kinds_json),
     "created_at": created_at.max(0) as u64,
-  })
+    "provenance": prov,
+  });
+  if let Some(map) = obj.as_object_mut() {
+    if let Some(e) = entity_id.filter(|s| !s.is_empty()) {
+      map.insert("entity_id".to_string(), json!(e));
+    }
+    if let Some(c) = confidence.filter(|c| c.is_finite()) {
+      map.insert("confidence".to_string(), json!(c));
+    }
+    if let Some(r) = redaction.filter(|s| !s.is_empty()) {
+      map.insert("redaction".to_string(), json!(r));
+    }
+  }
+  obj
+}
+
+/// Whitelist per `docs/context-layer-phase-0-1.md` §1. Unrecognized values are
+/// dropped at ingest and the source-derived fallback is used instead.
+fn is_valid_provenance(s: &str) -> bool {
+  matches!(s, "screen" | "connector" | "meeting" | "user")
+}
+
+/// Whitelist per spec §1. Invalid / missing redaction is stored as NULL,
+/// which downstream readers interpret as "none" (the current default).
+fn is_valid_redaction(s: &str) -> bool {
+  matches!(s, "none" | "summary_only" | "redacted")
 }
 
 fn item_kinds_from_json(kinds_json: &str) -> Vec<String> {
@@ -365,7 +487,8 @@ fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usiz
   let mut stmt = conn
     .prepare(
       r#"
-      SELECT m.id, m.title, m.snippet, m.source, m.kinds_json, m.created_at
+      SELECT m.id, m.title, m.snippet, m.source, m.kinds_json, m.created_at,
+             m.provenance, m.entity_id, m.confidence, m.redaction
       FROM mem_items_fts AS fts
       JOIN mem_items AS m ON m.rowid = fts.rowid
       WHERE fts MATCH ?1
@@ -384,6 +507,10 @@ fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usiz
         r.get(3)?,
         r.get(4)?,
         r.get(5)?,
+        r.get(6)?,
+        r.get(7)?,
+        r.get(8)?,
+        r.get(9)?,
       ))
     })
     .map_err(|e| e.to_string())?;
@@ -414,7 +541,7 @@ fn search_fallback_like(
 ) -> Result<(Vec<Value>, usize), String> {
   let mut stmt = conn
     .prepare(
-      "SELECT id, title, snippet, source, kinds_json, created_at FROM mem_items ORDER BY created_at DESC",
+      "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction FROM mem_items ORDER BY created_at DESC",
     )
     .map_err(|e| e.to_string())?;
   let rows = stmt
@@ -426,6 +553,10 @@ fn search_fallback_like(
         r.get(3)?,
         r.get(4)?,
         r.get(5)?,
+        r.get(6)?,
+        r.get(7)?,
+        r.get(8)?,
+        r.get(9)?,
       ))
     })
     .map_err(|e| e.to_string())?;
@@ -472,7 +603,7 @@ fn search_fallback_like(
 fn search_recent(conn: &Connection, kinds_want: &[String], limit: usize) -> Result<(Vec<Value>, usize), String> {
   let mut stmt = conn
     .prepare(
-      "SELECT id, title, snippet, source, kinds_json, created_at FROM mem_items ORDER BY created_at DESC",
+      "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction FROM mem_items ORDER BY created_at DESC",
     )
     .map_err(|e| e.to_string())?;
   let rows = stmt
@@ -484,6 +615,10 @@ fn search_recent(conn: &Connection, kinds_want: &[String], limit: usize) -> Resu
         r.get(3)?,
         r.get(4)?,
         r.get(5)?,
+        r.get(6)?,
+        r.get(7)?,
+        r.get(8)?,
+        r.get(9)?,
       ))
     })
     .map_err(|e| e.to_string())?;
@@ -506,7 +641,7 @@ fn search_recent(conn: &Connection, kinds_want: &[String], limit: usize) -> Resu
   Ok((out, total))
 }
 
-/// Append a memory item. Payload: `{ title, snippet?, kinds?, source? }` (WRITE).
+/// Append a memory item. Payload: `{ title, snippet?, kinds?, source?, provenance?, entity_id?, confidence?, redaction? }` (WRITE).
 pub fn ingest(payload: &Value) -> Result<Value, String> {
   let conn = open_conn()?;
   let title = payload
@@ -527,24 +662,69 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
     .unwrap_or_else(|| json!(["screen"]));
   let kinds_json = serde_json::to_string(&kinds).map_err(|e| e.to_string())?;
 
+  let provenance = payload
+    .get("provenance")
+    .and_then(|v| v.as_str())
+    .filter(|s| is_valid_provenance(s))
+    .map(String::from)
+    .unwrap_or_else(|| derive_provenance(source).to_string());
+  let entity_id: Option<String> = payload
+    .get("entity_id")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .map(String::from);
+  let confidence: Option<f64> = payload
+    .get("confidence")
+    .and_then(|v| v.as_f64())
+    .filter(|c| c.is_finite())
+    .map(|c| c.clamp(0.0, 1.0));
+  let redaction: Option<String> = payload
+    .get("redaction")
+    .and_then(|v| v.as_str())
+    .filter(|s| is_valid_redaction(s))
+    .map(String::from);
+
   let id = format!("m_{}", now_ms());
   let created = now_ms() as i64;
 
   conn
     .execute(
-      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-      params![id, title, snippet, source, kinds_json, created],
+      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction) \
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+      params![
+        id,
+        title,
+        snippet,
+        source,
+        kinds_json,
+        created,
+        provenance,
+        entity_id,
+        confidence,
+        redaction
+      ],
     )
     .map_err(|e| e.to_string())?;
 
-  let item = json!({
-    "id": id,
-    "title": title,
-    "snippet": snippet,
-    "kinds": kinds,
-    "source": source,
-    "created_at": created as u64,
-  });
+  let mut item_map = serde_json::Map::new();
+  item_map.insert("id".to_string(), json!(id));
+  item_map.insert("title".to_string(), json!(title));
+  item_map.insert("snippet".to_string(), json!(snippet));
+  item_map.insert("kinds".to_string(), kinds.clone());
+  item_map.insert("source".to_string(), json!(source));
+  item_map.insert("created_at".to_string(), json!(created as u64));
+  item_map.insert("provenance".to_string(), json!(provenance));
+  if let Some(ref e) = entity_id {
+    item_map.insert("entity_id".to_string(), json!(e));
+  }
+  if let Some(c) = confidence {
+    item_map.insert("confidence".to_string(), json!(c));
+  }
+  if let Some(ref r) = redaction {
+    item_map.insert("redaction".to_string(), json!(r));
+  }
+  let item = Value::Object(item_map);
 
   let out = json!({
     "item": item,
@@ -836,7 +1016,7 @@ pub fn fetch(payload: &Value) -> Result<Value, String> {
   for want in &id_list {
     let found = conn
       .query_row(
-        "SELECT id, title, snippet, source, kinds_json, created_at FROM mem_items WHERE id = ?1",
+        "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction FROM mem_items WHERE id = ?1",
         params![want],
         |r| {
           Ok(row_to_item(
@@ -846,6 +1026,10 @@ pub fn fetch(payload: &Value) -> Result<Value, String> {
             r.get(3)?,
             r.get(4)?,
             r.get(5)?,
+            r.get(6)?,
+            r.get(7)?,
+            r.get(8)?,
+            r.get(9)?,
           ))
         },
       )
@@ -1031,7 +1215,27 @@ pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-  use super::{decode_embedding_blob, encode_embedding_blob, is_transient_embed_error, truncate_api_error};
+  use super::{
+    decode_embedding_blob, derive_provenance, encode_embedding_blob, is_transient_embed_error,
+    is_valid_provenance, is_valid_redaction, row_to_item, truncate_api_error,
+  };
+  use serde_json::json;
+
+  #[test]
+  fn derive_provenance_covers_spec_table() {
+    assert_eq!(derive_provenance("capture_sampler"), "screen");
+    assert_eq!(derive_provenance("capture_ax"), "screen");
+    assert_eq!(derive_provenance("google_calendar"), "connector");
+    assert_eq!(derive_provenance("gmail"), "connector");
+    assert_eq!(derive_provenance("meeting"), "meeting");
+    assert_eq!(derive_provenance("meetings_granola"), "meeting");
+    assert_eq!(derive_provenance("meeting_zoom"), "meeting");
+    assert_eq!(derive_provenance("home_attachment"), "user");
+    assert_eq!(derive_provenance("capture"), "user");
+    assert_eq!(derive_provenance("focus_session"), "user");
+    assert_eq!(derive_provenance(""), "user");
+    assert_eq!(derive_provenance("unknown_source"), "user");
+  }
 
   #[test]
   fn embedding_blob_roundtrip() {
@@ -1066,5 +1270,169 @@ mod tests {
       "LLM API key is not set. Open Settings and save your key."
     ));
     assert!(!is_transient_embed_error("empty text for embedding"));
+  }
+
+  #[test]
+  fn is_valid_provenance_whitelist() {
+    for v in ["screen", "connector", "meeting", "user"] {
+      assert!(is_valid_provenance(v));
+    }
+    for v in ["", "Screen", "webhook", "cloud", " user "] {
+      assert!(!is_valid_provenance(v));
+    }
+  }
+
+  #[test]
+  fn is_valid_redaction_whitelist() {
+    for v in ["none", "summary_only", "redacted"] {
+      assert!(is_valid_redaction(v));
+    }
+    for v in ["", "NONE", "partial", "redact"] {
+      assert!(!is_valid_redaction(v));
+    }
+  }
+
+  #[test]
+  fn row_to_item_emits_persisted_provenance_when_present() {
+    let v = row_to_item(
+      "m_1".into(),
+      "T".into(),
+      "S".into(),
+      "capture_sampler".into(),
+      "[]".into(),
+      10,
+      Some("user".into()),
+      None,
+      None,
+      None,
+    );
+    // Persisted `user` overrides the would-be-derived `screen`.
+    assert_eq!(v.get("provenance").and_then(|x| x.as_str()), Some("user"));
+  }
+
+  #[test]
+  fn row_to_item_falls_back_to_derivation_when_column_null() {
+    let v = row_to_item(
+      "m_2".into(),
+      "T".into(),
+      "S".into(),
+      "google_calendar".into(),
+      "[]".into(),
+      10,
+      None,
+      None,
+      None,
+      None,
+    );
+    assert_eq!(
+      v.get("provenance").and_then(|x| x.as_str()),
+      Some("connector"),
+    );
+  }
+
+  #[test]
+  fn row_to_item_falls_back_when_stored_provenance_is_empty_string() {
+    let v = row_to_item(
+      "m_3".into(),
+      "T".into(),
+      "S".into(),
+      "capture_ax".into(),
+      "[]".into(),
+      10,
+      Some(String::new()),
+      None,
+      None,
+      None,
+    );
+    assert_eq!(v.get("provenance").and_then(|x| x.as_str()), Some("screen"));
+  }
+
+  #[test]
+  fn row_to_item_includes_optional_fields_only_when_present() {
+    let full = row_to_item(
+      "m_4".into(),
+      "T".into(),
+      "S".into(),
+      "gmail".into(),
+      "[]".into(),
+      10,
+      Some("connector".into()),
+      Some("eid-1".into()),
+      Some(0.83),
+      Some("summary_only".into()),
+    );
+    assert_eq!(full.get("entity_id").and_then(|x| x.as_str()), Some("eid-1"));
+    assert_eq!(full.get("confidence").and_then(|x| x.as_f64()), Some(0.83));
+    assert_eq!(
+      full.get("redaction").and_then(|x| x.as_str()),
+      Some("summary_only"),
+    );
+
+    let sparse = row_to_item(
+      "m_5".into(),
+      "T".into(),
+      "S".into(),
+      "gmail".into(),
+      "[]".into(),
+      10,
+      Some("connector".into()),
+      Some(String::new()),
+      None,
+      Some(String::new()),
+    );
+    assert!(sparse.get("entity_id").is_none());
+    assert!(sparse.get("confidence").is_none());
+    assert!(sparse.get("redaction").is_none());
+  }
+
+  #[test]
+  fn row_to_item_drops_non_finite_confidence() {
+    let v = row_to_item(
+      "m_6".into(),
+      "T".into(),
+      "S".into(),
+      "user".into(),
+      "[]".into(),
+      0,
+      Some("user".into()),
+      None,
+      Some(f64::NAN),
+      None,
+    );
+    assert!(v.get("confidence").is_none());
+  }
+
+  #[test]
+  fn row_to_item_clamps_negative_created_at_to_zero() {
+    let v = row_to_item(
+      "m_7".into(),
+      "T".into(),
+      "S".into(),
+      "user".into(),
+      "[]".into(),
+      -5,
+      Some("user".into()),
+      None,
+      None,
+      None,
+    );
+    assert_eq!(v.get("created_at").and_then(|x| x.as_u64()), Some(0));
+  }
+
+  #[test]
+  fn row_to_item_preserves_kinds_as_array() {
+    let v = row_to_item(
+      "m_8".into(),
+      "T".into(),
+      "S".into(),
+      "user".into(),
+      "[\"note\",\"screen\"]".into(),
+      0,
+      Some("user".into()),
+      None,
+      None,
+      None,
+    );
+    assert_eq!(v.get("kinds"), Some(&json!(["note", "screen"])));
   }
 }
