@@ -16,51 +16,88 @@ function workProvenanceLabel(prov) {
   return '手動';
 }
 
-function WorkDocDetail({ doc, siblings, onBack }) {
-  const [tab, setTab] = React.useState('preview');
-  const editedAt = (() => {
-    try {
-      const ms = doc.created_at ? Number(doc.created_at) : null;
-      if (!Number.isFinite(ms)) return '—';
-      const d = new Date(ms);
-      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    } catch (_) { return '—'; }
-  })();
+function srcIconFromSource(source) {
+  const s = source ? String(source).toLowerCase() : '';
+  if (s === 'chat') return 'chat';
+  if (s.includes('mail')) return 'mail';
+  if (s === 'google_calendar' || s === 'meetings') return 'calendar';
+  if (s === 'work') return 'file';
+  return 'note';
+}
 
-  const linked = (siblings || []).filter((s) => s && (s.id !== doc.id) && (s.title || s.snippet)).slice(0, 5);
-  const summary = doc.snippet || 'No summary text captured yet. The source memory entry has a title only — expand this doc in Chat to have the model synthesize a summary.';
+function WorkDocDetail({ doc, siblings, onBack, onSelect, allowServerMemoryAssembly }) {
+  const [tab, setTab] = React.useState('preview');
+
+  const editedAt = React.useMemo(() => {
+    const ms = doc.created_at ? Number(doc.created_at) : null;
+    if (!Number.isFinite(ms)) return null;
+    const d = new Date(ms);
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  }, [doc.created_at]);
+
+  const linked = React.useMemo(
+    () => (siblings || []).filter((s) => s && s.id !== doc.id && (s.title || s.snippet)).slice(0, 8),
+    [siblings, doc.id],
+  );
+  const summary = (doc.snippet && String(doc.snippet).trim()) || '';
+  const sourceLabel = doc.source ? String(doc.source) : 'memory';
+
+  const openInChat = React.useCallback(() => {
+    openWorkMemoryEntryInChat(
+      { title: doc.title, snippet: doc.snippet },
+      { memoryAssemblyQuery: doc.title || '', memoryAssemblyLimit: 14, allowServerMemoryAssembly },
+    );
+  }, [doc.title, doc.snippet, allowServerMemoryAssembly]);
+
+  const expandAsDraft = React.useCallback(() => {
+    const prompt =
+      'Expand this memory into a structured Markdown work note with headings (Summary, Key points, Open questions) and bullets.\n\n' +
+      '**Title:** ' + (doc.title || '') +
+      '\n\n**Snippet:**\n' + String(doc.snippet || '').slice(0, 4000);
+    const payload = { target: 'work_document', source: 'work_doc_detail', prompt };
+    if (allowServerMemoryAssembly) {
+      payload.memoryAssembly = { query: String(doc.title || '').slice(0, 240), limit: 12, semantic: true };
+    }
+    runRuntimeAction('draft.create', payload, { successMessage: 'Draft ready' });
+  }, [doc.title, doc.snippet, allowServerMemoryAssembly]);
+
+  const removeFromIndex = React.useCallback(() => {
+    if (!doc.id) return;
+    requestWriteAction(
+      'memory.delete',
+      { id: doc.id },
+      'Remove from memory index',
+      'Deletes this entry from the local memory index.',
+    );
+  }, [doc.id]);
+
+  const tabs = [
+    { k: 'preview',   l: 'Preview' },
+    { k: 'sources',   l: `Sources · ${linked.length}` },
+    { k: 'revisions', l: 'Revisions' },
+  ];
 
   return (
-    <div style={{display:'grid', gridTemplateColumns:'minmax(0, 1fr) 320px', gap:32, alignItems:'flex-start'}}>
+    <div style={{display:'grid', gridTemplateColumns:'minmax(0, 1fr) 320px', gap:'var(--space-8)', alignItems:'flex-start'}}>
       {/* Main column */}
       <div style={{minWidth:0}}>
         {/* Back link */}
-        <div style={{marginBottom:14}}>
-          <button
-            type="button"
-            onClick={onBack}
-            style={{
-              all:'unset', display:'inline-flex', alignItems:'center', gap:6,
-              fontSize:12, color:'var(--text-mute)', cursor:'pointer',
-            }}
-          >
+        <div style={{marginBottom:'var(--space-4)'}}>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={onBack} style={{padding:'0 8px'}}>
             <Icon name="chevronLeft" size={13}/> Back to Work
           </button>
         </div>
 
         {/* Tabs + Edit */}
-        <div style={{display:'flex', alignItems:'center', gap:14, marginBottom:16}}>
-          {[
-            { k: 'preview', l: 'Preview' },
-            { k: 'sources', l: `Sources · ${linked.length || 0}` },
-            { k: 'revisions', l: 'Revisions · 3' },
-          ].map((t) => (
+        <div className="row" style={{alignItems:'center', gap:'var(--space-3)', marginBottom:'var(--space-4)'}}>
+          {tabs.map((t) => (
             <button
               key={t.k}
               type="button"
               onClick={() => setTab(t.k)}
               style={{
-                all:'unset', cursor:'pointer', padding:'8px 14px', borderRadius:10,
+                all:'unset', cursor:'pointer',
+                padding:'8px 14px', borderRadius:'var(--radius-md)',
                 fontSize:13,
                 background: tab === t.k ? 'var(--surface-2)' : 'transparent',
                 color: tab === t.k ? 'var(--text)' : 'var(--text-mute)',
@@ -70,179 +107,187 @@ function WorkDocDetail({ doc, siblings, onBack }) {
               {t.l}
             </button>
           ))}
-          <span style={{flex:1}}/>
-          <button
-            type="button"
-            style={{
-              display:'inline-flex', alignItems:'center', gap:6,
-              padding:'8px 14px', borderRadius:10,
-              border:'1px solid var(--border)', background:'var(--surface)',
-              color:'var(--text-mute)', fontSize:13, cursor:'pointer', fontFamily:'inherit',
-            }}
-          >
-            <Icon name="edit" size={13}/> Edit
+          <span className="spacer"/>
+          <button type="button" className="btn btn-sm btn-secondary" onClick={expandAsDraft} title="Expand this memory into a draft via memoryAssembly">
+            <Icon name="edit" size={13}/> Expand as draft
           </button>
         </div>
 
-        <div style={{borderTop:'1px solid var(--border)', paddingTop:28}}>
+        <div style={{borderTop:'1px solid var(--border)', paddingTop:'var(--space-8)'}}>
           {/* Draft metadata */}
-          <div style={{display:'inline-flex', alignItems:'center', gap:8, marginBottom:18}}>
+          <div style={{display:'inline-flex', alignItems:'center', gap:8, marginBottom:'var(--space-4)'}}>
             <span style={{width:10, height:10, transform:'rotate(45deg)', background:'var(--gold)', display:'inline-block'}}/>
-            <span className="t-mono" style={{fontSize:11, color:'var(--gold)', letterSpacing:'0.16em'}}>
-              DRAFT · SYNTHESIZED FROM {linked.length || 12} MEMORIES
+            <span className="t-mono" style={{color:'var(--gold)'}}>
+              MEMORY · {sourceLabel.toUpperCase()}{linked.length > 0 ? ` · ${linked.length} RELATED` : ''}
             </span>
           </div>
 
           {/* Title + byline */}
-          <h1 style={{margin:0, fontSize:40, fontWeight:600, letterSpacing:'-0.02em', lineHeight:1.1}}>
-            {doc.title || 'Untitled document'}
+          <h1 className="t-h1" style={{margin:0, wordBreak:'break-word'}}>
+            {doc.title || 'Untitled memory'}
           </h1>
-          <div style={{marginTop:12, color:'var(--text-dim)', fontSize:13}}>
-            Last edited {editedAt} · you and 2 collaborators
+          <div style={{marginTop:'var(--space-3)', color:'var(--text-dim)', fontSize:13}}>
+            {editedAt ? `Captured ${editedAt}` : 'Captured time unknown'}
+            {doc.entity_id ? <> · <span className="t-mono" style={{fontSize:11}}>entity {String(doc.entity_id).slice(0, 16)}</span></> : null}
           </div>
 
-          {/* Summary */}
-          <h2 style={{marginTop:40, marginBottom:14, fontSize:22, fontWeight:600, letterSpacing:'-0.01em'}}>Summary</h2>
-          <p style={{margin:0, fontSize:15, lineHeight:1.7, color:'var(--text)', whiteSpace:'pre-wrap'}}>{summary}</p>
+          {/* Tab contents */}
+          {tab === 'preview' && (
+            <div>
+              <h2 className="t-h3" style={{marginTop:'var(--space-12)', marginBottom:'var(--space-4)', fontWeight:600}}>Summary</h2>
+              {summary ? (
+                <p style={{margin:0, fontSize:15, lineHeight:1.7, color:'var(--text)', whiteSpace:'pre-wrap'}}>{summary}</p>
+              ) : (
+                <p style={{margin:0, fontSize:14, color:'var(--text-mute)', lineHeight:1.6}}>
+                  This memory entry has a title only. Use <strong>Expand as draft</strong> to synthesize a summary from context.
+                </p>
+              )}
 
-          {/* Tiers (demo structural block — kept as the mock calls for it) */}
-          <h2 style={{marginTop:40, marginBottom:16, fontSize:22, fontWeight:600, letterSpacing:'-0.01em'}}>Tiers</h2>
-          <div style={{display:'grid', gridTemplateColumns:'repeat(3, minmax(0, 1fr))', gap:14}}>
-            {[
-              { name: 'Free', price: '$0', note: 'Try SHOGUN forever.', accent: false },
-              { name: 'Pro', price: '$17/mo', note: 'For builders. BYOK, 5 agents, unlimited memory.', accent: true },
-              { name: 'Team', price: '$62/mo', note: 'Shared memory · audit log · SSO.', accent: false },
-            ].map((t) => (
-              <div key={t.name} style={{
-                padding:'22px 22px 24px',
-                borderRadius:14,
-                border: t.accent ? '1px solid var(--gold-dim)' : '1px solid var(--border)',
-                background: t.accent ? 'color-mix(in srgb, var(--gold) 7%, var(--surface))' : 'var(--surface)',
-                boxShadow: t.accent ? '0 0 0 1px color-mix(in srgb, var(--gold) 18%, transparent)' : 'none',
-              }}>
-                <div style={{fontSize:13, color: t.accent ? 'var(--gold)' : 'var(--text-mute)', marginBottom:10}}>{t.name}</div>
-                <div style={{fontSize:28, fontWeight:600, letterSpacing:'-0.02em', marginBottom:12}}>{t.price}</div>
-                <div style={{fontSize:13, color:'var(--text-mute)', lineHeight:1.5}}>{t.note}</div>
+              <div className="row" style={{gap:'var(--space-2)', marginTop:'var(--space-8)', flexWrap:'wrap'}}>
+                <button type="button" className="btn btn-sm btn-secondary" onClick={openInChat}>
+                  <Icon name="chat" size={13}/> Open in Chat
+                </button>
+                <button type="button" className="btn btn-sm btn-secondary" onClick={expandAsDraft}>
+                  <Icon name="edit" size={13}/> Expand as draft
+                </button>
+                {doc.id && (
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={removeFromIndex}>
+                    <Icon name="x" size={13}/> Remove from index
+                  </button>
+                )}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
 
-          {/* Notes */}
-          <h2 style={{marginTop:40, marginBottom:14, fontSize:22, fontWeight:600, letterSpacing:'-0.01em'}}>Notes</h2>
-          <blockquote style={{
-            margin:'0 0 18px',
-            padding:'4px 0 4px 16px',
-            borderLeft:'2px solid var(--gold-dim)',
-            fontStyle:'italic',
-            color:'var(--text)',
-            fontSize:14, lineHeight:1.6,
-          }}>
-            “Pricing shouldn't apologize for itself.” — Matt, 14:16
-          </blockquote>
-          <p style={{margin:0, fontSize:14, lineHeight:1.7, color:'var(--text-mute)'}}>
-            Open questions surfaced from memory: (1) annual discount — 20% confirmed; (2) BYOK — default yes; (3) team tier entitlement on Pro — still unresolved.
-          </p>
+          {tab === 'sources' && (
+            <div>
+              <h2 className="t-h3" style={{marginTop:'var(--space-12)', marginBottom:'var(--space-4)', fontWeight:600}}>Linked memories</h2>
+              {linked.length === 0 ? (
+                <p style={{margin:0, fontSize:14, color:'var(--text-mute)', lineHeight:1.6}}>
+                  No other indexed memories sit near this one. Capture more or run a broader search from the Memory page.
+                </p>
+              ) : (
+                <div style={{display:'flex', flexDirection:'column', gap:'var(--space-3)'}}>
+                  {linked.map((m) => (
+                    <button
+                      key={m.id || m.title}
+                      type="button"
+                      onClick={() => onSelect && onSelect(m)}
+                      className="card card-interactive"
+                      style={{all:'unset', cursor:'pointer', display:'block', padding:'var(--space-4) var(--space-6)', borderRadius:'var(--radius-lg)', border:'1px solid var(--border)', background:'var(--surface)'}}
+                    >
+                      <div className="row" style={{gap:'var(--space-2)', marginBottom:'var(--space-2)', flexWrap:'wrap'}}>
+                        <Icon name={srcIconFromSource(m.source)} size={13} className="dim"/>
+                        <span className="t-mono" style={{color:'var(--text-mute)'}}>{String(m.source || 'memory').toUpperCase()}</span>
+                        {m.provenance && (
+                          <span className="label" style={{borderColor:'var(--gold-dim)', color:'var(--gold)'}}>
+                            {workProvenanceLabel(m.provenance)}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{fontSize:15, fontWeight:500, marginBottom:'var(--space-2)'}}>{m.title || 'Untitled'}</div>
+                      {m.snippet && (
+                        <div style={{fontSize:13, color:'var(--text-dim)', lineHeight:1.5, display:'-webkit-box', WebkitBoxOrient:'vertical', WebkitLineClamp:2, overflow:'hidden'}}>{m.snippet}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'revisions' && (
+            <div>
+              <h2 className="t-h3" style={{marginTop:'var(--space-12)', marginBottom:'var(--space-4)', fontWeight:600}}>Revisions</h2>
+              <div className="card" style={{padding:'var(--space-6)', color:'var(--text-mute)', fontSize:14, lineHeight:1.6}}>
+                Revision history is not tracked for local memory entries in this build. When this item becomes a draft document, revisions will appear here.
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Right sidebar */}
-      <div style={{display:'flex', flexDirection:'column', gap:26, position:'sticky', top:24, alignSelf:'flex-start'}}>
+      <div style={{display:'flex', flexDirection:'column', gap:'var(--space-8)', position:'sticky', top:'var(--space-6)', alignSelf:'flex-start'}}>
         {/* Linked memories */}
         <div>
-          <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', letterSpacing:'0.16em', marginBottom:12}}>
-            LINKED MEMORIES · {linked.length || 0}
+          <div className="t-mono" style={{marginBottom:'var(--space-3)'}}>
+            LINKED MEMORIES · {linked.length}
           </div>
-          <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            {(linked.length > 0 ? linked : [
-              { title: 'Revenue-cat · pricing tiers', meta: '14:02 · 518 tok', icon: 'chat' },
-              { title: 'All PJ · Matt + Tano', meta: '13:20 · 42m', icon: 'calendar' },
-              { title: 'Live notes · tier debate', meta: '13:46', icon: 'note' },
-              { title: 'Matt quote: "don’t apologize"', meta: '14:16', icon: 'note' },
-              { title: 'Send · tiering doc to Matt', meta: '14:53', icon: 'mail' },
-            ]).map((m, i) => {
-              const title = m.title || m.snippet || 'Memory';
-              const src = m.source ? String(m.source).toLowerCase() : '';
-              const icon = m.icon || (src === 'chat' ? 'chat' : src.includes('mail') ? 'mail' : src === 'google_calendar' || src === 'meetings' ? 'calendar' : 'note');
-              const meta = m.meta || (m.created_at ? new Date(Number(m.created_at)).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—');
-              return (
-                <button
-                  key={m.id || i}
-                  type="button"
-                  style={{
-                    all:'unset', cursor:'pointer',
-                    display:'flex', alignItems:'flex-start', gap:10,
-                    padding:'12px 14px', borderRadius:12,
-                    border:'1px solid var(--border)', background:'var(--surface)',
-                  }}
-                >
-                  <Icon name={icon} size={14} className="dim"/>
-                  <div style={{flex:1, minWidth:0}}>
-                    <div style={{fontSize:12.5, color:'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{title}</div>
-                    <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginTop:3, letterSpacing:'0.02em'}}>{meta}</div>
-                  </div>
-                  <Icon name="arrowUpRight" size={12} className="dim"/>
-                </button>
-              );
-            })}
-          </div>
+          {linked.length === 0 ? (
+            <div className="card" style={{padding:'var(--space-4) var(--space-6)', fontSize:12.5, color:'var(--text-dim)', lineHeight:1.5}}>
+              No related memories indexed yet.
+            </div>
+          ) : (
+            <div style={{display:'flex', flexDirection:'column', gap:'var(--space-2)'}}>
+              {linked.slice(0, 5).map((m) => {
+                const title = m.title || m.snippet || 'Memory';
+                const icon = srcIconFromSource(m.source);
+                const meta = m.created_at ? new Date(Number(m.created_at)).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
+                return (
+                  <button
+                    key={m.id || title}
+                    type="button"
+                    onClick={() => onSelect && onSelect(m)}
+                    className="card card-interactive"
+                    style={{all:'unset', cursor:'pointer', display:'flex', alignItems:'flex-start', gap:'var(--space-2)', padding:'var(--space-3) var(--space-4)', borderRadius:'var(--radius-md)', border:'1px solid var(--border)', background:'var(--surface)'}}
+                  >
+                    <Icon name={icon} size={14} className="dim"/>
+                    <div style={{flex:1, minWidth:0}}>
+                      <div style={{fontSize:12.5, color:'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{title}</div>
+                      <div className="t-mono" style={{marginTop:3, fontSize:10}}>{meta}</div>
+                    </div>
+                    <Icon name="arrowUpRight" size={12} className="dim"/>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* Tasks */}
+        {/* Actions */}
         <div>
-          <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', letterSpacing:'0.16em', marginBottom:12}}>
-            TASKS FROM THIS DOC
-          </div>
-          <div style={{
-            display:'flex', alignItems:'center', gap:10,
-            padding:'10px 12px', borderRadius:10,
-            border:'1px solid var(--border)', background:'var(--surface)',
-          }}>
-            <Icon name="check" size={14} className="dim"/>
-            <span style={{flex:1, fontSize:12.5, color:'var(--text-dim)', textDecoration:'line-through'}}>Draft pricing page</span>
-            <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'3px 8px', borderRadius:6, border:'1px solid var(--border)', letterSpacing:'0.06em'}}>due tomorrow</span>
-          </div>
-        </div>
-
-        {/* Collaborators */}
-        <div>
-          <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', letterSpacing:'0.16em', marginBottom:12}}>
-            COLLABORATORS
-          </div>
-          <div style={{display:'flex', flexDirection:'column', gap:12}}>
-            {[
-              { initial: 'K', name: 'Kenshin · You', role: 'owner' },
-              { initial: 'M', name: 'Matt', role: 'reviewer' },
-              { initial: 'T', name: 'Toru', role: 'commented 2x' },
-            ].map((c) => (
-              <div key={c.initial} style={{display:'flex', alignItems:'center', gap:10}}>
-                <span style={{
-                  width:28, height:28, borderRadius:999,
-                  background:'var(--surface-2)',
-                  border:'1px solid var(--border)',
-                  display:'inline-flex', alignItems:'center', justifyContent:'center',
-                  fontSize:12, color:'var(--text-mute)', fontFamily:'var(--font-mono, ui-monospace, monospace)',
-                }}>{c.initial}</span>
-                <div style={{display:'flex', flexDirection:'column'}}>
-                  <span style={{fontSize:13, color:'var(--text)'}}>{c.name}</span>
-                  <span style={{fontSize:11, color:'var(--text-dim)'}}>{c.role}</span>
-                </div>
-              </div>
-            ))}
-            <button
-              type="button"
-              style={{
-                all:'unset', cursor:'pointer',
-                display:'inline-flex', alignItems:'center', gap:6,
-                fontSize:12.5, color:'var(--text-mute)', marginTop:4,
-              }}
-            >
-              <Icon name="plus" size={13}/> Invite
+          <div className="t-mono" style={{marginBottom:'var(--space-3)'}}>ACTIONS</div>
+          <div style={{display:'flex', flexDirection:'column', gap:'var(--space-2)'}}>
+            <button type="button" className="btn btn-secondary" onClick={openInChat}>
+              <Icon name="chat" size={14}/> Open in Chat
             </button>
+            <button type="button" className="btn btn-secondary" onClick={expandAsDraft}>
+              <Icon name="edit" size={14}/> Expand as draft
+            </button>
+            {doc.id && (
+              <button type="button" className="btn btn-ghost" onClick={removeFromIndex}>
+                <Icon name="x" size={14}/> Remove from index
+              </button>
+            )}
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+/** Redirect a memory entry into the Chat composer (pre-fills + opens Chat). */
+function openWorkMemoryEntryInChat(entry, options) {
+  const title = entry && entry.title ? String(entry.title) : '';
+  const snippet = entry && entry.snippet ? String(entry.snippet) : '';
+  const textParts = [];
+  if (title) textParts.push(title);
+  if (snippet) textParts.push(snippet.slice(0, 800));
+  const text = textParts.join('\n\n') || 'Explore this memory.';
+  const allow = options && options.allowServerMemoryAssembly !== false;
+  const detail = { text, webSearch: false, assembleMemory: allow };
+  if (allow) {
+    detail.memoryAssemblyPreset = {
+      query: (options && options.memoryAssemblyQuery) || title || '',
+      limit: (options && options.memoryAssemblyLimit) || 14,
+      semantic: true,
+    };
+  } else {
+    detail.clearMemoryAssemblyPreset = true;
+  }
+  window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
+  window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
 }
 
 function ScreenWork() {
@@ -302,11 +347,13 @@ function ScreenWork() {
 
   if (selectedDoc) {
     return (
-      <div className="content-inner" style={{padding:'32px 40px 48px', maxWidth:1280, margin:'0 auto'}}>
+      <div className="content-inner" style={{padding:'var(--space-8) var(--space-12) var(--space-12)', maxWidth:1280, margin:'0 auto'}}>
         <WorkDocDetail
           doc={selectedDoc}
           siblings={hits}
           onBack={() => setSelectedDoc(null)}
+          onSelect={(nextDoc) => setSelectedDoc(nextDoc)}
+          allowServerMemoryAssembly={allowServerMemoryAssembly}
         />
       </div>
     );
