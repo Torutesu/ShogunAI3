@@ -911,14 +911,17 @@ function App() {
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
     if (r) {
-      // Clamp menu height to the space between viewport top (with 16px margin)
-      // and the pill so the upward-growing menu never renders above the viewport.
-      // If natural content is taller than maxHeight, the menu scrolls internally.
+      // Cap the upward-growing menu at exactly the space between viewport top
+      // (with 8px margin) and the pill. With bottom = innerHeight - r.top + 8
+      // and maxHeight = r.top - 16, the menu's computed top is always 8px —
+      // so the first row (Settings) is guaranteed inside the viewport even
+      // when Playwright scrolls the sidebar so the pill is near viewport top.
+      // No hard floor here; when space is tiny the menu scrolls internally.
       setUserAnchor({
         left: r.left,
         bottom: window.innerHeight - r.top + 8,
         width: r.width,
-        maxHeight: Math.max(200, r.top - 16),
+        maxHeight: Math.max(0, r.top - 16),
       });
     }
     setContextPanelOpen(false);
