@@ -21,13 +21,13 @@ pub fn read_llm_prefs() -> Result<(String, String, u64), String> {
   let base = llm
     .and_then(|l| l.get("baseUrl"))
     .and_then(|v| v.as_str())
-    .unwrap_or("https://api.openai.com/v1")
+    .unwrap_or("")
     .trim()
     .to_string();
   let model = llm
     .and_then(|l| l.get("model"))
     .and_then(|v| v.as_str())
-    .unwrap_or("gpt-4o-mini")
+    .unwrap_or("")
     .to_string();
   let max_tokens = llm
     .and_then(|l| l.get("maxTokens"))
@@ -36,37 +36,21 @@ pub fn read_llm_prefs() -> Result<(String, String, u64), String> {
   Ok((base, model, max_tokens))
 }
 
-fn chat_completions_url(base: &str) -> String {
-  let s = base.trim().trim_end_matches('/').to_string();
-  let root = if s.ends_with("/v1") {
-    s
-  } else if s.is_empty() {
-    "https://api.openai.com/v1".to_string()
-  } else {
-    format!("{}/v1", s)
-  };
-  format!("{}/chat/completions", root)
-}
-
-fn validate_llm_base_url(base: &str) -> Result<(), String> {
-  let trimmed = base.trim();
-  if trimmed.is_empty() {
-    return Ok(());
-  }
-  let parsed =
-    Url::parse(trimmed).map_err(|_| "Invalid LLM base URL. Use a full URL (e.g. https://api.openai.com/v1).".to_string())?;
-  match parsed.scheme() {
-    "https" => Ok(()),
-    "http" => {
-      let host = parsed.host_str().unwrap_or("");
-      if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-        Ok(())
-      } else {
-        Err("Insecure LLM base URL. Use HTTPS (HTTP is allowed only for localhost).".to_string())
-      }
-    }
-    _ => Err("Unsupported LLM base URL scheme. Use HTTPS (or localhost HTTP).".to_string()),
-  }
+fn read_extra_llm_hosts() -> Vec<String> {
+  settings_store::load()
+    .ok()
+    .and_then(|d| {
+      d.pointer("/sections/security/extraLlmHosts")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+          arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+        })
+    })
+    .unwrap_or_default()
 }
 
 pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
@@ -75,13 +59,25 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
     .ok_or_else(|| {
       "LLM API key is not set. Open Settings → Model & API and save your key.".to_string()
     })?;
-  let (base, default_model, max_tokens) = read_llm_prefs()?;
-  validate_llm_base_url(&base)?;
-  let model = payload
-    .get("model")
-    .and_then(|m| m.as_str())
-    .unwrap_or(&default_model)
-    .to_string();
+  let provider = crate::llm_providers::detect_provider(&key);
+  let (base_override, model_override, max_tokens) = read_llm_prefs()?;
+  let base = if base_override.is_empty() {
+    crate::llm_providers::default_base_url(provider).to_string()
+  } else {
+    base_override
+  };
+  let model = if model_override.is_empty() {
+    crate::llm_providers::default_chat_model(provider).to_string()
+  } else {
+    model_override
+  };
+  let url = crate::llm_providers::chat_url(provider, &base);
+  let host = Url::parse(&url)
+    .ok()
+    .and_then(|u| u.host_str().map(|s| s.to_string()))
+    .ok_or_else(|| "Invalid LLM URL".to_string())?;
+  let extra_hosts = read_extra_llm_hosts();
+  crate::llm_providers::validate_host_for_provider(provider, &host, &extra_hosts)?;
   let messages_in = payload
     .get("messages")
     .and_then(|m| m.as_array())
@@ -163,21 +159,16 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
     let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
     messages.push(json!({ "role": role, "content": content }));
   }
-  let body = json!({
-    "model": model,
-    "messages": messages,
-    "max_tokens": max_tokens,
-    "temperature": 0.7,
-  });
+  let body = crate::llm_providers::chat_body(provider, &model, &messages, max_tokens);
   let client = reqwest::Client::builder()
     .timeout(std::time::Duration::from_secs(120))
     .build()
     .map_err(|e| e.to_string())?;
-  let url = chat_completions_url(&base);
-  let resp = client
-    .post(&url)
-    .header("Authorization", format!("Bearer {}", key.trim()))
-    .header("Content-Type", "application/json")
+  let mut req = client.post(&url);
+  for (name, value) in crate::llm_providers::chat_headers(provider, &key) {
+    req = req.header(name, value);
+  }
+  let resp = req
     .json(&body)
     .send()
     .await
@@ -188,16 +179,14 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
     let snippet: String = text.chars().take(800).collect();
     return Err(format!("LLM API error {}: {}", status, snippet));
   }
-  let v: Value = serde_json::from_str(&text)
-    .map_err(|e| format!("Invalid JSON from LLM: {} — body: {}", e, text.chars().take(200).collect::<String>()))?;
-  let content = v
-    .get("choices")
-    .and_then(|c| c.as_array())
-    .and_then(|a| a.first())
-    .and_then(|c| c.get("message"))
-    .and_then(|m| m.get("content"))
-    .and_then(|c| c.as_str())
-    .ok_or_else(|| "Unexpected LLM response (no choices[0].message.content)".to_string())?;
+  let v: Value = serde_json::from_str(&text).map_err(|e| {
+    format!(
+      "Invalid JSON from LLM: {} — body: {}",
+      e,
+      text.chars().take(200).collect::<String>()
+    )
+  })?;
+  let content = crate::llm_providers::extract_chat_text(provider, &v)?;
   Ok(json!({
     "message": content,
     "echo": payload,
