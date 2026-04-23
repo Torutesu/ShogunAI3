@@ -132,6 +132,7 @@ function ScreenMeetings() {
   const [granolaOutline, setGranolaOutline] = useState(false);
   const [granolaAsk, setGranolaAsk] = useState('');
   const [granolaTodos, setGranolaTodos] = useState(null);
+  const [granolaEnhanceMenuOpen, setGranolaEnhanceMenuOpen] = useState(false);
   const granolaRef = useRef(null);
   const granolaDraftRef = useRef(granolaDraft);
   granolaDraftRef.current = granolaDraft;
@@ -796,6 +797,10 @@ function ScreenMeetings() {
     toastM('\u30e1\u30e2\u306b\u30d5\u30a9\u30eb\u30c0\u30bf\u30b0\u3092\u8ffd\u52a0\u3057\u307e\u3057\u305f', 'success');
   }, []);
 
+  const addCalendarEvent = useCallback(function () {
+    toastM('\u30ab\u30ec\u30f3\u30c0\u30fc\u30a4\u30d9\u30f3\u30c8\u306e\u30ea\u30f3\u30af\u306f\u8a2d\u5b9a\u304b\u3089\u6709\u52b9\u5316\u3067\u304d\u307e\u3059\uff08\u30e2\u30c3\u30af\uff09', 'info');
+  }, []);
+
   const showGranolaDateInfo = useCallback(function () {
     if (!granola) return;
     try {
@@ -869,13 +874,6 @@ function ScreenMeetings() {
     window.addEventListener('keydown', onKey);
     return function () { window.removeEventListener('keydown', onKey); };
   }, [showDockRecipeOverlay]);
-
-  const meetingsDockHistory = useCallback(function () {
-    runRuntimeActionM('brief.get', briefPayloadWithUserTz({ span: 'week', source: 'meetings_dock_history' }), { silentError: true }).then(function (r) {
-      if (r && r.ok) toastM('\u6700\u8fd1\u306e\u30d6\u30ea\u30fc\u30d5\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f', 'success');
-      else toastM('\u5c65\u6b74\u306f Memory \u691c\u7d22\u3067\u78ba\u8a8d\u3067\u304d\u307e\u3059\uff08\u30e2\u30c3\u30af\uff09', 'info');
-    });
-  }, []);
 
   return (
     <div className="screen-meetings-root">
@@ -1083,9 +1081,6 @@ function ScreenMeetings() {
             </div>
           )}
             <div className="mtg-chatdock-top">
-              <button type="button" className="mtg-chatdock-top-btn" title="History" aria-label="History" onMouseDown={function (e) { e.preventDefault(); }} onClick={meetingsDockHistory}>
-                <Icon name="history" size={16}/>
-              </button>
               <div className="mtg-chatdock-chips">
                 <button type="button" className="mtg-chatdock-chip" onMouseDown={function (e) { e.preventDefault(); }} onClick={function () { runDockSlashItem(MEETINGS_DOCK_SLASH_CATALOG[0]); }}>
                   <Icon name="edit" size={12}/>
@@ -1297,38 +1292,223 @@ function ScreenMeetings() {
               >
                 <Icon name="menu" size={15} />
               </button>
-              <button
-                type="button"
-                aria-label="Enhance — AI minutes from recording and notes"
-                title="録音・メモを統合して AI 議事録を生成"
-                disabled={mtgEnhanceBusy}
-                onClick={function () { void runMtgEnhance(); }}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  height: 32,
-                  padding: '0 12px',
-                  borderRadius: 999,
-                  border: 'none',
-                  background: mtgEnhanceBusy
-                    ? 'color-mix(in srgb, var(--gold) 12%, transparent)'
-                    : 'transparent',
-                  color: 'var(--text-mute)',
-                  cursor: mtgEnhanceBusy ? 'wait' : 'pointer',
-                  fontFamily: 'inherit',
-                  fontSize: 12,
-                  fontWeight: 500,
-                }}
-              >
-                {mtgEnhanceBusy ? (
-                  <span className="granola-share-spin" />
-                ) : (
-                  <Icon name="sparkles" size={15} />
+              <div style={{ position: 'relative', display: 'inline-flex' }}>
+                <button
+                  type="button"
+                  aria-label="Enhanced notes"
+                  title="Enhanced notes"
+                  aria-expanded={granolaEnhanceMenuOpen}
+                  disabled={mtgEnhanceBusy}
+                  onClick={function () {
+                    setGranolaEnhanceMenuOpen(function (v) { return !v; });
+                    setGranolaMenuOpen(false);
+                    setMtgTopShareOpen(false);
+                    setMtgLinkAccessMenuOpen(false);
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    height: 32,
+                    padding: '0 6px 0 8px',
+                    borderRadius: 999,
+                    border: 'none',
+                    background: mtgEnhanceBusy || granolaEnhanceMenuOpen
+                      ? 'color-mix(in srgb, var(--gold) 14%, transparent)'
+                      : 'transparent',
+                    color: 'var(--text-mute)',
+                    cursor: mtgEnhanceBusy ? 'wait' : 'pointer',
+                  }}
+                >
+                  {mtgEnhanceBusy ? (
+                    <span className="granola-share-spin" />
+                  ) : (
+                    <Icon name="sparkles" size={15} />
+                  )}
+                  <Icon name="chevronDown" size={10} />
+                </button>
+                {granolaEnhanceMenuOpen && (
+                  <>
+                    <div
+                      role="presentation"
+                      style={{ position: 'fixed', inset: 0, zIndex: 20 }}
+                      onMouseDown={function () { setGranolaEnhanceMenuOpen(false); }}
+                    />
+                    <div
+                      role="menu"
+                      aria-label="Enhanced notes"
+                      onMouseDown={function (e) { e.stopPropagation(); }}
+                      style={{
+                        position: 'absolute',
+                        top: 'calc(100% + 6px)',
+                        right: 0,
+                        zIndex: 21,
+                        minWidth: 240,
+                        padding: 6,
+                        borderRadius: 14,
+                        border: '1px solid var(--border-hi)',
+                        background: 'color-mix(in srgb, var(--surface-2) 96%, var(--bg))',
+                        boxShadow: 'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
+                        fontSize: 13,
+                        color: 'var(--text)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '8px 8px 8px 10px',
+                          borderRadius: 10,
+                        }}
+                      >
+                        <Icon name="sparkles" size={15} />
+                        <span style={{ flex: 1 }}>
+                          <span className="en-only">Enhanced notes</span>
+                          <span className="jp">AI強化メモ</span>
+                        </span>
+                        <button
+                          type="button"
+                          title="Re-run enhancement"
+                          aria-label="Re-run enhancement"
+                          disabled={mtgEnhanceBusy}
+                          onClick={function () {
+                            setGranolaEnhanceMenuOpen(false);
+                            void runMtgEnhance();
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 26,
+                            height: 26,
+                            borderRadius: 999,
+                            border: 'none',
+                            background: 'color-mix(in srgb, var(--surface) 60%, transparent)',
+                            color: 'var(--text-mute)',
+                            cursor: mtgEnhanceBusy ? 'wait' : 'pointer',
+                          }}
+                        >
+                          {mtgEnhanceBusy ? (
+                            <span className="granola-share-spin" />
+                          ) : (
+                            <Icon name="refresh" size={13} />
+                          )}
+                        </button>
+                        <Icon name="check" size={14} />
+                      </div>
+                      <div style={{ height: 1, margin: '4px 6px', background: 'var(--border)' }} />
+                      <div
+                        style={{
+                          padding: '4px 10px 6px',
+                          fontSize: 11,
+                          letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          color: 'var(--text-dim)',
+                        }}
+                      >
+                        <span className="en-only">Templates</span>
+                        <span className="jp">テンプレート</span>
+                      </div>
+                      {[
+                        { id: '1to1', en: '1 to 1', jp: '1on1', emoji: '👥' },
+                        { id: 'discovery', en: 'Customer: Discovery', jp: '顧客ディスカバリー', emoji: '💵' },
+                        { id: 'hiring', en: 'Hiring', jp: '採用', emoji: '💼' },
+                        { id: 'standup', en: 'Stand-Up', jp: 'スタンドアップ', emoji: '🧍' },
+                        { id: 'weekly', en: 'Weekly Team Meeting', jp: '週次ミーティング', emoji: '📆' },
+                      ].map(function (tpl) {
+                        return (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            role="menuitem"
+                            onClick={function () {
+                              setGranolaEnhanceMenuOpen(false);
+                              toastM((tpl.en) + ' テンプレートで生成（モック）', 'info');
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              width: '100%',
+                              padding: '8px 10px',
+                              borderRadius: 10,
+                              border: 'none',
+                              background: 'transparent',
+                              color: 'inherit',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              fontFamily: 'inherit',
+                              fontSize: 13,
+                            }}
+                            onMouseEnter={function (e) { e.currentTarget.style.background = 'color-mix(in srgb, var(--surface) 70%, transparent)'; }}
+                            onMouseLeave={function (e) { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <span style={{ fontSize: 16, lineHeight: 1 }}>{tpl.emoji}</span>
+                            <span className="en-only">{tpl.en}</span>
+                            <span className="jp">{tpl.jp}</span>
+                          </button>
+                        );
+                      })}
+                      <div style={{ height: 1, margin: '4px 6px', background: 'var(--border)' }} />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={function () {
+                          setGranolaEnhanceMenuOpen(false);
+                          toastM('テンプレート一覧（モック）', 'info');
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 10,
+                          border: 'none',
+                          background: 'transparent',
+                          color: 'inherit',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontFamily: 'inherit',
+                          fontSize: 13,
+                        }}
+                      >
+                        <Icon name="grid" size={14} />
+                        <span className="en-only">All templates…</span>
+                        <span className="jp">すべてのテンプレート…</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={function () {
+                          setGranolaEnhanceMenuOpen(false);
+                          toastM('新規テンプレートの作成（モック）', 'info');
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 10,
+                          border: 'none',
+                          background: 'transparent',
+                          color: 'inherit',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontFamily: 'inherit',
+                          fontSize: 13,
+                        }}
+                      >
+                        <Icon name="plus" size={14} />
+                        <span className="en-only">New template</span>
+                        <span className="jp">新規テンプレート</span>
+                      </button>
+                    </div>
+                  </>
                 )}
-                <span className="en-only">Enhance</span>
-                <span className="jp" style={{ fontSize: 11 }}>AI議事録</span>
-              </button>
+              </div>
             </div>
             <div
               style={{
@@ -1862,6 +2042,69 @@ function ScreenMeetings() {
                   {granola.tag}
                 </span>
               )}
+            </div>
+
+            <div
+              role="group"
+              aria-label="Calendar event"
+              style={{
+                marginTop:14,
+                display:'flex',
+                alignItems:'center',
+                gap:14,
+                padding:'14px 16px',
+                borderRadius:14,
+                border:'1px solid var(--border-hi)',
+                background:'color-mix(in srgb, var(--surface) 92%, var(--bg))',
+              }}
+            >
+              <div
+                aria-hidden="true"
+                style={{
+                  display:'flex',
+                  alignItems:'center',
+                  justifyContent:'center',
+                  width:34,
+                  height:34,
+                  borderRadius:10,
+                  color:'var(--text-mute)',
+                  background:'color-mix(in srgb, var(--surface-2) 70%, transparent)',
+                  flexShrink:0,
+                }}
+              >
+                <Icon name="calendar" size={16}/>
+              </div>
+              <div style={{display:'flex', flexDirection:'column', gap:2, minWidth:0, flex:1}}>
+                <div style={{fontSize:14, fontWeight:500, color:'var(--text)'}}>
+                  <span className="en-only">No calendar event</span>
+                  <span className="jp">カレンダーイベントなし</span>
+                </div>
+                <div className="t-mono" style={{fontSize:12, color:'var(--text-mute)'}}>
+                  {granola.dateLabel || 'Today'}
+                  {granola.time && <span style={{marginLeft:6}}>· {granola.time}</span>}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={addCalendarEvent}
+                title="Link a calendar event"
+                aria-label="Link a calendar event"
+                style={{
+                  display:'inline-flex',
+                  alignItems:'center',
+                  justifyContent:'center',
+                  width:32,
+                  height:32,
+                  borderRadius:999,
+                  border:'1px solid var(--border-hi)',
+                  background:'transparent',
+                  color:'var(--text-mute)',
+                  cursor:'pointer',
+                  flexShrink:0,
+                }}
+              >
+                <Icon name="plus" size={15}/>
+              </button>
             </div>
 
             <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:20, alignItems:'center'}}>

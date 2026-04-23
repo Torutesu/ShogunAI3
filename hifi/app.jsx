@@ -2029,7 +2029,10 @@ function App() {
     <div
       className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}
       data-screen-label={active}
-      style={{ gridTemplateColumns: sidebarCollapsed ? '0 minmax(0, 1fr)' : `${sidebarWidth}px minmax(0, 1fr)` }}
+      style={{
+        gridTemplateColumns: sidebarCollapsed ? '0 minmax(0, 1fr)' : `${sidebarWidth}px minmax(0, 1fr)`,
+        '--sidebar-w': sidebarCollapsed ? '0px' : `${sidebarWidth}px`,
+      }}
     >
       {bioGate.ready && bioGate.open && (
         <div
@@ -2157,18 +2160,6 @@ function App() {
       )}
       {/* Topbar */}
       <div className="topbar">
-        <button
-          type="button"
-          className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
-          onClick={() => setSidebarCollapsed((v) => !v)}
-          aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-          title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-        >
-          <span className="sidebar-toggle-glyph" aria-hidden="true">
-            <span className="pane" />
-            <span className="divider" />
-          </span>
-        </button>
         <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Shogun AI · Home">
           <Kamon size={26} color="var(--text)"/>
           <div>
@@ -2466,6 +2457,18 @@ function App() {
           </div>
         </div>
       </div>
+      <button
+        type="button"
+        className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
+        onClick={() => setSidebarCollapsed((v) => !v)}
+        aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+        title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+      >
+        <span className="sidebar-toggle-glyph" aria-hidden="true">
+          <span className="pane" />
+          <span className="divider" />
+        </span>
+      </button>
       <button
         type="button"
         className={'sidebar-resizer' + (sidebarResizeHint ? ' show-hint' : '')}

@@ -8,6 +8,7 @@
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
+  position: relative;
 }
 
 /* Sidebar toggle (Cmd+S) — wins over responsive .app column rules */
@@ -21,6 +22,69 @@
   pointer-events: none;
   border-right: 0;
   padding: 0;
+}
+
+/* Sidebar resizer — absolutely positioned so it does not consume a grid cell
+   (otherwise it auto-places into row 2 col 2 and pushes `.content` to row 3). */
+.sidebar-resizer {
+  position: absolute;
+  left: var(--sidebar-w, 240px);
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  margin-left: -5px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sidebar-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: transparent;
+  transition: background var(--dur-base, 160ms) ease;
+}
+.sidebar-resizer:hover::before,
+.sidebar-resizer.show-hint::before {
+  background: color-mix(in srgb, var(--gold) 45%, transparent);
+}
+.sidebar-resizer-hit {
+  position: absolute;
+  inset: 0;
+}
+.sidebar-resizer-tip {
+  position: absolute;
+  left: 14px;
+  top: 80px;
+  white-space: nowrap;
+  padding: 6px 10px;
+  background: var(--surface-2);
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm, 0 2px 6px rgba(0, 0, 0, 0.18));
+}
+.sidebar-resizer-kbd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-left: 4px;
+}
+.app.sidebar-collapsed .sidebar-resizer {
+  left: 0;
+  margin-left: 0;
 }
 
 /* Global meeting recording HUD — all screens */
@@ -45,13 +109,59 @@
   grid-column: 1 / -1;
   display:flex;
   align-items:center;
-  padding: 0 20px;
+  padding: 0 20px 0 22px;
   border-bottom:1px solid var(--border);
   gap: 20px;
   background:var(--bg);
   z-index:2;
 }
-.topbar .brand { display:flex; align-items:center; gap:10px; min-width:220px; max-width:280px; }
+.topbar .brand { display:flex; align-items:center; gap:10px; min-width:220px; max-width:280px; padding: 12px 0; }
+.sidebar-toggle-btn {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--dur-base, 160ms) ease, color var(--dur-base, 160ms) ease;
+}
+.sidebar-toggle-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.sidebar-toggle-glyph {
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 13px;
+  border: 1.4px solid currentColor;
+  border-radius: 3px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.sidebar-toggle-glyph .pane {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 5px;
+  background: currentColor;
+}
+.sidebar-toggle-glyph .divider {
+  display: none;
+}
+.sidebar-toggle-btn.collapsed .sidebar-toggle-glyph .pane {
+  background: transparent;
+}
 .topbar .brand-title { font-size:15px; font-weight:600; letter-spacing:-0.02em; }
 .topbar .brand-jp { font-family:var(--font-jp); font-weight:300; color:var(--text-mute); font-size:12px; }
 .topbar .cmdk { flex:1; max-width:600px; display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); color:var(--text-dim); cursor:pointer; font-size:13px; transition:border-color var(--dur-base); }
@@ -67,7 +177,7 @@
   z-index: 2;
   border-right:1px solid var(--border);
   background:var(--bg);
-  padding: 16px 12px;
+  padding: 16px 12px 58px;
   overflow-y:auto;
   display:flex;
   flex-direction:column;
