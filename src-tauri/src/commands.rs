@@ -964,3 +964,45 @@ pub fn shogun_memory_debug_recent_calls(
 pub fn shogun_memory_debug_stats() -> Result<serde_json::Value, String> {
   crate::memory_store::stats_extended()
 }
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn shogun_memory_debug_sync_status() -> Result<serde_json::Value, String> {
+  use crate::integration_secrets;
+  use crate::settings_store;
+
+  let cal_snap = crate::calendar_sync::snapshot_state();
+  let gmail_snap = crate::gmail::snapshot_state();
+  let doc = settings_store::load().unwrap_or_else(|_| serde_json::json!({ "sections": {} }));
+  let auto_cal = doc
+    .pointer("/sections/integrations/googleCalendarAutoSync")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  let cal_creds = integration_secrets::get_credentials("google_calendar")
+    .ok()
+    .flatten()
+    .is_some();
+  let gmail_creds = integration_secrets::get_credentials("gmail")
+    .ok()
+    .flatten()
+    .is_some();
+
+  Ok(serde_json::json!({
+    "google_calendar": {
+      "last_sync_ms": cal_snap.last_sync_ms,
+      "last_ingested": cal_snap.last_ingested,
+      "last_error": cal_snap.last_error,
+      "last_duration_ms": cal_snap.last_duration_ms,
+      "credentials_present": cal_creds,
+      "auto_enabled": auto_cal,
+    },
+    "gmail": {
+      "last_sync_ms": gmail_snap.last_sync_ms,
+      "last_ingested": gmail_snap.last_ingested,
+      "last_error": gmail_snap.last_error,
+      "last_duration_ms": gmail_snap.last_duration_ms,
+      "credentials_present": gmail_creds,
+      "auto_enabled": false,
+    }
+  }))
+}
