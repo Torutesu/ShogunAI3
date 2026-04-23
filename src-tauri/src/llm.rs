@@ -211,6 +211,7 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     .get("target")
     .and_then(|t| t.as_str())
     .unwrap_or("document");
+  let start = std::time::Instant::now();
   let prompt = payload
     .get("prompt")
     .and_then(|p| p.as_str())
@@ -274,6 +275,17 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     .and_then(|t| t.as_str())
     .map(|s| s.to_string())
     .unwrap_or_else(|| format!("Draft · {}", target));
+  let memory_used = !memory_block.is_empty();
+  let block_chars = memory_block.chars().count();
+  crate::memory_obs::emit(
+    "draft_from_payload_done",
+    &[
+      ("memory_used", memory_used.to_string()),
+      ("block_chars", block_chars.to_string()),
+      ("content_len", content.chars().count().to_string()),
+      ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+    ],
+  );
   Ok(json!({
     "content": content,
     "title": title,
@@ -283,12 +295,14 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
 }
 
 pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
+  let start = std::time::Instant::now();
   let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
     query: "",
     limit: 15,
     semantic: false,
   })
   .await?;
+  let hits_count = hits.len();
   let block = context_assembly::format_hits_brief_json_prompt(&hits, 10_000);
   let user_prompt = format!(
     "From these local memory items, output ONLY valid JSON with shape {{\"sections\":[{{\"title\":string,\"body\":string}}]}}. No markdown code fences. If there are no items, use {{\"sections\":[]}}.\n\nMemories:\n{}",
@@ -304,10 +318,19 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
     .get("sections")
     .cloned()
     .unwrap_or(json!([]));
+  let sections_count = sections.as_array().map(|a| a.len()).unwrap_or(0);
   let generated = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_millis() as u64)
     .unwrap_or(0);
+  crate::memory_obs::emit(
+    "brief_generate_done",
+    &[
+      ("hits_used", hits_count.to_string()),
+      ("sections", sections_count.to_string()),
+      ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+    ],
+  );
   Ok(json!({
     "sections": sections,
     "generatedAt": generated,
@@ -319,6 +342,7 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
 /// Draft a paste-ready reply from a Morning Brief item + local Memory (requires LLM API key).
 pub async fn draft_reply_for_brief(payload: &Value) -> Result<Value, String> {
   let item = payload.get("brief_item");
+  let start = std::time::Instant::now();
   let what = item
     .and_then(|i| i.get("what"))
     .and_then(|x| x.as_str())
@@ -377,6 +401,14 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
   let title = format!(
     "Reply draft · {}",
     what.chars().take(40).collect::<String>()
+  );
+  crate::memory_obs::emit(
+    "draft_reply_done",
+    &[
+      ("hits_used", hits.len().to_string()),
+      ("content_len", content.chars().count().to_string()),
+      ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+    ],
   );
   Ok(json!({
     "content": content,
