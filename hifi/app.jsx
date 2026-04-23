@@ -1022,10 +1022,16 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [contextPanelOpen]);
 
-  const pushToast = (message, kind='info') => {
+  const pushToast = (message, kind='info', options={}) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    setToast({ message, kind });
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2200);
+    const action =
+      options.action && typeof options.action.onClick === 'function' && options.action.label
+        ? { label: String(options.action.label), onClick: options.action.onClick }
+        : null;
+    setToast({ message, kind, action });
+    // Actionable toasts stick around longer so the user can reach the button.
+    const ttl = action ? (options.durationMs || 8000) : (options.durationMs || 2200);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), ttl);
   };
   const pushToastRef = useRef(pushToast);
   pushToastRef.current = pushToast;
@@ -1158,7 +1164,20 @@ function App() {
           const message =
             (typeof p.message === 'string' && p.message) ||
             'Accessibility permission is required for AX-rich capture. Open System Settings → Privacy & Security → Accessibility to allow SHOGUN.';
-          pushToastRef.current(message, 'warn');
+          const runtime = window.SHOGUN_RUNTIME;
+          const canOpen = !!(runtime && typeof runtime.executeAction === 'function');
+          pushToastRef.current(message, 'warn', canOpen ? {
+            action: {
+              label: 'Open Accessibility',
+              onClick: () => {
+                runtime.executeAction(
+                  'permissions.manage',
+                  { target: 'accessibility', source: 'capture.ax_not_trusted_toast' },
+                  { silentError: true },
+                );
+              },
+            },
+          } : {});
         });
       } catch (_) {
         /* ignore */
@@ -3004,7 +3023,22 @@ function App() {
       />
 
       {toast && (
-        <div className={'app-toast '+toast.kind}>{toast.message}</div>
+        <div className={'app-toast '+toast.kind+(toast.action?' has-action':'')}>
+          <span className="app-toast__msg">{toast.message}</span>
+          {toast.action && (
+            <button
+              type="button"
+              className="app-toast__action"
+              onClick={() => {
+                try { toast.action.onClick(); } catch (_) { /* ignore */ }
+                if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+                setToast(null);
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
+        </div>
       )}
 
       {/* System floating menu removed */}
@@ -3474,6 +3508,18 @@ function App() {
         .app-toast.success { border-color:color-mix(in srgb, var(--success) 40%, var(--border)); }
         .app-toast.warn { border-color:color-mix(in srgb, #d9a85a 45%, var(--border)); }
         .app-toast.error { border-color:color-mix(in srgb, #d96b5a 45%, var(--border)); }
+        .app-toast.has-action { display:flex; align-items:center; gap:10px; max-width:420px; }
+        .app-toast__msg { flex:1 1 auto; min-width:0; }
+        .app-toast__action {
+          flex:0 0 auto;
+          padding:4px 10px; border-radius:999px;
+          border:1px solid color-mix(in srgb, var(--gold) 45%, var(--border-hi));
+          background:color-mix(in srgb, var(--gold) 10%, var(--surface));
+          color:var(--text); font-size:11px; font-weight:600; cursor:pointer;
+          white-space:nowrap;
+        }
+        .app-toast__action:hover { background:color-mix(in srgb, var(--gold) 18%, var(--surface)); }
+        .app-toast__action:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
 
         /* Hummingbird assistant (chat topbar 2nd action) */
         .hummingbird-panel {
