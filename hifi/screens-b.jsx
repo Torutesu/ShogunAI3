@@ -45,6 +45,10 @@ function ScreenChat() {
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateB(true);
   const pendingMemoryAssemblyRef = useRefB(null);
   const pendingAutoSendRef = useRefB(false);
+  const [attachments, setAttachments] = useStateB([]);
+  const [dropActive, setDropActive] = useStateB(false);
+  const dragDepthRef = useRefB(0);
+  const fileInputRef = useRefB(null);
 
   useEffectB(() => {
     let cancelled = false;
@@ -148,13 +152,45 @@ function ScreenChat() {
     toast('Memory snippets attached for the next message', 'success');
   };
 
+  const formatAttachmentSize = (bytes) => {
+    if (!Number.isFinite(bytes) || bytes < 1024) return `${Math.max(0, Math.round(bytes || 0))} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const addFiles = (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    const mapped = files.map((f) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: f.name || 'file',
+      type: f.type || '',
+      size: Number(f.size) || 0,
+      file: f,
+    }));
+    setAttachments((prev) => prev.concat(mapped));
+    toast(`${mapped.length} ${mapped.length === 1 ? 'file' : 'files'} attached`, 'success');
+  };
+
+  const removeAttachment = (id) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const openFilePicker = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
   const sendChat = async () => {
     const text = composerText.trim();
-    if (!text || loading) return;
-    const userTurn = { role: 'user', content: text };
+    if ((!text && attachments.length === 0) || loading) return;
+    const attachmentSummary = attachments.length
+      ? '\n\n[Attached: ' + attachments.map((a) => a.name).join(', ') + ']'
+      : '';
+    const userTurn = { role: 'user', content: text + attachmentSummary };
     const next = messages.concat(userTurn);
     setMessages(next);
     setComposerText('');
+    setAttachments([]);
     setLoading(true);
     const payload = {
       messages: next,
@@ -231,7 +267,58 @@ function ScreenChat() {
   }, [composerText, loading]);
 
   return (
-    <div className={'shogun-chat-layout' + (chatMax ? ' shogun-chat-max' : '')}>
+    <div
+      className={'shogun-chat-layout' + (chatMax ? ' shogun-chat-max' : '') + (dropActive ? ' shogun-chat-dropping' : '')}
+      onDragEnter={(e) => {
+        if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+        e.preventDefault();
+        dragDepthRef.current += 1;
+        setDropActive(true);
+      }}
+      onDragOver={(e) => {
+        if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      }}
+      onDragLeave={(e) => {
+        if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (dragDepthRef.current === 0) setDropActive(false);
+      }}
+      onDrop={(e) => {
+        if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+        e.preventDefault();
+        dragDepthRef.current = 0;
+        setDropActive(false);
+        const dropped = e.dataTransfer?.files;
+        if (dropped && dropped.length) addFiles(dropped);
+      }}
+    >
+      {dropActive && (
+        <div className="shogun-chat-drop-overlay" aria-hidden="true">
+          <div className="shogun-chat-drop-card">
+            <Icon name="paperclip" size={22} />
+            <div className="shogun-chat-drop-title">
+              <span className="en-only">Drop to attach</span>
+              <span className="jp">ドロップして添付</span>
+            </div>
+            <div className="shogun-chat-drop-sub">
+              <span className="en-only">Files & images — added to this message</span>
+              <span className="jp">ファイル・画像をこのメッセージに添付</span>
+            </div>
+          </div>
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          addFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
       <div className="shogun-chat-main">
         <div className="shogun-chat-header">
           <button className="btn btn-sm btn-ghost" onClick={newChat} style={{padding:'0 8px'}}><Icon name="plus" size={13}/>New</button>
@@ -307,7 +394,27 @@ function ScreenChat() {
                   }
                 }}
               />
+              {attachments.length > 0 && (
+                <div className="composer-attachments">
+                  {attachments.map((a) => (
+                    <span key={a.id} className="composer-attachment-chip" title={`${a.name} · ${formatAttachmentSize(a.size)}`}>
+                      <Icon name={a.type.startsWith('image/') ? 'note' : 'file'} size={12} />
+                      <span className="composer-attachment-name">{a.name}</span>
+                      <span className="composer-attachment-size">{formatAttachmentSize(a.size)}</span>
+                      <button
+                        type="button"
+                        className="composer-attachment-remove"
+                        aria-label={`Remove ${a.name}`}
+                        onClick={() => removeAttachment(a.id)}
+                      >
+                        <Icon name="x" size={10} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="row composer-actions" style={{gap:6, marginTop:8}}>
+                <button className="composer-pill" type="button" onClick={openFilePicker} title="Attach files or images"><Icon name="paperclip" size={13}/>Attach</button>
                 <button className="composer-pill" type="button" onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
                 <button
                   className={'composer-pill' + (webSearchOn ? ' is-on' : '')}
@@ -328,7 +435,16 @@ function ScreenChat() {
                 <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
                 <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
                 <span className="spacer"/>
-                <button className="composer-send" type="button" aria-label="Send" disabled={loading} onClick={sendChat}><Icon name="arrowUp" size={16}/></button>
+                <button
+                  className="composer-send"
+                  type="button"
+                  disabled={loading || (!composerText.trim() && attachments.length === 0)}
+                  onClick={sendChat}
+                  aria-label="Send message"
+                  title="Send (Return)"
+                >
+                  <Icon name="arrowUp" size={18} />
+                </button>
               </div>
             </div>
             <div className="t-mono" style={{fontSize:11, marginTop:8, textAlign:'center', color:'var(--text-dim)', textTransform:'none', letterSpacing:'0.02em'}}>
@@ -465,6 +581,64 @@ function ScreenChat() {
           outline-offset:2px;
         }
         .shogun-chat-thread--empty { min-height:100%; justify-content:center; box-sizing:border-box; padding-block:12px; }
+
+        .composer-send {
+          width:36px; height:36px; border-radius:10px;
+          display:inline-flex; align-items:center; justify-content:center;
+          background:var(--gold); color:#151212;
+          border:0; padding:0; cursor:pointer;
+          transition:background var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+          box-shadow:0 1px 0 rgba(0,0,0,0.25);
+        }
+        .composer-send:hover:not(:disabled) { background:var(--gold-hover); }
+        .composer-send:active:not(:disabled) { transform:translateY(1px); }
+        .composer-send:disabled { opacity:0.45; cursor:not-allowed; }
+        .composer-send:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+
+        .composer-attachments {
+          display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;
+        }
+        .composer-attachment-chip {
+          display:inline-flex; align-items:center; gap:6px;
+          height:26px; padding:0 6px 0 8px;
+          background:var(--surface-2); border:1px solid var(--border);
+          border-radius:var(--radius-sm);
+          font-size:11px; color:var(--text);
+          max-width:240px;
+        }
+        .composer-attachment-name {
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+          max-width:140px;
+        }
+        .composer-attachment-size {
+          font-family:var(--font-mono); font-size:10px; color:var(--text-dim);
+        }
+        .composer-attachment-remove {
+          display:inline-flex; align-items:center; justify-content:center;
+          width:16px; height:16px; border-radius:4px;
+          color:var(--text-dim); background:transparent; border:0; cursor:pointer;
+        }
+        .composer-attachment-remove:hover { color:var(--text); background:var(--surface); }
+
+        .shogun-chat-layout { position:relative; }
+        .shogun-chat-drop-overlay {
+          position:absolute; inset:0; z-index:50;
+          display:flex; align-items:center; justify-content:center;
+          background:color-mix(in srgb, var(--bg) 70%, transparent);
+          backdrop-filter:blur(2px);
+          pointer-events:none;
+        }
+        .shogun-chat-drop-card {
+          display:flex; flex-direction:column; align-items:center; gap:8px;
+          padding:24px 32px;
+          border:2px dashed var(--gold);
+          border-radius:var(--radius-lg);
+          background:var(--surface);
+          color:var(--text);
+          box-shadow:0 20px 40px -16px rgba(0,0,0,0.5);
+        }
+        .shogun-chat-drop-title { font-size:15px; font-weight:500; color:var(--gold); }
+        .shogun-chat-drop-sub { font-size:12px; color:var(--text-mute); }
       `}</style>
     </div>
   );

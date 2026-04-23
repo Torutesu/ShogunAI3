@@ -937,10 +937,6 @@ function ScreenMeetings() {
         <h1 style={{margin:0, width:'100%', textAlign:'center', fontSize:34, fontWeight:600, letterSpacing:'-0.02em', fontFamily:'var(--font-serif, var(--font-en))'}}>
           Meetings <span className="jp" style={{fontSize:22, fontWeight:300, marginLeft:10, color:'var(--text-mute)'}}>会議</span>
         </h1>
-        <div style={{marginTop:8, color:'var(--text-mute)', fontSize:13, display:'inline-flex', alignItems:'center', justifyContent:'center', gap:6, flexWrap:'wrap', textAlign:'center'}}>
-          <span>Your private meeting notes and recordings</span>
-          <span className="jp dim" style={{fontSize:11, marginLeft:4}}>個人</span>
-        </div>
       </div>
 
       {/* Coming up — filled when calendar.sync returns events (localStorage cache on success) */}
@@ -992,11 +988,27 @@ function ScreenMeetings() {
             <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>{userMeetingItems.length} ITEMS</span>
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:2}}>
-            {userMeetingItems.map(function (n, i) {
+            {(function () {
               var Mrow = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
               var recSk = audioRecSession && audioRecSession.storageKey;
               var activeSk = recSk || (Mrow && Mrow.getActiveStorageKey && Mrow.getActiveStorageKey());
-              var isLiveRow = !!(Mrow && Mrow.isBusyRecordingOrStarting && Mrow.isBusyRecordingOrStarting() && n.storageKey && activeSk && n.storageKey === activeSk);
+              var isBusy = !!(Mrow && Mrow.isBusyRecordingOrStarting && Mrow.isBusyRecordingOrStarting());
+              var annotated = userMeetingItems.map(function (n, i) {
+                var isLiveRow = !!(isBusy && n.storageKey && activeSk && n.storageKey === activeSk);
+                return { n: n, i: i, isLiveRow: isLiveRow };
+              });
+              annotated.sort(function (a, b) {
+                if (a.isLiveRow !== b.isLiveRow) return a.isLiveRow ? -1 : 1;
+                var ta = Number(a.n.loggedAt) || 0;
+                var tb = Number(b.n.loggedAt) || 0;
+                if (ta !== tb) return tb - ta;
+                return a.i - b.i;
+              });
+              return annotated;
+            })().map(function (entry) {
+              var n = entry.n;
+              var i = entry.i;
+              var isLiveRow = entry.isLiveRow;
               var rowTag = isLiveRow ? 'LIVE' : (n.tag || 'LOCAL');
               return (
                 <div key={n.storageKey || n.loggedAt || i} role="button" tabIndex={0} className="mtg-row" onClick={function () { openMeetingNote(n, n.dateCtx || 'today-user'); }} onKeyDown={function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMeetingNote(n, n.dateCtx || 'today-user'); } }}>
