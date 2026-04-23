@@ -19,6 +19,8 @@ function workProvenanceLabel(prov) {
 function ScreenWork() {
   const [hits, setHits] = React.useState([]);
   const [draftWithMemory, setDraftWithMemory] = React.useState(true);
+  const [query, setQuery] = React.useState('');
+  const [searching, setSearching] = React.useState(false);
   /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
   React.useEffect(() => {
@@ -46,13 +48,34 @@ function ScreenWork() {
     window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
     return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
   }, []);
-  const refresh = React.useCallback(() => {
+  const refresh = React.useCallback((q) => {
+    const effective = typeof q === 'string' ? q : query;
+    setSearching(true);
+    runRuntimeAction(
+      'memory.search',
+      { query: effective, limit: 24 },
+      { silentError: true },
+    ).then((res) => {
+      setSearching(false);
+      if (!res?.ok || !Array.isArray(res.data?.hits)) return;
+      setHits(res.data.hits);
+    });
+  }, [query]);
+  // Initial load uses an empty query (recent items). The debounced effect
+  // below owns subsequent fetches as the user types.
+  React.useEffect(() => {
     runRuntimeAction('memory.search', { query: '', limit: 24 }, { silentError: true }).then((res) => {
       if (!res?.ok || !Array.isArray(res.data?.hits)) return;
       setHits(res.data.hits);
     });
   }, []);
-  React.useEffect(() => { refresh(); }, [refresh]);
+  // Debounce keystrokes so a fast typist doesn't trigger a search per key.
+  // 180ms feels responsive while still coalescing a rushed phrase.
+  React.useEffect(() => {
+    if (query === '') return undefined;
+    const t = setTimeout(() => refresh(query), 180);
+    return () => clearTimeout(t);
+  }, [query, refresh]);
 
   const buildDraftPayload = React.useCallback((prompt, memoryQuery) => {
     const payload = {
@@ -78,7 +101,27 @@ function ScreenWork() {
           <h1>Work <span className="jp">任務</span></h1>
           <div className="sub">Recent items from your local memory index. Drafts can include <code className="t-mono" style={{fontSize:11}}>memoryAssembly</code> for extra local context.</div>
         </div>
-        <div className="row" style={{flexWrap:'wrap', gap:8}}>
+        <div className="row" style={{flexWrap:'wrap', gap:8, alignItems:'center'}}>
+          <div className="work-search-wrap">
+            <Icon name="filter" size={13} className="work-search-icon"/>
+            <input
+              type="text"
+              className="work-search-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') refresh(query); }}
+              placeholder="Search memory…"
+              aria-label="Search indexed memory"
+            />
+            {query && (
+              <button
+                type="button"
+                className="work-search-clear"
+                onClick={() => { setQuery(''); refresh(''); }}
+                aria-label="Clear search"
+              >×</button>
+            )}
+          </div>
           <label className="row" style={{gap:6, alignItems:'center', fontSize:12, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
             <input
               type="checkbox"
@@ -87,7 +130,7 @@ function ScreenWork() {
             />
             <span>Memory を下書きに取り込む</span>
           </label>
-          <button className="btn btn-secondary" type="button" onClick={refresh}><Icon name="filter" size={14}/>Refresh</button>
+          <button className="btn btn-secondary" type="button" disabled={searching} onClick={() => refresh()}><Icon name="filter" size={14}/>{searching ? '…' : 'Refresh'}</button>
           <button
             className="btn btn-primary"
             type="button"
@@ -104,13 +147,21 @@ function ScreenWork() {
       {hits.length === 0 ? (
         <div className="card" style={{padding:28}}>
           <p style={{fontSize:14, color:'var(--text-mute)', margin:0, lineHeight:1.6}}>
-            No indexed memories yet. Ingest content from Memory or Capture in the desktop app, then refresh.
+            {query
+              ? ('No memory matched "' + query.slice(0, 40) + '". Try a different keyword or clear the search.')
+              : 'No indexed memories yet. Ingest content from Memory or Capture in the desktop app, then refresh.'}
           </p>
         </div>
       ) : (
         <div className="shogun-grid-cards">
-          {hits.map((h) => (
-            <div key={h.id || h.title} className="card card-interactive" style={{padding:18}}>
+          {hits.map((h) => {
+            const titleSrc = h.title_highlight || h.title || 'Untitled';
+            const snippetSrc = h.snippet_highlight || h.snippet || '—';
+            const renderHL = window.ShogunHighlight && window.ShogunHighlight.renderHighlighted
+              ? window.ShogunHighlight.renderHighlighted
+              : ((t) => t);
+            return (
+            <div key={h.id || h.title} className="card card-interactive work-memory-card" style={{padding:18}}>
               <div className="row" style={{gap:10, marginBottom:10, flexWrap:'wrap'}}>
                 <Icon name="file" size={14} className="gold"/>
                 <span className="t-mono" style={{fontSize:10}}>{String(h.source || 'memory')}</span>
@@ -120,8 +171,8 @@ function ScreenWork() {
                   </span>
                 )}
               </div>
-              <div style={{fontSize:15, fontWeight:500, marginBottom:8}}>{h.title || 'Untitled'}</div>
-              <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.5, marginBottom:12}}>{h.snippet || '—'}</div>
+              <div style={{fontSize:15, fontWeight:500, marginBottom:8}}>{renderHL(titleSrc)}</div>
+              <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.5, marginBottom:12}}>{renderHL(snippetSrc)}</div>
               <button
                 type="button"
                 className="btn btn-sm btn-secondary"
@@ -135,7 +186,8 @@ function ScreenWork() {
                 }}
               ><Icon name="edit" size={12}/> Draft from memory</button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
