@@ -290,3 +290,5 @@ function ScreenMemoryDebug() {
     </div>
   );
 }
+
+window.ScreenMemoryDebug = ScreenMemoryDebug;
