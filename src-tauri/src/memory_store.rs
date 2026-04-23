@@ -384,6 +384,27 @@ fn kinds_json_to_value(s: &str) -> Value {
   serde_json::from_str(s).unwrap_or_else(|_| json!([]))
 }
 
+/// Attach FTS5 `highlight()` / `snippet()` output to a memory item row when
+/// the marker characters are actually present — i.e. the match was in that
+/// column. The frontend later splits on the markers to wrap each span in
+/// `<mark>`; sentinels outside `\x02` / `\x03` keep the contract HTML-safe
+/// (no escaping needed).
+fn attach_fts_highlights(
+  item: &mut Value,
+  title_hl: Option<String>,
+  snippet_hl: Option<String>,
+) {
+  let Some(obj) = item.as_object_mut() else {
+    return;
+  };
+  if let Some(t) = title_hl.filter(|s| s.contains('\u{0002}')) {
+    obj.insert("title_highlight".to_string(), json!(t));
+  }
+  if let Some(s) = snippet_hl.filter(|s| s.contains('\u{0002}')) {
+    obj.insert("snippet_highlight".to_string(), json!(s));
+  }
+}
+
 fn row_to_item(
   id: String,
   title: String,
@@ -482,13 +503,21 @@ fn fts_match_query(user: &str) -> Option<String> {
   )
 }
 
+/// ASCII STX used to wrap each matched span in FTS highlight output so the
+/// frontend can split and render `<mark>` tags safely (no HTML injection).
+pub(crate) const HL_START: &str = "\u{0002}";
+/// ASCII ETX terminator, paired with `HL_START`.
+pub(crate) const HL_END: &str = "\u{0003}";
+
 fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usize) -> Result<(Vec<Value>, usize), String> {
   let cap = (limit.saturating_mul(12)).max(limit).min(400);
   let mut stmt = conn
     .prepare(
       r#"
       SELECT m.id, m.title, m.snippet, m.source, m.kinds_json, m.created_at,
-             m.provenance, m.entity_id, m.confidence, m.redaction
+             m.provenance, m.entity_id, m.confidence, m.redaction,
+             highlight(fts, 0, char(2), char(3)) AS title_hl,
+             snippet(fts, 1, char(2), char(3), '…', 32) AS snippet_hl
       FROM mem_items_fts AS fts
       JOIN mem_items AS m ON m.rowid = fts.rowid
       WHERE fts MATCH ?1
@@ -500,7 +529,9 @@ fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usiz
 
   let rows = stmt
     .query_map(params![fts_q, cap as i64], |r| {
-      Ok(row_to_item(
+      let title_hl: Option<String> = r.get(10).ok();
+      let snippet_hl: Option<String> = r.get(11).ok();
+      let mut item = row_to_item(
         r.get(0)?,
         r.get(1)?,
         r.get(2)?,
@@ -511,7 +542,9 @@ fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usiz
         r.get(7)?,
         r.get(8)?,
         r.get(9)?,
-      ))
+      );
+      attach_fts_highlights(&mut item, title_hl, snippet_hl);
+      Ok(item)
     })
     .map_err(|e| e.to_string())?;
 
@@ -1216,8 +1249,9 @@ pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
   use super::{
-    decode_embedding_blob, derive_provenance, encode_embedding_blob, is_transient_embed_error,
-    is_valid_provenance, is_valid_redaction, row_to_item, truncate_api_error,
+    attach_fts_highlights, decode_embedding_blob, derive_provenance, encode_embedding_blob,
+    is_transient_embed_error, is_valid_provenance, is_valid_redaction, row_to_item,
+    truncate_api_error, HL_END, HL_START,
   };
   use serde_json::json;
 
@@ -1290,6 +1324,57 @@ mod tests {
     for v in ["", "NONE", "partial", "redact"] {
       assert!(!is_valid_redaction(v));
     }
+  }
+
+  fn mark(s: &str) -> String {
+    format!("{HL_START}{s}{HL_END}")
+  }
+
+  #[test]
+  fn attach_fts_highlights_adds_title_and_snippet_when_marked() {
+    let mut item = json!({ "id": "m_1", "title": "Deploy window", "snippet": "Prod cut" });
+    let title_hl = format!("{} window", mark("Deploy"));
+    let snippet_hl = format!("…{} cut at 19:00", mark("Prod"));
+    attach_fts_highlights(&mut item, Some(title_hl.clone()), Some(snippet_hl.clone()));
+    assert_eq!(item["title_highlight"], json!(title_hl));
+    assert_eq!(item["snippet_highlight"], json!(snippet_hl));
+    // Raw values untouched so context_assembly still sees the clean text.
+    assert_eq!(item["title"], json!("Deploy window"));
+    assert_eq!(item["snippet"], json!("Prod cut"));
+  }
+
+  #[test]
+  fn attach_fts_highlights_skips_columns_without_matches() {
+    // FTS returns the raw column text when a column has no matches; without
+    // the sentinel the frontend has nothing to highlight, so we drop it.
+    let mut item = json!({ "id": "m_1", "title": "Plain", "snippet": "Plain" });
+    attach_fts_highlights(&mut item, Some("Plain".into()), Some("Plain".into()));
+    assert!(item.get("title_highlight").is_none());
+    assert!(item.get("snippet_highlight").is_none());
+  }
+
+  #[test]
+  fn attach_fts_highlights_handles_partial_matches() {
+    let mut item = json!({ "id": "m_1" });
+    // Match only in the snippet column.
+    attach_fts_highlights(&mut item, Some("No match".into()), Some(mark("hit")));
+    assert!(item.get("title_highlight").is_none());
+    assert_eq!(item["snippet_highlight"], json!(mark("hit")));
+  }
+
+  #[test]
+  fn attach_fts_highlights_tolerates_none_inputs() {
+    let mut item = json!({ "id": "m_1" });
+    attach_fts_highlights(&mut item, None, None);
+    assert!(item.get("title_highlight").is_none());
+    assert!(item.get("snippet_highlight").is_none());
+  }
+
+  #[test]
+  fn attach_fts_highlights_no_op_when_item_is_not_object() {
+    let mut item = json!("not an object");
+    attach_fts_highlights(&mut item, Some(mark("x")), None);
+    assert_eq!(item, json!("not an object"));
   }
 
   #[test]
