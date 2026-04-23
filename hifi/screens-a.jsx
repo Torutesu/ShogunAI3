@@ -163,8 +163,7 @@ function computeHomeGreetingState(now) {
     timeZone: tz,
     timeZoneName: 'short',
   })
-    .format(d)
-    .toUpperCase();
+    .format(d);
   const dateJp = new Intl.DateTimeFormat('ja-JP', {
     weekday: 'long',
     year: 'numeric',
@@ -242,6 +241,8 @@ function ScreenHome() {
   const [promptModal, setPromptModal] = useState(null);
   const [webSearchOn, setWebSearchOn] = useState(true);
   const [assembleMemoryOn, setAssembleMemoryOn] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
   const [composerPh, setComposerPh] = useState(() =>
     composerPlaceholderForLang(
       typeof document !== 'undefined' ? document.body.getAttribute('data-lang') : null,
@@ -679,7 +680,7 @@ function ScreenHome() {
           >
             {headLine.greetJp}。{greetFirstName || 'ゲスト'}さん、お帰りなさい
           </h1>
-          <div className="t-mono" style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
+          <div className="t-mono" style={{ marginTop: 10, fontSize: 12, color: 'var(--text-dim)', textTransform:'none', letterSpacing:'0.02em' }}>
             {homeDateStr}
             {memoryTotal != null && (
               <span className="jp" style={{ marginLeft: 12, fontFamily: 'var(--font-jp)' }}>
@@ -694,14 +695,46 @@ function ScreenHome() {
           style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 10 }}
         >
           <div
+            className={'home-composer-dropzone' + (dragOver ? ' is-drag-over' : '')}
             style={{
+              position: 'relative',
               background: 'var(--surface)',
-              border: '1px solid var(--border)',
+              border: '1px solid ' + (dragOver ? 'var(--gold)' : 'var(--border)'),
               borderRadius: 20,
               boxShadow: 'var(--shadow-md)',
               padding: '16px 16px 12px',
+              transition: 'border-color 140ms, background 140ms, box-shadow 140ms',
+            }}
+            onDragEnter={(e) => {
+              if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+              e.preventDefault();
+              dragDepthRef.current += 1;
+              setDragOver(true);
+            }}
+            onDragOver={(e) => {
+              if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'copy';
+            }}
+            onDragLeave={() => {
+              dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+              if (dragDepthRef.current === 0) setDragOver(false);
+            }}
+            onDrop={(e) => {
+              if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+              e.preventDefault();
+              dragDepthRef.current = 0;
+              setDragOver(false);
+              void ingestPlusFiles(e.dataTransfer.files);
             }}
           >
+            {dragOver && (
+              <div className="home-composer-drop-hint" aria-hidden="true">
+                <Icon name="paperclip" size={18} />
+                <span className="en-only">Drop files to add to Memory</span>
+                <span className="jp">ファイルをドロップして Memory に追加</span>
+              </div>
+            )}
             <textarea
               value={homeInput}
               onChange={(e) => setHomeInput(e.target.value)}
@@ -1056,6 +1089,24 @@ function ScreenHome() {
         </div>
       )}
       <style>{`
+        .home-composer-dropzone.is-drag-over {
+          background:color-mix(in srgb, var(--gold) 6%, var(--surface) 94%);
+          box-shadow:
+            var(--shadow-md),
+            0 0 0 3px color-mix(in srgb, var(--gold) 28%, transparent);
+        }
+        .home-composer-drop-hint {
+          position:absolute; inset:0;
+          display:flex; align-items:center; justify-content:center;
+          gap:10px;
+          border-radius:20px;
+          background:color-mix(in srgb, var(--gold) 10%, var(--surface) 90%);
+          color:var(--gold);
+          font-size:14px; font-weight:500;
+          letter-spacing:0.01em;
+          pointer-events:none;
+          z-index:2;
+        }
         .home-send-btn {
           display:inline-flex; align-items:center; justify-content:center;
           width:36px; height:36px;
