@@ -9,8 +9,21 @@
     return err;
   }
 
+  function tauriInvokeFn() {
+    // Tauri v2: invoke lives under window.__TAURI_INTERNALS__.
+    // Tauri v1 kept it at window.__TAURI__.core.invoke — supported as a fallback
+    // so this code still works if the runtime is downgraded.
+    if (global.__TAURI_INTERNALS__ && typeof global.__TAURI_INTERNALS__.invoke === "function") {
+      return global.__TAURI_INTERNALS__.invoke;
+    }
+    if (global.__TAURI__ && global.__TAURI__.core && typeof global.__TAURI__.core.invoke === "function") {
+      return global.__TAURI__.core.invoke;
+    }
+    return null;
+  }
+
   function hasTauriInvoke() {
-    return Boolean(global.__TAURI__ && global.__TAURI__.core && typeof global.__TAURI__.core.invoke === "function");
+    return tauriInvokeFn() !== null;
   }
 
   const HTTP_BACKEND_BASE_LS = "shogun.hifi.backend.baseUrl.v1";
@@ -45,10 +58,15 @@
   }
 
   async function tauriTransport(command, payload) {
-    if (!hasTauriInvoke()) {
+    const invoke = tauriInvokeFn();
+    if (!invoke) {
       throw createError("TRANSPORT_UNAVAILABLE", "Tauri invoke is unavailable");
     }
-    return global.__TAURI__.core.invoke(command, payload || {});
+    // Rust side uniformly uses `fn shogun_*(payload: Value)` (see
+    // src-tauri/src/commands.rs), so args must be wrapped as { payload: X }
+    // for Tauri's named-argument deserializer. Commands with no user args
+    // still accept this — the extra key is ignored.
+    return invoke(command, { payload: payload || {} });
   }
 
   async function httpTransport(command, payload, timeoutMs) {
