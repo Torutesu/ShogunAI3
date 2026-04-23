@@ -3,13 +3,31 @@
 //! Single entry point for callers that need local memory as context for a
 //! chat / draft / brief / pack. Call sites: `llm::brief_generate`,
 //! `llm::draft_reply_for_brief`, `llm::draft_from_payload`, `llm::chat_complete`
-//! (when `memoryAssembly` is provided), and eventually
-//! `brief_actions::open_pack`.
+//! (when `memoryAssembly` is provided), `brief_actions::open_pack`, and the
+//! `meeting_recipes` builtins that surface related memory (`FollowUpEmail`,
+//! `FeatureDigest`, `PrdDraft`).
 //!
 //! Spec: `docs/context-layer-phase-0-1.md` §2.
 
 use crate::memory_store;
 use serde_json::{json, Value};
+
+/// Character budget for the chat / brief system-prompt memory block. Large
+/// because the model has most of the conversation budget to play with and
+/// benefits from a wide candidate set. Shared by `chat_complete` and
+/// `brief_generate`.
+pub const SYSTEM_PROMPT_BUDGET_CHARS: usize = 10_000;
+
+/// Character budget for in-prompt memory blocks on direct drafts and the
+/// narrower meeting recipes (`FollowUpEmail`, `PrdDraft`). Smaller than the
+/// system-prompt budget because drafts focus on a specific outcome and the
+/// LLM's output slot competes for tokens with the memory block.
+pub const DRAFT_PROMPT_BUDGET_CHARS: usize = 6_000;
+
+/// Slightly larger budget for `FeatureDigest` meeting recipe — digests
+/// summarize across many topics, so a wider memory window helps catch the
+/// full feature surface.
+pub const MEETING_DIGEST_BUDGET_CHARS: usize = 8_000;
 
 /// Parameters for `assemble_memory_hits`. `query` borrows from the caller to
 /// avoid an allocation for literals like `""`.
