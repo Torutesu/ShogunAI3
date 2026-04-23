@@ -183,50 +183,63 @@ function computeHomeGreetingState(now) {
 }
 
 const HOME_QUICK_CATEGORIES = [
-  { id: 'writing', label: '文章作成', icon: 'edit' },
-  { id: 'learning', label: '学習', icon: 'graduation' },
-  { id: 'code', label: 'コード', icon: 'terminal' },
-  { id: 'lifestyle', label: 'ライフスタイル', icon: 'coffee' },
-  { id: 'drive', label: 'Drive から', icon: 'drive' },
+  { id: 'writing', en: 'Writing', jp: '文章作成', icon: 'edit' },
+  { id: 'learning', en: 'Learning', jp: '学習', icon: 'graduation' },
+  { id: 'code', en: 'Code', jp: 'コード', icon: 'terminal' },
+  { id: 'lifestyle', en: 'Lifestyle', jp: 'ライフスタイル', icon: 'coffee' },
+  { id: 'drive', en: 'From Drive', jp: 'Drive から', icon: 'drive' },
 ];
 
 const HOME_PROMPT_ROWS = {
   writing: [
-    '執筆のための調査をする',
-    '面接質問の作成',
-    'ブログ記事シリーズの作成',
-    'ソーシャルメディア投稿の作成',
-    'コンテンツ企画書を作成する',
+    { en: 'Research for a piece of writing', jp: '執筆のための調査をする' },
+    { en: 'Draft interview questions', jp: '面接質問の作成' },
+    { en: 'Plan a blog post series', jp: 'ブログ記事シリーズの作成' },
+    { en: 'Write social media posts', jp: 'ソーシャルメディア投稿の作成' },
+    { en: 'Create a content brief', jp: 'コンテンツ企画書を作成する' },
   ],
   learning: [
-    '学習目標を設定する',
-    '教育戦略の開発',
-    '学術論文を要約する',
-    '振り返り演習を開発する',
-    '私の研究からパターンを見つけてください',
+    { en: 'Set learning goals', jp: '学習目標を設定する' },
+    { en: 'Design a teaching strategy', jp: '教育戦略の開発' },
+    { en: 'Summarize an academic paper', jp: '学術論文を要約する' },
+    { en: 'Design a reflection exercise', jp: '振り返り演習を開発する' },
+    { en: 'Find patterns across my research', jp: '私の研究からパターンを見つけてください' },
   ],
   code: [
-    'コードレビューを依頼する',
-    'バグの原因を調査する',
-    'リファクタリング案を出す',
-    'テストケースを生成する',
-    'このコードのアーキテクチャを説明する',
+    { en: 'Request a code review', jp: 'コードレビューを依頼する' },
+    { en: 'Diagnose a bug', jp: 'バグの原因を調査する' },
+    { en: 'Suggest a refactor', jp: 'リファクタリング案を出す' },
+    { en: 'Generate test cases', jp: 'テストケースを生成する' },
+    { en: 'Explain this code’s architecture', jp: 'このコードのアーキテクチャを説明する' },
   ],
   lifestyle: [
-    '個人のストレス管理',
-    '意思決定をサポートする',
-    'セルフケアの習慣作り',
-    '退職後の活動を計画する',
-    '住宅改善を計画する',
+    { en: 'Manage personal stress', jp: '個人のストレス管理' },
+    { en: 'Help me decide', jp: '意思決定をサポートする' },
+    { en: 'Build a self-care routine', jp: 'セルフケアの習慣作り' },
+    { en: 'Plan post-retirement activities', jp: '退職後の活動を計画する' },
+    { en: 'Plan a home improvement', jp: '住宅改善を計画する' },
   ],
   drive: [
-    '私の文書から最も優れた瞬間を特定し、視覚化する',
-    '私の文書全体を通して一貫して現れるアイデアのテーマは何ですか？',
-    '私の文書に基づいて文章スタイルを分析してください',
-    '私の文書を確認して、どのようなジャンルの作家になれるか提案する',
-    '新しくアクセス権を得た文書の要約を教えてください',
+    { en: 'Surface the best moments in my documents', jp: '私の文書から最も優れた瞬間を特定し、視覚化する' },
+    { en: 'What themes recur across my documents?', jp: '私の文書全体を通して一貫して現れるアイデアのテーマは何ですか？' },
+    { en: 'Analyze my writing style from my documents', jp: '私の文書に基づいて文章スタイルを分析してください' },
+    { en: 'Suggest a writing genre that fits me', jp: '私の文書を確認して、どのようなジャンルの作家になれるか提案する' },
+    { en: 'Summarize documents I just gained access to', jp: '新しくアクセス権を得た文書の要約を教えてください' },
   ],
 };
+
+function pickHomeText(item, uiLang) {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  if (uiLang === 'jp') return item.jp || item.en || '';
+  if (uiLang === 'bi') {
+    const en = item.en || '';
+    const jp = item.jp || '';
+    if (en && jp) return `${en} ／ ${jp}`;
+    return en || jp;
+  }
+  return item.en || item.jp || '';
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // L1 · HOME — the launch pad
@@ -918,10 +931,9 @@ function ScreenHome() {
                 )}
                 <span
                   id="home-quick-prompt-title"
-                  className="jp"
                   style={{ flex: 1, fontSize: 15, fontWeight: 600, color: 'var(--text)' }}
                 >
-                  {modalMeta.label}
+                  {pickHomeText(modalMeta, uiLang)}
                 </span>
                 <button
                   type="button"
@@ -958,7 +970,7 @@ function ScreenHome() {
                     <button
                       type="button"
                       onClick={() => {
-                        seedAndOpenChat(line);
+                        seedAndOpenChat(pickHomeText(line, uiLang));
                         setPromptModal(null);
                       }}
                       style={{
@@ -981,7 +993,7 @@ function ScreenHome() {
                         e.currentTarget.style.background = 'transparent';
                       }}
                     >
-                      {line}
+                      {pickHomeText(line, uiLang)}
                     </button>
                   </div>
                 ))}
@@ -1030,7 +1042,7 @@ function ScreenHome() {
               ) : (
                 <Icon name={cat.icon} size={16} />
               )}
-              {cat.label}
+              {pickHomeText(cat, uiLang)}
             </button>
           ))}
         </div>

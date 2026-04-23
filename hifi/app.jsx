@@ -59,6 +59,18 @@ const INITIAL_CHAT_HISTORY =
 
 const CHAT_CONTEXT_TELEMETRY_LS = 'shogun.hifi.telemetry.chat_context.v1';
 const CHAT_WORKSPACE_LS = 'shogun.hifi.chat.workspace.v1';
+const DUMMY_WORK_PROJECT_IDS = new Set([
+  'w-steal',
+  'w-grop',
+  'w-cluely',
+  'w-kakei',
+  'w-hojo',
+  'w-chrome',
+]);
+function purgeDummyWorkProjects(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((p) => p && typeof p === 'object' && !DUMMY_WORK_PROJECT_IDS.has(p.id));
+}
 const SIDEBAR_WIDTH_LS = 'shogun.hifi.sidebar.width.v1';
 const SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_MAX_WIDTH = 420;
@@ -1276,7 +1288,7 @@ function App() {
             loaded = true;
           }
           if (Array.isArray(ws.workProjects)) {
-            setWorkProjects(ws.workProjects);
+            setWorkProjects(purgeDummyWorkProjects(ws.workProjects));
             loaded = true;
           }
         }
@@ -1294,7 +1306,7 @@ function App() {
                 loaded = true;
               }
               if (Array.isArray(parsed.workProjects)) {
-                setWorkProjects(parsed.workProjects);
+                setWorkProjects(purgeDummyWorkProjects(parsed.workProjects));
                 loaded = true;
               }
             }
