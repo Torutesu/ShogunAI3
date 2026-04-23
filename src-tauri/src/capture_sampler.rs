@@ -1,6 +1,13 @@
 //! Background sampler: macOS frontmost app name ingested as memory (no screenshots).
 //! Optional Accessibility-rich snapshot when `sections.capture.axRichCapture` is true.
 //! Honors `sections.privacy.excludedApps` / `excludedSites` on every sample.
+//!
+//! Most helpers here are only reachable through the macOS sampler loop or
+//! from unit tests; non-macOS library builds see them as dead. Silencing
+//! `dead_code` there keeps `cargo check` quiet on Linux / Windows without
+//! hiding genuine dead code on the Mac (where CI runs).
+
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use crate::{memory_store, settings_store};
 #[cfg(target_os = "macos")]

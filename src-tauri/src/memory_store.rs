@@ -397,10 +397,10 @@ fn attach_fts_highlights(
   let Some(obj) = item.as_object_mut() else {
     return;
   };
-  if let Some(t) = title_hl.filter(|s| s.contains('\u{0002}')) {
+  if let Some(t) = title_hl.filter(|s| s.contains(HL_START)) {
     obj.insert("title_highlight".to_string(), json!(t));
   }
-  if let Some(s) = snippet_hl.filter(|s| s.contains('\u{0002}')) {
+  if let Some(s) = snippet_hl.filter(|s| s.contains(HL_START)) {
     obj.insert("snippet_highlight".to_string(), json!(s));
   }
 }
@@ -505,8 +505,14 @@ fn fts_match_query(user: &str) -> Option<String> {
 
 /// ASCII STX used to wrap each matched span in FTS highlight output so the
 /// frontend can split and render `<mark>` tags safely (no HTML injection).
+/// Production code uses this to detect whether a column actually carried a
+/// match (see `attach_fts_highlights`); the SQL binds the sentinel via
+/// `char(2)`.
 pub(crate) const HL_START: &str = "\u{0002}";
-/// ASCII ETX terminator, paired with `HL_START`.
+/// ASCII ETX terminator, paired with `HL_START`. Only the test helpers
+/// synthesize marked strings; production code looks for the start sentinel
+/// alone, and the SQL emits both via `char(2)` / `char(3)`.
+#[cfg(test)]
 pub(crate) const HL_END: &str = "\u{0003}";
 
 fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usize) -> Result<(Vec<Value>, usize), String> {

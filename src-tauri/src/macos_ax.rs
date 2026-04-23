@@ -1,4 +1,11 @@
 //! macOS Accessibility (AXUIElement) snapshot of the focused control — text only, no screenshots.
+//!
+//! Types and helpers here serve the macOS-only `imp` submodule and the
+//! pure-formatter unit tests. On non-macOS builds every item is reachable
+//! only from `#[cfg(test)]`, so the top-level definitions look dead —
+//! silence that per-platform so Mac CI still flags truly dead code.
+
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 /// Raw strings copied from the focused AX element. All fields are owned so
 /// the formatter stays pure and testable on any platform.
