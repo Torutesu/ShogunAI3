@@ -851,6 +851,14 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
         log::warn!("memory embed {}: {}", id_spawn, e);
       }
     });
+    crate::memory_obs::emit(
+      "ingest_done",
+      &[
+        ("source", source.to_string()),
+        ("provenance", provenance.clone()),
+        ("embedding_queued", (!skip_embed).to_string()),
+      ],
+    );
   }
 
   Ok(out)
@@ -931,6 +939,7 @@ pub fn search(payload: &Value) -> Result<Value, String> {
 /// Fetches a wider lexical candidate set, embeds the query once, re-orders by cosine similarity
 /// (items without `embedding` sort last).
 pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
+  let start = std::time::Instant::now();
   let semantic = payload
     .get("semantic")
     .and_then(|v| v.as_bool())
@@ -941,7 +950,9 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
     .unwrap_or("")
     .trim();
   if !semantic || query.is_empty() {
-    return search(payload);
+    let result = search(payload)?;
+    emit_search_with_semantics_done(&result, false, start.elapsed());
+    return Ok(result);
   }
   if secrets::get_llm_api_key()
     .ok()
@@ -949,7 +960,9 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
     .map(|s| s.trim().is_empty())
     .unwrap_or(true)
   {
-    return search(payload);
+    let result = search(payload)?;
+    emit_search_with_semantics_done(&result, false, start.elapsed());
+    return Ok(result);
   }
 
   let limit = payload
@@ -970,6 +983,7 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
     .and_then(|h| h.as_array_mut())
     .ok_or_else(|| "hits missing".to_string())?;
   if arr.is_empty() {
+    emit_search_with_semantics_done(&base, false, start.elapsed());
     return Ok(base);
   }
 
@@ -1008,7 +1022,26 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
   base["hits"] = json!(new_hits);
   base["semanticRerank"] = json!(true);
   base["total"] = total;
+  emit_search_with_semantics_done(&base, true, start.elapsed());
   Ok(base)
+}
+
+fn emit_search_with_semantics_done(v: &Value, semantic_applied: bool, elapsed: std::time::Duration) {
+  let returned = v
+    .get("hits")
+    .and_then(|h| h.as_array())
+    .map(|a| a.len())
+    .unwrap_or(0);
+  let total = v.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
+  crate::memory_obs::emit(
+    "search_with_semantics_done",
+    &[
+      ("returned", returned.to_string()),
+      ("total", total.to_string()),
+      ("semantic_applied", semantic_applied.to_string()),
+      ("elapsed_ms", (elapsed.as_millis() as u64).to_string()),
+    ],
+  );
 }
 
 /// Fill **`embedding`** for rows that lack it (excludes capture sampler noise).
