@@ -77,6 +77,15 @@ fn hit_from_value(v: &Value) -> Option<Hit> {
 pub async fn assemble_memory_hits(
   params: AssembleParams<'_>,
 ) -> Result<Vec<Hit>, String> {
+  let start = std::time::Instant::now();
+  crate::memory_obs::emit(
+    "assemble_hits_begin",
+    &[
+      ("query_len", params.query.chars().count().to_string()),
+      ("limit", params.limit.to_string()),
+      ("semantic", params.semantic.to_string()),
+    ],
+  );
   let payload = json!({
     "query": params.query,
     "limit": params.limit,
@@ -88,7 +97,37 @@ pub async fn assemble_memory_hits(
     .and_then(|h| h.as_array())
     .cloned()
     .unwrap_or_default();
-  Ok(arr.iter().filter_map(hit_from_value).collect())
+  let hits: Vec<Hit> = arr.iter().filter_map(hit_from_value).collect();
+  let elapsed_ms = start.elapsed().as_millis() as u64;
+  let (screen, connector, meeting, user) = provenance_counts(&hits);
+  crate::memory_obs::emit(
+    "assemble_hits_done",
+    &[
+      ("hits", hits.len().to_string()),
+      ("elapsed_ms", elapsed_ms.to_string()),
+      ("screen", screen.to_string()),
+      ("connector", connector.to_string()),
+      ("meeting", meeting.to_string()),
+      ("user", user.to_string()),
+    ],
+  );
+  Ok(hits)
+}
+
+fn provenance_counts(hits: &[Hit]) -> (u32, u32, u32, u32) {
+  let mut screen = 0u32;
+  let mut connector = 0u32;
+  let mut meeting = 0u32;
+  let mut user = 0u32;
+  for h in hits {
+    match h.provenance.as_str() {
+      "screen" => screen += 1,
+      "connector" => connector += 1,
+      "meeting" => meeting += 1,
+      _ => user += 1,
+    }
+  }
+  (screen, connector, meeting, user)
 }
 
 fn clip_chars(s: &str, max_chars: usize) -> String {
@@ -324,5 +363,21 @@ mod tests {
     assert!(brief.matches('x').count() == 300);
     let reply = format_hits_reply_draft(&hits);
     assert!(reply.matches('x').count() == 200);
+  }
+
+  #[test]
+  fn provenance_counts_tallies_by_category() {
+    let hits = vec![
+      mk_hit("m1", "A", "x", "google_calendar"),
+      mk_hit("m2", "B", "y", "capture_ax"),
+      mk_hit("m3", "C", "z", "capture_sampler"),
+      mk_hit("m4", "D", "w", "meeting"),
+      mk_hit("m5", "E", "v", "user_note"),
+    ];
+    let (screen, connector, meeting, user) = provenance_counts(&hits);
+    assert_eq!(screen, 2);
+    assert_eq!(connector, 1);
+    assert_eq!(meeting, 1);
+    assert_eq!(user, 1);
   }
 }
