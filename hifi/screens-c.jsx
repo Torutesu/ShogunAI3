@@ -376,7 +376,6 @@ function ScreenWork() {
             />
             <span>Memory を下書きに取り込む</span>
           </label>
-          <button className="btn btn-secondary" type="button" onClick={refresh}><Icon name="filter" size={14}/>Refresh</button>
           <button
             className="btn btn-primary"
             type="button"
