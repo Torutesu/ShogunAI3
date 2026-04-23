@@ -849,9 +849,6 @@ function PanePrivacy() {
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateS(true);
 
   const [bioLock, setBioLock] = useStateS(!!secSecurity.biometricLockEnabled);
-  const [requireImportApproval, setRequireImportApproval] = useStateS(
-    !!secSecurity.requireIntegrationImportApproval,
-  );
   const [bioStatus, setBioStatus] = useStateS(null);
 
   const persistPrivacy = React.useCallback(
@@ -883,8 +880,7 @@ function PanePrivacy() {
 
   React.useEffect(() => {
     setBioLock(!!secSecurity.biometricLockEnabled);
-    setRequireImportApproval(!!secSecurity.requireIntegrationImportApproval);
-  }, [secSecurity.biometricLockEnabled, secSecurity.requireIntegrationImportApproval]);
+  }, [secSecurity.biometricLockEnabled]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1115,37 +1111,6 @@ function PanePrivacy() {
       </div>
       <div className="s-card" style={{marginBottom:14}}>
         <Row
-          title={
-            <span>
-              <span className="en-only">Integration import approval</span>
-              <span className="jp">連携インポートに承認トークン必須</span>
-            </span>
-          }
-          desc="Require a short-lived approval token before external agents can import OAuth credentials (invoke / deep-link code issue). Keeps legacy behavior when off."
-        >
-          <Toggle
-            on={requireImportApproval}
-            onClick={async () => {
-              const next = !requireImportApproval;
-              setRequireImportApproval(next);
-              const r = await run(
-                'settings.save',
-                {
-                  section: 'security',
-                  biometricLockEnabled: bioLock,
-                  requireIntegrationImportApproval: next,
-                },
-                {
-                  successMessage: next
-                    ? '連携インポート保護を有効にしました'
-                    : '連携インポート保護をオフにしました',
-                },
-              );
-              if (r && r.ok && refreshSections) await refreshSections();
-            }}
-          />
-        </Row>
-        <Row
           title={<span><span className="en-only">Biometric app lock</span><span className="jp">生体認証でロック</span></span>}
           desc="Device-level protection (no cloud passkey): Touch ID or Face ID after launch and when returning from the background. Pair with Clerk sign-in above for account identity. Requires the Tauri desktop app on a supported Mac."
           last
@@ -1171,7 +1136,6 @@ function PanePrivacy() {
                 {
                   section: 'security',
                   biometricLockEnabled: next,
-                  requireIntegrationImportApproval: requireImportApproval,
                 },
                 { successMessage: next ? '生体ロックを有効にしました' : '生体ロックをオフにしました' },
               );
@@ -1757,7 +1721,7 @@ function PaneLLM() {
       subtitle="OpenAI-compatible chat/completions and /v1/embeddings (Memory semantic search). Endpoint and models are saved locally; the API key stays in the macOS Keychain."
     >
       <div className="s-card" style={{padding:20, marginBottom:16}}>
-        <Field label="Base URL" hint="Trusted hosts only. Allowlist is enforced by desktop security policy (sections.security.llmAllowedHosts / llmAllowedHostSuffixes) or localhost HTTP for local gateways. If the path has no /v1, it is appended automatically.">
+        <Field label="Base URL" hint="HTTPS only (localhost HTTP is accepted for local gateways). If the path has no /v1, it is appended automatically.">
           <input
             className="s-input"
             value={baseUrl}
@@ -2020,7 +1984,6 @@ function PaneIntegrations() {
   const [gmailRefresh, setGmailRefresh] = useStateS(false);
   const [calAutoSync, setCalAutoSync] = useStateS(false);
   const [calSyncMins, setCalSyncMins] = useStateS(15);
-  const [importGuardOn, setImportGuardOn] = useStateS(false);
   const [auditRows, setAuditRows] = useStateS([]);
   const [auditFilter, setAuditFilter] = useStateS('all');
   const [auditProviderFilter, setAuditProviderFilter] = useStateS('all');
@@ -2051,12 +2014,10 @@ function PaneIntegrations() {
       const r = await run('settings.load', {}, { silentError: true });
       const sections = r.ok && r.data?.settings?.sections;
       const integ = sections && sections.integrations;
-      const sec = sections && sections.security;
       if (!integ || typeof integ !== 'object') return;
       setCalAutoSync(!!integ.googleCalendarAutoSync);
       const m = Number(integ.googleCalendarSyncIntervalMins);
       if (Number.isFinite(m)) setCalSyncMins(Math.min(1440, Math.max(5, m)));
-      setImportGuardOn(!!(sec && sec.requireIntegrationImportApproval));
     })();
   }, [run]);
 
@@ -2183,23 +2144,7 @@ function PaneIntegrations() {
   return (
     <Pane title="All Integrations" jp="連携" subtitle="v1: In-app OAuth is not wired. Google Calendar tokens can be imported by an external agent (Keychain); use Refresh / Sync below. Other Connect rows show an honest notice where applicable.">
       <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
-        <div style={{ marginBottom: 8 }}>
-          <span className={'label ' + (importGuardOn ? 'label-success' : 'label-gold')}>
-            Import Guard: {importGuardOn ? 'ON' : 'OFF'}
-          </span>
-          <span className="jp" style={{ marginLeft: 8, color: 'var(--text-dim)' }}>
-            連携インポート保護: {importGuardOn ? '有効' : '無効'}
-          </span>
-          <button
-            type="button"
-            className="btn btn-xs btn-ghost"
-            style={{ marginLeft: 10, padding: '2px 8px' }}
-            onClick={() => setPane && setPane('privacy')}
-          >
-            Open Privacy Controls
-          </button>
-        </div>
-        Workspace Integrations screen has the same agent contract. Preferred path: Tauri invoke <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code> or <code style={{fontSize:11}}>&quot;gmail&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh). For deep-link handoff, issue a short-lived code via <code style={{fontSize:11}}>app_integration_issue_import_code</code> then open <code style={{fontSize:11}}>shogun-ai://credentials/import?provider=...&amp;code=...</code>. Raw token query params are blocked. Gmail needs scope <code style={{fontSize:11}}>gmail.readonly</code> or broader.
+        Workspace Integrations screen has the same agent contract. Preferred path: Tauri invoke <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code> or <code style={{fontSize:11}}>&quot;gmail&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh). Deep-link alternative: <code style={{fontSize:11}}>shogun-ai://credentials/import?provider=...</code> — prefer invoke for secrets (URLs leak to logs / history). Gmail needs scope <code style={{fontSize:11}}>gmail.readonly</code> or broader.
       </div>
       <div className="s-card" style={{marginBottom:10}}>
         <Row title={<div className="row" style={{gap:10}}><IntegrationLogo slug="apple_calendar" size={30} title="Apple Calendar" /><div><div style={{fontSize:13, fontWeight:500}}>Apple Calendar <span className="label label-gold" style={{marginLeft:4}}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
