@@ -25,6 +25,7 @@ mod meeting_recipes;
 mod meeting_session;
 mod meeting_store;
 mod meeting_stt;
+mod memory_debug;
 mod memory_obs;
 mod memory_store;
 mod paths;
@@ -67,6 +68,7 @@ pub fn run() {
 
   builder
     .manage(embed_backfill::EmbedBackfillState::default())
+    .manage(memory_debug::RingBuffer::default())
     .manage(meeting_session::MeetingSessionState::default())
     .manage(meeting_mic::MeetingMicController::default())
     .plugin(tauri_plugin_deep_link::init())
