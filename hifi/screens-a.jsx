@@ -58,37 +58,11 @@ function memoryHitToRiverEvent(hit) {
   };
 }
 
-/**
- * FTS5 `highlight()` / `snippet()` wrap each match in `\x02 … \x03`. Split on
- * those sentinels and render each span inside a `<mark>` element. Using React
- * elements (not dangerouslySetInnerHTML) keeps the output HTML-safe — any
- * angle brackets / script tags in the stored memory stay as plain text.
- */
-function renderHighlighted(text) {
-  if (typeof text !== 'string' || text.length === 0) return text || '';
-  const S = String.fromCharCode(2);
-  const E = String.fromCharCode(3);
-  if (!text.includes(S)) return text;
-  const out = [];
-  let cursor = 0;
-  let key = 0;
-  while (cursor < text.length) {
-    const s = text.indexOf(S, cursor);
-    if (s < 0) {
-      out.push(text.slice(cursor));
-      break;
-    }
-    if (s > cursor) out.push(text.slice(cursor, s));
-    const e = text.indexOf(E, s + 1);
-    if (e < 0) {
-      out.push(text.slice(s + 1));
-      break;
-    }
-    out.push(<mark key={'hl-'+(key++)}>{text.slice(s + 1, e)}</mark>);
-    cursor = e + 1;
-  }
-  return out;
-}
+/** Shared FTS5 highlight renderer. Definition lives in `hifi/lib/highlight.js`. */
+const renderHighlighted = (text) =>
+  (window.ShogunHighlight && window.ShogunHighlight.renderHighlighted)
+    ? window.ShogunHighlight.renderHighlighted(text)
+    : (text || '');
 
 function mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx) {
   if (!res || !res.ok || !res.data) return;
