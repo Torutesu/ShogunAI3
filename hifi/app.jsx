@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
+/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
 const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -888,6 +888,17 @@ function App() {
   const [toast, setToast] = useState(null);
   const [writeConfirm, setWriteConfirm] = useState({ open:false, actionKey:null, payload:null, title:null, description:null });
   const [writePending, setWritePending] = useState(false);
+  const [devGate, setDevGate] = useState({ available: false });
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const out = await (window.ShogunAPI && window.ShogunAPI.memoryDebugGate && window.ShogunAPI.memoryDebugGate());
+        if (!cancel && out) setDevGate(out);
+      } catch (_) { /* ignore */ }
+    })();
+    return () => { cancel = true; };
+  }, []);
   const runtimeRef = useRef(null);
   const toastTimerRef = useRef(null);
   const bioWantLockRef = useRef(false);
@@ -1959,6 +1970,7 @@ function App() {
     work: ScreenWork,
     tasks: ScreenTasks,
     meetings: ScreenMeetings,
+    memory_debug: ScreenMemoryDebug,
   }[active] || ScreenHome;
 
   if (typeof window !== 'undefined') {
@@ -2029,6 +2041,11 @@ function App() {
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
   };
+
+  // Include memory_debug nav entry only when the dev gate returns available.
+  const effectiveNav = devGate.available
+    ? [...NAV, { id: "memory_debug", label: "Memory DBG", jp: "DBG", icon: "memory", section: "workspace" }]
+    : NAV;
 
   return (
     <div
@@ -2244,7 +2261,7 @@ function App() {
             {(sec.label || sec.jp) && (
               <div className="section-label"><span className="en-only">{sec.label}</span><span className="en-only"> · </span><span className="jp">{sec.jp}</span></div>
             )}
-            {NAV.filter(n => n.section === sec.id).map(n => (
+            {effectiveNav.filter(n => n.section === sec.id).map(n => (
               <React.Fragment key={n.id}>
                 <div className={'nav-item '+(active===n.id?'active':'')} onClick={() => setActive(n.id)}>
                   <Icon name={n.icon} size={16}/>

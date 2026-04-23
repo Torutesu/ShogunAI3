@@ -1210,3 +1210,25 @@
     display: none;
   }
 }
+
+/* Memory Debugger screen (dev-only) */
+.content-memory-debug { padding: 16px 24px; }
+.mdbg-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.mdbg-tabs { display: flex; gap: 4px; }
+.mdbg-tabs button { padding: 4px 10px; font-size: 12px; background: transparent; border: 1px solid #444; color: #ccc; cursor: pointer; }
+.mdbg-tabs button.active { background: #222; color: #fff; }
+.mdbg-form { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; font-size: 12px; }
+.mdbg-form input[type="text"] { flex: 1; padding: 4px 6px; }
+.mdbg-form input[type="number"] { width: 64px; padding: 4px 6px; }
+.mdbg-form button { padding: 4px 12px; }
+.mdbg-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.mdbg-table th, .mdbg-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #222; }
+.mdbg-table tr { cursor: pointer; }
+.mdbg-table tr.sel { background: #1a1a1a; }
+.mdbg-table td.mdbg-q { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdbg-err { color: #d44; padding: 8px; }
+.mdbg-err-cell { color: #d44; }
+.mdbg-ok { color: #4a4; }
+.mdbg-pre { background: #0e0e0e; padding: 8px; font-size: 11px; white-space: pre-wrap; max-height: 240px; overflow: auto; }
+.mdbg-snip { color: #aaa; font-size: 11px; margin-top: 2px; }
+.mdbg-detail { margin-top: 16px; padding-top: 12px; border-top: 1px solid #222; }
