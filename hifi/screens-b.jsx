@@ -646,9 +646,121 @@ function ScreenChat() {
 
 // L4 · AGENTS — execution layer
 // ═══════════════════════════════════════════════════════════════════════════
+const AGENTS_DEMO = [
+  {
+    id: 'inbox-triage',
+    name: 'Inbox triage',
+    icon: 'mail',
+    status: 'running',
+    trigger: 'every 2 hours',
+    description: 'Sorts Gmail by memory-derived priority. Drafts replies for you to approve.',
+    runs: 142,
+    tools: [{ name: 'mail', icon: 'mail' }, { name: 'memory', icon: 'memory' }],
+  },
+  {
+    id: 'meeting-notes',
+    name: 'Meeting notes',
+    icon: 'calendar',
+    status: 'idle',
+    trigger: 'trigger: cal event',
+    description: 'Captures calendar events, extracts decisions into memory, links to entities.',
+    runs: 87,
+    tools: [{ name: 'calendar', icon: 'calendar' }, { name: 'memory', icon: 'memory' }],
+  },
+  {
+    id: 'daily-digest',
+    name: 'Daily digest',
+    icon: 'note',
+    status: 'scheduled',
+    trigger: '21:00 daily',
+    description: 'Synthesizes the day at 21:00. Writes a morning brief for tomorrow at 07:00.',
+    runs: 38,
+    tools: [{ name: 'memory', icon: 'memory' }, { name: 'note', icon: 'note' }],
+  },
+  {
+    id: 'weekly-review',
+    name: 'Weekly review',
+    icon: 'clock',
+    status: 'scheduled',
+    trigger: 'Sun 10:00',
+    description: 'Sunday morning. What moved this week? What needs decisions. Drafts a retro.',
+    runs: 5,
+    tools: [{ name: 'memory', icon: 'memory' }, { name: 'note', icon: 'note' }, { name: 'calendar', icon: 'calendar' }],
+  },
+];
+
+const AGENTS_LIVE = [
+  { t: '14:31:08', agent: 'inbox-triage', msg: 'Read 3 emails · drafted 1 reply', level: 'success' },
+  { t: '14:18:42', agent: 'meeting-notes', msg: 'Processed "All PJ" meeting · 6 decisions extracted', level: 'success' },
+  { t: '14:02:15', agent: 'memory', msg: 'Indexed conversation · 48 messages · 3 entities linked', level: 'info' },
+  { t: '13:46:02', agent: 'inbox-triage', msg: 'Polled inbox · no new priority mail', level: 'info' },
+  { t: '13:20:37', agent: 'daily-digest', msg: 'Scheduled: next run at 21:00', level: 'info' },
+];
+
+const AGENT_STATUS_META = {
+  running: { color: 'var(--success)', label: 'running' },
+  scheduled: { color: 'var(--gold)', label: 'scheduled' },
+  idle: { color: 'var(--text-mute)', label: 'idle' },
+  paused: { color: 'var(--text-dim)', label: 'paused' },
+};
+
+function AgentsKpiCard({ label, value, tone }) {
+  const toneColor = tone === 'success' ? 'var(--success)' : tone === 'gold' ? 'var(--gold)' : tone === 'dim' ? 'var(--text-mute)' : 'var(--text)';
+  return (
+    <div className="card" style={{display:'flex', flexDirection:'column', gap:'var(--space-3)'}}>
+      <div className="t-mono">{label}</div>
+      <div className="t-h2" style={{color:toneColor, margin:0}}>{value}</div>
+    </div>
+  );
+}
+
+function AgentCard({ agent }) {
+  const status = AGENT_STATUS_META[agent.status] || AGENT_STATUS_META.idle;
+  return (
+    <div className="card card-hover" style={{padding:0, overflow:'hidden'}}>
+      <div style={{padding:'var(--space-4) var(--space-6)', display:'flex', alignItems:'flex-start', gap:'var(--space-3)'}}>
+        <div style={{
+          width:40, height:40, borderRadius:'var(--radius-md)',
+          background:'var(--surface-2)', border:'1px solid var(--border)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          color:'var(--gold)', flexShrink:0,
+        }}>
+          <Icon name={agent.icon} size={18}/>
+        </div>
+        <div style={{flex:1, minWidth:0}}>
+          <div style={{fontSize:16, fontWeight:600, letterSpacing:'-0.01em', marginBottom:4}}>{agent.name}</div>
+          <div className="t-mono" style={{display:'inline-flex', alignItems:'center', gap:'var(--space-2)'}}>
+            <span style={{width:6, height:6, borderRadius:999, background:status.color, display:'inline-block'}}/>
+            {status.label} · {agent.trigger}
+          </div>
+        </div>
+        <button type="button" aria-label="Agent actions" style={{
+          all:'unset',
+          padding:6, borderRadius:'var(--radius-sm)', color:'var(--text-dim)', cursor:'pointer',
+        }}>
+          <Icon name="more" size={15}/>
+        </button>
+      </div>
+      <div style={{borderTop:'1px solid var(--border)', padding:'var(--space-4) var(--space-6)', color:'var(--text-mute)'}} className="t-sm">
+        {agent.description}
+      </div>
+      <div style={{padding:'var(--space-3) var(--space-6)', borderTop:'1px solid var(--border)', display:'flex', alignItems:'center', gap:'var(--space-2)'}}>
+        <span className="t-mono">{agent.runs} RUNS</span>
+        <span style={{flex:1}}/>
+        {agent.tools.map((tool) => (
+          <span key={tool.name} className="label" style={{display:'inline-flex', alignItems:'center', gap:5}}>
+            <Icon name={tool.icon} size={11}/>{tool.name}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ScreenAgents() {
   const [runPrompt, setRunPrompt] = React.useState('');
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
+  const [playgroundOpen, setPlaygroundOpen] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -682,17 +794,9 @@ function ScreenAgents() {
     const prompt =
       raw ||
       'Summarize actionable items from my recent local memory index. Output Markdown: bullets, owners if known, and open questions.';
-    const payload = {
-      target: 'agent_run',
-      source: 'agents_playground',
-      prompt,
-    };
+    const payload = { target: 'agent_run', source: 'agents_playground', prompt };
     if (allowServerMemoryAssembly) {
-      payload.memoryAssembly = {
-        query: raw.slice(0, 480) || '',
-        limit: 14,
-        semantic: true,
-      };
+      payload.memoryAssembly = { query: raw.slice(0, 480) || '', limit: 14, semantic: true };
     }
     return runRuntimeActionB('draft.create', payload, { successMessage: 'Draft ready', silentError: true }).then((r) => {
       if (!r.ok && window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.pushToast) {
@@ -717,82 +821,111 @@ function ScreenAgents() {
     window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
   }, [runPrompt, allowServerMemoryAssembly]);
 
-  const applyQuick = (line) => {
-    setRunPrompt(line);
-  };
+  const runningCount = AGENTS_DEMO.filter((a) => a.status === 'running').length;
+  const scheduledCount = AGENTS_DEMO.filter((a) => a.status === 'scheduled').length;
+  const pausedCount = AGENTS_DEMO.filter((a) => a.status === 'paused').length;
 
   return (
-    <div className="content-inner">
+    <div className="content-inner" style={{padding:'var(--space-8) var(--space-12) var(--space-12)', maxWidth:1280, margin:'0 auto'}}>
+      {/* Header */}
       <div className="page-head">
         <div>
-          <div className="t-mono" style={{marginBottom:8, textTransform:'none', letterSpacing:'0.02em'}}>Execution layer</div>
-          <h1>Agents <span className="jp">家臣</span></h1>
-          <div className="sub">
-            <span className="en-only">Playground: drafts and Chat can pull </span>
-            <code className="t-mono" style={{ fontSize: 11 }}>memoryAssembly</code>
-            <span className="en-only"> from your local index. Register real agents in the desktop app.</span>
-            <span className="jp" style={{ display: 'block', fontSize: 12, marginTop: 6, color: 'var(--text-dim)' }}>
-              下書き・チャットはローカル Memory を検索して文脈を足せます。本番のエージェントはデスクトップで登録してください。
-            </span>
-          </div>
+          <div className="t-mono" style={{marginBottom:'var(--space-2)'}}>EXECUTION LAYER</div>
+          <h1>Agents</h1>
+          <div className="sub">Agents that read your memory and act. {runningCount + scheduledCount + pausedCount + 8} MCP tools available.</div>
         </div>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-secondary" type="button" onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}>
-            <Icon name="plug" size={14}/> Integrations
+        <div className="row" style={{gap:'var(--space-2)', flexWrap:'wrap'}}>
+          <button type="button" className="btn btn-secondary" onClick={() => setPlaygroundOpen((v) => !v)}>
+            <Icon name="terminal" size={14}/> MCP console
           </button>
-          <button className="btn btn-ghost" type="button" onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('chat')}>
-            <Icon name="chat" size={14}/> Chat
+          <button type="button" className="btn btn-primary" onClick={() => setPlaygroundOpen(true)}>
+            <Icon name="plus" size={14}/> New agent
           </button>
         </div>
       </div>
 
-      <div className="card" style={{ padding: 24, maxWidth: 640 }}>
-        <div className="t-mono" style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, textTransform:'none', letterSpacing:'0.02em' }}>Goal · 指示</div>
-        <textarea
-          className="s-input"
-          style={{
-            width: '100%',
-            minHeight: 88,
-            resize: 'vertical',
-            fontSize: 14,
-            fontFamily: 'inherit',
-            background: 'var(--surface)',
-            border: '1px solid var(--border-hi)',
-            borderRadius: 'var(--radius-md)',
-            padding: 12,
-            color: 'var(--text)',
-          }}
-          placeholder="例: 今週のリスクを Memory から洗い出して / 投資家向けに1段落…"
-          value={runPrompt}
-          onChange={(e) => setRunPrompt(e.target.value)}
-        />
-        <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" type="button" onClick={draftWithMemory}>
-            <Icon name="edit" size={14}/> Draft + Memory
-          </button>
-          <button className="btn btn-secondary" type="button" onClick={openChatWithMemory}>
-            <Icon name="chat" size={14}/> Open in Chat
-          </button>
-        </div>
-        <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text-dim)' }}>
-          <span className="t-mono" style={{ marginRight: 8, textTransform:'none', letterSpacing:'0.02em' }}>Quick</span>
-          {[
-            '今週のブロッカーを Memory から列挙',
-            'カレンダー関連メモのフォローアップ案',
-            '会議メモに出てくる名前の整理',
-          ].map((q) => (
-            <button
-              key={q}
-              type="button"
-              className="btn btn-sm btn-ghost"
-              style={{ marginRight: 6, marginBottom: 6 }}
-              onClick={() => applyQuick(q)}
-            >
-              {q.length > 28 ? q.slice(0, 28) + '…' : q}
-            </button>
-          ))}
-        </div>
+      {/* KPI row */}
+      <div style={{display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:'var(--space-4)', marginBottom:'var(--space-8)'}}>
+        <AgentsKpiCard label="RUNNING" value={runningCount} tone="success"/>
+        <AgentsKpiCard label="SCHEDULED" value={scheduledCount} tone="gold"/>
+        <AgentsKpiCard label="PAUSED" value={pausedCount} tone="dim"/>
+        <AgentsKpiCard label="TOOLS CONNECTED" value={20} tone="gold"/>
       </div>
+
+      {/* Agents section */}
+      <div style={{marginBottom:'var(--space-4)', color:'var(--text-mute)'}} className="t-sm">Your agents</div>
+      <div style={{display:'grid', gridTemplateColumns:'repeat(2, minmax(0, 1fr))', gap:'var(--space-4)', marginBottom:'var(--space-8)'}}>
+        {AGENTS_DEMO.map((a) => (
+          <AgentCard key={a.id} agent={a}/>
+        ))}
+      </div>
+
+      {/* Live activity */}
+      <div style={{marginBottom:'var(--space-3)', color:'var(--text-mute)'}} className="t-sm">Live activity</div>
+      <div className="card" style={{padding:0, overflow:'hidden'}}>
+        {AGENTS_LIVE.map((row, i) => (
+          <div key={i} style={{
+            display:'grid', gridTemplateColumns:'120px 140px 1fr auto', columnGap:'var(--space-4)',
+            alignItems:'center', padding:'var(--space-3) var(--space-6)',
+            borderBottom: i < AGENTS_LIVE.length - 1 ? '1px solid var(--border)' : 'none',
+          }} className="t-sm">
+            <span className="t-mono">{row.t}</span>
+            <span className="t-mono" style={{color:'var(--text-mute)'}}>{row.agent}</span>
+            <span style={{color:'var(--text)', lineHeight:1.5}}>{row.msg}</span>
+            <span
+              className="label"
+              style={{
+                borderColor: row.level === 'success' ? 'color-mix(in srgb, var(--success) 60%, var(--border))' : 'var(--border)',
+                color: row.level === 'success' ? 'var(--success)' : 'var(--text-mute)',
+              }}
+            >
+              {row.level.toUpperCase()}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Playground drawer — kept for the memory-aware draft + chat flows */}
+      {playgroundOpen && (
+        <div className="card" style={{
+          marginTop:'var(--space-8)',
+          borderColor:'var(--gold-dim)',
+        }}>
+          <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:14}}>
+            <div className="t-mono" style={{fontSize:11, color:'var(--gold)', letterSpacing:'0.16em'}}>NEW AGENT · PLAYGROUND</div>
+            <span style={{flex:1}}/>
+            <button
+              type="button"
+              onClick={() => setPlaygroundOpen(false)}
+              style={{all:'unset', padding:4, color:'var(--text-mute)', cursor:'pointer'}}
+              aria-label="Close"
+            >
+              <Icon name="x" size={14}/>
+            </button>
+          </div>
+          <textarea
+            className="s-input"
+            style={{
+              width:'100%', minHeight:88, resize:'vertical',
+              fontSize:14, fontFamily:'inherit',
+              background:'var(--surface)', border:'1px solid var(--border-hi)',
+              borderRadius:'var(--radius-md)', padding:12, color:'var(--text)',
+              boxSizing:'border-box',
+            }}
+            placeholder="例: 今週のリスクを Memory から洗い出して / 投資家向けに1段落…"
+            value={runPrompt}
+            onChange={(e) => setRunPrompt(e.target.value)}
+          />
+          <div style={{display:'flex', gap:8, marginTop:12, flexWrap:'wrap'}}>
+            <button className="btn btn-primary" type="button" onClick={draftWithMemory}>
+              <Icon name="edit" size={14}/> Draft + Memory
+            </button>
+            <button className="btn btn-secondary" type="button" onClick={openChatWithMemory}>
+              <Icon name="chat" size={14}/> Open in Chat
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

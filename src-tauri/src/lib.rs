@@ -54,12 +54,20 @@ pub fn run() {
     }));
   }
 
+  // The updater plugin requires a `plugins.updater` config block in
+  // tauri.conf.json (with an endpoint + pubkey). Dev builds ship without
+  // update servers, so gate registration to release builds to avoid a
+  // startup panic on `cargo run`.
+  #[cfg(not(debug_assertions))]
+  {
+    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+  }
+
   builder
     .manage(embed_backfill::EmbedBackfillState::default())
     .manage(meeting_session::MeetingSessionState::default())
     .manage(meeting_mic::MeetingMicController::default())
     .plugin(tauri_plugin_deep_link::init())
-    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

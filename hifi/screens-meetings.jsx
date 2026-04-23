@@ -1241,33 +1241,6 @@ function ScreenMeetings() {
               maxWidth: 'calc(100% - 88px)',
             }}
           >
-            <button
-              type="button"
-              aria-label="More"
-              title="More"
-              onClick={function () {
-                setGranolaMenuOpen(function (v) { return !v; });
-                setMtgTopShareOpen(false);
-                setMtgLinkAccessMenuOpen(false);
-                setPostRecWaveMenuOpen(false);
-              }}
-              aria-expanded={granolaMenuOpen}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 36,
-                height: 36,
-                borderRadius: 999,
-                border: '1px solid color-mix(in srgb, var(--border-hi) 85%, transparent)',
-                background: 'color-mix(in srgb, var(--surface-2) 90%, var(--bg))',
-                color: 'var(--text-mute)',
-                cursor: 'pointer',
-                flexShrink: 0,
-              }}
-            >
-              <Icon name="more" size={16} />
-            </button>
             <div
               style={{
                 display: 'inline-flex',
@@ -1279,6 +1252,35 @@ function ScreenMeetings() {
                 background: 'color-mix(in srgb, var(--surface-2) 88%, var(--bg))',
               }}
             >
+              <button
+                type="button"
+                aria-label="More"
+                title="More"
+                onClick={function () {
+                  setGranolaMenuOpen(function (v) { return !v; });
+                  setMtgTopShareOpen(false);
+                  setMtgLinkAccessMenuOpen(false);
+                  setPostRecWaveMenuOpen(false);
+                }}
+                aria-expanded={granolaMenuOpen}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 32,
+                  height: 32,
+                  borderRadius: 999,
+                  border: 'none',
+                  background: granolaMenuOpen
+                    ? 'color-mix(in srgb, var(--gold) 14%, transparent)'
+                    : 'transparent',
+                  color: 'var(--text-mute)',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name="more" size={15} />
+              </button>
               <button
                 type="button"
                 aria-label="Section outline"

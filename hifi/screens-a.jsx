@@ -43,6 +43,7 @@ function memoryHitToRiverEvent(hit) {
   else if (rawSrc === 'gmail') src = 'mail';
   const provenance = hit.provenance || deriveLocalProvenance(hit.source);
   return {
+    ts,
     t,
     h,
     src,
@@ -1240,21 +1241,36 @@ function ScreenMemory() {
     catch (_e) { return ''; }
   };
   const rangeLabel = useMemo(() => `${fmtMonthDay(weekDays[0])} – ${fmtMonthDay(weekDays[weekDays.length - 1])}`, [weekDays]);
+  /** Per-day, 12-bucket (2h each) histograms sourced from real indexed events. */
+  const weekHistograms = useMemo(() => {
+    let globalMax = 1;
+    const perDay = weekDays.map((d) => {
+      const start = new Date(d);
+      start.setHours(0, 0, 0, 0);
+      const startMs = start.getTime();
+      const endMs = startMs + 24 * 60 * 60 * 1000;
+      const bars = new Array(12).fill(0);
+      let count = 0;
+      events.forEach((e) => {
+        if (!Number.isFinite(e.ts) || e.ts < startMs || e.ts >= endMs) return;
+        const h = Math.max(0, Math.min(23, Math.floor(Number(e.h))));
+        bars[Math.min(11, Math.floor(h / 2))] += 1;
+        count += 1;
+      });
+      const dayMax = bars.reduce((a, b) => Math.max(a, b), 0);
+      if (dayMax > globalMax) globalMax = dayMax;
+      return { bars, count, dayMax };
+    });
+    return { perDay, globalMax };
+  }, [weekDays, events]);
   const memoryTotals = useMemo(() => {
-    const seed = Math.abs(Math.floor(timelineCursor.getTime() / 86400000));
-    const counts = weekDays.map((_d, i) => 30 + (((seed + i * 13) * 37) % 46));
+    const counts = weekHistograms.perDay.map((d) => d.count);
     const total = counts.reduce((a, b) => a + b, 0);
     return { counts, total };
-  }, [weekDays, timelineCursor]);
+  }, [weekHistograms]);
   const activeFilterCount = Object.values(activeFilters).filter(Boolean).length;
   const toggleFilter = useCallback((key) => {
     setActiveFilters((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
-  const openInChat = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', {
-      detail: { text: 'Revenue-cat · pricing tiers', webSearch: false, assembleMemory: true },
-    }));
-    window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
   }, []);
   const [sourceEntities, setSourceEntities] = useState([]);
   const [semanticMemorySearch, setSemanticMemorySearch] = useState(true);
@@ -1395,11 +1411,11 @@ function ScreenMemory() {
   }, [events]);
 
   return (
-    <div className="content-inner wide" style={{padding:0, height:'100%', display:'flex', flexDirection:'column', overflowY:'auto'}}>
+    <div className="content-inner wide memory-screen" style={{padding:0, height:'100%', display:'flex', flexDirection:'column', overflowY:'auto'}}>
       {/* Header */}
       <div style={{padding:'24px 40px 0', display:'flex', alignItems:'flex-start', gap:20, flexWrap:'wrap'}}>
         <div style={{flex:1, minWidth:240}}>
-          <div className="t-mono" style={{fontSize:10, letterSpacing:'0.14em', color:'var(--text-dim)'}}>MEMORY / TIMELINE</div>
+          <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)'}}>Memory / Timeline</div>
           <h1 style={{margin:'10px 0 0', fontSize:32, fontWeight:600, letterSpacing:'-0.02em'}}>
             <span className="en-only">{fmtFullDate(selectedDate)}</span>
             <span className="jp" style={{display:'block', fontSize:14, color:'var(--text-mute)', fontWeight:400, marginTop:4}}>{fmtFullDateJp(selectedDate)}</span>
@@ -1407,7 +1423,7 @@ function ScreenMemory() {
         </div>
         <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
           <div style={{display:'inline-flex', border:'1px solid var(--border)', borderRadius:999, padding:2, background:'var(--surface)'}}>
-            {[['river','River'],['kakejiku','Kakejiku']].map(([k,l])=>(
+            {[['river','River'],['kakejiku','Kakejiku'],['heatmap','Heatmap']].map(([k,l])=>(
               <button key={k} type="button" onClick={()=>setView(k)} style={{
                 padding:'6px 14px', borderRadius:999, border:'none',
                 background: view===k ? 'var(--surface-2)' : 'transparent',
@@ -1435,7 +1451,7 @@ function ScreenMemory() {
                   border:'1px solid var(--border-hi)', background:'var(--surface-2)',
                   boxShadow:'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
                 }}>
-                  <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'2px 6px 6px', letterSpacing:'0.12em'}}>SOURCES</div>
+                  <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Sources</div>
                   {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input']].map(([k,l])=>(
                     <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
                       <input type="checkbox" checked={!!activeFilters[k]} onChange={()=>toggleFilter(k)}/>
@@ -1488,93 +1504,190 @@ function ScreenMemory() {
         <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>{memoryTotals.total} MEMORIES · {Math.round(memoryTotals.total * 0.25)}H</span>
       </div>
 
-      {/* 7-day week cards (no heatmap — just date + activity count) */}
+      {/* 7-day week cards — each day shows a 12-bucket hour histogram */}
       <div style={{padding:'18px 40px 0', display:'grid', gridTemplateColumns:'repeat(7, minmax(0, 1fr))', gap:10}}>
         {weekDays.map((d, i)=>{
           const offset = 6 - i;
           const active = offset === selectedDayOffset;
+          const { bars } = weekHistograms.perDay[i] || { bars: new Array(12).fill(0) };
+          const maxBar = Math.max(1, weekHistograms.globalMax);
           return (
             <button key={d.toISOString()} type="button" onClick={()=>setSelectedDayOffset(offset)} style={{
-              padding:'14px 16px',
+              padding:'14px 16px 12px',
               borderRadius:14,
-              border: active ? '1px solid color-mix(in srgb, var(--gold) 55%, var(--border))' : '1px solid var(--border)',
-              background: active ? 'color-mix(in srgb, var(--gold) 10%, var(--surface))' : 'var(--surface)',
-              minHeight:82,
-              display:'flex', flexDirection:'column', gap:8,
+              border: active ? '1px solid color-mix(in srgb, var(--gold) 65%, var(--border))' : '1px solid var(--border)',
+              background: active ? 'color-mix(in srgb, var(--gold) 8%, var(--surface))' : 'var(--surface)',
+              minHeight:96,
+              display:'flex', flexDirection:'column', gap:10,
               cursor:'pointer', fontFamily:'inherit', textAlign:'left',
+              boxShadow: active ? '0 0 0 1px color-mix(in srgb, var(--gold) 25%, transparent)' : 'none',
+              transition: 'border-color 120ms, background 120ms',
             }}>
-              <div className="t-mono" style={{fontSize:10, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>{fmtMonthDay(d)}</div>
-              <div style={{fontSize:22, fontWeight:600, color: active ? 'var(--text)' : 'var(--text-mute)', letterSpacing:'-0.02em'}}>{memoryTotals.counts[i]}</div>
-              <div className="t-mono" style={{fontSize:9, color:'var(--text-dim)'}}>MEMORIES</div>
+              <div className="t-mono" style={{fontSize:11, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>{fmtMonthDay(d)}</div>
+              <div style={{display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:2, height:28}} aria-hidden="true">
+                {bars.map((v, j)=>{
+                  const h = v > 0 ? Math.round((v / maxBar) * 22) + 4 : 3;
+                  return (
+                    <span key={j} style={{
+                      flex:'1 1 0',
+                      height: h,
+                      borderRadius:2,
+                      background: active
+                        ? (v > 0 ? 'var(--gold)' : 'color-mix(in srgb, var(--gold) 18%, transparent)')
+                        : (v > 0 ? 'var(--border-hi)' : 'var(--border)'),
+                      opacity: active ? (v > 0 ? 0.95 : 0.4) : (v > 0 ? 0.7 : 0.45),
+                    }}/>
+                  );
+                })}
+              </div>
             </button>
           );
         })}
       </div>
 
-      {/* Main content split */}
-      <div style={{padding:'24px 40px 24px', display:'grid', gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)', gap:20, minHeight:420}}>
-        {/* Left: Conversation card */}
+      {/* River view: two-card split + hourly timeline scrubber */}
+      {view === 'river' && (
+      <>
+      <div className="memory-scrub-stage" style={{padding:'24px 40px 24px', display:'grid', gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)', gap:20, minHeight:420}}>
+        {/* Left: the scrubbed memory */}
         <div style={{
           padding:'24px 26px',
           borderRadius:18,
           border:'1px solid var(--border)',
           background:'color-mix(in srgb, var(--surface) 94%, var(--bg))',
+          display:'flex', flexDirection:'column',
         }}>
           <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:14}}>
             <div style={{width:32, height:32, borderRadius:8, background:'color-mix(in srgb, var(--gold) 14%, var(--surface-2))', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--gold)'}}>
-              <Icon name="chat" size={15}/>
+              <Icon name={srcIcon(scrubbed.src)} size={15}/>
             </div>
-            <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>CONVERSATION · 14:02</div>
+            <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>
+              {srcLabel(scrubbed.src).toUpperCase()} · {scrubbed.t}
+            </div>
+            {events.length > 0 && !timelineLoading && (
+              <span className="t-mono" style={{marginLeft:'auto', fontSize:10, color:'var(--text-dim)'}}>
+                {Math.min(scrubIdx + 1, events.length)} / {events.length}
+              </span>
+            )}
           </div>
-          <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em'}}>Revenue-cat · pricing tiers</h2>
-          <div style={{display:'flex', gap:8, flexWrap:'wrap', marginBottom:16}}>
-            {['#pricing','Matt','Toru'].map(t=>(
-              <span key={t} style={{padding:'4px 10px', borderRadius:999, border:'1px solid var(--border)', background:'var(--surface-2)', fontSize:11, color:'var(--text-mute)', fontFamily:'var(--font-mono, ui-monospace, monospace)'}}>{t}</span>
-            ))}
+          <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
+            {timelineLoading ? (
+              <span className="muted" style={{fontWeight:400, fontSize:16}}>
+                <span className="en-only">Loading timeline…</span>
+                <span className="jp">読み込み中…</span>
+              </span>
+            ) : (
+              renderHighlighted(scrubbed.titleHighlight || scrubbed.title)
+            )}
+          </h2>
+          <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:16}}>
+            {scrubbed.memoryId && (
+              <span className="label">index</span>
+            )}
+            {scrubbed.provenance && (
+              <span className="label" style={{borderColor:'var(--gold-dim)', color:'var(--gold)'}} title={scrubbed.sourceRaw || ''}>
+                <span className="en-only">{memoryProvenanceLabel(scrubbed.provenance).en}</span>
+                <span className="jp" style={{fontSize:10}}>{memoryProvenanceLabel(scrubbed.provenance).jp}</span>
+              </span>
+            )}
+            {scrubbed.entityId && (
+              <span className="label t-mono" style={{fontSize:9, maxWidth:140, overflow:'hidden', textOverflow:'ellipsis'}} title={scrubbed.entityId}>
+                id · {scrubbed.entityId.slice(0, 24)}{scrubbed.entityId.length > 24 ? '…' : ''}
+              </span>
+            )}
           </div>
-          <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)'}}>
-            Jumped into Revenue-cat. Locked on a three-tier structure: Plus at $17, Pro at $62, and a founder plan. Matt pushed back on the middle tier — we softened it.
+          <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
+            {timelineLoading ? (
+              <span className="muted">
+                <span className="en-only">Applying Memory search preferences before the first fetch.</span>
+                <span className="jp" style={{display:'block', marginTop:4}}>初回取得の前に設定を適用しています。</span>
+              </span>
+            ) : (
+              scrubbed.snippetHighlight
+                ? renderHighlighted(scrubbed.snippetHighlight)
+                : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')
+            )}
           </p>
-          <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em', marginBottom:12}}>3 MEMORIES WRITTEN · 2 ENTITIES LINKED</div>
-          <div style={{display:'flex', flexDirection:'column', gap:8}}>
-            {[
-              {label:'DECISION', body:'\"Pro tier = $62/mo, annual $49\"', query:'Pro tier 62 annual 49'},
-              {label:'QUOTE', body:'\"pricing shouldn\u2019t apologize for itself\"', query:'pricing apologize'},
-              {label:'TODO', body:'Send tiering doc to Matt by Friday', query:'tiering doc Matt Friday'},
-            ].map(row=>(
-              <button key={row.label} type="button" onClick={async ()=>{
-                await runRuntimeActionA('memory.search', withSemantic({ query: row.query, limit: 10 }), { successMessage: row.label + ' opened' });
-              }} style={{
-                display:'flex', alignItems:'center', gap:14,
-                padding:'10px 14px', borderRadius:10,
-                background:'color-mix(in srgb, var(--surface-2) 50%, transparent)',
-                border:'1px solid var(--border)',
-                cursor:'pointer', fontFamily:'inherit', textAlign:'left', width:'100%',
-              }}>
-                <span className="t-mono" style={{fontSize:10, color:'var(--gold)', letterSpacing:'0.14em', minWidth:78}}>{row.label}</span>
-                <span style={{flex:1, fontSize:13, color:'var(--text)'}}>{row.body}</span>
-                <Icon name="arrowUpRight" size={13}/>
+          <span style={{flex:1}}/>
+          <div style={{display:'flex', gap:8, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)', flexWrap:'wrap'}}>
+            {scrubbed.memoryId && !timelineLoading && (
+              <button
+                type="button"
+                onClick={() => openMemoryEntryInChat(
+                  { title: scrubbed.title, snippet: scrubbed.snippet },
+                  { memoryAssemblyQuery: scrubbed.title, memoryAssemblyLimit: 14, allowServerMemoryAssembly },
+                )}
+                style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}
+              >
+                <Icon name="chat" size={13}/>
+                <span className="en-only">Open in Chat</span>
+                <span className="jp" style={{fontSize:11}}>チャットへ</span>
               </button>
-            ))}
-          </div>
-          <div style={{display:'flex', gap:10, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)'}}>
-            <button type="button" onClick={openInChat} style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>
-              <Icon name="chat" size={13}/>Open in Chat
+            )}
+            <button
+              type="button"
+              disabled={timelineLoading || !scrubbed.title}
+              onClick={async () => {
+                const res = await runRuntimeActionA('memory.search', withSemantic({ query: scrubbed.title, limit: 10 }), { successMessage: 'Search run' });
+                mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
+              }}
+              style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit', opacity: (timelineLoading || !scrubbed.title) ? 0.5 : 1}}
+            >
+              <Icon name="search" size={13}/>Search title
             </button>
-            <button type="button" onClick={async ()=>{
-              const res = await runRuntimeActionA('memory.search', withSemantic({ query:'Revenue-cat pricing tiers', limit:10 }), { successMessage:'Source opened' });
-              mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
-            }} style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>
-              <Icon name="link" size={13}/>Open source
-            </button>
+            {scrubbed.memoryId && !timelineLoading && (
+              <button
+                type="button"
+                onClick={() => {
+                  const prompt =
+                    'Turn this indexed memory into a concise Markdown work note (bullets OK).\n\n**Title:** ' +
+                    (scrubbed.title || '') +
+                    '\n\n**Snippet:**\n' +
+                    (scrubbed.snippet || '').slice(0, 4000);
+                  runRuntimeActionA(
+                    'draft.create',
+                    (() => {
+                      const p = { target: 'work_document', source: 'memory_timeline', prompt };
+                      if (allowServerMemoryAssembly) {
+                        p.memoryAssembly = {
+                          query: String(scrubbed.title || '').slice(0, 240),
+                          limit: 12,
+                          semantic: true,
+                        };
+                      }
+                      return p;
+                    })(),
+                    { successMessage: 'Draft ready' },
+                  );
+                }}
+                style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}
+              >
+                <Icon name="edit" size={13}/>
+                <span className="en-only">Draft</span>
+                <span className="jp" style={{fontSize:11}}>下書き</span>
+              </button>
+            )}
             <span style={{flex:1}}/>
-            <button type="button" onClick={()=>window.SHOGUN_RUNTIME?.pushToast?.('More actions (preview)', 'info')} style={{display:'inline-flex', alignItems:'center', justifyContent:'center', width:32, height:30, padding:0, borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer'}}>
-              <Icon name="more" size={14}/>
-            </button>
+            {scrubbed.memoryId && (
+              <button
+                type="button"
+                onClick={() => requestWriteActionA(
+                  'memory.delete',
+                  { id: scrubbed.memoryId },
+                  'Remove from memory index',
+                  'Deletes this entry from the local memory index.',
+                )}
+                aria-label="Remove from index"
+                title="Remove from index"
+                style={{display:'inline-flex', alignItems:'center', justifyContent:'center', width:32, height:30, padding:0, borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer'}}
+              >
+                <Icon name="x" size={13}/>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Right: Snapshot card */}
+        {/* Right: details panel */}
         <div style={{
           borderRadius:18,
           border:'1px solid var(--border)',
@@ -1583,40 +1696,58 @@ function ScreenMemory() {
           display:'flex', flexDirection:'column',
         }}>
           <div style={{padding:'14px 18px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', gap:10}}>
-            <div style={{display:'flex', gap:5}}>
-              {['#ff5f57','#ffbd2e','#28c940'].map(c=>(
-                <span key={c} style={{width:9, height:9, borderRadius:999, background:c, opacity:0.85}}/>
-              ))}
-            </div>
-            <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', marginLeft:6}}>SHOGUN Chat · Revenue-cat · pricing tiers</span>
-            <span style={{flex:1}}/>
-            <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>33 / 57</span>
+            <Icon name="memory" size={14} className="gold"/>
+            <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>
+              <span className="en-only">Memory details</span>
+              <span className="jp" style={{marginLeft:6, fontSize:10}}>メモリ詳細</span>
+            </span>
           </div>
-          <div style={{flex:1, padding:'24px 22px', display:'flex', flexDirection:'column', gap:18, minHeight:280}}>
-            <div style={{alignSelf:'flex-end', maxWidth:'75%', padding:'10px 14px', borderRadius:14, background:'var(--surface-2)', color:'var(--text)', fontSize:13}}>
-              Draft a three-tier pricing page for SHOGUN.
-            </div>
-            <div style={{display:'flex', gap:10, alignItems:'flex-start'}}>
-              <div style={{marginTop:2}}><Kamon size={18}/></div>
-              <div style={{flex:1, fontSize:13, color:'var(--text)', lineHeight:1.55}}>
-                Pulling from Matt 1-on-1 and Rev-cat chat — here\u2019s the draft…
-                <div style={{marginTop:12, fontFamily:'var(--font-mono, ui-monospace, monospace)', fontSize:12, color:'var(--text-mute)'}}>
-                  ## Plus — $17/mo · ## Pro — $62/mo
+          <div style={{flex:1, padding:'18px 22px', display:'flex', flexDirection:'column', gap:14, minHeight:280, overflowY:'auto'}}>
+            {scrubbed.memoryId ? (
+              <>
+                <div style={{display:'grid', gridTemplateColumns:'110px 1fr', rowGap:10, columnGap:12, fontSize:12}}>
+                  <span className="t-mono" style={{color:'var(--text-dim)'}}>Source</span>
+                  <span style={{color:'var(--text)', wordBreak:'break-word'}}>{scrubbed.sourceRaw || srcLabel(scrubbed.src)}</span>
+                  <span className="t-mono" style={{color:'var(--text-dim)'}}>Captured</span>
+                  <span style={{color:'var(--text)'}}>{scrubbed.t}</span>
+                  {scrubbed.entityId && (
+                    <>
+                      <span className="t-mono" style={{color:'var(--text-dim)'}}>Entity</span>
+                      <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.entityId}</span>
+                    </>
+                  )}
+                  {scrubbed.memoryId && (
+                    <>
+                      <span className="t-mono" style={{color:'var(--text-dim)'}}>ID</span>
+                      <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.memoryId}</span>
+                    </>
+                  )}
                 </div>
+                <div style={{borderTop:'1px solid var(--border)', paddingTop:14, fontSize:13, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
+                  {scrubbed.snippetHighlight
+                    ? renderHighlighted(scrubbed.snippetHighlight)
+                    : scrubbed.snippet || <span className="muted">No snippet text for this entry.</span>}
+                </div>
+              </>
+            ) : (
+              <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:8, color:'var(--text-dim)', fontSize:13, textAlign:'center', padding:'0 20px'}}>
+                <Icon name="memory" size={22}/>
+                <span className="en-only">Select a memory to see its details.</span>
+                <span className="jp" style={{fontSize:12}}>メモリを選ぶと詳細が表示されます。</span>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Timeline scrubber */}
+      {/* Timeline scrubber — real events by hour */}
       <div style={{marginTop:'auto', padding:'18px 40px 28px', borderTop:'1px solid var(--border)'}}>
         <div style={{display:'flex', alignItems:'center', gap:14, marginBottom:12}}>
           <span style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.08em', fontFamily:'inherit'}}>Timeline</span>
           <span style={{flex:1}}/>
           <button type="button" onClick={()=>scrollTimeline(-1)} aria-label="Scroll timeline left" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={12}/></button>
           <button type="button" onClick={()=>scrollTimeline(1)} aria-label="Scroll timeline right" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
-          <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>{memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))]} EVENTS · {Math.round(memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 0.26)}H {Math.floor((memoryTotals.counts[Math.min(6, Math.max(0, 6 - selectedDayOffset))] * 60 * 0.26) % 60)}M</span>
+          <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>{events.length} events · {timeSpanLabel}</span>
         </div>
         <div
           ref={timelineScrollRef}
@@ -1633,13 +1764,33 @@ function ScreenMemory() {
             minWidth:0,
           }}
         >
-          <div style={{position:'relative', width: 24 * 8 * 15, height:72, flexShrink:0}}>
-            <div style={{position:'absolute', inset:'0 0 26px 0', display:'flex', alignItems:'flex-end', gap:3}}>
-              {[...Array(24 * 8)].map((_,i)=>{
-                const h = 6 + ((i * 37 + (i%7)*11 + (i%11)*5) % 26);
-                const nowSlot = new Date().getHours() * 8 + Math.floor(new Date().getMinutes() / 7.5);
-                const now = i === nowSlot;
-                return <span key={i} style={{width:12, flexShrink:0, height: h, background: now? 'var(--gold)':'var(--border-hi)', opacity: now?0.95:0.48, borderRadius:2}}/>;
+          <div style={{position:'relative', width: 24 * 96, height:72, flexShrink:0}}>
+            <div style={{position:'absolute', inset:'0 0 26px 0', display:'grid', gridTemplateColumns:'repeat(24, minmax(0, 1fr))', alignItems:'end', gap:3}}>
+              {[...Array(24)].map((_,h)=>{
+                const count = hourIndexFromEvents.counts[h] || 0;
+                const firstIdx = hourIndexFromEvents.firstIdx[h];
+                const height = count > 0 ? Math.round((count / hourIndexFromEvents.maxC) * 42) + 6 : 4;
+                const active = firstIdx >= 0 && scrubIdx >= firstIdx && scrubIdx < firstIdx + count;
+                const clickable = firstIdx >= 0;
+                return (
+                  <button
+                    key={h}
+                    type="button"
+                    disabled={!clickable}
+                    onClick={() => { if (clickable) setScrubIdx(firstIdx); }}
+                    aria-label={`${count} memories at ${String(h).padStart(2,'0')}:00`}
+                    style={{
+                      height,
+                      padding:0,
+                      border:'none',
+                      background: active ? 'var(--gold)' : (count > 0 ? 'var(--border-hi)' : 'var(--border)'),
+                      opacity: clickable ? (active ? 0.95 : 0.65) : 0.3,
+                      borderRadius:2,
+                      cursor: clickable ? 'pointer' : 'default',
+                      transition: 'opacity 120ms, background 120ms',
+                    }}
+                  />
+                );
               })}
             </div>
             <div className="t-mono" style={{position:'absolute', left:0, bottom:0, right:0, display:'grid', gridTemplateColumns:'repeat(24, minmax(0, 1fr))', fontSize:10, color:'var(--text-dim)'}}>
@@ -1650,6 +1801,198 @@ function ScreenMemory() {
           </div>
         </div>
       </div>
+      </>
+      )}
+
+      {/* Kakejiku view: vertical scroll feed of memories for the selected day */}
+      {view === 'kakejiku' && (
+        <div style={{flex:1, padding:'24px 40px 40px', minHeight:0, overflowY:'auto'}}>
+          <div style={{maxWidth:820, margin:'0 auto'}}>
+            {(() => {
+              const dayStart = new Date(selectedDate);
+              dayStart.setHours(0, 0, 0, 0);
+              const dayEnd = dayStart.getTime() + 24 * 60 * 60 * 1000;
+              const dayEvents = events.filter((e) => Number.isFinite(e.ts) && e.ts >= dayStart.getTime() && e.ts < dayEnd);
+              if (timelineLoading) {
+                return (
+                  <div className="muted" style={{padding:'40px 0', textAlign:'center', fontSize:13}}>
+                    <span className="en-only">Loading timeline…</span>
+                    <span className="jp" style={{display:'block', marginTop:6}}>読み込み中…</span>
+                  </div>
+                );
+              }
+              if (dayEvents.length === 0) {
+                return (
+                  <div style={{padding:'60px 0', textAlign:'center', color:'var(--text-dim)', fontSize:13, display:'flex', flexDirection:'column', alignItems:'center', gap:10}}>
+                    <Icon name="memory" size={28}/>
+                    <span className="en-only">No memories for {fmtFullDate(selectedDate)}.</span>
+                    <span className="jp" style={{fontSize:12}}>{fmtFullDateJp(selectedDate)} のメモリはまだありません。</span>
+                  </div>
+                );
+              }
+              return dayEvents.map((e, i) => {
+                const solid = e.src === 'agent' || e.src === 'meet';
+                return (
+                  <button
+                    key={e.memoryId || `${e.ts}-${i}`}
+                    type="button"
+                    disabled={!e.memoryId}
+                    onClick={() => {
+                      if (!e.memoryId) return;
+                      openMemoryEntryInChat(
+                        { title: e.title, snippet: e.snippet },
+                        { memoryAssemblyQuery: e.title, memoryAssemblyLimit: 14, allowServerMemoryAssembly },
+                      );
+                    }}
+                    className="memory-scrub-stage"
+                    style={{
+                      all: 'unset',
+                      display:'grid',
+                      gridTemplateColumns:'76px 1px 1fr',
+                      columnGap:24,
+                      padding:'22px 0',
+                      borderBottom:'1px solid var(--border)',
+                      width:'100%',
+                      boxSizing:'border-box',
+                      cursor: e.memoryId ? 'pointer' : 'default',
+                      fontFamily:'inherit',
+                    }}
+                  >
+                    <div style={{textAlign:'right', paddingTop:4}}>
+                      <span className="t-mono" style={{fontSize:12, color:'var(--text)', letterSpacing:'0.06em'}}>{e.t}</span>
+                    </div>
+                    <div style={{background:'var(--border)', alignSelf:'stretch', position:'relative'}}>
+                      <span style={{
+                        position:'absolute', left:-4, top:8, width:9, height:9, borderRadius:'50%',
+                        background: solid ? 'var(--gold)' : 'transparent',
+                        border: solid ? 'none' : '1.5px solid var(--text-mute)',
+                        boxShadow:'0 0 0 3px var(--bg)',
+                      }}/>
+                    </div>
+                    <div style={{minWidth:0, display:'flex', flexDirection:'column', gap:6}}>
+                      <div style={{display:'flex', alignItems:'center', gap:8}}>
+                        <Icon name={srcIcon(e.src)} size={13} className="dim"/>
+                        <span className="t-mono" style={{fontSize:11, color:'var(--text-dim)', letterSpacing:'0.14em'}}>{srcLabel(e.src)}</span>
+                      </div>
+                      <div style={{fontSize:15, fontWeight:500, color:'var(--text)', lineHeight:1.45, wordBreak:'break-word'}}>
+                        {renderHighlighted(e.titleHighlight || e.title)}
+                      </div>
+                    </div>
+                  </button>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Heatmap view: 7 days × 24 hours activity grid */}
+      {view === 'heatmap' && (
+        <div style={{flex:1, padding:'24px 40px 40px', minHeight:0, overflowY:'auto'}}>
+          <div style={{maxWidth:900, margin:'0 auto'}}>
+            {(() => {
+              const grid = weekDays.map((d) => {
+                const start = new Date(d);
+                start.setHours(0, 0, 0, 0);
+                const startMs = start.getTime();
+                const endMs = startMs + 24 * 60 * 60 * 1000;
+                const hours = new Array(24).fill(0);
+                events.forEach((e) => {
+                  if (!Number.isFinite(e.ts) || e.ts < startMs || e.ts >= endMs) return;
+                  const hh = Math.max(0, Math.min(23, Math.floor(Number(e.h))));
+                  hours[hh] += 1;
+                });
+                return hours;
+              });
+              const max = Math.max(1, ...grid.flat());
+              const fmtWk = (d) => d.toLocaleString('en-US', { weekday: 'short' }).toUpperCase();
+              return (
+                <div style={{display:'flex', flexDirection:'column', gap:6}}>
+                  {/* hour axis */}
+                  <div style={{display:'grid', gridTemplateColumns:'44px repeat(24, minmax(0, 1fr))', columnGap:3, alignItems:'end', paddingBottom:4}}>
+                    <span/>
+                    {[...Array(24)].map((_, h) => (
+                      <span key={h} className="t-mono" style={{fontSize:9, color:'var(--text-dim)', textAlign:'center'}}>{String(h).padStart(2,'0')}</span>
+                    ))}
+                  </div>
+                  {grid.map((row, i) => {
+                    const offset = 6 - i;
+                    const isActiveDay = offset === selectedDayOffset;
+                    return (
+                      <div key={i} style={{display:'grid', gridTemplateColumns:'44px repeat(24, minmax(0, 1fr))', columnGap:3, alignItems:'stretch'}}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDayOffset(offset)}
+                          className="t-mono"
+                          style={{
+                            all:'unset',
+                            fontSize:10,
+                            color: isActiveDay ? 'var(--gold)' : 'var(--text-dim)',
+                            letterSpacing:'0.14em',
+                            cursor:'pointer',
+                            paddingRight:8,
+                            textAlign:'right',
+                            alignSelf:'center',
+                          }}
+                          title={weekDays[i].toDateString()}
+                        >
+                          {fmtWk(weekDays[i])}
+                        </button>
+                        {row.map((v, h) => {
+                          const intensity = v / max;
+                          const bg = v === 0
+                            ? 'var(--border)'
+                            : `color-mix(in srgb, var(--gold) ${Math.round(15 + intensity * 75)}%, var(--surface))`;
+                          return (
+                            <span
+                              key={h}
+                              title={`${fmtWk(weekDays[i])} ${String(h).padStart(2,'0')}:00 · ${v} ${v === 1 ? 'memory' : 'memories'}`}
+                              style={{
+                                height:24,
+                                borderRadius:4,
+                                background: bg,
+                                outline: isActiveDay ? '1px solid color-mix(in srgb, var(--gold) 35%, transparent)' : 'none',
+                                opacity: v === 0 ? 0.35 : 1,
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                  {/* legend */}
+                  <div style={{marginTop:18, display:'flex', alignItems:'center', gap:10, justifyContent:'flex-end'}}>
+                    <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.12em'}}>LESS</span>
+                    {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => (
+                      <span key={idx} style={{
+                        width:18, height:10, borderRadius:3,
+                        background: p === 0 ? 'var(--border)' : `color-mix(in srgb, var(--gold) ${Math.round(15 + p * 75)}%, var(--surface))`,
+                      }}/>
+                    ))}
+                    <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.12em'}}>MORE</span>
+                  </div>
+                  {events.length === 0 && !timelineLoading && (
+                    <div style={{marginTop:20, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
+                      <span className="en-only">No memories indexed yet — ingest or sync to populate the grid.</span>
+                      <span className="jp" style={{display:'block', fontSize:12, marginTop:4}}>まだインデックス化されたメモリがありません。</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* FTS5 highlight styles */}
+      <style>{`
+        .memory-scrub-stage mark {
+          background: color-mix(in srgb, var(--gold) 28%, transparent);
+          color: inherit;
+          padding: 0 2px;
+          border-radius: 2px;
+        }
+      `}</style>
     </div>
   );
 }
