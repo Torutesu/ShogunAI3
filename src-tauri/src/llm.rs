@@ -123,6 +123,20 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
       })
       .await?;
       let block = context_assembly::format_hits_draft_context(&hits, 10_000);
+      let manual_ctx = payload
+        .get("memoryContext")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+      crate::memory_obs::emit(
+        "chat_memory_block",
+        &[
+          ("block_chars", block.chars().count().to_string()),
+          ("hits", hits.len().to_string()),
+          ("manual_ctx", manual_ctx.to_string()),
+          ("semantic", semantic.to_string()),
+        ],
+      );
       if !block.is_empty() {
         messages.push(json!({
           "role": "system",
