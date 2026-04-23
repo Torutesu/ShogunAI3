@@ -974,12 +974,77 @@
   padding: clamp(12px, 2vw, 16px) clamp(14px, 3vw, 32px) clamp(16px, 2.5vw, 24px);
 }
 
+/* Work: memory search box */
+.work-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 200px;
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+
+.work-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.work-search-input {
+  flex: 1 1 auto;
+  height: 32px;
+  padding: 0 28px 0 30px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  transition: border-color var(--dur-base);
+}
+.work-search-input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--gold) 55%, var(--border-hi));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--gold) 25%, transparent);
+}
+.work-search-input::placeholder {
+  color: var(--text-dim);
+}
+
+.work-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+}
+.work-search-clear:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
 /* Work: memory cards */
 .shogun-grid-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: 16px;
   margin-bottom: 32px;
+}
+
+/* FTS match highlights in Work memory cards — same palette as the Memory
+   timeline and chat memoryContext pane. */
+.work-memory-card mark {
+  background: color-mix(in srgb, var(--gold) 28%, transparent);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
 }
 
 /* Integration brand marks — SVGs from Simple Icons (see hifi/assets/integrations/) */
