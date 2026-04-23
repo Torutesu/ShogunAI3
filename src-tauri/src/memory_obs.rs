@@ -4,6 +4,11 @@
 //! (raw queries, snippets, titles) is never emitted — only lengths, counts,
 //! and optional `*_preview` fields clipped to 40 characters.
 
+// TODO(memory-obs perf): the `&[(&'static str, String)]` API forces `.to_string()`
+// at every call site. Acceptable for B-1 (11 events, low frequency). If call
+// volume grows, switch to `&[(&'static str, &dyn std::fmt::Display)]` or a
+// macro so hot paths avoid per-event allocations. See B-1 Task 1 review.
+
 /// Format a single event line. Values that contain a space, `=`, or `"` are
 /// wrapped in double quotes; embedded quotes inside such values are escaped
 /// as `\"`. Fields are emitted in the order given.
@@ -13,9 +18,20 @@ pub fn format_event(event: &str, fields: &[(&'static str, String)]) -> String {
         out.push(' ');
         out.push_str(k);
         out.push('=');
-        if v.contains(' ') || v.contains('=') || v.contains('"') {
+        let needs_quote = v.contains(|c: char| {
+            c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '=' || c == '"' || c == '\\'
+        });
+        if needs_quote {
             out.push('"');
-            out.push_str(&v.replace('"', "\\\""));
+            // Escape backslash first, then quote. Then collapse vertical
+            // whitespace to a single space so each event stays on one line.
+            let escaped = v
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', " ")
+                .replace('\r', " ")
+                .replace('\t', " ");
+            out.push_str(&escaped);
             out.push('"');
         } else {
             out.push_str(v);
@@ -78,6 +94,32 @@ mod tests {
     fn format_event_escapes_embedded_quotes() {
         let out = format_event("probe", &[("msg", "he said \"hi\"".to_string())]);
         assert_eq!(out, "event=probe msg=\"he said \\\"hi\\\"\"");
+    }
+
+    #[test]
+    fn format_event_quotes_values_with_newlines() {
+        let out = format_event("e", &[("err", "line1\nline2".to_string())]);
+        assert_eq!(out, "event=e err=\"line1 line2\"");
+    }
+
+    #[test]
+    fn format_event_quotes_values_with_tabs() {
+        let out = format_event("e", &[("err", "col1\tcol2".to_string())]);
+        assert_eq!(out, "event=e err=\"col1 col2\"");
+    }
+
+    #[test]
+    fn format_event_escapes_backslash_before_quote() {
+        // A value containing a literal backslash should be escaped as \\ so
+        // that a downstream parser can unambiguously round-trip.
+        let out = format_event("e", &[("path", "a\\b".to_string())]);
+        assert_eq!(out, "event=e path=\"a\\\\b\"");
+    }
+
+    #[test]
+    fn format_event_plain_alphanumeric_is_unquoted() {
+        let out = format_event("e", &[("k", "plain42".to_string())]);
+        assert_eq!(out, "event=e k=plain42");
     }
 
     #[test]
