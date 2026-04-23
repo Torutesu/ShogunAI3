@@ -197,8 +197,7 @@ function computeHomeGreetingState(now) {
     timeZone: tz,
     timeZoneName: 'short',
   })
-    .format(d)
-    .toUpperCase();
+    .format(d);
   const dateJp = new Intl.DateTimeFormat('ja-JP', {
     weekday: 'long',
     year: 'numeric',
@@ -218,57 +217,69 @@ function computeHomeGreetingState(now) {
 }
 
 const HOME_QUICK_CATEGORIES = [
-  { id: 'writing', label: '文章作成', icon: 'edit' },
-  { id: 'learning', label: '学習', icon: 'graduation' },
-  { id: 'code', label: 'コード', icon: 'terminal' },
-  { id: 'lifestyle', label: 'ライフスタイル', icon: 'coffee' },
-  { id: 'drive', label: 'Drive から', icon: 'drive' },
+  { id: 'writing', en: 'Writing', jp: '文章作成', icon: 'edit' },
+  { id: 'learning', en: 'Learning', jp: '学習', icon: 'graduation' },
+  { id: 'code', en: 'Code', jp: 'コード', icon: 'terminal' },
+  { id: 'lifestyle', en: 'Lifestyle', jp: 'ライフスタイル', icon: 'coffee' },
+  { id: 'drive', en: 'From Drive', jp: 'Drive から', icon: 'drive' },
 ];
 
 const HOME_PROMPT_ROWS = {
   writing: [
-    '執筆のための調査をする',
-    '面接質問の作成',
-    'ブログ記事シリーズの作成',
-    'ソーシャルメディア投稿の作成',
-    'コンテンツ企画書を作成する',
+    { en: 'Research for a piece of writing', jp: '執筆のための調査をする' },
+    { en: 'Draft interview questions', jp: '面接質問の作成' },
+    { en: 'Plan a blog post series', jp: 'ブログ記事シリーズの作成' },
+    { en: 'Write social media posts', jp: 'ソーシャルメディア投稿の作成' },
+    { en: 'Create a content brief', jp: 'コンテンツ企画書を作成する' },
   ],
   learning: [
-    '学習目標を設定する',
-    '教育戦略の開発',
-    '学術論文を要約する',
-    '振り返り演習を開発する',
-    '私の研究からパターンを見つけてください',
+    { en: 'Set learning goals', jp: '学習目標を設定する' },
+    { en: 'Design a teaching strategy', jp: '教育戦略の開発' },
+    { en: 'Summarize an academic paper', jp: '学術論文を要約する' },
+    { en: 'Design a reflection exercise', jp: '振り返り演習を開発する' },
+    { en: 'Find patterns across my research', jp: '私の研究からパターンを見つけてください' },
   ],
   code: [
-    'コードレビューを依頼する',
-    'バグの原因を調査する',
-    'リファクタリング案を出す',
-    'テストケースを生成する',
-    'このコードのアーキテクチャを説明する',
+    { en: 'Request a code review', jp: 'コードレビューを依頼する' },
+    { en: 'Diagnose a bug', jp: 'バグの原因を調査する' },
+    { en: 'Suggest a refactor', jp: 'リファクタリング案を出す' },
+    { en: 'Generate test cases', jp: 'テストケースを生成する' },
+    { en: 'Explain this code’s architecture', jp: 'このコードのアーキテクチャを説明する' },
   ],
   lifestyle: [
-    '個人のストレス管理',
-    '意思決定をサポートする',
-    'セルフケアの習慣作り',
-    '退職後の活動を計画する',
-    '住宅改善を計画する',
+    { en: 'Manage personal stress', jp: '個人のストレス管理' },
+    { en: 'Help me decide', jp: '意思決定をサポートする' },
+    { en: 'Build a self-care routine', jp: 'セルフケアの習慣作り' },
+    { en: 'Plan post-retirement activities', jp: '退職後の活動を計画する' },
+    { en: 'Plan a home improvement', jp: '住宅改善を計画する' },
   ],
   drive: [
-    '私の文書から最も優れた瞬間を特定し、視覚化する',
-    '私の文書全体を通して一貫して現れるアイデアのテーマは何ですか？',
-    '私の文書に基づいて文章スタイルを分析してください',
-    '私の文書を確認して、どのようなジャンルの作家になれるか提案する',
-    '新しくアクセス権を得た文書の要約を教えてください',
+    { en: 'Surface the best moments in my documents', jp: '私の文書から最も優れた瞬間を特定し、視覚化する' },
+    { en: 'What themes recur across my documents?', jp: '私の文書全体を通して一貫して現れるアイデアのテーマは何ですか？' },
+    { en: 'Analyze my writing style from my documents', jp: '私の文書に基づいて文章スタイルを分析してください' },
+    { en: 'Suggest a writing genre that fits me', jp: '私の文書を確認して、どのようなジャンルの作家になれるか提案する' },
+    { en: 'Summarize documents I just gained access to', jp: '新しくアクセス権を得た文書の要約を教えてください' },
   ],
 };
+
+function pickHomeText(item, uiLang) {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  if (uiLang === 'jp') return item.jp || item.en || '';
+  if (uiLang === 'bi') {
+    const en = item.en || '';
+    const jp = item.jp || '';
+    if (en && jp) return `${en} ／ ${jp}`;
+    return en || jp;
+  }
+  return item.en || item.jp || '';
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // L1 · HOME — the launch pad
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenHome() {
   const [morningBrief, setMorningBrief] = useState(null);
-  const [briefErr, setBriefErr] = useState(null);
   const [memoryTotal, setMemoryTotal] = useState(null);
   const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
@@ -277,6 +288,8 @@ function ScreenHome() {
   const [promptModal, setPromptModal] = useState(null);
   const [webSearchOn, setWebSearchOn] = useState(true);
   const [assembleMemoryOn, setAssembleMemoryOn] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
   const [composerPh, setComposerPh] = useState(() =>
     composerPlaceholderForLang(
       typeof document !== 'undefined' ? document.body.getAttribute('data-lang') : null,
@@ -403,7 +416,7 @@ function ScreenHome() {
       );
       if (cancelled) return;
       if (!res.ok || !res.data) {
-        setBriefErr("brief unavailable");
+        setMorningBrief(null);
         return;
       }
       const inner = res.data;
@@ -453,11 +466,12 @@ function ScreenHome() {
     return () => document.removeEventListener('mousedown', close);
   }, [promptModal]);
 
-  const seedAndOpenChat = (text) => {
+  const seedAndOpenChat = (text, options) => {
     const t = String(text || '').trim();
+    const autoSend = !!(options && options.autoSend) && t.length > 0;
     window.dispatchEvent(
       new CustomEvent('shogun-chat-composer-seed', {
-        detail: { text: t, webSearch: webSearchOn, assembleMemory: assembleMemoryOn },
+        detail: { text: t, webSearch: webSearchOn, assembleMemory: assembleMemoryOn, autoSend },
       }),
     );
     window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
@@ -465,15 +479,9 @@ function ScreenHome() {
 
   const goAsk = () => {
     const t = homeInput.trim();
-    if (t) seedAndOpenChat(t);
-    else {
-      window.dispatchEvent(
-        new CustomEvent('shogun-chat-composer-seed', {
-          detail: { text: '', webSearch: webSearchOn, assembleMemory: assembleMemoryOn },
-        }),
-      );
-      window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
-    }
+    if (!t) return;
+    seedAndOpenChat(t, { autoSend: true });
+    setHomeInput('');
   };
 
   const ingestPlusFiles = useCallback(async (fileList) => {
@@ -672,13 +680,17 @@ function ScreenHome() {
     <div
       className="content-inner home-launch-root"
       style={{
-        maxWidth: 720,
-        margin: '0 auto',
-        padding: 'clamp(28px, 6vw, 56px) clamp(18px, 3vw, 32px) clamp(36px, 5vw, 64px)',
+        width: '100%',
+        maxWidth: 'none',
+        margin: 0,
+        padding: 'clamp(32px, 5vw, 64px) clamp(24px, 5vw, 72px) clamp(40px, 6vw, 80px)',
       }}
     >
       <div
         style={{
+          width: '100%',
+          maxWidth: 760,
+          marginInline: 'auto',
           minHeight: 'min(72vh, 620px)',
           display: 'flex',
           flexDirection: 'column',
@@ -715,7 +727,7 @@ function ScreenHome() {
           >
             {headLine.greetJp}。{greetFirstName || 'ゲスト'}さん、お帰りなさい
           </h1>
-          <div className="t-mono" style={{ marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>
+          <div className="t-mono" style={{ marginTop: 10, fontSize: 12, color: 'var(--text-dim)', textTransform:'none', letterSpacing:'0.02em' }}>
             {homeDateStr}
             {memoryTotal != null && (
               <span className="jp" style={{ marginLeft: 12, fontFamily: 'var(--font-jp)' }}>
@@ -730,14 +742,46 @@ function ScreenHome() {
           style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 10 }}
         >
           <div
+            className={'home-composer-dropzone' + (dragOver ? ' is-drag-over' : '')}
             style={{
+              position: 'relative',
               background: 'var(--surface)',
-              border: '1px solid var(--border)',
+              border: '1px solid ' + (dragOver ? 'var(--gold)' : 'var(--border)'),
               borderRadius: 20,
               boxShadow: 'var(--shadow-md)',
               padding: '16px 16px 12px',
+              transition: 'border-color 140ms, background 140ms, box-shadow 140ms',
+            }}
+            onDragEnter={(e) => {
+              if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+              e.preventDefault();
+              dragDepthRef.current += 1;
+              setDragOver(true);
+            }}
+            onDragOver={(e) => {
+              if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'copy';
+            }}
+            onDragLeave={() => {
+              dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+              if (dragDepthRef.current === 0) setDragOver(false);
+            }}
+            onDrop={(e) => {
+              if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+              e.preventDefault();
+              dragDepthRef.current = 0;
+              setDragOver(false);
+              void ingestPlusFiles(e.dataTransfer.files);
             }}
           >
+            {dragOver && (
+              <div className="home-composer-drop-hint" aria-hidden="true">
+                <Icon name="paperclip" size={18} />
+                <span className="en-only">Drop files to add to Memory</span>
+                <span className="jp">ファイルをドロップして Memory に追加</span>
+              </div>
+            )}
             <textarea
               value={homeInput}
               onChange={(e) => setHomeInput(e.target.value)}
@@ -807,20 +851,20 @@ function ScreenHome() {
                     style={{
                       position: 'absolute',
                       left: 0,
-                      bottom: '100%',
-                      marginBottom: 8,
-                      width: 'min(340px, calc(100vw - 48px))',
+                      top: '100%',
+                      marginTop: 6,
+                      width: 'min(260px, calc(100vw - 48px))',
                       background: 'var(--surface)',
                       border: '1px solid var(--border-hi)',
-                      borderRadius: 'var(--radius-lg)',
+                      borderRadius: 'var(--radius-md)',
                       boxShadow: 'var(--shadow-lg)',
-                      padding: '6px 0',
+                      padding: '4px 0',
                       zIndex: 50,
                     }}
                   >
                     {plusMenuSections.map((section, si) => (
                       <div key={si}>
-                        {si > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '6px 0' }} />}
+                        {si > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />}
                         {section.map((row, ri) => (
                           <button
                             key={ri}
@@ -840,11 +884,11 @@ function ScreenHome() {
                             style={{
                               display: 'flex',
                               alignItems: 'center',
-                              gap: 12,
+                              gap: 10,
                               width: '100%',
                               textAlign: 'left',
-                              padding: '12px 14px',
-                              fontSize: 13,
+                              padding: '7px 12px',
+                              fontSize: 12.5,
                               border: 'none',
                               background: 'transparent',
                               color: row.active ? 'var(--gold)' : row.disabled ? 'var(--text-dim)' : 'var(--text)',
@@ -853,18 +897,18 @@ function ScreenHome() {
                               fontFamily: 'var(--font-jp), var(--font-en)',
                             }}
                           >
-                            <span style={{ flexShrink: 0, opacity: 0.9, display: 'inline-flex' }}>
-                              <Icon name={row.icon} size={16} />
+                            <span style={{ flexShrink: 0, opacity: 0.85, display: 'inline-flex' }}>
+                              <Icon name={row.icon} size={14} />
                             </span>
                             <span style={{ flex: 1 }}>{row.label}</span>
                             {row.chev && (
                               <span style={{ color: 'var(--text-dim)', display: 'inline-flex' }}>
-                                <Icon name="chevronRight" size={14} />
+                                <Icon name="chevronRight" size={12} />
                               </span>
                             )}
                             {row.active && (
                               <span style={{ color: 'var(--gold)', display: 'inline-flex' }}>
-                                <Icon name="check" size={16} />
+                                <Icon name="check" size={14} />
                               </span>
                             )}
                           </button>
@@ -877,22 +921,11 @@ function ScreenHome() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <button
                   type="button"
-                  onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('llm')}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '6px 10px',
-                    borderRadius: 999,
-                    border: '1px solid var(--border)',
-                    background: 'var(--surface-2)',
-                    color: 'var(--text-mute)',
-                    fontSize: 12,
-                    fontFamily: 'var(--font-mono)',
-                  }}
+                  aria-label="Send"
+                  onClick={goAsk}
+                  className="home-send-btn"
                 >
-                  {modelHint || 'Model'}
-                  <Icon name="chevronDown" size={14} />
+                  <Icon name="arrowUp" size={16} />
                 </button>
               </div>
             </div>
@@ -932,10 +965,9 @@ function ScreenHome() {
                 )}
                 <span
                   id="home-quick-prompt-title"
-                  className="jp"
                   style={{ flex: 1, fontSize: 15, fontWeight: 600, color: 'var(--text)' }}
                 >
-                  {modalMeta.label}
+                  {pickHomeText(modalMeta, uiLang)}
                 </span>
                 <button
                   type="button"
@@ -972,7 +1004,7 @@ function ScreenHome() {
                     <button
                       type="button"
                       onClick={() => {
-                        seedAndOpenChat(line);
+                        seedAndOpenChat(pickHomeText(line, uiLang));
                         setPromptModal(null);
                       }}
                       style={{
@@ -995,7 +1027,7 @@ function ScreenHome() {
                         e.currentTarget.style.background = 'transparent';
                       }}
                     >
-                      {line}
+                      {pickHomeText(line, uiLang)}
                     </button>
                   </div>
                 ))}
@@ -1044,7 +1076,7 @@ function ScreenHome() {
               ) : (
                 <Icon name={cat.icon} size={16} />
               )}
-              {cat.label}
+              {pickHomeText(cat, uiLang)}
             </button>
           ))}
         </div>
@@ -1052,9 +1084,9 @@ function ScreenHome() {
       </div>
 
       {morningBrief && (
-        <div className="card" style={{ padding: 28, borderColor: 'var(--gold-dim)', marginTop: 32, background: 'var(--surface)' }}>
+        <div className="card" style={{ width: '100%', maxWidth: 760, marginInline: 'auto', padding: 28, borderColor: 'var(--gold-dim)', marginTop: 32, background: 'var(--surface)' }}>
           <div className="row" style={{ marginBottom: 14, alignItems: 'baseline', gap: 12 }}>
-            <div className="t-mono gold">MORNING BRIEF · AMC</div>
+            <div className="t-mono gold" style={{textTransform:'none', letterSpacing:'0.02em'}}>Morning brief · AMC</div>
             <span className="pill" style={{ fontSize: 10 }}>{morningBrief.posture}</span>
             <span className="spacer" />
             <span className="t-mono xsmall muted">{briefGeneratedDisplay || '—'}</span>
@@ -1102,9 +1134,53 @@ function ScreenHome() {
           </div>
         </div>
       )}
-      {briefErr && (
-        <div className="xsmall muted" style={{ marginTop: 16 }}>{briefErr}</div>
-      )}
+      <style>{`
+        .home-composer-dropzone.is-drag-over {
+          background:color-mix(in srgb, var(--gold) 6%, var(--surface) 94%);
+          box-shadow:
+            var(--shadow-md),
+            0 0 0 3px color-mix(in srgb, var(--gold) 28%, transparent);
+        }
+        .home-composer-drop-hint {
+          position:absolute; inset:0;
+          display:flex; align-items:center; justify-content:center;
+          gap:10px;
+          border-radius:20px;
+          background:color-mix(in srgb, var(--gold) 10%, var(--surface) 90%);
+          color:var(--gold);
+          font-size:14px; font-weight:500;
+          letter-spacing:0.01em;
+          pointer-events:none;
+          z-index:2;
+        }
+        .home-send-btn {
+          display:inline-flex; align-items:center; justify-content:center;
+          width:36px; height:36px;
+          border-radius:10px;
+          border:0;
+          background:var(--gold);
+          color:#fff;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.18),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 2px 8px -2px color-mix(in srgb, var(--gold) 55%, transparent);
+          cursor:pointer;
+          transition:background 160ms, transform 80ms, box-shadow 160ms, filter 160ms;
+        }
+        .home-send-btn:hover {
+          background:var(--gold-hover);
+          filter:saturate(1.35) brightness(1.06);
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.28),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 6px 18px -2px color-mix(in srgb, var(--gold) 80%, transparent);
+        }
+        .home-send-btn:active { transform:scale(0.96); }
+        .home-send-btn:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
+      `}</style>
     </div>
   );
 }
@@ -1259,7 +1335,7 @@ function ScreenMemory() {
       {/* Header */}
       <div style={{padding:'24px 40px 0', display:'flex', alignItems:'flex-end', gap:20}}>
         <div>
-          <div className="t-mono" style={{marginBottom:6}}>MEMORY / TIMELINE</div>
+          <div className="t-mono" style={{marginBottom:6, textTransform:'none', letterSpacing:'0.02em'}}>Memory / Timeline</div>
           <h1 style={{margin:0, fontSize:28, fontWeight:600}}>{memoryHeadDate} <span className="jp muted" style={{fontSize:16, fontWeight:300, marginLeft:8}}>時間軸</span></h1>
           <div className="muted" style={{marginTop:8, fontSize:12, lineHeight:1.45, maxWidth:560}}>
             Memory index stays on this Mac in this build (no SHOGUN cloud sync).
@@ -1309,7 +1385,7 @@ function ScreenMemory() {
         data-testid="memory-entity-sources"
         style={{padding:'8px 40px 4px', borderBottom:'1px solid var(--border)'}}
       >
-        <div className="t-mono" style={{fontSize:10, color:'var(--text-mute)', marginBottom:6}}>SOURCES IN INDEX · カタログ別件数</div>
+        <div className="t-mono" style={{fontSize:11, color:'var(--text-mute)', marginBottom:6, textTransform:'none', letterSpacing:'0.02em'}}>Sources in index · カタログ別件数</div>
         <div style={{display:'flex', flexWrap:'wrap', gap:8, alignItems:'center'}}>
           {sourceEntities.length === 0 ? (
             <span style={{fontSize:12, color:'var(--text-dim)'}}>No indexed sources yet — ingest or sync to populate.</span>
@@ -1326,11 +1402,11 @@ function ScreenMemory() {
 
       {/* Hour distribution from index (click a bar to jump to that hour) */}
       <div style={{padding:'12px 40px 8px', display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
-        <span className="t-mono" style={{fontSize:10, color:'var(--text-mute)'}}>
+        <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', textTransform:'none', letterSpacing:'0.02em'}}>
           <span className="en-only">By hour</span>
           <span className="jp">時間帯</span>
         </span>
-        <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>
+        <span className="t-mono" style={{fontSize:11, color:'var(--text-dim)', textTransform:'none', letterSpacing:'0.01em'}}>
           {timelineLoading ? (
             <span className="muted">
               <span className="en-only">Loading…</span>
@@ -1338,7 +1414,7 @@ function ScreenMemory() {
             </span>
           ) : (
             <>
-              {events.length} {events.length === 1 ? 'event' : 'events'} · {timeSpanLabel}
+              {events.length} {events.length === 1 ? 'Event' : 'Events'} · {timeSpanLabel}
             </>
           )}
         </span>
@@ -1411,7 +1487,7 @@ function ScreenMemory() {
                   <Icon name={srcIcon(scrubbed.src)} size={14} className="gold"/>
                 </div>
                 <div>
-                  <div className="t-mono" style={{fontSize:10}}>{srcLabel(scrubbed.src).toUpperCase()} · {scrubbed.t}</div>
+                  <div className="t-mono" style={{fontSize:11, textTransform:'none', letterSpacing:'0.02em'}}>{srcLabel(scrubbed.src)} · {scrubbed.t}</div>
                   <div style={{fontSize:18, fontWeight:500, marginTop:2, letterSpacing:'-0.01em'}}>
                     {timelineLoading ? (
                       <span className="muted">
@@ -1523,8 +1599,8 @@ function ScreenMemory() {
             </div>
 
             <div style={{flex:1, background:'var(--surface-2)', overflow:'auto', minWidth:0, padding:'24px 28px'}}>
-              <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginBottom:10}}>
-                PREVIEW · {timelineLoading ? '—' : scrubbed.t} ·{' '}
+              <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', marginBottom:10, textTransform:'none', letterSpacing:'0.02em'}}>
+                Preview · {timelineLoading ? '—' : scrubbed.t} ·{' '}
                 {timelineLoading ? '—' : events.length ? `${scrubIdx + 1}/${events.length}` : '—'}
               </div>
               <div style={{fontSize:16, fontWeight:600, marginBottom:12, letterSpacing:'-0.01em'}}>
@@ -1546,14 +1622,14 @@ function ScreenMemory() {
           {/* Scrubber strip */}
           <div className="card memory-scrubber">
             <div className="row" style={{padding:'10px 14px', borderBottom:'1px solid var(--border)', gap:10}}>
-              <span className="t-mono" style={{color:'var(--gold)'}}>TIMELINE</span>
+              <span className="t-mono" style={{color:'var(--gold)', textTransform:'none', letterSpacing:'0.02em'}}>Timeline</span>
               <span className="jp dim" style={{fontSize:10}}>さかのぼる</span>
               <span className="spacer"/>
               <div className="row" style={{gap:4}}>
                 <button type="button" className="btn btn-sm btn-ghost" disabled={events.length===0} onClick={()=>setScrubIdx(Math.max(0, scrubIdx-1))} style={{padding:'0 6px'}}><Icon name="arrowLeft" size={12}/></button>
                 <button type="button" className="btn btn-sm btn-ghost" disabled={events.length===0} onClick={()=>setScrubIdx(Math.min(Math.max(events.length - 1, 0), scrubIdx+1))} style={{padding:'0 6px'}}><Icon name="arrowRight" size={12}/></button>
               </div>
-              <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-dim)', textTransform:'none', letterSpacing:'0.01em'}}>
                 {timelineLoading ? (
                   <span className="muted">
                     <span className="en-only">Loading…</span>
@@ -1561,7 +1637,7 @@ function ScreenMemory() {
                   </span>
                 ) : (
                   <>
-                    {events.length} {events.length === 1 ? 'EVENT' : 'EVENTS'} · {timeSpanLabel}
+                    {events.length} {events.length === 1 ? 'Event' : 'Events'} · {timeSpanLabel}
                   </>
                 )}
               </span>

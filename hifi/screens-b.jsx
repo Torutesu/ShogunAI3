@@ -44,6 +44,7 @@ function ScreenChat() {
   /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateB(true);
   const pendingMemoryAssemblyRef = useRefB(null);
+  const pendingAutoSendRef = useRefB(false);
 
   useEffectB(() => {
     let cancelled = false;
@@ -122,6 +123,9 @@ function ScreenChat() {
       const preset = normalizeSeedMemoryAssembly(d);
       if (preset) pendingMemoryAssemblyRef.current = preset;
       else if (d.clearMemoryAssemblyPreset) pendingMemoryAssemblyRef.current = null;
+      if (d.autoSend && d.text != null && String(d.text).trim()) {
+        pendingAutoSendRef.current = true;
+      }
     };
     window.addEventListener('shogun-chat-toggle-max', onMax);
     window.addEventListener('shogun-chat-composer-seed', onComposerSeed);
@@ -219,6 +223,13 @@ function ScreenChat() {
     }
   };
 
+  useEffectB(() => {
+    if (!pendingAutoSendRef.current) return;
+    if (!composerText.trim() || loading) return;
+    pendingAutoSendRef.current = false;
+    void sendChat();
+  }, [composerText, loading]);
+
   return (
     <div className={'shogun-chat-layout' + (chatMax ? ' shogun-chat-max' : '')}>
       <div className="shogun-chat-main">
@@ -296,40 +307,32 @@ function ScreenChat() {
                   }
                 }}
               />
-              <div className="row" style={{gap:8, marginTop:8}}>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
+              <div className="row composer-actions" style={{gap:6, marginTop:8}}>
+                <button className="composer-pill" type="button" onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
                 <button
-                  className="btn btn-sm btn-ghost"
+                  className={'composer-pill' + (webSearchOn ? ' is-on' : '')}
                   type="button"
-                  style={{
-                    padding: '0 8px',
-                    color: webSearchOn ? 'var(--gold)' : 'var(--text-mute)',
-                  }}
                   title="Web research mode (prompts the model for current-style answers; no live browse unless you paste URLs)"
                   onClick={() => setWebSearchOn((v) => !v)}
                 >
                   <Icon name="globe" size={13} /> Web
                 </button>
                 <button
-                  className="btn btn-sm btn-ghost"
+                  className={'composer-pill' + (assembleMemoryOn ? ' is-on' : '')}
                   type="button"
-                  style={{
-                    padding: '0 8px',
-                    color: assembleMemoryOn ? 'var(--gold)' : 'var(--text-mute)',
-                  }}
                   title="memoryAssembly: server assembles context from local Memory (semantic search when API key is set)"
                   onClick={() => setAssembleMemoryOn((v) => !v)}
                 >
                   <Icon name="memory" size={13} /> Assemble
                 </button>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
-                <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 8px'}} onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
+                <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
+                <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
                 <span className="spacer"/>
-                <button className="btn btn-sm btn-primary" type="button" disabled={loading} onClick={sendChat}><Icon name="arrowRight" size={13}/>Send</button>
+                <button className="composer-send" type="button" aria-label="Send" disabled={loading} onClick={sendChat}><Icon name="arrowUp" size={16}/></button>
               </div>
             </div>
-            <div className="t-mono" style={{fontSize:9, marginTop:8, textAlign:'center', color:'var(--text-dim)'}}>
-              {memoryTotal} MEMORIES INDEXED · LOCAL
+            <div className="t-mono" style={{fontSize:11, marginTop:8, textAlign:'center', color:'var(--text-dim)', textTransform:'none', letterSpacing:'0.02em'}}>
+              {memoryTotal} memories indexed · Local
               <span style={{marginLeft:10}}>Return sends · Shift+Return new line · Cmd+Return also sends</span>
             </div>
           </div>
@@ -404,6 +407,63 @@ function ScreenChat() {
           box-shadow:0 1px 0 rgba(0,0,0,0.2);
         }
         .composer:focus-within { border-color:var(--gold-dim); }
+        .composer-actions { align-items:center; }
+        .composer-pill {
+          display:inline-flex; align-items:center; gap:6px;
+          height:30px; padding:0 12px;
+          border-radius:999px;
+          border:1px solid var(--border);
+          background:color-mix(in srgb, var(--surface) 65%, var(--bg) 35%);
+          color:var(--text-mute);
+          font-size:12.5px; font-weight:450; letter-spacing:0.01em;
+          font-family:inherit; cursor:pointer;
+          transition:border-color 120ms, background 120ms, color 120ms;
+        }
+        .composer-pill:hover {
+          border-color:var(--border-hi);
+          background:var(--surface);
+          color:var(--text);
+        }
+        .composer-pill.is-on {
+          color:var(--gold);
+          border-color:color-mix(in srgb, var(--gold-dim) 60%, var(--border) 40%);
+          background:color-mix(in srgb, var(--gold) 8%, var(--surface) 92%);
+        }
+        .composer-pill:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
+        .composer-send {
+          display:inline-flex; align-items:center; justify-content:center;
+          width:38px; height:38px;
+          border-radius:12px;
+          border:0;
+          background:var(--gold);
+          color:#fff;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.18),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 2px 8px -2px color-mix(in srgb, var(--gold) 55%, transparent);
+          cursor:pointer;
+          transition:background 120ms, transform 80ms, box-shadow 120ms;
+        }
+        .composer-send:hover:not(:disabled) {
+          background:var(--gold-hover);
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,0.22),
+            0 1px 0 rgba(0,0,0,0.35),
+            0 4px 14px -2px color-mix(in srgb, var(--gold) 70%, transparent);
+        }
+        .composer-send:active:not(:disabled) { transform:scale(0.96); }
+        .composer-send:disabled {
+          opacity:0.5;
+          cursor:not-allowed;
+          box-shadow:none;
+        }
+        .composer-send:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
         .shogun-chat-thread--empty { min-height:100%; justify-content:center; box-sizing:border-box; padding-block:12px; }
       `}</style>
     </div>
@@ -491,7 +551,7 @@ function ScreenAgents() {
     <div className="content-inner">
       <div className="page-head">
         <div>
-          <div className="t-mono" style={{marginBottom:8}}>EXECUTION LAYER</div>
+          <div className="t-mono" style={{marginBottom:8, textTransform:'none', letterSpacing:'0.02em'}}>Execution layer</div>
           <h1>Agents <span className="jp">家臣</span></h1>
           <div className="sub">
             <span className="en-only">Playground: drafts and Chat can pull </span>
@@ -513,7 +573,7 @@ function ScreenAgents() {
       </div>
 
       <div className="card" style={{ padding: 24, maxWidth: 640 }}>
-        <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', marginBottom: 8 }}>GOAL · 指示</div>
+        <div className="t-mono" style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 8, textTransform:'none', letterSpacing:'0.02em' }}>Goal · 指示</div>
         <textarea
           className="s-input"
           style={{
@@ -541,7 +601,7 @@ function ScreenAgents() {
           </button>
         </div>
         <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text-dim)' }}>
-          <span className="t-mono" style={{ marginRight: 8 }}>QUICK</span>
+          <span className="t-mono" style={{ marginRight: 8, textTransform:'none', letterSpacing:'0.02em' }}>Quick</span>
           {[
             '今週のブロッカーを Memory から列挙',
             'カレンダー関連メモのフォローアップ案',
