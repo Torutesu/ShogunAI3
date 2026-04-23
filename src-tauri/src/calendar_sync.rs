@@ -5,7 +5,24 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::async_runtime::spawn;
 
-static LAST_SYNC_MS: Mutex<Option<u64>> = Mutex::new(None);
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct CalendarSyncState {
+  pub last_sync_ms: Option<u64>,
+  pub last_ingested: Option<u64>,
+  pub last_error: Option<String>,
+  pub last_duration_ms: Option<u64>,
+}
+
+static STATE: Mutex<CalendarSyncState> = Mutex::new(CalendarSyncState {
+  last_sync_ms: None,
+  last_ingested: None,
+  last_error: None,
+  last_duration_ms: None,
+});
+
+pub fn snapshot_state() -> CalendarSyncState {
+  STATE.lock().map(|g| g.clone()).unwrap_or_default()
+}
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -41,7 +58,7 @@ pub fn spawn_background_calendar_sync() {
         .is_some();
       let now = now_ms();
       let period_ms = mins.saturating_mul(60_000);
-      let last_ms = LAST_SYNC_MS.lock().ok().and_then(|g| *g);
+      let last_ms = STATE.lock().ok().and_then(|g| g.last_sync_ms);
       let due = last_ms
         .map(|t| now.saturating_sub(t) >= period_ms)
         .unwrap_or(true);
@@ -81,12 +98,19 @@ pub fn spawn_background_calendar_sync() {
               ),
             ],
           );
-          if let Ok(mut last) = LAST_SYNC_MS.lock() {
-            *last = Some(now_ms());
+          if let Ok(mut s) = STATE.lock() {
+            s.last_sync_ms = Some(now_ms());
+            s.last_ingested = Some(n);
+            s.last_error = None;
+            s.last_duration_ms = Some(sync_start.elapsed().as_millis() as u64);
           }
         }
         Err(e) => {
           log::warn!("calendar auto-sync failed: {}", e);
+          if let Ok(mut s) = STATE.lock() {
+            s.last_error = Some(e.clone());
+            s.last_duration_ms = Some(sync_start.elapsed().as_millis() as u64);
+          }
           crate::memory_obs::emit(
             "calendar_sync_error",
             &[
