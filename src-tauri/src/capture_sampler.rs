@@ -234,20 +234,76 @@ pub fn app_excluded(filters: &PrivacyFilters, app_name: &str) -> bool {
   filters.excluded_apps.iter().any(|a| a == &needle)
 }
 
-/// Checks whether any excluded host appears in the AX text. Matches bare
-/// occurrences as well as URLs: we lowercase both sides and look for a
-/// substring hit. To reduce false positives we only match hosts that contain a
-/// dot (which all real DNS names do).
+/// Checks whether any excluded host appears in the AX text. Matches the host
+/// of any parseable URL as well as bounded bare-hostname tokens, using suffix
+/// matching so `internal.corp.example` excludes `mail.internal.corp.example`
+/// too. Dotless entries are ignored so a list entry like `internal` cannot
+/// accidentally match the English word. `not-internal.corp.example` is
+/// rejected because the token before the excluded suffix must end on a label
+/// boundary (a dot), not a hyphen.
 pub fn ax_text_excluded(filters: &PrivacyFilters, text: &str) -> bool {
   if filters.excluded_hosts.is_empty() || text.is_empty() {
     return false;
   }
-  let lower = text.to_ascii_lowercase();
-  filters
+  let hosts: Vec<&str> = filters
     .excluded_hosts
     .iter()
     .filter(|h| h.contains('.'))
-    .any(|host| lower.contains(host.as_str()))
+    .map(String::as_str)
+    .collect();
+  if hosts.is_empty() {
+    return false;
+  }
+  let lower = text.to_ascii_lowercase();
+
+  for tok in lower.split_whitespace() {
+    if !tok.contains("://") {
+      continue;
+    }
+    let clean = tok.trim_end_matches(|c: char| {
+      matches!(c, '.' | ',' | ';' | ')' | ']' | '>' | '"' | '\'' | '!' | '?')
+    });
+    if let Ok(url) = url::Url::parse(clean) {
+      if let Some(h) = url.host_str() {
+        if hosts.iter().any(|ex| host_suffix_match(h, ex)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  let bytes = lower.as_bytes();
+  let mut i = 0;
+  while i < bytes.len() {
+    if !is_host_byte(bytes[i]) {
+      i += 1;
+      continue;
+    }
+    let start = i;
+    while i < bytes.len() && is_host_byte(bytes[i]) {
+      i += 1;
+    }
+    let token = lower[start..i].trim_matches(|c: char| c == '.' || c == '-');
+    if token.contains('.') && hosts.iter().any(|ex| host_suffix_match(token, ex)) {
+      return true;
+    }
+  }
+  false
+}
+
+fn is_host_byte(b: u8) -> bool {
+  b.is_ascii_alphanumeric() || b == b'-' || b == b'.'
+}
+
+/// Returns true when `actual` equals `excluded` or is a subdomain of it
+/// (ends with `.<excluded>`). All inputs are expected to be lower-case.
+fn host_suffix_match(actual: &str, excluded: &str) -> bool {
+  if actual == excluded {
+    return true;
+  }
+  actual.len() > excluded.len()
+    && actual.as_bytes()[actual.len() - excluded.len() - 1] == b'.'
+    && actual.ends_with(excluded)
 }
 
 fn maybe_ingest_focus(app: &str) {
@@ -491,6 +547,86 @@ mod tests {
   fn ax_text_excluded_returns_false_when_no_hosts() {
     let f = PrivacyFilters::default();
     assert!(!ax_text_excluded(&f, "anything"));
+  }
+
+  #[test]
+  fn ax_text_excluded_matches_subdomain_of_excluded_host() {
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(ax_text_excluded(
+      &f,
+      "value=https://mail.internal.corp.example/inbox"
+    ));
+    assert!(ax_text_excluded(
+      &f,
+      "window=Docs — mail.internal.corp.example"
+    ));
+  }
+
+  #[test]
+  fn ax_text_excluded_rejects_hyphen_prefixed_lookalike() {
+    // `not-internal.corp.example` must NOT match `internal.corp.example`:
+    // the character before the excluded suffix is a hyphen, not a label
+    // boundary.
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(!ax_text_excluded(
+      &f,
+      "value=https://not-internal.corp.example/"
+    ));
+    assert!(!ax_text_excluded(&f, "window=not-internal.corp.example"));
+  }
+
+  #[test]
+  fn ax_text_excluded_rejects_longer_tld_lookalike() {
+    // `internal.corp.example.gov` is a different domain.
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(!ax_text_excluded(
+      &f,
+      "value=https://internal.corp.example.gov/"
+    ));
+    assert!(!ax_text_excluded(
+      &f,
+      "window=Public site internal.corp.example.gov"
+    ));
+  }
+
+  #[test]
+  fn ax_text_excluded_strips_trailing_url_punctuation() {
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(ax_text_excluded(
+      &f,
+      "value=See https://internal.corp.example/path."
+    ));
+    assert!(ax_text_excluded(
+      &f,
+      "value=(see https://internal.corp.example)"
+    ));
+  }
+
+  #[test]
+  fn ax_text_excluded_tolerates_non_ascii_separators() {
+    // Em dash and Japanese punctuation must be treated as non-host bytes
+    // without panicking on UTF-8 boundaries.
+    let f = PrivacyFilters {
+      excluded_apps: vec![],
+      excluded_hosts: vec!["internal.corp.example".to_string()],
+    };
+    assert!(ax_text_excluded(
+      &f,
+      "window=社内 — internal.corp.example を開く"
+    ));
+    assert!(!ax_text_excluded(&f, "window=社内 — 別のドメイン"));
   }
 
   #[test]
