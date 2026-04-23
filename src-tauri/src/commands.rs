@@ -886,6 +886,63 @@ pub fn auth_biometric_authenticate(payload: Value) -> Result<Value, String> {
 
 #[cfg(debug_assertions)]
 #[tauri::command]
+pub async fn shogun_memory_debug_query(
+  payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+  use crate::context_assembly;
+  let query = payload
+    .get("query")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .to_string();
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(12)
+    .clamp(1, 80);
+  let semantic = payload
+    .get("semantic")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+    query: &query,
+    limit,
+    semantic,
+  })
+  .await?;
+
+  let draft_block = context_assembly::format_hits_draft_context(&hits, 10_000);
+  let brief_block = context_assembly::format_hits_brief_json_prompt(&hits, 10_000);
+  let reply_block = context_assembly::format_hits_reply_draft(&hits);
+
+  let items: Vec<serde_json::Value> = hits
+    .iter()
+    .map(|h| {
+      serde_json::json!({
+        "id": h.id,
+        "title": h.title,
+        "snippet": h.snippet,
+        "source": h.source,
+        "provenance": h.provenance,
+        "created_at": h.created_at,
+      })
+    })
+    .collect();
+
+  Ok(serde_json::json!({
+    "hits": items,
+    "draft_block": draft_block,
+    "brief_block": brief_block,
+    "reply_block": reply_block,
+    "query": query,
+    "limit": limit,
+    "semantic": semantic,
+  }))
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
 pub fn shogun_memory_debug_recent_calls(
   ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
   payload: serde_json::Value,
