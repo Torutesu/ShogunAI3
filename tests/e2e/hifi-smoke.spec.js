@@ -271,7 +271,13 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
     await expect(page.locator(".s-pane-head")).toContainText("Integrations");
 
-    await page.locator(".s-pane-body").getByRole("button", { name: "Sync to Memory" }).click();
+    // Scope to the Google Calendar card — Gmail and Calendar each expose a
+    // "Sync to Memory" button, so the unscoped getByRole hits both.
+    await page
+      .locator(".s-card")
+      .filter({ hasText: "Google Calendar" })
+      .getByRole("button", { name: "Sync to Memory" })
+      .click();
     await expect(page.locator(".app-toast.success")).toContainText("Calendar synced to Memory", {
       timeout: 8000,
     });
