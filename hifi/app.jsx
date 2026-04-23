@@ -14,6 +14,7 @@ const NAV = [
   {id:'chat',      label:'Chat',         jp:'対話',   icon:'chat',      section:'main'},
   {id:'agents',    label:'Agents',       jp:'家臣',   icon:'agents',    section:'main'},
   {id:'work',      label:'Work',         jp:'任務',   icon:'work',      section:'workspace'},
+  {id:'tasks',     label:'Tasks',        jp:'任務',   icon:'check',     section:'workspace'},
   {id:'meetings',  label:'Meetings',     jp:'会議',   icon:'calendar',  section:'workspace'},
 ];
 
@@ -1964,6 +1965,7 @@ function App() {
     chat: ScreenChat,
     agents: ScreenAgents,
     work: ScreenWork,
+    tasks: ScreenTasks,
     meetings: ScreenMeetings,
   }[active] || ScreenHome;
 
