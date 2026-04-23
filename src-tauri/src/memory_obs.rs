@@ -9,9 +9,11 @@
 // volume grows, switch to `&[(&'static str, &dyn std::fmt::Display)]` or a
 // macro so hot paths avoid per-event allocations. See B-1 Task 1 review.
 
-/// Format a single event line. Values that contain a space, `=`, or `"` are
-/// wrapped in double quotes; embedded quotes inside such values are escaped
-/// as `\"`. Fields are emitted in the order given.
+/// Format a single event line. Values that contain whitespace
+/// (` `, `\t`, `\n`, `\r`), `=`, `"`, or `\` are wrapped in double quotes;
+/// inside the quoted form, `\` is escaped as `\\`, `"` as `\"`, and vertical
+/// whitespace (`\n`, `\r`, `\t`) is collapsed to a single space so each event
+/// stays on one line. Fields are emitted in the order given.
 pub fn format_event(event: &str, fields: &[(&'static str, String)]) -> String {
     let mut out = format!("event={}", event);
     for (k, v) in fields {
