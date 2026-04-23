@@ -47,6 +47,7 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
   init_schema(&conn)?;
   ensure_embedding_column(&conn)?;
   ensure_context_layer_columns(&conn)?;
+  ensure_redaction_nullable(&conn)?;
   migrate_json_if_needed(&conn)?;
   Ok(conn)
 }
@@ -107,6 +108,83 @@ fn ensure_context_layer_columns(conn: &Connection) -> Result<(), String> {
   if needs_provenance {
     backfill_provenance_from_source(conn)?;
   }
+  Ok(())
+}
+
+/// Relax a legacy NOT NULL constraint on `mem_items.redaction`. Old dev DBs were
+/// created with `redaction TEXT NOT NULL`, which blocks ingest from sources that
+/// don't produce a whitelisted redaction tag (e.g. `capture_ax`). SQLite can't
+/// drop a column constraint in place, so rebuild the table when detected.
+fn ensure_redaction_nullable(conn: &Connection) -> Result<(), String> {
+  let mut stmt = conn
+    .prepare("PRAGMA table_info(mem_items)")
+    .map_err(|e| e.to_string())?;
+  let mut is_notnull = false;
+  let rows = stmt
+    .query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(3)?)))
+    .map_err(|e| e.to_string())?;
+  for row in rows {
+    let (name, notnull) = row.map_err(|e| e.to_string())?;
+    if name == "redaction" && notnull == 1 {
+      is_notnull = true;
+      break;
+    }
+  }
+  drop(stmt);
+  if !is_notnull {
+    return Ok(());
+  }
+
+  let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+  tx.execute_batch(
+    r#"
+      DROP TRIGGER IF EXISTS mem_items_ai;
+      DROP TRIGGER IF EXISTS mem_items_ad;
+      DROP TRIGGER IF EXISTS mem_items_au;
+
+      CREATE TABLE mem_items_new (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        snippet TEXT NOT NULL,
+        source TEXT NOT NULL,
+        kinds_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        embedding BLOB,
+        provenance TEXT,
+        entity_id TEXT,
+        confidence REAL,
+        redaction TEXT
+      );
+
+      INSERT INTO mem_items_new
+        (id, title, snippet, source, kinds_json, created_at, embedding, provenance, entity_id, confidence, redaction)
+        SELECT id, title, snippet, source, kinds_json, created_at, embedding, provenance, entity_id, confidence, redaction
+        FROM mem_items;
+
+      DROP TABLE mem_items;
+      ALTER TABLE mem_items_new RENAME TO mem_items;
+
+      CREATE TRIGGER mem_items_ai AFTER INSERT ON mem_items BEGIN
+        INSERT INTO mem_items_fts(rowid, title, snippet, source)
+        VALUES (new.rowid, new.title, new.snippet, new.source);
+      END;
+      CREATE TRIGGER mem_items_ad AFTER DELETE ON mem_items BEGIN
+        INSERT INTO mem_items_fts(mem_items_fts, rowid, title, snippet, source)
+        VALUES('delete', old.rowid, old.title, old.snippet, old.source);
+      END;
+      CREATE TRIGGER mem_items_au AFTER UPDATE ON mem_items BEGIN
+        INSERT INTO mem_items_fts(mem_items_fts, rowid, title, snippet, source)
+        VALUES('delete', old.rowid, old.title, old.snippet, old.source);
+        INSERT INTO mem_items_fts(rowid, title, snippet, source)
+        VALUES (new.rowid, new.title, new.snippet, new.source);
+      END;
+
+      INSERT INTO mem_items_fts(mem_items_fts) VALUES('rebuild');
+    "#,
+  )
+  .map_err(|e| e.to_string())?;
+  tx.commit().map_err(|e| e.to_string())?;
+  log::info!("memory_store: rebuilt mem_items to relax redaction NOT NULL");
   Ok(())
 }
 
