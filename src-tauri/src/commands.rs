@@ -1006,3 +1006,27 @@ pub fn shogun_memory_debug_sync_status() -> Result<serde_json::Value, String> {
     }
   }))
 }
+
+#[tauri::command]
+pub fn shogun_memory_debug_gate() -> Result<serde_json::Value, String> {
+  // `cfg!` evaluates at compile time to a bool — safe to use inside
+  // the function body (unlike `#[cfg(...)]` on expression blocks).
+  if !cfg!(debug_assertions) {
+    return Ok(serde_json::json!({
+      "available": false,
+      "reason": "release_build",
+    }));
+  }
+  let enabled = settings_store::load()
+    .ok()
+    .and_then(|doc| {
+      doc
+        .pointer("/sections/developer/memoryDebugger")
+        .and_then(|v| v.as_bool())
+    })
+    .unwrap_or(false);
+  Ok(serde_json::json!({
+    "available": enabled,
+    "reason": if enabled { "enabled" } else { "settings_disabled" },
+  }))
+}
