@@ -15,6 +15,7 @@ mod google_oauth;
 mod integration_secrets;
 mod integrations;
 mod llm;
+mod llm_providers;
 mod macos_ax;
 mod meeting_commands;
 mod meeting_enhance;
