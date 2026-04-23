@@ -4,6 +4,28 @@ use crate::{context_assembly, secrets, settings_store};
 use serde_json::{json, Value};
 use url::Url;
 
+fn now_ms() -> u64 {
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0)
+}
+
+fn provenance_counts_from_hits(
+  hits: &[context_assembly::Hit],
+) -> crate::memory_debug::ProvenanceCounts {
+  let mut c = crate::memory_debug::ProvenanceCounts::default();
+  for h in hits {
+    match h.provenance.as_str() {
+      "screen" => c.screen += 1,
+      "connector" => c.connector += 1,
+      "meeting" => c.meeting += 1,
+      _ => c.user += 1,
+    }
+  }
+  c
+}
+
 fn privacy_allows_chat_server_memory_assembly() -> bool {
   settings_store::load()
     .ok()
@@ -53,7 +75,11 @@ fn read_extra_llm_hosts() -> Vec<String> {
     .unwrap_or_default()
 }
 
-pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
+pub async fn chat_complete(
+  payload: &Value,
+  chat_ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
+  let chat_start = std::time::Instant::now();
   let key = secrets::get_llm_api_key()?
     .filter(|k| !k.trim().is_empty())
     .ok_or_else(|| {
@@ -133,6 +159,22 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
           ("semantic", semantic.to_string()),
         ],
       );
+      if let Some(ring) = chat_ring {
+        ring.push(crate::memory_debug::CallTrace {
+          ts_ms: now_ms(),
+          route: "chat.complete",
+          query_preview: crate::memory_obs::clip_preview(q),
+          query_len: q.chars().count(),
+          limit,
+          semantic,
+          hits_count: hits.len(),
+          provenance_counts: provenance_counts_from_hits(&hits),
+          block_chars: block.chars().count(),
+          elapsed_ms: chat_start.elapsed().as_millis() as u64,
+          status: crate::memory_debug::CallStatus::Ok,
+          assembled_block: Some(block.clone()),
+        });
+      }
       if !block.is_empty() {
         messages.push(json!({
           "role": "system",
@@ -195,7 +237,10 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
 }
 
 /// One-shot Markdown draft from UI payload (`target`, `prompt`, `source`, …).
-pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
+pub async fn draft_from_payload(
+  payload: &Value,
+  ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
   let target = payload
     .get("target")
     .and_then(|t| t.as_str())
@@ -211,6 +256,10 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     .unwrap_or("");
   let mut memory_block = String::new();
   let mut hits_count: usize = 0;
+  let mut draft_hits: Vec<context_assembly::Hit> = Vec::new();
+  let mut draft_q = String::new();
+  let mut draft_limit: u64 = 8;
+  let mut draft_semantic = false;
   if privacy_allows_chat_server_memory_assembly() {
     if let Some(ma) = payload.get("memoryAssembly").and_then(|x| x.as_object()) {
       let q = ma
@@ -233,6 +282,10 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
       .unwrap_or_else(|_| Vec::new());
       hits_count = hits.len();
       memory_block = context_assembly::format_hits_draft_context(&hits, 6000);
+      draft_q = q.to_string();
+      draft_limit = limit;
+      draft_semantic = semantic;
+      draft_hits = hits;
     }
   }
   let user = if memory_block.is_empty() {
@@ -255,7 +308,7 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
       { "role": "user", "content": user }
     ]
   });
-  let out = chat_complete(&wrapped).await?;
+  let out = chat_complete(&wrapped, None).await?;
   let content = out
     .get("message")
     .and_then(|m| m.as_str())
@@ -278,6 +331,24 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
       ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
     ],
   );
+  if memory_used {
+    if let Some(r) = ring {
+      r.push(crate::memory_debug::CallTrace {
+        ts_ms: now_ms(),
+        route: "draft_from_payload",
+        query_preview: crate::memory_obs::clip_preview(&draft_q),
+        query_len: draft_q.chars().count(),
+        limit: draft_limit,
+        semantic: draft_semantic,
+        hits_count,
+        provenance_counts: provenance_counts_from_hits(&draft_hits),
+        block_chars,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        status: crate::memory_debug::CallStatus::Ok,
+        assembled_block: Some(memory_block.clone()),
+      });
+    }
+  }
   Ok(json!({
     "content": content,
     "title": title,
@@ -286,7 +357,10 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
   }))
 }
 
-pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
+pub async fn brief_generate(
+  payload: &Value,
+  ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
   let start = std::time::Instant::now();
   let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
     query: "",
@@ -303,7 +377,7 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
   let synthetic = json!({
     "messages": [{ "role": "user", "content": user_prompt }],
   });
-  let out = chat_complete(&synthetic).await?;
+  let out = chat_complete(&synthetic, None).await?;
   let message = out.get("message").and_then(|m| m.as_str()).unwrap_or("{}");
   let sections_val: Value = serde_json::from_str(message).unwrap_or(json!({ "sections": [] }));
   let sections = sections_val
@@ -323,6 +397,23 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
       ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
     ],
   );
+  if let Some(r) = ring {
+    let block_chars = block.chars().count();
+    r.push(crate::memory_debug::CallTrace {
+      ts_ms: now_ms(),
+      route: "brief.get",
+      query_preview: String::new(),
+      query_len: 0,
+      limit: 15,
+      semantic: false,
+      hits_count,
+      provenance_counts: provenance_counts_from_hits(&hits),
+      block_chars,
+      elapsed_ms: start.elapsed().as_millis() as u64,
+      status: crate::memory_debug::CallStatus::Ok,
+      assembled_block: Some(block.clone()),
+    });
+  }
   Ok(json!({
     "sections": sections,
     "generatedAt": generated,
@@ -332,7 +423,10 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
 }
 
 /// Draft a paste-ready reply from a Morning Brief item + local Memory (requires LLM API key).
-pub async fn draft_reply_for_brief(payload: &Value) -> Result<Value, String> {
+pub async fn draft_reply_for_brief(
+  payload: &Value,
+  ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
   let item = payload.get("brief_item");
   let start = std::time::Instant::now();
   let what = item
@@ -372,7 +466,7 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
     if mem_block.is_empty() {
       "—\n".to_string()
     } else {
-      mem_block
+      mem_block.clone()
     }
   );
   let wrapped = json!({
@@ -384,7 +478,7 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
       { "role": "user", "content": user }
     ]
   });
-  let out = chat_complete(&wrapped).await?;
+  let out = chat_complete(&wrapped, None).await?;
   let content = out
     .get("message")
     .and_then(|m| m.as_str())
@@ -402,6 +496,22 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
       ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
     ],
   );
+  if let Some(r) = ring {
+    r.push(crate::memory_debug::CallTrace {
+      ts_ms: now_ms(),
+      route: "draft_reply",
+      query_preview: crate::memory_obs::clip_preview(&q),
+      query_len: q.chars().count(),
+      limit: 12,
+      semantic: true,
+      hits_count: hits.len(),
+      provenance_counts: provenance_counts_from_hits(&hits),
+      block_chars: mem_block.chars().count(),
+      elapsed_ms: start.elapsed().as_millis() as u64,
+      status: crate::memory_debug::CallStatus::Ok,
+      assembled_block: Some(mem_block.clone()),
+    });
+  }
   Ok(json!({
     "content": content,
     "title": title,

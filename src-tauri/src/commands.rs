@@ -102,7 +102,10 @@ pub fn shogun_entity_query(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn shogun_brief_get(payload: Value) -> Result<Value, String> {
+pub async fn shogun_brief_get(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
   let settings = settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
   if brief::should_use_v2(&settings, &payload) {
     let user_tz = payload
@@ -112,17 +115,23 @@ pub async fn shogun_brief_get(payload: Value) -> Result<Value, String> {
     let ms = ts();
     return Ok(brief::morning_brief_v2_stub(ms, user_tz, &payload));
   }
-  llm::brief_generate(&payload).await
+  llm::brief_generate(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]
-pub async fn shogun_chat_complete(payload: Value) -> Result<Value, String> {
-  llm::chat_complete(&payload).await
+pub async fn shogun_chat_complete(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
+  llm::chat_complete(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]
-pub async fn shogun_draft(payload: Value) -> Result<Value, String> {
-  llm::draft_from_payload(&payload).await
+pub async fn shogun_draft(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
+  llm::draft_from_payload(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]
@@ -786,8 +795,11 @@ pub fn shogun_start_focus_session(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn shogun_draft_reply(payload: Value) -> Result<Value, String> {
-  llm::draft_reply_for_brief(&payload).await
+pub async fn shogun_draft_reply(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
+  llm::draft_reply_for_brief(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]

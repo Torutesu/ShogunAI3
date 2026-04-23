@@ -146,7 +146,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
       { "role": "user", "content": user }
     ]
   });
-  let out = llm::chat_complete(&wrapped).await?;
+  let out = llm::chat_complete(&wrapped, None).await?;
   let text = out
     .get("message")
     .and_then(|m| m.as_str())
