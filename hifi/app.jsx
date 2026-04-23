@@ -856,7 +856,7 @@ function App() {
   const [hummingbirdOpen, setHummingbirdOpen] = useState(false);
   const [hummingbirdInput, setHummingbirdInput] = useState('');
   const [userOpen, setUserOpen] = useState(false);
-  const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220});
+  const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220, maxHeight:600});
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [contextPanelAnchor, setContextPanelAnchor] = useState({ left: 0, bottom: 0, width: 320 });
   const [chatMenu, setChatMenu] = useState({ open:false, chatId:null, x:0, y:0, width:240 });
@@ -910,7 +910,17 @@ function App() {
 
   const openUser = () => {
     const r = userBtnRef.current?.getBoundingClientRect();
-    if (r) setUserAnchor({left: r.left, bottom: window.innerHeight - r.top + 8, width: r.width});
+    if (r) {
+      // Clamp menu height to the space between viewport top (with 16px margin)
+      // and the pill so the upward-growing menu never renders above the viewport.
+      // If natural content is taller than maxHeight, the menu scrolls internally.
+      setUserAnchor({
+        left: r.left,
+        bottom: window.innerHeight - r.top + 8,
+        width: r.width,
+        maxHeight: Math.max(200, r.top - 16),
+      });
+    }
     setContextPanelOpen(false);
     setUserOpen(v => !v);
   };
@@ -2705,7 +2715,12 @@ function App() {
           />
           <div
             className="user-float"
-            style={{ left: userAnchor.left, bottom: userAnchor.bottom, width: userAnchor.width }}
+            style={{
+              left: userAnchor.left,
+              bottom: userAnchor.bottom,
+              width: userAnchor.width,
+              maxHeight: userAnchor.maxHeight,
+            }}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="user-float-head">
@@ -3386,7 +3401,8 @@ function App() {
           border-radius:18px;
           box-shadow:0 26px 56px -16px rgba(0,0,0,0.62), 0 2px 0 rgba(0,0,0,0.32);
           padding:6px 0;
-          overflow:hidden;
+          overflow-x:hidden;
+          overflow-y:auto;
           min-width:220px;
         }
         @keyframes userFloatIn {
