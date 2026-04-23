@@ -1,6 +1,9 @@
 //! Builtin recipes (LLM prompts over meeting transcript ± memory).
 
-use crate::context_assembly::{assemble_memory_hits, format_hits_draft_context, AssembleParams, Hit};
+use crate::context_assembly::{
+  assemble_memory_hits, format_hits_draft_context, AssembleParams, Hit,
+  DRAFT_PROMPT_BUDGET_CHARS, MEETING_DIGEST_BUDGET_CHARS,
+};
 use crate::{llm, meeting_store};
 use serde_json::{json, Value};
 
@@ -102,7 +105,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
         "## Transcript\n{}\n\n## Notes\n{}\n\n## Related memory\n{}\n\nDraft a short follow-up email (greeting, thanks, commitments, next step).",
         tr_text.chars().take(14_000).collect::<String>(),
         notes_text.chars().take(6000).collect::<String>(),
-        format_hits_draft_context(&memory_hits, 6000)
+        format_hits_draft_context(&memory_hits, DRAFT_PROMPT_BUDGET_CHARS)
       ),
     ),
     RecipeId::ActionItems => (
@@ -118,7 +121,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
       format!(
         "## Transcript\n{}\n\n## Memory\n{}\n\nSummarize feature requests as bullets with customer pain.",
         tr_text.chars().take(14_000).collect::<String>(),
-        format_hits_draft_context(&memory_hits, 8000)
+        format_hits_draft_context(&memory_hits, MEETING_DIGEST_BUDGET_CHARS)
       ),
     ),
     RecipeId::PrdDraft => (
@@ -127,7 +130,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
         "## Transcript\n{}\n\n## Notes\n{}\n\n## Memory\n{}\n\nDraft Problem, Goals, Non-goals, Success metrics — cite transcript only.",
         tr_text.chars().take(12_000).collect::<String>(),
         notes_text.chars().take(6000).collect::<String>(),
-        format_hits_draft_context(&memory_hits, 6000)
+        format_hits_draft_context(&memory_hits, DRAFT_PROMPT_BUDGET_CHARS)
       ),
     ),
     RecipeId::DecisionLog => (

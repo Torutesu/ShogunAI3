@@ -122,7 +122,10 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
         semantic,
       })
       .await?;
-      let block = context_assembly::format_hits_draft_context(&hits, 10_000);
+      let block = context_assembly::format_hits_draft_context(
+        &hits,
+        context_assembly::SYSTEM_PROMPT_BUDGET_CHARS,
+      );
       if !block.is_empty() {
         messages.push(json!({
           "role": "system",
@@ -226,7 +229,10 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
       })
       .await
       .unwrap_or_else(|_| Vec::new());
-      memory_block = context_assembly::format_hits_draft_context(&hits, 6000);
+      memory_block = context_assembly::format_hits_draft_context(
+        &hits,
+        context_assembly::DRAFT_PROMPT_BUDGET_CHARS,
+      );
     }
   }
   let user = if memory_block.is_empty() {
@@ -275,7 +281,10 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
     semantic: false,
   })
   .await?;
-  let block = context_assembly::format_hits_brief_json_prompt(&hits, 10_000);
+  let block = context_assembly::format_hits_brief_json_prompt(
+    &hits,
+    context_assembly::SYSTEM_PROMPT_BUDGET_CHARS,
+  );
   let user_prompt = format!(
     "From these local memory items, output ONLY valid JSON with shape {{\"sections\":[{{\"title\":string,\"body\":string}}]}}. No markdown code fences. If there are no items, use {{\"sections\":[]}}.\n\nMemories:\n{}",
     block
