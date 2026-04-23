@@ -34,6 +34,13 @@ function ScreenChat() {
   const [messages, setMessages] = useStateB([]);
   const [composerText, setComposerText] = useStateB('');
   const [memoryContext, setMemoryContext] = useStateB('');
+  /**
+   * Structured hits when the memory block came from an in-app search (so we
+   * can render FTS5 highlights per field). `null` when the block came from
+   * a composer seed — the plain string in `memoryContext` is the source of
+   * truth in that case.
+   */
+  const [memoryContextHits, setMemoryContextHits] = useStateB(null);
   const [loading, setLoading] = useStateB(false);
   const [memoryTotal, setMemoryTotal] = useStateB(0);
   const [modelHint, setModelHint] = useStateB('');
@@ -101,11 +108,15 @@ function ScreenChat() {
       if (!id || !seed || !seed.chatThreads || !seed.chatThreads[id]) {
         setMessages([]);
         setMemoryContext('');
+        setMemoryContextHits(null);
         return;
       }
       setMessages(seed.chatThreads[id].map((m) => ({ ...m })));
       const ctx = seed.chatMemoryContext && seed.chatMemoryContext[id];
       setMemoryContext(ctx ? String(ctx) : '');
+      // Seed-provided contexts are plain strings — structured hits only come
+      // from in-app searches.
+      setMemoryContextHits(null);
     };
     syncFromShell();
     window.addEventListener('shogun-active-chat-changed', syncFromShell);
@@ -132,16 +143,39 @@ function ScreenChat() {
   }, []);
 
   const attachMemory = async () => {
-    const r = await runRuntimeActionB('memory.search', { query: '', limit: 12 }, { silentError: true });
-    if (!r.ok || !r.data?.hits?.length) {
-      toast('No memory items to attach', 'warn');
+    // Composer text drives the search when present so the attached memory is
+    // topically relevant; an empty composer falls back to the old behavior of
+    // attaching the most recent 12 items.
+    const query = composerText.trim();
+    const r = await runRuntimeActionB(
+      'memory.search',
+      { query, limit: 12 },
+      { silentError: true }
+    );
+    if (!r.ok) {
+      const msg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
+      toast(msg ? 'Memory search failed — ' + msg : 'Memory search failed', 'warn');
       return;
     }
-    const block = r.data.hits
+    const hits = (r.data && Array.isArray(r.data.hits)) ? r.data.hits : [];
+    if (!hits.length) {
+      toast(query ? 'No memory matched "' + query.slice(0, 40) + '"' : 'No memory items to attach', 'warn');
+      return;
+    }
+    // Plain-text block is what actually reaches the LLM (payload.memoryContext
+    // in chat_complete). We keep the existing "[provenance] title: snippet"
+    // format so the backend contract is unchanged.
+    const block = hits
       .map((h) => '[' + (h.provenance || 'user') + '] ' + (h.title || '') + ': ' + (h.snippet || ''))
       .join('\n');
     setMemoryContext(block.slice(0, 12000));
-    toast('Memory snippets attached for the next message', 'success');
+    setMemoryContextHits(hits);
+    toast(
+      query
+        ? 'Memory matching "' + query.slice(0, 40) + '" attached (' + hits.length + ')'
+        : 'Attached ' + hits.length + ' recent memory items',
+      'success'
+    );
   };
 
   const sendChat = async () => {
@@ -207,6 +241,7 @@ function ScreenChat() {
   const newChat = () => {
     setMessages([]);
     setMemoryContext('');
+    setMemoryContextHits(null);
     setComposerText('');
     pendingMemoryAssemblyRef.current = null;
   };
@@ -357,12 +392,35 @@ function ScreenChat() {
             className="memory-context-clear"
             type="button"
             disabled={!memoryContext}
-            onClick={() => setMemoryContext('')}
+            onClick={() => { setMemoryContext(''); setMemoryContextHits(null); }}
           >
             Clear
           </button>
         </div>
-        {memoryContext ? (
+        {memoryContextHits && memoryContextHits.length ? (
+          <div className="memory-context-body memory-context-body--filled memory-context-body--hits">
+            {memoryContextHits.map((h, i) => {
+              const prov = (h && h.provenance) || 'user';
+              const titleSrc = (h && (h.title_highlight || h.title)) || '';
+              const snippetSrc = (h && (h.snippet_highlight || h.snippet)) || '';
+              return (
+                <div key={(h && h.id) || ('mch-' + i)} className="memory-context-hit">
+                  <div className="memory-context-hit-head">
+                    <span className="memory-context-hit-tag">{prov}</span>
+                    <span className="memory-context-hit-title">
+                      {window.ShogunHighlight ? window.ShogunHighlight.renderHighlighted(titleSrc) : titleSrc}
+                    </span>
+                  </div>
+                  {snippetSrc && (
+                    <div className="memory-context-hit-snippet">
+                      {window.ShogunHighlight ? window.ShogunHighlight.renderHighlighted(snippetSrc) : snippetSrc}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : memoryContext ? (
           <div className="memory-context-body memory-context-body--filled">
             {memoryContext}
           </div>
