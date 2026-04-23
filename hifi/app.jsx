@@ -923,16 +923,12 @@ function App() {
       // so the first row (Settings) is guaranteed inside the viewport even
       // when Playwright scrolls the sidebar so the pill is near viewport top.
       // No hard floor here; when space is tiny the menu scrolls internally.
-      // Menu content has settings shortcut labels, Japanese glosses and
-      // a profile chip — too tight at the pill's raw width. Grow beyond
-      // the pill but keep it contained in the viewport.
-      const minMenuWidth = 260;
-      const viewportCap = Math.max(220, window.innerWidth - r.left - 16);
-      const width = Math.min(viewportCap, Math.max(r.width, minMenuWidth));
+      // Match the pill's width so the popup stays inside the sidebar column
+      // (i.e. within the "wall" the user pill lives in).
       setUserAnchor({
         left: r.left,
         bottom: window.innerHeight - r.top + 8,
-        width,
+        width: Math.round(r.width),
         maxHeight: Math.max(0, r.top - 16),
       });
     }
@@ -943,16 +939,12 @@ function App() {
   const openContextPanel = () => {
     const r = contextBtnRef.current?.getBoundingClientRect();
     if (r) {
-      // Panel contains a heading ("Context Awareness"), body paragraph and
-      // a "Manage" row — sidebar-pill width (~210px) mangles the copy. Grow
-      // to at least 300px, capped to viewport so it never overflows.
-      const minPanelWidth = 300;
-      const viewportCap = Math.max(220, window.innerWidth - Math.max(12, r.left) - 16);
-      const targetWidth = Math.min(viewportCap, Math.max(Math.round(r.width), minPanelWidth));
+      // Match the pill's width so the popup stays inside the sidebar column
+      // (i.e. within the "wall" the Context-enabled pill lives in).
       setContextPanelAnchor({
         left: Math.max(12, r.left),
         bottom: window.innerHeight - r.top + 10,
-        width: targetWidth,
+        width: Math.round(r.width),
       });
     }
     setUserOpen(false);
@@ -3591,7 +3583,7 @@ function App() {
           padding:6px 0;
           overflow-x:hidden;
           overflow-y:auto;
-          min-width:260px;
+          /* width is pinned to the user-pill's width by setUserAnchor — no min */
         }
         .user-float-row .en-only,
         .user-float-row .jp {
