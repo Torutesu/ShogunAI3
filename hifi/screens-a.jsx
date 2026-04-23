@@ -938,10 +938,18 @@ function ScreenHome() {
               aria-modal="false"
               aria-labelledby="home-quick-prompt-title"
               style={{
+                // Float below the composer without consuming column height
+                // — otherwise the centered home content shifts upward every
+                // time a quick-prompt category is clicked.
+                position: 'absolute',
+                top: 'calc(100% + 10px)',
+                left: 0,
+                right: 0,
+                zIndex: 10,
                 background: 'color-mix(in srgb, var(--surface) 88%, var(--bg))',
                 border: '1px solid var(--border-hi)',
                 borderRadius: 16,
-                boxShadow: '0 8px 28px -12px rgba(0,0,0,0.45)',
+                boxShadow: '0 20px 48px -16px rgba(0,0,0,0.55)',
                 overflow: 'hidden',
               }}
             >
