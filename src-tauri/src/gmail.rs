@@ -98,6 +98,7 @@ async fn refresh_and_persist_creds(creds: &Value) -> Result<Value, String> {
 }
 
 pub async fn sync_inbox_to_memory(max_results: usize) -> Result<Value, String> {
+  let start = std::time::Instant::now();
   let mut creds = integration_secrets::get_credentials(PROVIDER)?
     .ok_or_else(not_configured_msg)?;
 
@@ -117,7 +118,15 @@ pub async fn sync_inbox_to_memory(max_results: usize) -> Result<Value, String> {
 
   if !status.is_success() {
     let snippet: String = text.chars().take(600).collect();
-    return Err(format!("Gmail API {}: {}", status, snippet));
+    let err = format!("Gmail API {}: {}", status, snippet);
+    crate::memory_obs::emit(
+      "gmail_sync_error",
+      &[
+        ("error", err.clone()),
+        ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+      ],
+    );
+    return Err(err);
   }
 
   let body: Value = serde_json::from_str(&text)
@@ -153,6 +162,15 @@ pub async fn sync_inbox_to_memory(max_results: usize) -> Result<Value, String> {
     ingested += 1;
   }
 
+  let elapsed_ms = start.elapsed().as_millis() as u64;
+  crate::memory_obs::emit(
+    "gmail_sync_done",
+    &[
+      ("ingested", ingested.to_string()),
+      ("max_results", max_results.to_string()),
+      ("elapsed_ms", elapsed_ms.to_string()),
+    ],
+  );
   Ok(json!({
     "ingested": ingested,
     "stub": false,
