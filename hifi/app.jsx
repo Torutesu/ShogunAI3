@@ -922,10 +922,16 @@ function App() {
       // so the first row (Settings) is guaranteed inside the viewport even
       // when Playwright scrolls the sidebar so the pill is near viewport top.
       // No hard floor here; when space is tiny the menu scrolls internally.
+      // Menu content has settings shortcut labels, Japanese glosses and
+      // a profile chip — too tight at the pill's raw width. Grow beyond
+      // the pill but keep it contained in the viewport.
+      const minMenuWidth = 260;
+      const viewportCap = Math.max(220, window.innerWidth - r.left - 16);
+      const width = Math.min(viewportCap, Math.max(r.width, minMenuWidth));
       setUserAnchor({
         left: r.left,
         bottom: window.innerHeight - r.top + 8,
-        width: r.width,
+        width,
         maxHeight: Math.max(0, r.top - 16),
       });
     }
@@ -936,7 +942,12 @@ function App() {
   const openContextPanel = () => {
     const r = contextBtnRef.current?.getBoundingClientRect();
     if (r) {
-      const targetWidth = Math.round(r.width);
+      // Panel contains a heading ("Context Awareness"), body paragraph and
+      // a "Manage" row — sidebar-pill width (~210px) mangles the copy. Grow
+      // to at least 300px, capped to viewport so it never overflows.
+      const minPanelWidth = 300;
+      const viewportCap = Math.max(220, window.innerWidth - Math.max(12, r.left) - 16);
+      const targetWidth = Math.min(viewportCap, Math.max(Math.round(r.width), minPanelWidth));
       setContextPanelAnchor({
         left: Math.max(12, r.left),
         bottom: window.innerHeight - r.top + 10,
@@ -2830,11 +2841,9 @@ function App() {
               <button type="button" className="context-awareness-close" onClick={() => setContextPanelOpen(false)} aria-label="Close">
                 <Icon name="x" size={16} />
               </button>
-              <div style={{ fontSize: 22, fontWeight: 520, marginBottom: 6 }}>Context Awareness</div>
+              <div className="context-awareness-heading">Context Awareness</div>
               <div className="context-panel-body-copy">
-                Littlebird remembers your work across apps,
-                <br />
-                no integrations needed.
+                Littlebird remembers your work across apps, no integrations needed.
               </div>
               <button type="button" className="context-link-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
                 Learn more <Icon name="arrowUpRight" size={14} />
@@ -2849,10 +2858,8 @@ function App() {
               <Icon name="chevronRight" size={14} />
             </button>
             <div className="context-panel-foot">
-              <span className="context-panel-body-copy" style={{ fontSize: 14 }}>
-                Exclude apps and websites Littlebird
-                <br />
-                can access context from
+              <span className="context-panel-body-copy">
+                Exclude apps and websites Littlebird can access context from
               </span>
               <button type="button" className="context-manage-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
                 Manage
@@ -3468,9 +3475,16 @@ function App() {
           cursor:pointer;
         }
         .context-awareness-close:hover { background:var(--surface-2); color:var(--text); }
+        .context-awareness-heading {
+          font-size:16px;
+          font-weight:600;
+          letter-spacing:-0.01em;
+          margin-bottom:6px;
+          padding-right:28px;
+        }
         .context-panel-body-copy {
           color:var(--text-mute);
-          line-height:1.45;
+          line-height:1.5;
           font-size:13px;
         }
         .context-link-btn {
@@ -3575,7 +3589,13 @@ function App() {
           padding:6px 0;
           overflow-x:hidden;
           overflow-y:auto;
-          min-width:220px;
+          min-width:260px;
+        }
+        .user-float-row .en-only,
+        .user-float-row .jp {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         @keyframes userFloatIn {
           from { opacity:0; transform:translateY(8px) scale(0.98); }

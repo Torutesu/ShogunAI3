@@ -887,36 +887,36 @@ function ScreenAgents() {
 
       {/* Playground drawer — kept for the memory-aware draft + chat flows */}
       {playgroundOpen && (
-        <div className="card" style={{
-          marginTop:'var(--space-8)',
-          borderColor:'var(--gold-dim)',
-        }}>
-          <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:14}}>
-            <div className="t-mono" style={{fontSize:11, color:'var(--gold)', letterSpacing:'0.16em'}}>NEW AGENT · PLAYGROUND</div>
-            <span style={{flex:1}}/>
+        <div className="card" style={{marginTop:'var(--space-8)', borderColor:'var(--gold-dim)'}}>
+          <div className="row" style={{alignItems:'center', gap:'var(--space-3)', marginBottom:'var(--space-4)'}}>
+            <div className="t-mono" style={{color:'var(--gold)'}}>NEW AGENT · PLAYGROUND</div>
+            <span className="spacer"/>
             <button
               type="button"
+              className="btn btn-sm btn-ghost"
               onClick={() => setPlaygroundOpen(false)}
-              style={{all:'unset', padding:4, color:'var(--text-mute)', cursor:'pointer'}}
               aria-label="Close"
+              style={{padding:'0 8px'}}
             >
               <Icon name="x" size={14}/>
             </button>
           </div>
           <textarea
-            className="s-input"
+            className="input"
             style={{
-              width:'100%', minHeight:88, resize:'vertical',
-              fontSize:14, fontFamily:'inherit',
-              background:'var(--surface)', border:'1px solid var(--border-hi)',
-              borderRadius:'var(--radius-md)', padding:12, color:'var(--text)',
+              width:'100%',
+              minHeight:88,
+              height:'auto',
+              resize:'vertical',
+              padding:'var(--space-3)',
               boxSizing:'border-box',
+              fontFamily:'inherit',
             }}
             placeholder="例: 今週のリスクを Memory から洗い出して / 投資家向けに1段落…"
             value={runPrompt}
             onChange={(e) => setRunPrompt(e.target.value)}
           />
-          <div style={{display:'flex', gap:8, marginTop:12, flexWrap:'wrap'}}>
+          <div className="row" style={{gap:'var(--space-2)', marginTop:'var(--space-3)', flexWrap:'wrap'}}>
             <button className="btn btn-primary" type="button" onClick={draftWithMemory}>
               <Icon name="edit" size={14}/> Draft + Memory
             </button>
