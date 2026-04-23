@@ -3222,7 +3222,7 @@ function App() {
         }
 
         /* User cluster (bottom-left sidebar) */
-        .user-cluster { padding:10px; border-top:1px solid var(--border); margin-top:8px; }
+        .user-cluster { padding:10px; border-top:1px solid var(--border); margin-top:auto; }
         .context-enabled-pill {
           display:flex; align-items:center; justify-content:space-between; gap:10px;
           min-height:44px; padding:0 16px;
