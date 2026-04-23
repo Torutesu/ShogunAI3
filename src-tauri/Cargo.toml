@@ -38,6 +38,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 cpal = "0.15.3"
 base64 = "0.22"
 
+[dev-dependencies]
+testing_logger = "0.1"
+
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 

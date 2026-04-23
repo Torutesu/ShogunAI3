@@ -24,6 +24,7 @@ mod meeting_recipes;
 mod meeting_session;
 mod meeting_store;
 mod meeting_stt;
+mod memory_obs;
 mod memory_store;
 mod paths;
 mod schedule_queue;
