@@ -19,6 +19,7 @@ pub fn status_json() -> Value {
 }
 
 /// Returns Ok(()) on success, Err(message) on failure or user cancel.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn authenticate(reason: &str) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   {

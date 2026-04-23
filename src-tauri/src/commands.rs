@@ -212,6 +212,7 @@ pub fn app_open_hummingbird(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn app_create_share_link(payload: Value) -> Result<Value, String> {
   #[cfg(target_os = "macos")]
   {
@@ -556,6 +557,7 @@ pub fn app_permissions_manage(payload: Value) -> Result<Value, String> {
 
 /// Native file picker for a `.app` bundle (Privacy → exclude list). Cancel returns `cancelled: true`.
 #[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn app_privacy_pick_app(payload: Value) -> Result<Value, String> {
   #[cfg(target_os = "macos")]
   {
