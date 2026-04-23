@@ -232,7 +232,17 @@ function ScreenMeetings() {
       }
     } catch (_e) {}
     runRuntimeActionM('calendar.sync', { calendarId: 'primary', maxResults: 25 }, { silentError: true }).then(function (r) {
-      if (!r || !r.ok || !r.data || !Array.isArray(r.data.events) || !r.data.events.length) return;
+      if (!r || !r.ok) {
+        // "not configured" is an expected first-run state — stay silent.
+        // Any other failure (auth expired, network, API error) gets surfaced
+        // so the user doesn't wonder why the coming-up list is stale.
+        var errMsg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
+        if (errMsg && errMsg.indexOf('not configured') < 0) {
+          toastM('カレンダー同期に失敗しました — ' + errMsg, 'warn');
+        }
+        return;
+      }
+      if (!r.data || !Array.isArray(r.data.events) || !r.data.events.length) return;
       var WKD = ['\u65e5', '\u6708', '\u706b', '\u6c34', '\u6728', '\u91d1', '\u571f'];
       var mapped = r.data.events.map(function (ev, idx) {
         var start = ev.startDateTimeMs != null ? new Date(ev.startDateTimeMs) : (ev.start ? new Date(ev.start) : new Date());
@@ -725,9 +735,20 @@ function ScreenMeetings() {
         }, function () {
           toastM('下書きは取得できましたがコピーに失敗しました', 'warn');
         });
-      } else {
-        toastM('下書きを取得できませんでした', 'warn');
+        return;
       }
+      if (c) {
+        // Draft succeeded but the browser denied clipboard access (e.g. no
+        // secure context). Tell the user explicitly so they know the text
+        // isn't on their clipboard.
+        toastM('クリップボードが利用できません', 'warn');
+        return;
+      }
+      var errMsg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
+      toastM(
+        errMsg ? 'メール下書きに失敗しました — ' + errMsg : 'メール下書きを取得できませんでした',
+        'warn'
+      );
     });
   }, [granola, granolaDraft]);
 
