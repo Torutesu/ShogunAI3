@@ -289,12 +289,22 @@ pub fn app_llm_api_key_set(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn app_llm_api_key_status(payload: Value) -> Result<Value, String> {
-  Ok(json!({
-    "configured": secrets::llm_api_key_configured()?,
-    "echo": payload,
-    "stub": false,
-  }))
+pub fn app_llm_api_key_status(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  match secrets::get_llm_api_key()? {
+    Some(k) if !k.trim().is_empty() => {
+      let provider = crate::llm_providers::detect_provider(&k);
+      Ok(serde_json::json!({
+        "configured": true,
+        "provider": provider.as_str(),
+        "keyPreview": crate::llm_providers::key_preview(&k),
+      }))
+    }
+    _ => Ok(serde_json::json!({
+      "configured": false,
+      "provider": null,
+      "keyPreview": null,
+    })),
+  }
 }
 
 #[tauri::command]
