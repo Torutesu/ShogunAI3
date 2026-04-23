@@ -865,14 +865,7 @@ function App() {
   const [chatDeleteModal, setChatDeleteModal] = useState({ open:false, chatId:null });
   const [chatWorkModal, setChatWorkModal] = useState({ open:false, chatId:null, query:'' });
   const [chatGroupsOpen, setChatGroupsOpen] = useState({ favorite: true, chats: true });
-  const [workProjects, setWorkProjects] = useState([
-    { id:'w-steal', name:'スチールカウント' },
-    { id:'w-grop', name:'GROP Internal Chatbot Project' },
-    { id:'w-cluely', name:'cluely' },
-    { id:'w-kakei', name:'家系図OCR' },
-    { id:'w-hojo', name:'補助金,助成金' },
-    { id:'w-chrome', name:'chrome自動化' },
-  ]);
+  const [workProjects, setWorkProjects] = useState([]);
   const chatWorkspaceHydratedRef = useRef(false);
   const userBtnRef = React.useRef(null);
   const contextBtnRef = React.useRef(null);
@@ -2901,20 +2894,23 @@ function App() {
                 }}
               />
             </div>
-            <div className="work-list">
-              {filteredWorkProjects.map((p) => (
-                <button key={p.id} type="button" className="work-list-item" onClick={() => assignChatToWork(p.id, p.name)}>
-                  <Icon name="folder" size={16}/>
-                  <span>{p.name}</span>
-                </button>
-              ))}
-              {filteredWorkProjects.length === 0 && (
-                <button type="button" className="work-list-item create" onClick={createAndAssignWork}>
-                  <Icon name="plus" size={16}/>
-                  <span>「{chatWorkModal.query.trim()}」を作成して追加</span>
-                </button>
-              )}
-            </div>
+            {filteredWorkProjects.length > 0 ? (
+              <div className="work-list">
+                {filteredWorkProjects.map((p) => (
+                  <button key={p.id} type="button" className="work-list-item" onClick={() => assignChatToWork(p.id, p.name)}>
+                    <Icon name="folder" size={14}/>
+                    <span>{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : chatWorkModal.query.trim() ? (
+              <button type="button" className="work-list-item create" style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} onClick={createAndAssignWork}>
+                <Icon name="plus" size={14}/>
+                <span>「{chatWorkModal.query.trim()}」を作成して追加</span>
+              </button>
+            ) : (
+              <div className="work-list-empty">プロジェクトはまだありません。名前を入力して作成してください。</div>
+            )}
           </div>
         </div>,
         document.body,
@@ -3098,73 +3094,92 @@ function App() {
           padding:18px;
         }
         .chat-dialog {
-          width:min(620px, calc(100vw - 36px));
-          background:color-mix(in srgb, var(--surface) 90%, #272727 10%);
+          width:min(400px, calc(100vw - 32px));
+          background:var(--surface);
           border:1px solid var(--border-hi);
-          border-radius:24px;
-          box-shadow:0 30px 70px -12px rgba(0,0,0,0.7), 0 4px 14px rgba(0,0,0,0.35);
-          padding:34px 38px 30px;
+          border-radius:var(--radius-lg);
+          box-shadow:var(--shadow-lg);
+          padding:18px 20px 16px;
           position:relative;
         }
-        .chat-dialog.rename { width:min(560px, calc(100vw - 36px)); border-radius:16px; padding:24px 22px 18px; }
-        .chat-dialog.work { width:min(760px, calc(100vw - 36px)); border-radius:22px; padding:30px 28px 24px; }
+        .chat-dialog.rename { width:min(380px, calc(100vw - 32px)); }
+        .chat-dialog.work { width:min(440px, calc(100vw - 32px)); padding:16px 18px 14px; }
         .chat-dialog-title {
-          font-size:21px; line-height:1.2; letter-spacing:-0.01em; color:var(--text); font-weight:600;
+          font-size:15px; line-height:1.3; letter-spacing:-0.005em; color:var(--text); font-weight:600;
         }
-        .chat-dialog.rename .chat-dialog-title { font-size:18px; letter-spacing:0; }
-        .chat-dialog.work .chat-dialog-title { font-size:42px; line-height:1.08; letter-spacing:-0.02em; }
+        .chat-dialog.rename .chat-dialog-title { font-size:14px; letter-spacing:0; }
+        .chat-dialog.work .chat-dialog-title { font-size:15px; letter-spacing:0; }
         .chat-dialog-desc {
-          margin-top:14px; color:var(--text-dim); font-size:14px; line-height:1.45;
+          margin-top:6px; color:var(--text-dim); font-size:12.5px; line-height:1.5;
         }
         .chat-dialog-actions {
-          margin-top:30px; display:flex; gap:12px; justify-content:flex-end;
+          margin-top:16px; display:flex; gap:8px; justify-content:flex-end;
         }
         .chat-dialog-btn {
-          min-width:122px; height:52px; border-radius:14px; border:1px solid transparent;
-          cursor:pointer; font-size:16px; font-weight:550; color:var(--text);
+          min-width:72px; height:32px; border-radius:var(--radius-sm); border:1px solid transparent;
+          cursor:pointer; font-size:13px; font-weight:500; color:var(--text);
           background:var(--surface-2);
+          padding:0 14px;
+          transition:background 120ms, border-color 120ms, color 120ms;
         }
+        .chat-dialog-btn:hover { background:color-mix(in srgb, var(--surface-2) 80%, var(--border-hi)); }
         .chat-dialog-btn.ghost { border-color:var(--border-hi); background:transparent; }
-        .chat-dialog-btn.solid { background:var(--text); color:var(--bg); }
-        .chat-dialog-btn.danger { background:var(--danger); color:var(--white); }
+        .chat-dialog-btn.ghost:hover { background:var(--surface-2); }
+        .chat-dialog-btn.solid { background:var(--gold); color:var(--bg); border-color:var(--gold); }
+        .chat-dialog-btn.solid:hover { background:var(--gold-hover); border-color:var(--gold-hover); }
+        .chat-dialog-btn.danger { background:var(--danger); color:#fff; border-color:var(--danger); }
+        .chat-dialog-btn.danger:hover { background:color-mix(in srgb, var(--danger) 80%, #000); }
         .chat-dialog-input {
-          width:100%; margin-top:14px; height:50px; border-radius:12px;
-          border:1px solid color-mix(in srgb, var(--gold) 35%, var(--border-hi));
-          background:color-mix(in srgb, var(--surface-2) 86%, #101010 14%);
-          color:var(--text); font-size:14px; padding:0 14px;
+          width:100%; margin-top:10px; height:34px; border-radius:var(--radius-sm);
+          border:1px solid var(--border-hi);
+          background:var(--surface-2);
+          color:var(--text); font-size:13px; padding:0 10px;
           outline:none;
+          transition:border-color 120ms, box-shadow 120ms;
         }
         .chat-dialog-input:focus {
           border-color:var(--gold);
-          box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 30%, transparent);
+          box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 28%, transparent);
         }
         .chat-dialog-close {
-          position:absolute; right:18px; top:16px; width:30px; height:30px;
-          border:0; background:transparent; color:var(--text-dim); border-radius:8px; cursor:pointer;
+          position:absolute; right:10px; top:10px; width:24px; height:24px;
+          border:0; background:transparent; color:var(--text-dim); border-radius:var(--radius-sm); cursor:pointer;
           display:flex; align-items:center; justify-content:center;
+          transition:background 120ms, color 120ms;
         }
         .chat-dialog-close:hover { color:var(--text); background:var(--surface-2); }
         .work-search-wrap {
-          margin-top:18px; height:56px; border-radius:14px;
-          border:1px solid var(--border);
-          display:flex; align-items:center; gap:10px; padding:0 14px;
+          margin-top:10px; height:34px; border-radius:var(--radius-sm);
+          border:1px solid var(--border-hi);
+          display:flex; align-items:center; gap:8px; padding:0 10px;
           color:var(--text-dim); background:var(--surface-2);
         }
         .work-search-input {
-          flex:1; min-width:0; border:0; background:transparent; outline:none; color:var(--text); font-size:17px;
+          flex:1; min-width:0; border:0; background:transparent; outline:none; color:var(--text); font-size:13px;
         }
         .work-list {
-          margin-top:0; border:1px solid var(--border); border-top:0;
-          border-radius:0 0 14px 14px; overflow:auto; max-height:320px; background:var(--surface);
+          margin-top:8px;
+          border:1px solid var(--border);
+          border-radius:var(--radius-sm);
+          overflow:auto;
+          max-height:220px;
+          background:var(--surface);
         }
+        .work-list:empty { display:none; }
         .work-list-item {
           width:100%; border:0; border-top:1px solid color-mix(in srgb, var(--border) 85%, transparent);
           background:transparent; color:var(--text); cursor:pointer; text-align:left;
-          display:flex; align-items:center; gap:12px; padding:13px 14px; font-size:16px;
+          display:flex; align-items:center; gap:10px; padding:8px 12px; font-size:13px;
+          transition:background 120ms;
         }
         .work-list-item:first-child { border-top:0; }
         .work-list-item:hover { background:var(--surface-2); }
         .work-list-item.create { color:var(--gold); }
+        .work-list-empty {
+          padding:16px 12px; text-align:center; color:var(--text-dim); font-size:12.5px;
+          border:1px dashed var(--border); border-radius:var(--radius-sm);
+          margin-top:8px;
+        }
 
         /* Floating system menu */
         .system-float {
