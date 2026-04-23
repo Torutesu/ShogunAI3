@@ -789,35 +789,74 @@ function ScreenMeetings() {
     }
   }, [listLocalTodos, injectRecipeIntoMemo]);
 
-  const addFolderTag = useCallback(() => {
-    setGranolaDraft(function (d) {
-      const line = '\n\n\u203c\ufe0f \u30d5\u30a9\u30eb\u30c0: \u53d7\u4fe1\u30c8\u30ec\u30a4\uff08\u30ed\u30fc\u30ab\u30eb\u30e1\u30e2\u306e\u307f\uff09';
-      return { ...d, body: (d.body || '') + line };
-    });
-    toastM('\u30e1\u30e2\u306b\u30d5\u30a9\u30eb\u30c0\u30bf\u30b0\u3092\u8ffd\u52a0\u3057\u307e\u3057\u305f', 'success');
+  const [granolaPillMenu, setGranolaPillMenu] = useState(null); // { kind: 'date'|'attendees'|'folder', anchor: {left, top, width} }
+  const [granolaAttendees, setGranolaAttendees] = useState(['Toru Tano']);
+  const [granolaAttendeesQuery, setGranolaAttendeesQuery] = useState('');
+  const [granolaFolder, setGranolaFolder] = useState('My notes');
+  const [granolaFolderQuery, setGranolaFolderQuery] = useState('');
+  const [granolaFolderList, setGranolaFolderList] = useState(['My notes', 'Toru team']);
+
+  const openGranolaPillMenu = useCallback(function (kind, evt) {
+    try {
+      var el = evt && evt.currentTarget;
+      if (!el) { setGranolaPillMenu({ kind: kind, anchor: { left: 80, top: 80, width: 260 } }); return; }
+      var r = el.getBoundingClientRect();
+      setGranolaPillMenu({
+        kind: kind,
+        anchor: { left: r.left, top: r.bottom + 6, width: Math.max(260, Math.round(r.width)) },
+      });
+    } catch (_e) {
+      setGranolaPillMenu({ kind: kind, anchor: { left: 80, top: 80, width: 260 } });
+    }
   }, []);
+  const closeGranolaPillMenu = useCallback(function () { setGranolaPillMenu(null); }, []);
+
+  const addFolderTag = useCallback(function (ev) {
+    openGranolaPillMenu('folder', ev);
+  }, [openGranolaPillMenu]);
 
   const addCalendarEvent = useCallback(function () {
     toastM('\u30ab\u30ec\u30f3\u30c0\u30fc\u30a4\u30d9\u30f3\u30c8\u306e\u30ea\u30f3\u30af\u306f\u8a2d\u5b9a\u304b\u3089\u6709\u52b9\u5316\u3067\u304d\u307e\u3059\uff08\u30e2\u30c3\u30af\uff09', 'info');
   }, []);
 
-  const showGranolaDateInfo = useCallback(function () {
-    if (!granola) return;
+  const showGranolaDateInfo = useCallback(function (ev) {
+    openGranolaPillMenu('date', ev);
+  }, [openGranolaPillMenu]);
+
+  const showGranolaAuthorInfo = useCallback(function (ev) {
+    openGranolaPillMenu('attendees', ev);
+  }, [openGranolaPillMenu]);
+
+  const granolaDateFull = useMemo(function () {
     try {
       var d = new Date();
-      var jp = d.toLocaleDateString('ja-JP', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-      var en = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-      toastM(en + ' / ' + jp, 'info');
+      var en = d.toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric' });
+      var jp = d.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+      var t = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      return { en: en, jp: jp, t: t };
     } catch (_e) {
-      toastM(String(granola.dateLabel || 'Today'), 'info');
+      return { en: 'Today', jp: '\u672c\u65e5', t: '--:--' };
     }
-  }, [granola]);
-
-  const showGranolaAuthorInfo = useCallback(function () {
-    if (!granola) return;
-    var a = granola.authorLabel || 'Me';
-    toastM('\u53c2\u52a0\u8005\u8868\u793a: ' + a + ' \uff08\u30ed\u30fc\u30ab\u30eb\u30ce\u30fc\u30c8\uff09', 'info');
-  }, [granola]);
+  }, [granolaPillMenu]); // re-eval when menu opens so "today" stays fresh
+  const toggleAttendee = useCallback(function (name) {
+    setGranolaAttendees(function (list) {
+      return list.indexOf(name) >= 0 ? list.filter(function (n) { return n !== name; }) : list.concat([name]);
+    });
+  }, []);
+  const pickFolder = useCallback(function (name) {
+    setGranolaFolder(name);
+    toastM('Folder: ' + name, 'success');
+    setGranolaPillMenu(null);
+  }, []);
+  const addNewFolder = useCallback(function () {
+    var base = (granolaFolderQuery || '').trim();
+    if (!base) { toastM('\u65b0\u3057\u3044\u30d5\u30a9\u30eb\u30c0\u540d\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044', 'info'); return; }
+    setGranolaFolderList(function (list) { return list.indexOf(base) >= 0 ? list : list.concat([base]); });
+    setGranolaFolder(base);
+    toastM('\u30d5\u30a9\u30eb\u30c0\u3092\u4f5c\u6210\u3057\u307e\u3057\u305f: ' + base, 'success');
+    setGranolaFolderQuery('');
+    setGranolaPillMenu(null);
+  }, [granolaFolderQuery]);
 
   const submitMeetingsPrompt = useCallback(function (e) {
     if (e) e.preventDefault();
@@ -2035,21 +2074,21 @@ function ScreenMeetings() {
             </h1>
 
             <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:18}}>
-              <button type="button" onClick={showGranolaDateInfo} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} title="Tap for full date">
+              <button type="button" onClick={function (ev) { showGranolaDateInfo(ev); }} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'date' ? true : false}>
                 <Icon name="calendar" size={13}/>
                 <span className="en-only">{granola.dateLabel}</span>
                 <span className="jp" style={{fontSize:12}}>{granola.dateLabelJp}</span>
                 {granola.time && <span style={{opacity:0.7, marginLeft:4}} className="t-mono">{granola.time}</span>}
               </button>
-              <button type="button" onClick={showGranolaAuthorInfo} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} title="Participant label">
+              <button type="button" onClick={function (ev) { showGranolaAuthorInfo(ev); }} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'attendees' ? true : false}>
                 <Icon name="users" size={13}/>
-                <span className="en-only">{granola.authorLabel}</span>
-                <span className="jp" style={{fontSize:12}}>{granola.authorLabelJp}</span>
+                <span className="en-only">{granolaAttendees.length === 1 ? 'Me' : granolaAttendees.length + ' people'}</span>
+                <span className="jp" style={{fontSize:12}}>{granolaAttendees.length === 1 ? '自分のみ' : granolaAttendees.length + '名'}</span>
               </button>
-              <button type="button" onClick={addFolderTag} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}}>
+              <button type="button" onClick={function (ev) { addFolderTag(ev); }} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'folder' ? true : false}>
                 <Icon name="folder" size={13}/>
-                <span className="en-only">Add to folder</span>
-                <span className="jp" style={{fontSize:12}}>フォルダに追加</span>
+                <span className="en-only">{granolaFolder}</span>
+                <span className="jp" style={{fontSize:12}}>フォルダ</span>
               </button>
               {granola.tag && (
                 <span style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--gold)'), color:'var(--gold)', borderColor:'color-mix(in srgb, var(--gold) 35%, transparent)'}}>
@@ -2057,6 +2096,191 @@ function ScreenMeetings() {
                 </span>
               )}
             </div>
+
+            {/* Pill popovers — date / attendees / folder */}
+            {granolaPillMenu && ReactDOM.createPortal(
+              <>
+                <div role="presentation" style={{position:'fixed', inset:0, zIndex:1300}} onMouseDown={closeGranolaPillMenu}/>
+                <div
+                  role="menu"
+                  onMouseDown={function (e) { e.stopPropagation(); }}
+                  style={{
+                    position:'fixed',
+                    left: granolaPillMenu.anchor.left,
+                    top: granolaPillMenu.anchor.top,
+                    zIndex:1301,
+                    minWidth: Math.max(280, granolaPillMenu.anchor.width + 40),
+                    maxWidth: 380,
+                    padding:6,
+                    borderRadius:14,
+                    border:'1px solid var(--border-hi)',
+                    background:'color-mix(in srgb, var(--surface-2) 96%, var(--bg))',
+                    boxShadow:'0 26px 54px -16px rgba(0,0,0,0.65), 0 4px 12px rgba(0,0,0,0.36)',
+                  }}
+                >
+                  {granolaPillMenu.kind === 'date' && (
+                    <div style={{display:'flex', alignItems:'center', gap:12, padding:'10px 10px 10px 12px', borderRadius:10}}>
+                      <Icon name="calendar" size={16} className="dim"/>
+                      <div style={{flex:1, minWidth:0}}>
+                        <div style={{fontSize:13, color:'var(--text)'}}>
+                          <span className="en-only">No calendar event</span>
+                          <span className="jp">カレンダーイベントなし</span>
+                        </div>
+                        <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', marginTop:2, letterSpacing:'0.04em'}}>
+                          {granolaDateFull.jp} · {granolaDateFull.t}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={function () { addCalendarEvent(); closeGranolaPillMenu(); }}
+                        aria-label="Link to a calendar event"
+                        style={{all:'unset', cursor:'pointer', width:28, height:28, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', display:'inline-flex', alignItems:'center', justifyContent:'center', flexShrink:0}}
+                      >
+                        <Icon name="plus" size={13}/>
+                      </button>
+                    </div>
+                  )}
+
+                  {granolaPillMenu.kind === 'attendees' && (
+                    <div style={{padding:4}}>
+                      <div style={{padding:'4px 6px 8px'}}>
+                        <input
+                          type="text"
+                          autoFocus
+                          value={granolaAttendeesQuery}
+                          onChange={function (e) { setGranolaAttendeesQuery(e.target.value); }}
+                          placeholder="Add attendees…"
+                          style={{
+                            width:'100%', boxSizing:'border-box',
+                            padding:'8px 10px',
+                            background:'transparent',
+                            border:'none',
+                            borderBottom:'1px solid var(--border)',
+                            color:'var(--text)', fontSize:13, fontFamily:'inherit',
+                            outline:'none',
+                          }}
+                        />
+                      </div>
+                      <div style={{padding:'6px 10px 2px', fontSize:11, color:'var(--text-dim)'}}>Work-ai</div>
+                      {[
+                        { name: 'Toru Tano', note: '(me)' },
+                        { name: 'Matt Reynolds', note: '' },
+                        { name: 'Kenshin Takeda', note: '' },
+                      ].filter(function (p) {
+                        var q = (granolaAttendeesQuery || '').toLowerCase();
+                        return !q || p.name.toLowerCase().indexOf(q) >= 0;
+                      }).map(function (p) {
+                        var selected = granolaAttendees.indexOf(p.name) >= 0;
+                        return (
+                          <button
+                            key={p.name}
+                            type="button"
+                            onClick={function () { toggleAttendee(p.name); }}
+                            style={{
+                              all:'unset', cursor:'pointer',
+                              display:'flex', alignItems:'center', gap:10,
+                              width:'100%', boxSizing:'border-box',
+                              padding:'8px 10px', borderRadius:10,
+                              color:'var(--text)', fontSize:13,
+                            }}
+                            onMouseEnter={function (e) { e.currentTarget.style.background = 'color-mix(in srgb, var(--surface) 70%, var(--bg))'; }}
+                            onMouseLeave={function (e) { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <span style={{
+                              width:22, height:22, borderRadius:999,
+                              background:'var(--surface)', border:'1px solid var(--border)',
+                              display:'inline-flex', alignItems:'center', justifyContent:'center',
+                              fontSize:11, color:'var(--text-mute)', fontFamily:'var(--font-mono, ui-monospace, monospace)',
+                              flexShrink:0,
+                            }}>{p.name.charAt(0)}</span>
+                            <span style={{flex:1}}>{p.name}{p.note ? <span style={{color:'var(--text-dim)', marginLeft:6, fontSize:12}}>{p.note}</span> : null}</span>
+                            {selected && <Icon name="check" size={13} className="gold"/>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {granolaPillMenu.kind === 'folder' && (
+                    <div style={{padding:4}}>
+                      <div style={{padding:'4px 6px 8px', display:'flex', alignItems:'center', gap:8}}>
+                        <input
+                          type="text"
+                          autoFocus
+                          value={granolaFolderQuery}
+                          onChange={function (e) { setGranolaFolderQuery(e.target.value); }}
+                          placeholder="Search"
+                          style={{
+                            flex:1,
+                            padding:'8px 10px',
+                            background:'transparent',
+                            border:'none',
+                            borderBottom:'1px solid var(--border)',
+                            color:'var(--text)', fontSize:13, fontFamily:'inherit',
+                            outline:'none',
+                          }}
+                        />
+                        <Icon name="search" size={13} className="dim"/>
+                      </div>
+                      {granolaFolderList.filter(function (name) {
+                        var q = (granolaFolderQuery || '').toLowerCase();
+                        return !q || name.toLowerCase().indexOf(q) >= 0;
+                      }).map(function (name) {
+                        var selected = name === granolaFolder;
+                        var avatar = name === 'My notes'
+                          ? <Icon name="lock" size={13} className="dim"/>
+                          : <span style={{
+                              width:24, height:24, borderRadius:6,
+                              background:'var(--surface)', border:'1px solid var(--border)',
+                              display:'inline-flex', alignItems:'center', justifyContent:'center',
+                              fontSize:11, color:'var(--text-mute)', fontFamily:'var(--font-mono, ui-monospace, monospace)',
+                            }}>{name.charAt(0).toUpperCase()}</span>;
+                        return (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={function () { pickFolder(name); }}
+                            style={{
+                              all:'unset', cursor:'pointer',
+                              display:'flex', alignItems:'center', gap:10,
+                              width:'100%', boxSizing:'border-box',
+                              padding:'8px 10px', borderRadius:10,
+                              color:'var(--text)', fontSize:13,
+                            }}
+                            onMouseEnter={function (e) { e.currentTarget.style.background = 'color-mix(in srgb, var(--surface) 70%, var(--bg))'; }}
+                            onMouseLeave={function (e) { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            {avatar}
+                            <span style={{flex:1}}>{name}</span>
+                            {selected && <Icon name="check" size={13} className="gold"/>}
+                          </button>
+                        );
+                      })}
+                      <div style={{height:1, margin:'4px 6px', background:'var(--border)'}}/>
+                      <button
+                        type="button"
+                        onClick={addNewFolder}
+                        style={{
+                          all:'unset', cursor:'pointer',
+                          display:'flex', alignItems:'center', gap:10,
+                          width:'100%', boxSizing:'border-box',
+                          padding:'8px 10px', borderRadius:10,
+                          color:'var(--gold)', fontSize:13,
+                        }}
+                        onMouseEnter={function (e) { e.currentTarget.style.background = 'color-mix(in srgb, var(--gold) 10%, transparent)'; }}
+                        onMouseLeave={function (e) { e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <Icon name="folder" size={13} className="gold"/>
+                        <span>New folder</span>
+                        <span style={{flex:1}}/>
+                        <Icon name="plus" size={13}/>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>,
+              document.body,
+            )}
 
             <div
               role="group"
