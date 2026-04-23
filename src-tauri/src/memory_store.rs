@@ -1294,6 +1294,90 @@ pub fn stats() -> Result<Value, String> {
   }))
 }
 
+/// Extended stats for the Memory Debugger (B-2). Returns breakdown by source
+/// and provenance, FTS integrity (base vs fts row count), and embedding
+/// coverage by source. Read-only.
+pub fn stats_extended() -> Result<Value, String> {
+  let conn = open_conn()?;
+
+  let total: i64 = conn
+    .query_row("SELECT COUNT(*) FROM mem_items", [], |r| r.get(0))
+    .map_err(|e| e.to_string())?;
+
+  let fts_total: i64 = conn
+    .query_row("SELECT COUNT(*) FROM mem_items_fts", [], |r| r.get(0))
+    .map_err(|e| e.to_string())?;
+
+  let mut by_source = Vec::new();
+  {
+    let mut stmt = conn
+      .prepare(
+        "SELECT source, COUNT(*), SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END)
+         FROM mem_items GROUP BY source ORDER BY 2 DESC",
+      )
+      .map_err(|e| e.to_string())?;
+    let rows = stmt
+      .query_map([], |r| {
+        Ok((
+          r.get::<_, String>(0)?,
+          r.get::<_, i64>(1)?,
+          r.get::<_, i64>(2).unwrap_or(0),
+        ))
+      })
+      .map_err(|e| e.to_string())?;
+    for row in rows {
+      let (source, rows_n, with_embed) = row.map_err(|e| e.to_string())?;
+      by_source.push(json!({
+        "source": source,
+        "rows": rows_n,
+        "with_embed": with_embed,
+      }));
+    }
+  }
+
+  let mut by_provenance = Vec::new();
+  {
+    let mut stmt = conn
+      .prepare(
+        "SELECT COALESCE(provenance,''), COUNT(*) FROM mem_items GROUP BY provenance",
+      )
+      .map_err(|e| e.to_string())?;
+    let rows = stmt
+      .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+      .map_err(|e| e.to_string())?;
+    for row in rows {
+      let (prov, rows_n) = row.map_err(|e| e.to_string())?;
+      by_provenance.push(json!({
+        "provenance": if prov.is_empty() { "(null)".to_string() } else { prov },
+        "rows": rows_n,
+      }));
+    }
+  }
+
+  let (earliest, latest): (Option<i64>, Option<i64>) = conn
+    .query_row("SELECT MIN(created_at), MAX(created_at) FROM mem_items", [], |r| {
+      Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?))
+    })
+    .map_err(|e| e.to_string())?;
+
+  let db_bytes = db_path()
+    .ok()
+    .and_then(|p| std::fs::metadata(p).ok())
+    .map(|m| m.len())
+    .unwrap_or(0);
+
+  Ok(json!({
+    "total": total,
+    "fts_total": fts_total,
+    "fts_integrity": total == fts_total,
+    "by_source": by_source,
+    "by_provenance": by_provenance,
+    "earliest_ms": earliest,
+    "latest_ms": latest,
+    "db_bytes": db_bytes,
+  }))
+}
+
 /// Roll-up "entities" from indexed memories: one row per distinct `source`.
 pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
   use std::collections::HashMap;

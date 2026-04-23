@@ -958,3 +958,9 @@ pub fn shogun_memory_debug_recent_calls(
     "capacity": crate::memory_debug::RING_CAPACITY,
   }))
 }
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn shogun_memory_debug_stats() -> Result<serde_json::Value, String> {
+  crate::memory_store::stats_extended()
+}
