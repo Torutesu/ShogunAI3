@@ -174,6 +174,8 @@ pub fn run() {
       meeting_commands::shogun_meeting_mic_stop,
       meeting_commands::shogun_meeting_transcribe_pcm,
       meeting_commands::shogun_meeting_mcp_tools,
+      #[cfg(debug_assertions)]
+      commands::shogun_memory_debug_recent_calls,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

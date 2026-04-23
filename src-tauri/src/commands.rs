@@ -883,3 +883,21 @@ pub fn auth_biometric_authenticate(payload: Value) -> Result<Value, String> {
     })),
   }
 }
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn shogun_memory_debug_recent_calls(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(50)
+    .min(crate::memory_debug::RING_CAPACITY as u64) as usize;
+  let calls = ring.snapshot(limit);
+  Ok(serde_json::json!({
+    "calls": calls,
+    "capacity": crate::memory_debug::RING_CAPACITY,
+  }))
+}
