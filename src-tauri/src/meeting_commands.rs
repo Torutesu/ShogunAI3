@@ -2,7 +2,7 @@
 
 use crate::{
   meeting_enhance, meeting_import, meeting_mic, meeting_mcp, meeting_recipes, meeting_session,
-  meeting_store, meeting_stt, memory_store,
+  meeting_store, meeting_stt, memory_store, settings_store,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rusqlite::params;
@@ -101,8 +101,44 @@ pub async fn shogun_meeting_stop(
   meeting_store::meeting_stop(meeting_id, ended)?;
   let detail = meeting_store::get_meeting_detail(meeting_id)?
     .ok_or_else(|| "meeting not found".to_string())?;
+
+  // Phase 3: auto-generate a meeting summary so it shows up in the
+  // Memory digest alongside connector items. Respects the user's
+  // autoDigestLang; failures are non-fatal (meeting still stops).
+  let auto_lang = settings_store::load()
+    .ok()
+    .and_then(|doc| {
+      doc.pointer("/sections/memory/autoDigestLang")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+    })
+    .unwrap_or_else(|| "en".to_string());
+  let summary_enabled = settings_store::load()
+    .ok()
+    .and_then(|doc| {
+      doc.pointer("/sections/memory/enableMemorySummary")
+        .and_then(|v| v.as_bool())
+    })
+    .unwrap_or(true);
+  let mut meeting_summary: Option<Value> = None;
+  if summary_enabled {
+    match crate::summarizer::summarize_meeting(meeting_id, &auto_lang).await {
+      Ok(s) => {
+        if let Err(e) = crate::summarizer_store::upsert(&s) {
+          log::warn!("meeting summary upsert failed for {}: {}", meeting_id, e);
+        } else {
+          meeting_summary = Some(s.to_json());
+        }
+      }
+      Err(e) => {
+        log::warn!("meeting summary failed for {}: {}", meeting_id, e);
+      }
+    }
+  }
+
   Ok(json!({
     "meeting": detail,
+    "summary": meeting_summary,
     "stub": false,
     "echo": payload,
   }))

@@ -366,6 +366,87 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value,
   })
 }
 
+// ---- Phase 3: meeting auto-summary ----------------------------------------
+
+/// Build a synthetic item Value from a stored meeting's detail / transcript /
+/// notes, then run it through the standard `summarize_item` pipeline so
+/// meetings share the same LLM path, cache, lang-handling, and priority
+/// flow as connector items.
+///
+/// Returns the generated Summary (also persisted by the caller).
+/// target_id = `mtg_<meeting_id>` so it doesn't collide with mem_items in
+/// the shared `target_kind="item"` namespace.
+pub async fn summarize_meeting(meeting_id: &str, lang: &str) -> Result<Summary, String> {
+  let detail = crate::meeting_store::get_meeting_detail(meeting_id)?
+    .ok_or_else(|| format!("meeting {} not found", meeting_id))?;
+  let title = detail
+    .get("title")
+    .and_then(|v| v.as_str())
+    .filter(|s| !s.is_empty())
+    .map(|s| s.to_string())
+    .unwrap_or_else(|| "Meeting".to_string());
+
+  // Participants → comma-separated string.
+  let participants = detail
+    .get("participants")
+    .and_then(|v| v.as_array())
+    .map(|arr| {
+      arr.iter()
+        .filter_map(|p| p.as_str().map(String::from).or_else(|| {
+          p.get("name").and_then(|n| n.as_str()).map(String::from)
+        }))
+        .collect::<Vec<_>>()
+        .join(", ")
+    })
+    .unwrap_or_default();
+
+  // Transcript final segments → single speaker-annotated transcript block,
+  // truncated to keep prompt bounded.
+  let segments = crate::meeting_store::list_transcript_final(meeting_id).unwrap_or_default();
+  let mut transcript = String::new();
+  for seg in &segments {
+    let speaker = seg.get("speaker").and_then(|v| v.as_str()).unwrap_or("?");
+    let text = seg.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    transcript.push_str(&format!("{}: {}\n", speaker, text));
+    if transcript.chars().count() > 3500 {
+      transcript.push_str("… (truncated)\n");
+      break;
+    }
+  }
+
+  // Manually authored notes, if any.
+  let note_blocks = crate::meeting_store::list_note_blocks(meeting_id).unwrap_or_default();
+  let notes: String = note_blocks
+    .iter()
+    .filter_map(|b| b.get("content").and_then(|v| v.as_str()))
+    .collect::<Vec<_>>()
+    .join("\n")
+    .chars()
+    .take(500)
+    .collect();
+
+  let mut snippet = String::new();
+  if !participants.is_empty() {
+    snippet.push_str(&format!("Participants: {}\n\n", participants));
+  }
+  if !notes.is_empty() {
+    snippet.push_str(&format!("Notes:\n{}\n\n", notes));
+  }
+  if !transcript.is_empty() {
+    snippet.push_str(&format!("Transcript:\n{}", transcript));
+  } else if snippet.is_empty() {
+    snippet.push_str("(No transcript or notes captured.)");
+  }
+
+  let synthetic = json!({
+    "id": format!("mtg_{}", meeting_id),
+    "title": title,
+    "snippet": snippet,
+    "source": "meetings",
+  });
+  summarize_item(&synthetic, lang).await
+}
+
 // ---- Phase 2 / 2.5: rollup digests (week + day) ---------------------------
 
 /// Build the rollup SYSTEM_PROMPT for a given UI language + scope.
