@@ -36,6 +36,8 @@ fn ensure_shape(mut v: Value) -> Value {
     if let Some(o) = sec.as_object_mut() {
       o.entry("biometricLockEnabled".to_string())
         .or_insert(json!(false));
+      // Memory Digest (Phase 1): feature flag for summary generation and display.
+      o.entry("enableMemorySummary".to_string()).or_insert(json!(true));
     }
   }
   v
