@@ -528,3 +528,88 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
     "echo": payload,
   }))
 }
+
+/// Anthropic Messages API を tool_choice 強制モードで呼び出し、tool_use の入力 JSON を返す。
+/// Phase 1 summarizer 専用: emit_memory_summary のような structured output ツールを使う想定。
+///
+/// - `system`: System prompt。短ければキャッシュ効果小、長ければ ephemeral cache_control を付ける (v1 は付けない)。
+/// - `user`: ユーザーメッセージ本文 (LLM に渡す本編のデータ)。
+/// - `tool`: JSON schema (`{"name": ..., "description": ..., "input_schema": ...}` の中身)。
+/// - `model`: 例 "claude-sonnet-4-6"。
+///
+/// 戻り値: LLM が emit したツールの input JSON (= summary の構造化データ)。
+pub async fn anthropic_tool_complete(
+  system: &str,
+  user: &str,
+  tool: &serde_json::Value,
+  model: &str,
+) -> Result<serde_json::Value, String> {
+  let key = crate::secrets::get_llm_api_key()?
+    .ok_or_else(|| "LLM API key not configured".to_string())?;
+
+  let tool_name = tool
+    .get("name")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "tool.name required".to_string())?
+    .to_string();
+
+  let body = serde_json::json!({
+    "model": model,
+    "max_tokens": 1024,
+    "system": system,
+    "messages": [{ "role": "user", "content": user }],
+    "tools": [tool],
+    "tool_choice": { "type": "tool", "name": tool_name },
+  });
+
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(60))
+    .build()
+    .map_err(|e| format!("reqwest build: {}", e))?;
+
+  let resp = client
+    .post("https://api.anthropic.com/v1/messages")
+    .header("x-api-key", key)
+    .header("anthropic-version", "2023-06-01")
+    .header("content-type", "application/json")
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("Anthropic tool_use network error: {}", e))?;
+
+  let status = resp.status();
+  let text = resp
+    .text()
+    .await
+    .map_err(|e| format!("Anthropic tool_use body: {}", e))?;
+
+  if !status.is_success() {
+    return Err(format!("Anthropic tool_use {}: {}", status, text.chars().take(300).collect::<String>()));
+  }
+
+  let parsed: serde_json::Value = serde_json::from_str(&text)
+    .map_err(|e| format!("Anthropic tool_use JSON parse: {}", e))?;
+
+  // Expect content = [{ type: "tool_use", name: tool_name, input: { ... } }, ...]
+  let content = parsed
+    .get("content")
+    .and_then(|v| v.as_array())
+    .ok_or_else(|| "Anthropic response missing content array".to_string())?;
+
+  for item in content {
+    if item.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+      && item.get("name").and_then(|n| n.as_str()) == Some(tool_name.as_str())
+    {
+      return item
+        .get("input")
+        .cloned()
+        .ok_or_else(|| "tool_use missing input".to_string());
+    }
+  }
+
+  Err(format!(
+    "Anthropic response has no tool_use for {}: {}",
+    tool_name,
+    text.chars().take(300).collect::<String>()
+  ))
+}
