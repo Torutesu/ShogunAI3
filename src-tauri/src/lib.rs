@@ -33,6 +33,7 @@ mod meeting_stt;
 mod memory_debug;
 mod memory_obs;
 mod memory_store;
+mod rollup_sync;
 mod summarizer_store;
 mod summarizer;
 mod paths;
@@ -114,6 +115,7 @@ pub fn run() {
       capture_sampler::start_background_sampler(app.handle().clone());
       calendar_sync::spawn_background_calendar_sync();
       connector_sync::spawn_background_connector_sync();
+      rollup_sync::spawn_background_rollup_sync();
       progress_emitter::set_app_handle(app.handle().clone());
       Ok(())
     })

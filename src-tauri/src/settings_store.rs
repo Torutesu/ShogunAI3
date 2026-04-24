@@ -43,6 +43,11 @@ fn ensure_shape(mut v: Value) -> Value {
     if let Some(o) = mem.as_object_mut() {
       // Memory Digest (Phase 1): feature flag for summary generation and display.
       o.entry("enableMemorySummary".to_string()).or_insert(json!(true));
+      // Auto-generate day + week rollups in the background so the Home
+      // "Memory digest" card is populated when the user opens the app.
+      o.entry("autoDigest".to_string()).or_insert(json!(true));
+      o.entry("autoDigestIntervalMins".to_string()).or_insert(json!(360));
+      o.entry("autoDigestLang".to_string()).or_insert(json!("en"));
     }
   }
   v
