@@ -55,11 +55,7 @@ grep -n "biometricLockEnabled\|entry(" src-tauri/src/settings_store.rs | head -1
 o.entry("enableMemorySummary".to_string()).or_insert(json!(true));
 ```
 
-配置例 (既存の `biometricLockEnabled` 行の下):
-```rust
-o.entry("biometricLockEnabled".to_string()).or_insert(json!(false));
-o.entry("enableMemorySummary".to_string()).or_insert(json!(true));
-```
+配置場所: `sections.memory` の default 群 (semanticRerank 等がある場所) の近く。`sections.security` ではなく `sections.memory` ブロック内に追加すること。
 
 ### Step 3: ビルド確認
 
@@ -1891,8 +1887,11 @@ git status
 
 Task 10 の useEffect の冒頭に `enable_memory_summary` flag チェックを追加 (settings 経由で読む):
 
+flag は `sections.memory` に格納されているため、`settingsLoad` のレスポンスから `res.data.sections.memory.enableMemorySummary` または section ごとの load API (`section: 'memory'`) で参照すること。
+
 ```javascript
 // 先頭で settings を読む (既存の useSettings パターンに従う、see existing screens)
+// flag は sections.memory に存在する (sections.security ではない)
 const [summaryEnabled, setSummaryEnabled] = useState(true);
 useEffect(() => {
   ShogunAPI.settingsLoad({}).then((res) => {
