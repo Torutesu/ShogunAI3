@@ -3,6 +3,33 @@
 use crate::{google_oauth, integration_secrets, memory_store};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
+use std::sync::Mutex;
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct GmailSyncState {
+  pub last_sync_ms: Option<u64>,
+  pub last_ingested: Option<u64>,
+  pub last_error: Option<String>,
+  pub last_duration_ms: Option<u64>,
+}
+
+static STATE: Mutex<GmailSyncState> = Mutex::new(GmailSyncState {
+  last_sync_ms: None,
+  last_ingested: None,
+  last_error: None,
+  last_duration_ms: None,
+});
+
+pub fn snapshot_state() -> GmailSyncState {
+  STATE.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+fn now_ms() -> u64 {
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0)
+}
 
 const PROVIDER: &str = "gmail";
 
@@ -98,6 +125,7 @@ async fn refresh_and_persist_creds(creds: &Value) -> Result<Value, String> {
 }
 
 pub async fn sync_inbox_to_memory(max_results: usize) -> Result<Value, String> {
+  let start = std::time::Instant::now();
   let mut creds = integration_secrets::get_credentials(PROVIDER)?
     .ok_or_else(not_configured_msg)?;
 
@@ -117,7 +145,19 @@ pub async fn sync_inbox_to_memory(max_results: usize) -> Result<Value, String> {
 
   if !status.is_success() {
     let snippet: String = text.chars().take(600).collect();
-    return Err(format!("Gmail API {}: {}", status, snippet));
+    let err = format!("Gmail API {}: {}", status, snippet);
+    crate::memory_obs::emit(
+      "gmail_sync_error",
+      &[
+        ("error", err.clone()),
+        ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+      ],
+    );
+    if let Ok(mut s) = STATE.lock() {
+      s.last_error = Some(err.clone());
+      s.last_duration_ms = Some(start.elapsed().as_millis() as u64);
+    }
+    return Err(err);
   }
 
   let body: Value = serde_json::from_str(&text)
@@ -153,6 +193,21 @@ pub async fn sync_inbox_to_memory(max_results: usize) -> Result<Value, String> {
     ingested += 1;
   }
 
+  let elapsed_ms = start.elapsed().as_millis() as u64;
+  crate::memory_obs::emit(
+    "gmail_sync_done",
+    &[
+      ("ingested", ingested.to_string()),
+      ("max_results", max_results.to_string()),
+      ("elapsed_ms", elapsed_ms.to_string()),
+    ],
+  );
+  if let Ok(mut s) = STATE.lock() {
+    s.last_sync_ms = Some(now_ms());
+    s.last_ingested = Some(ingested as u64);
+    s.last_error = None;
+    s.last_duration_ms = Some(start.elapsed().as_millis() as u64);
+  }
   Ok(json!({
     "ingested": ingested,
     "stub": false,

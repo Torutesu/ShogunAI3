@@ -74,7 +74,7 @@ Respond with JSON only.",
       { "role": "user", "content": user_msg }
     ]
   });
-  let out = llm::chat_complete(&payload).await?;
+  let out = llm::chat_complete(&payload, None).await?;
   let message = out
     .get("message")
     .and_then(|m| m.as_str())

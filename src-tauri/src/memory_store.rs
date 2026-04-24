@@ -47,6 +47,7 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
   init_schema(&conn)?;
   ensure_embedding_column(&conn)?;
   ensure_context_layer_columns(&conn)?;
+  ensure_redaction_nullable(&conn)?;
   migrate_json_if_needed(&conn)?;
   Ok(conn)
 }
@@ -107,6 +108,83 @@ fn ensure_context_layer_columns(conn: &Connection) -> Result<(), String> {
   if needs_provenance {
     backfill_provenance_from_source(conn)?;
   }
+  Ok(())
+}
+
+/// Relax a legacy NOT NULL constraint on `mem_items.redaction`. Old dev DBs were
+/// created with `redaction TEXT NOT NULL`, which blocks ingest from sources that
+/// don't produce a whitelisted redaction tag (e.g. `capture_ax`). SQLite can't
+/// drop a column constraint in place, so rebuild the table when detected.
+fn ensure_redaction_nullable(conn: &Connection) -> Result<(), String> {
+  let mut stmt = conn
+    .prepare("PRAGMA table_info(mem_items)")
+    .map_err(|e| e.to_string())?;
+  let mut is_notnull = false;
+  let rows = stmt
+    .query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(3)?)))
+    .map_err(|e| e.to_string())?;
+  for row in rows {
+    let (name, notnull) = row.map_err(|e| e.to_string())?;
+    if name == "redaction" && notnull == 1 {
+      is_notnull = true;
+      break;
+    }
+  }
+  drop(stmt);
+  if !is_notnull {
+    return Ok(());
+  }
+
+  let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+  tx.execute_batch(
+    r#"
+      DROP TRIGGER IF EXISTS mem_items_ai;
+      DROP TRIGGER IF EXISTS mem_items_ad;
+      DROP TRIGGER IF EXISTS mem_items_au;
+
+      CREATE TABLE mem_items_new (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        snippet TEXT NOT NULL,
+        source TEXT NOT NULL,
+        kinds_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        embedding BLOB,
+        provenance TEXT,
+        entity_id TEXT,
+        confidence REAL,
+        redaction TEXT
+      );
+
+      INSERT INTO mem_items_new
+        (id, title, snippet, source, kinds_json, created_at, embedding, provenance, entity_id, confidence, redaction)
+        SELECT id, title, snippet, source, kinds_json, created_at, embedding, provenance, entity_id, confidence, redaction
+        FROM mem_items;
+
+      DROP TABLE mem_items;
+      ALTER TABLE mem_items_new RENAME TO mem_items;
+
+      CREATE TRIGGER mem_items_ai AFTER INSERT ON mem_items BEGIN
+        INSERT INTO mem_items_fts(rowid, title, snippet, source)
+        VALUES (new.rowid, new.title, new.snippet, new.source);
+      END;
+      CREATE TRIGGER mem_items_ad AFTER DELETE ON mem_items BEGIN
+        INSERT INTO mem_items_fts(mem_items_fts, rowid, title, snippet, source)
+        VALUES('delete', old.rowid, old.title, old.snippet, old.source);
+      END;
+      CREATE TRIGGER mem_items_au AFTER UPDATE ON mem_items BEGIN
+        INSERT INTO mem_items_fts(mem_items_fts, rowid, title, snippet, source)
+        VALUES('delete', old.rowid, old.title, old.snippet, old.source);
+        INSERT INTO mem_items_fts(rowid, title, snippet, source)
+        VALUES (new.rowid, new.title, new.snippet, new.source);
+      END;
+
+      INSERT INTO mem_items_fts(mem_items_fts) VALUES('rebuild');
+    "#,
+  )
+  .map_err(|e| e.to_string())?;
+  tx.commit().map_err(|e| e.to_string())?;
+  log::info!("memory_store: rebuilt mem_items to relax redaction NOT NULL");
   Ok(())
 }
 
@@ -779,6 +857,14 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
         log::warn!("memory embed {}: {}", id_spawn, e);
       }
     });
+    crate::memory_obs::emit(
+      "ingest_done",
+      &[
+        ("source", source.to_string()),
+        ("provenance", provenance.clone()),
+        ("embedding_queued", (!skip_embed).to_string()),
+      ],
+    );
   }
 
   Ok(out)
@@ -859,6 +945,7 @@ pub fn search(payload: &Value) -> Result<Value, String> {
 /// Fetches a wider lexical candidate set, embeds the query once, re-orders by cosine similarity
 /// (items without `embedding` sort last).
 pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
+  let start = std::time::Instant::now();
   let semantic = payload
     .get("semantic")
     .and_then(|v| v.as_bool())
@@ -869,7 +956,9 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
     .unwrap_or("")
     .trim();
   if !semantic || query.is_empty() {
-    return search(payload);
+    let result = search(payload)?;
+    emit_search_with_semantics_done(&result, false, start.elapsed());
+    return Ok(result);
   }
   if secrets::get_llm_api_key()
     .ok()
@@ -877,7 +966,9 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
     .map(|s| s.trim().is_empty())
     .unwrap_or(true)
   {
-    return search(payload);
+    let result = search(payload)?;
+    emit_search_with_semantics_done(&result, false, start.elapsed());
+    return Ok(result);
   }
 
   let limit = payload
@@ -898,6 +989,7 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
     .and_then(|h| h.as_array_mut())
     .ok_or_else(|| "hits missing".to_string())?;
   if arr.is_empty() {
+    emit_search_with_semantics_done(&base, false, start.elapsed());
     return Ok(base);
   }
 
@@ -936,7 +1028,26 @@ pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
   base["hits"] = json!(new_hits);
   base["semanticRerank"] = json!(true);
   base["total"] = total;
+  emit_search_with_semantics_done(&base, true, start.elapsed());
   Ok(base)
+}
+
+fn emit_search_with_semantics_done(v: &Value, semantic_applied: bool, elapsed: std::time::Duration) {
+  let returned = v
+    .get("hits")
+    .and_then(|h| h.as_array())
+    .map(|a| a.len())
+    .unwrap_or(0);
+  let total = v.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
+  crate::memory_obs::emit(
+    "search_with_semantics_done",
+    &[
+      ("returned", returned.to_string()),
+      ("total", total.to_string()),
+      ("semantic_applied", semantic_applied.to_string()),
+      ("elapsed_ms", (elapsed.as_millis() as u64).to_string()),
+    ],
+  );
 }
 
 /// Fill **`embedding`** for rows that lack it (excludes capture sampler noise).
@@ -1186,6 +1297,90 @@ pub fn stats() -> Result<Value, String> {
     "memoriesLast24h": last24,
     "historyDays": history_days,
     "stub": false,
+  }))
+}
+
+/// Extended stats for the Memory Debugger (B-2). Returns breakdown by source
+/// and provenance, FTS integrity (base vs fts row count), and embedding
+/// coverage by source. Read-only.
+pub fn stats_extended() -> Result<Value, String> {
+  let conn = open_conn()?;
+
+  let total: i64 = conn
+    .query_row("SELECT COUNT(*) FROM mem_items", [], |r| r.get(0))
+    .map_err(|e| e.to_string())?;
+
+  let fts_total: i64 = conn
+    .query_row("SELECT COUNT(*) FROM mem_items_fts", [], |r| r.get(0))
+    .map_err(|e| e.to_string())?;
+
+  let mut by_source = Vec::new();
+  {
+    let mut stmt = conn
+      .prepare(
+        "SELECT source, COUNT(*), SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END)
+         FROM mem_items GROUP BY source ORDER BY 2 DESC",
+      )
+      .map_err(|e| e.to_string())?;
+    let rows = stmt
+      .query_map([], |r| {
+        Ok((
+          r.get::<_, String>(0)?,
+          r.get::<_, i64>(1)?,
+          r.get::<_, i64>(2).unwrap_or(0),
+        ))
+      })
+      .map_err(|e| e.to_string())?;
+    for row in rows {
+      let (source, rows_n, with_embed) = row.map_err(|e| e.to_string())?;
+      by_source.push(json!({
+        "source": source,
+        "rows": rows_n,
+        "with_embed": with_embed,
+      }));
+    }
+  }
+
+  let mut by_provenance = Vec::new();
+  {
+    let mut stmt = conn
+      .prepare(
+        "SELECT COALESCE(provenance,''), COUNT(*) FROM mem_items GROUP BY provenance",
+      )
+      .map_err(|e| e.to_string())?;
+    let rows = stmt
+      .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+      .map_err(|e| e.to_string())?;
+    for row in rows {
+      let (prov, rows_n) = row.map_err(|e| e.to_string())?;
+      by_provenance.push(json!({
+        "provenance": if prov.is_empty() { "(null)".to_string() } else { prov },
+        "rows": rows_n,
+      }));
+    }
+  }
+
+  let (earliest, latest): (Option<i64>, Option<i64>) = conn
+    .query_row("SELECT MIN(created_at), MAX(created_at) FROM mem_items", [], |r| {
+      Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?))
+    })
+    .map_err(|e| e.to_string())?;
+
+  let db_bytes = db_path()
+    .ok()
+    .and_then(|p| std::fs::metadata(p).ok())
+    .map(|m| m.len())
+    .unwrap_or(0);
+
+  Ok(json!({
+    "total": total,
+    "fts_total": fts_total,
+    "fts_integrity": total == fts_total,
+    "by_source": by_source,
+    "by_provenance": by_provenance,
+    "earliest_ms": earliest,
+    "latest_ms": latest,
+    "db_bytes": db_bytes,
   }))
 }
 

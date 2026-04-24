@@ -102,7 +102,10 @@ pub fn shogun_entity_query(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn shogun_brief_get(payload: Value) -> Result<Value, String> {
+pub async fn shogun_brief_get(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
   let settings = settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
   if brief::should_use_v2(&settings, &payload) {
     let user_tz = payload
@@ -112,17 +115,23 @@ pub async fn shogun_brief_get(payload: Value) -> Result<Value, String> {
     let ms = ts();
     return Ok(brief::morning_brief_v2_stub(ms, user_tz, &payload));
   }
-  llm::brief_generate(&payload).await
+  llm::brief_generate(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]
-pub async fn shogun_chat_complete(payload: Value) -> Result<Value, String> {
-  llm::chat_complete(&payload).await
+pub async fn shogun_chat_complete(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
+  llm::chat_complete(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]
-pub async fn shogun_draft(payload: Value) -> Result<Value, String> {
-  llm::draft_from_payload(&payload).await
+pub async fn shogun_draft(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
+  llm::draft_from_payload(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]
@@ -290,12 +299,22 @@ pub fn app_llm_api_key_set(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn app_llm_api_key_status(payload: Value) -> Result<Value, String> {
-  Ok(json!({
-    "configured": secrets::llm_api_key_configured()?,
-    "echo": payload,
-    "stub": false,
-  }))
+pub fn app_llm_api_key_status(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  match secrets::get_llm_api_key()? {
+    Some(k) if !k.trim().is_empty() => {
+      let provider = crate::llm_providers::detect_provider(&k);
+      Ok(serde_json::json!({
+        "configured": true,
+        "provider": provider.as_str(),
+        "keyPreview": crate::llm_providers::key_preview(&k),
+      }))
+    }
+    _ => Ok(serde_json::json!({
+      "configured": false,
+      "provider": null,
+      "keyPreview": null,
+    })),
+  }
 }
 
 #[tauri::command]
@@ -778,8 +797,11 @@ pub fn shogun_start_focus_session(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn shogun_draft_reply(payload: Value) -> Result<Value, String> {
-  llm::draft_reply_for_brief(&payload).await
+pub async fn shogun_draft_reply(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: Value,
+) -> Result<Value, String> {
+  llm::draft_reply_for_brief(&payload, Some(&*ring)).await
 }
 
 #[tauri::command]
@@ -862,4 +884,151 @@ pub fn auth_biometric_authenticate(payload: Value) -> Result<Value, String> {
       "echo": payload,
     })),
   }
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn shogun_memory_debug_query(
+  payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+  use crate::context_assembly;
+  let query = payload
+    .get("query")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .to_string();
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(12)
+    .clamp(1, 80);
+  let semantic = payload
+    .get("semantic")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+    query: &query,
+    limit,
+    semantic,
+  })
+  .await?;
+
+  let draft_block = context_assembly::format_hits_draft_context(&hits, 10_000);
+  let brief_block = context_assembly::format_hits_brief_json_prompt(&hits, 10_000);
+  let reply_block = context_assembly::format_hits_reply_draft(&hits);
+
+  let items: Vec<serde_json::Value> = hits
+    .iter()
+    .map(|h| {
+      serde_json::json!({
+        "id": h.id,
+        "title": h.title,
+        "snippet": h.snippet,
+        "source": h.source,
+        "provenance": h.provenance,
+        "created_at": h.created_at,
+      })
+    })
+    .collect();
+
+  Ok(serde_json::json!({
+    "hits": items,
+    "draft_block": draft_block,
+    "brief_block": brief_block,
+    "reply_block": reply_block,
+    "query": query,
+    "limit": limit,
+    "semantic": semantic,
+  }))
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn shogun_memory_debug_recent_calls(
+  ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+  payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(50)
+    .min(crate::memory_debug::RING_CAPACITY as u64) as usize;
+  let calls = ring.snapshot(limit);
+  Ok(serde_json::json!({
+    "calls": calls,
+    "capacity": crate::memory_debug::RING_CAPACITY,
+  }))
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn shogun_memory_debug_stats() -> Result<serde_json::Value, String> {
+  crate::memory_store::stats_extended()
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn shogun_memory_debug_sync_status() -> Result<serde_json::Value, String> {
+  use crate::integration_secrets;
+  use crate::settings_store;
+
+  let cal_snap = crate::calendar_sync::snapshot_state();
+  let gmail_snap = crate::gmail::snapshot_state();
+  let doc = settings_store::load().unwrap_or_else(|_| serde_json::json!({ "sections": {} }));
+  let auto_cal = doc
+    .pointer("/sections/integrations/googleCalendarAutoSync")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  let cal_creds = integration_secrets::get_credentials("google_calendar")
+    .ok()
+    .flatten()
+    .is_some();
+  let gmail_creds = integration_secrets::get_credentials("gmail")
+    .ok()
+    .flatten()
+    .is_some();
+
+  Ok(serde_json::json!({
+    "google_calendar": {
+      "last_sync_ms": cal_snap.last_sync_ms,
+      "last_ingested": cal_snap.last_ingested,
+      "last_error": cal_snap.last_error,
+      "last_duration_ms": cal_snap.last_duration_ms,
+      "credentials_present": cal_creds,
+      "auto_enabled": auto_cal,
+    },
+    "gmail": {
+      "last_sync_ms": gmail_snap.last_sync_ms,
+      "last_ingested": gmail_snap.last_ingested,
+      "last_error": gmail_snap.last_error,
+      "last_duration_ms": gmail_snap.last_duration_ms,
+      "credentials_present": gmail_creds,
+      "auto_enabled": false,
+    }
+  }))
+}
+
+#[tauri::command]
+pub fn shogun_memory_debug_gate() -> Result<serde_json::Value, String> {
+  // `cfg!` evaluates at compile time to a bool — safe to use inside
+  // the function body (unlike `#[cfg(...)]` on expression blocks).
+  if !cfg!(debug_assertions) {
+    return Ok(serde_json::json!({
+      "available": false,
+      "reason": "release_build",
+    }));
+  }
+  let enabled = settings_store::load()
+    .ok()
+    .and_then(|doc| {
+      doc
+        .pointer("/sections/developer/memoryDebugger")
+        .and_then(|v| v.as_bool())
+    })
+    .unwrap_or(false);
+  Ok(serde_json::json!({
+    "available": enabled,
+    "reason": if enabled { "enabled" } else { "settings_disabled" },
+  }))
 }

@@ -1648,6 +1648,8 @@ function PaneLLM() {
   const [maxTokens, setMaxTokens] = useStateS('');
   const [apiKeyDraft, setApiKeyDraft] = useStateS('');
   const [keyConfigured, setKeyConfigured] = useStateS(false);
+  const [keyProvider, setKeyProvider] = useStateS(null);
+  const [keyPreview, setKeyPreview] = useStateS(null);
   const [backfillLimit, setBackfillLimit] = useStateS(40);
   const [backfillDelayMs, setBackfillDelayMs] = useStateS(0);
   const [backfillBusy, setBackfillBusy] = useStateS(false);
@@ -1681,6 +1683,8 @@ function PaneLLM() {
     const r = await run('llm.api_key_status', {}, { silentError: true });
     if (r.ok && r.data && typeof r.data.configured === 'boolean') {
       setKeyConfigured(r.data.configured);
+      setKeyProvider(typeof r.data.provider === 'string' ? r.data.provider : null);
+      setKeyPreview(typeof r.data.keyPreview === 'string' ? r.data.keyPreview : null);
     }
   }, [run]);
 
@@ -1807,6 +1811,16 @@ function PaneLLM() {
             placeholder={keyConfigured ? '•••••••• (replace by typing a new key)' : 'sk-…'}
             autoComplete="off"
           />
+          {keyConfigured && keyProvider && (
+            <div className="s-field-hint" style={{marginTop:6, fontSize:11}}>
+              Provider: {
+                keyProvider === 'openai' ? 'OpenAI' :
+                keyProvider === 'anthropic' ? 'Anthropic (Claude)' :
+                keyProvider === 'gemini' ? 'Google Gemini' :
+                'Custom / Local'
+              }{keyPreview ? ` — ${keyPreview}` : ''}
+            </div>
+          )}
           <div className="row" style={{marginTop:10}}>
             <span className="s-field-hint" style={{marginTop:0}}>
               Keychain: {keyConfigured ? 'configured' : 'not set'}

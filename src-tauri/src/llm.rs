@@ -4,6 +4,28 @@ use crate::{context_assembly, secrets, settings_store};
 use serde_json::{json, Value};
 use url::Url;
 
+fn now_ms() -> u64 {
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0)
+}
+
+fn provenance_counts_from_hits(
+  hits: &[context_assembly::Hit],
+) -> crate::memory_debug::ProvenanceCounts {
+  let mut c = crate::memory_debug::ProvenanceCounts::default();
+  for h in hits {
+    match h.provenance.as_str() {
+      "screen" => c.screen += 1,
+      "connector" => c.connector += 1,
+      "meeting" => c.meeting += 1,
+      _ => c.user += 1,
+    }
+  }
+  c
+}
+
 fn privacy_allows_chat_server_memory_assembly() -> bool {
   settings_store::load()
     .ok()
@@ -21,13 +43,13 @@ pub fn read_llm_prefs() -> Result<(String, String, u64), String> {
   let base = llm
     .and_then(|l| l.get("baseUrl"))
     .and_then(|v| v.as_str())
-    .unwrap_or("https://api.openai.com/v1")
+    .unwrap_or("")
     .trim()
     .to_string();
   let model = llm
     .and_then(|l| l.get("model"))
     .and_then(|v| v.as_str())
-    .unwrap_or("gpt-4o-mini")
+    .unwrap_or("")
     .to_string();
   let max_tokens = llm
     .and_then(|l| l.get("maxTokens"))
@@ -36,52 +58,52 @@ pub fn read_llm_prefs() -> Result<(String, String, u64), String> {
   Ok((base, model, max_tokens))
 }
 
-fn chat_completions_url(base: &str) -> String {
-  let s = base.trim().trim_end_matches('/').to_string();
-  let root = if s.ends_with("/v1") {
-    s
-  } else if s.is_empty() {
-    "https://api.openai.com/v1".to_string()
-  } else {
-    format!("{}/v1", s)
-  };
-  format!("{}/chat/completions", root)
+fn read_extra_llm_hosts() -> Vec<String> {
+  settings_store::load()
+    .ok()
+    .and_then(|d| {
+      d.pointer("/sections/security/extraLlmHosts")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+          arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+        })
+    })
+    .unwrap_or_default()
 }
 
-fn validate_llm_base_url(base: &str) -> Result<(), String> {
-  let trimmed = base.trim();
-  if trimmed.is_empty() {
-    return Ok(());
-  }
-  let parsed =
-    Url::parse(trimmed).map_err(|_| "Invalid LLM base URL. Use a full URL (e.g. https://api.openai.com/v1).".to_string())?;
-  match parsed.scheme() {
-    "https" => Ok(()),
-    "http" => {
-      let host = parsed.host_str().unwrap_or("");
-      if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-        Ok(())
-      } else {
-        Err("Insecure LLM base URL. Use HTTPS (HTTP is allowed only for localhost).".to_string())
-      }
-    }
-    _ => Err("Unsupported LLM base URL scheme. Use HTTPS (or localhost HTTP).".to_string()),
-  }
-}
-
-pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
+pub async fn chat_complete(
+  payload: &Value,
+  chat_ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
+  let chat_start = std::time::Instant::now();
   let key = secrets::get_llm_api_key()?
     .filter(|k| !k.trim().is_empty())
     .ok_or_else(|| {
       "LLM API key is not set. Open Settings → Model & API and save your key.".to_string()
     })?;
-  let (base, default_model, max_tokens) = read_llm_prefs()?;
-  validate_llm_base_url(&base)?;
-  let model = payload
-    .get("model")
-    .and_then(|m| m.as_str())
-    .unwrap_or(&default_model)
-    .to_string();
+  let provider = crate::llm_providers::detect_provider(&key);
+  let (base_override, model_override, max_tokens) = read_llm_prefs()?;
+  let base = if base_override.is_empty() {
+    crate::llm_providers::default_base_url(provider).to_string()
+  } else {
+    base_override
+  };
+  let model = if model_override.is_empty() {
+    crate::llm_providers::default_chat_model(provider).to_string()
+  } else {
+    model_override
+  };
+  let url = crate::llm_providers::chat_url(provider, &base);
+  let host = Url::parse(&url)
+    .ok()
+    .and_then(|u| u.host_str().map(|s| s.to_string()))
+    .ok_or_else(|| "Invalid LLM URL".to_string())?;
+  let extra_hosts = read_extra_llm_hosts();
+  crate::llm_providers::validate_host_for_provider(provider, &host, &extra_hosts)?;
   let messages_in = payload
     .get("messages")
     .and_then(|m| m.as_array())
@@ -126,6 +148,36 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
         &hits,
         context_assembly::SYSTEM_PROMPT_BUDGET_CHARS,
       );
+      let manual_ctx = payload
+        .get("memoryContext")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+      crate::memory_obs::emit(
+        "chat_memory_block",
+        &[
+          ("block_chars", block.chars().count().to_string()),
+          ("hits", hits.len().to_string()),
+          ("manual_ctx", manual_ctx.to_string()),
+          ("semantic", semantic.to_string()),
+        ],
+      );
+      if let Some(ring) = chat_ring {
+        ring.push(crate::memory_debug::CallTrace {
+          ts_ms: now_ms(),
+          route: "chat.complete",
+          query_preview: crate::memory_obs::clip_preview(q),
+          query_len: q.chars().count(),
+          limit,
+          semantic,
+          hits_count: hits.len(),
+          provenance_counts: provenance_counts_from_hits(&hits),
+          block_chars: block.chars().count(),
+          elapsed_ms: chat_start.elapsed().as_millis() as u64,
+          status: crate::memory_debug::CallStatus::Ok,
+          assembled_block: Some(block.clone()),
+        });
+      }
       if !block.is_empty() {
         messages.push(json!({
           "role": "system",
@@ -152,21 +204,16 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
     let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
     messages.push(json!({ "role": role, "content": content }));
   }
-  let body = json!({
-    "model": model,
-    "messages": messages,
-    "max_tokens": max_tokens,
-    "temperature": 0.7,
-  });
+  let body = crate::llm_providers::chat_body(provider, &model, &messages, max_tokens);
   let client = reqwest::Client::builder()
     .timeout(std::time::Duration::from_secs(120))
     .build()
     .map_err(|e| e.to_string())?;
-  let url = chat_completions_url(&base);
-  let resp = client
-    .post(&url)
-    .header("Authorization", format!("Bearer {}", key.trim()))
-    .header("Content-Type", "application/json")
+  let mut req = client.post(&url);
+  for (name, value) in crate::llm_providers::chat_headers(provider, &key) {
+    req = req.header(name, value);
+  }
+  let resp = req
     .json(&body)
     .send()
     .await
@@ -177,16 +224,14 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
     let snippet: String = text.chars().take(800).collect();
     return Err(format!("LLM API error {}: {}", status, snippet));
   }
-  let v: Value = serde_json::from_str(&text)
-    .map_err(|e| format!("Invalid JSON from LLM: {} — body: {}", e, text.chars().take(200).collect::<String>()))?;
-  let content = v
-    .get("choices")
-    .and_then(|c| c.as_array())
-    .and_then(|a| a.first())
-    .and_then(|c| c.get("message"))
-    .and_then(|m| m.get("content"))
-    .and_then(|c| c.as_str())
-    .ok_or_else(|| "Unexpected LLM response (no choices[0].message.content)".to_string())?;
+  let v: Value = serde_json::from_str(&text).map_err(|e| {
+    format!(
+      "Invalid JSON from LLM: {} — body: {}",
+      e,
+      text.chars().take(200).collect::<String>()
+    )
+  })?;
+  let content = crate::llm_providers::extract_chat_text(provider, &v)?;
   Ok(json!({
     "message": content,
     "echo": payload,
@@ -195,11 +240,15 @@ pub async fn chat_complete(payload: &Value) -> Result<Value, String> {
 }
 
 /// One-shot Markdown draft from UI payload (`target`, `prompt`, `source`, …).
-pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
+pub async fn draft_from_payload(
+  payload: &Value,
+  ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
   let target = payload
     .get("target")
     .and_then(|t| t.as_str())
     .unwrap_or("document");
+  let start = std::time::Instant::now();
   let prompt = payload
     .get("prompt")
     .and_then(|p| p.as_str())
@@ -209,6 +258,11 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     .and_then(|s| s.as_str())
     .unwrap_or("");
   let mut memory_block = String::new();
+  let mut hits_count: usize = 0;
+  let mut draft_hits: Vec<context_assembly::Hit> = Vec::new();
+  let mut draft_q = String::new();
+  let mut draft_limit: u64 = 8;
+  let mut draft_semantic = false;
   if privacy_allows_chat_server_memory_assembly() {
     if let Some(ma) = payload.get("memoryAssembly").and_then(|x| x.as_object()) {
       let q = ma
@@ -229,10 +283,15 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
       })
       .await
       .unwrap_or_else(|_| Vec::new());
+      hits_count = hits.len();
       memory_block = context_assembly::format_hits_draft_context(
         &hits,
         context_assembly::DRAFT_PROMPT_BUDGET_CHARS,
       );
+      draft_q = q.to_string();
+      draft_limit = limit;
+      draft_semantic = semantic;
+      draft_hits = hits;
     }
   }
   let user = if memory_block.is_empty() {
@@ -255,7 +314,7 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
       { "role": "user", "content": user }
     ]
   });
-  let out = chat_complete(&wrapped).await?;
+  let out = chat_complete(&wrapped, None).await?;
   let content = out
     .get("message")
     .and_then(|m| m.as_str())
@@ -266,6 +325,36 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
     .and_then(|t| t.as_str())
     .map(|s| s.to_string())
     .unwrap_or_else(|| format!("Draft · {}", target));
+  let memory_used = !memory_block.is_empty();
+  let block_chars = memory_block.chars().count();
+  crate::memory_obs::emit(
+    "draft_from_payload_done",
+    &[
+      ("memory_used", memory_used.to_string()),
+      ("hits", hits_count.to_string()),
+      ("block_chars", block_chars.to_string()),
+      ("content_len", content.chars().count().to_string()),
+      ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+    ],
+  );
+  if memory_used {
+    if let Some(r) = ring {
+      r.push(crate::memory_debug::CallTrace {
+        ts_ms: now_ms(),
+        route: "draft_from_payload",
+        query_preview: crate::memory_obs::clip_preview(&draft_q),
+        query_len: draft_q.chars().count(),
+        limit: draft_limit,
+        semantic: draft_semantic,
+        hits_count,
+        provenance_counts: provenance_counts_from_hits(&draft_hits),
+        block_chars,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        status: crate::memory_debug::CallStatus::Ok,
+        assembled_block: Some(memory_block.clone()),
+      });
+    }
+  }
   Ok(json!({
     "content": content,
     "title": title,
@@ -274,13 +363,18 @@ pub async fn draft_from_payload(payload: &Value) -> Result<Value, String> {
   }))
 }
 
-pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
+pub async fn brief_generate(
+  payload: &Value,
+  ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
+  let start = std::time::Instant::now();
   let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
     query: "",
     limit: 15,
     semantic: false,
   })
   .await?;
+  let hits_count = hits.len();
   let block = context_assembly::format_hits_brief_json_prompt(
     &hits,
     context_assembly::SYSTEM_PROMPT_BUDGET_CHARS,
@@ -292,17 +386,43 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
   let synthetic = json!({
     "messages": [{ "role": "user", "content": user_prompt }],
   });
-  let out = chat_complete(&synthetic).await?;
+  let out = chat_complete(&synthetic, None).await?;
   let message = out.get("message").and_then(|m| m.as_str()).unwrap_or("{}");
   let sections_val: Value = serde_json::from_str(message).unwrap_or(json!({ "sections": [] }));
   let sections = sections_val
     .get("sections")
     .cloned()
     .unwrap_or(json!([]));
+  let sections_count = sections.as_array().map(|a| a.len()).unwrap_or(0);
   let generated = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_millis() as u64)
     .unwrap_or(0);
+  crate::memory_obs::emit(
+    "brief_generate_done",
+    &[
+      ("hits", hits_count.to_string()),
+      ("sections", sections_count.to_string()),
+      ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+    ],
+  );
+  if let Some(r) = ring {
+    let block_chars = block.chars().count();
+    r.push(crate::memory_debug::CallTrace {
+      ts_ms: now_ms(),
+      route: "brief.get",
+      query_preview: String::new(),
+      query_len: 0,
+      limit: 15,
+      semantic: false,
+      hits_count,
+      provenance_counts: provenance_counts_from_hits(&hits),
+      block_chars,
+      elapsed_ms: start.elapsed().as_millis() as u64,
+      status: crate::memory_debug::CallStatus::Ok,
+      assembled_block: Some(block.clone()),
+    });
+  }
   Ok(json!({
     "sections": sections,
     "generatedAt": generated,
@@ -312,8 +432,12 @@ pub async fn brief_generate(payload: &Value) -> Result<Value, String> {
 }
 
 /// Draft a paste-ready reply from a Morning Brief item + local Memory (requires LLM API key).
-pub async fn draft_reply_for_brief(payload: &Value) -> Result<Value, String> {
+pub async fn draft_reply_for_brief(
+  payload: &Value,
+  ring: Option<&crate::memory_debug::RingBuffer>,
+) -> Result<Value, String> {
   let item = payload.get("brief_item");
+  let start = std::time::Instant::now();
   let what = item
     .and_then(|i| i.get("what"))
     .and_then(|x| x.as_str())
@@ -351,7 +475,7 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
     if mem_block.is_empty() {
       "—\n".to_string()
     } else {
-      mem_block
+      mem_block.clone()
     }
   );
   let wrapped = json!({
@@ -363,7 +487,7 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
       { "role": "user", "content": user }
     ]
   });
-  let out = chat_complete(&wrapped).await?;
+  let out = chat_complete(&wrapped, None).await?;
   let content = out
     .get("message")
     .and_then(|m| m.as_str())
@@ -373,6 +497,30 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
     "Reply draft · {}",
     what.chars().take(40).collect::<String>()
   );
+  crate::memory_obs::emit(
+    "draft_reply_done",
+    &[
+      ("hits", hits.len().to_string()),
+      ("content_len", content.chars().count().to_string()),
+      ("elapsed_ms", (start.elapsed().as_millis() as u64).to_string()),
+    ],
+  );
+  if let Some(r) = ring {
+    r.push(crate::memory_debug::CallTrace {
+      ts_ms: now_ms(),
+      route: "draft_reply",
+      query_preview: crate::memory_obs::clip_preview(&q),
+      query_len: q.chars().count(),
+      limit: 12,
+      semantic: true,
+      hits_count: hits.len(),
+      provenance_counts: provenance_counts_from_hits(&hits),
+      block_chars: mem_block.chars().count(),
+      elapsed_ms: start.elapsed().as_millis() as u64,
+      status: crate::memory_debug::CallStatus::Ok,
+      assembled_block: Some(mem_block.clone()),
+    });
+  }
   Ok(json!({
     "content": content,
     "title": title,

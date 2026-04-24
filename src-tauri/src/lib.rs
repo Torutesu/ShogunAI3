@@ -15,6 +15,7 @@ mod google_oauth;
 mod integration_secrets;
 mod integrations;
 mod llm;
+mod llm_providers;
 mod macos_ax;
 mod meeting_commands;
 mod meeting_enhance;
@@ -24,6 +25,8 @@ mod meeting_recipes;
 mod meeting_session;
 mod meeting_store;
 mod meeting_stt;
+mod memory_debug;
+mod memory_obs;
 mod memory_store;
 mod paths;
 mod schedule_queue;
@@ -54,12 +57,21 @@ pub fn run() {
     }));
   }
 
+  // The updater plugin requires a `plugins.updater` config block in
+  // tauri.conf.json (with an endpoint + pubkey). Dev builds ship without
+  // update servers, so gate registration to release builds to avoid a
+  // startup panic on `cargo run`.
+  #[cfg(not(debug_assertions))]
+  {
+    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+  }
+
   builder
     .manage(embed_backfill::EmbedBackfillState::default())
+    .manage(memory_debug::RingBuffer::default())
     .manage(meeting_session::MeetingSessionState::default())
     .manage(meeting_mic::MeetingMicController::default())
     .plugin(tauri_plugin_deep_link::init())
-    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -162,6 +174,15 @@ pub fn run() {
       meeting_commands::shogun_meeting_mic_stop,
       meeting_commands::shogun_meeting_transcribe_pcm,
       meeting_commands::shogun_meeting_mcp_tools,
+      #[cfg(debug_assertions)]
+      commands::shogun_memory_debug_query,
+      #[cfg(debug_assertions)]
+      commands::shogun_memory_debug_recent_calls,
+      #[cfg(debug_assertions)]
+      commands::shogun_memory_debug_stats,
+      #[cfg(debug_assertions)]
+      commands::shogun_memory_debug_sync_status,
+      commands::shogun_memory_debug_gate,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
+/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
 const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -14,6 +14,7 @@ const NAV = [
   {id:'chat',      label:'Chat',         jp:'対話',   icon:'chat',      section:'main'},
   {id:'agents',    label:'Agents',       jp:'家臣',   icon:'agents',    section:'main'},
   {id:'work',      label:'Work',         jp:'任務',   icon:'work',      section:'workspace'},
+  {id:'tasks',     label:'Tasks',        jp:'任務',   icon:'check',     section:'workspace'},
   {id:'meetings',  label:'Meetings',     jp:'会議',   icon:'calendar',  section:'workspace'},
 ];
 
@@ -59,6 +60,18 @@ const INITIAL_CHAT_HISTORY =
 
 const CHAT_CONTEXT_TELEMETRY_LS = 'shogun.hifi.telemetry.chat_context.v1';
 const CHAT_WORKSPACE_LS = 'shogun.hifi.chat.workspace.v1';
+const DUMMY_WORK_PROJECT_IDS = new Set([
+  'w-steal',
+  'w-grop',
+  'w-cluely',
+  'w-kakei',
+  'w-hojo',
+  'w-chrome',
+]);
+function purgeDummyWorkProjects(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((p) => p && typeof p === 'object' && !DUMMY_WORK_PROJECT_IDS.has(p.id));
+}
 const SIDEBAR_WIDTH_LS = 'shogun.hifi.sidebar.width.v1';
 const SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_MAX_WIDTH = 420;
@@ -864,14 +877,7 @@ function App() {
   const [chatDeleteModal, setChatDeleteModal] = useState({ open:false, chatId:null });
   const [chatWorkModal, setChatWorkModal] = useState({ open:false, chatId:null, query:'' });
   const [chatGroupsOpen, setChatGroupsOpen] = useState({ favorite: true, chats: true });
-  const [workProjects, setWorkProjects] = useState([
-    { id:'w-steal', name:'スチールカウント' },
-    { id:'w-grop', name:'GROP Internal Chatbot Project' },
-    { id:'w-cluely', name:'cluely' },
-    { id:'w-kakei', name:'家系図OCR' },
-    { id:'w-hojo', name:'補助金,助成金' },
-    { id:'w-chrome', name:'chrome自動化' },
-  ]);
+  const [workProjects, setWorkProjects] = useState([]);
   const chatWorkspaceHydratedRef = useRef(false);
   const userBtnRef = React.useRef(null);
   const contextBtnRef = React.useRef(null);
@@ -882,6 +888,22 @@ function App() {
   const [toast, setToast] = useState(null);
   const [writeConfirm, setWriteConfirm] = useState({ open:false, actionKey:null, payload:null, title:null, description:null });
   const [writePending, setWritePending] = useState(false);
+  const [devGate, setDevGate] = useState({ available: false });
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        // Call the backend command directly via Tauri v2 bridge. The devGate
+        // only exists inside runtimeRef.current once it's built — we need
+        // this at mount time, so skip the runtime layer.
+        const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+        if (!invoke) return;
+        const out = await invoke('shogun_memory_debug_gate', { payload: {} });
+        if (!cancel && out && typeof out === 'object') setDevGate(out);
+      } catch (_) { /* ignore — release build returns available:false anyway */ }
+    })();
+    return () => { cancel = true; };
+  }, []);
   const runtimeRef = useRef(null);
   const toastTimerRef = useRef(null);
   const bioWantLockRef = useRef(false);
@@ -917,10 +939,12 @@ function App() {
       // so the first row (Settings) is guaranteed inside the viewport even
       // when Playwright scrolls the sidebar so the pill is near viewport top.
       // No hard floor here; when space is tiny the menu scrolls internally.
+      // Match the pill's width so the popup stays inside the sidebar column
+      // (i.e. within the "wall" the user pill lives in).
       setUserAnchor({
         left: r.left,
         bottom: window.innerHeight - r.top + 8,
-        width: r.width,
+        width: Math.round(r.width),
         maxHeight: Math.max(0, r.top - 16),
       });
     }
@@ -931,11 +955,12 @@ function App() {
   const openContextPanel = () => {
     const r = contextBtnRef.current?.getBoundingClientRect();
     if (r) {
-      const targetWidth = Math.round(r.width);
+      // Match the pill's width so the popup stays inside the sidebar column
+      // (i.e. within the "wall" the Context-enabled pill lives in).
       setContextPanelAnchor({
         left: Math.max(12, r.left),
         bottom: window.innerHeight - r.top + 10,
-        width: targetWidth,
+        width: Math.round(r.width),
       });
     }
     setUserOpen(false);
@@ -1337,7 +1362,7 @@ function App() {
             loaded = true;
           }
           if (Array.isArray(ws.workProjects)) {
-            setWorkProjects(ws.workProjects);
+            setWorkProjects(purgeDummyWorkProjects(ws.workProjects));
             loaded = true;
           }
         }
@@ -1355,7 +1380,7 @@ function App() {
                 loaded = true;
               }
               if (Array.isArray(parsed.workProjects)) {
-                setWorkProjects(parsed.workProjects);
+                setWorkProjects(purgeDummyWorkProjects(parsed.workProjects));
                 loaded = true;
               }
             }
@@ -1948,7 +1973,9 @@ function App() {
     chat: ScreenChat,
     agents: ScreenAgents,
     work: ScreenWork,
+    tasks: ScreenTasks,
     meetings: ScreenMeetings,
+    memory_debug: ScreenMemoryDebug,
   }[active] || ScreenHome;
 
   if (typeof window !== 'undefined') {
@@ -2020,11 +2047,19 @@ function App() {
     window.addEventListener('pointercancel', endResize);
   };
 
+  // Include memory_debug nav entry only when the dev gate returns available.
+  const effectiveNav = devGate.available
+    ? [...NAV, { id: "memory_debug", label: "Memory DBG", jp: "DBG", icon: "memory", section: "workspace" }]
+    : NAV;
+
   return (
     <div
       className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}
       data-screen-label={active}
-      style={{ gridTemplateColumns: sidebarCollapsed ? '0 minmax(0, 1fr)' : `${sidebarWidth}px minmax(0, 1fr)` }}
+      style={{
+        gridTemplateColumns: sidebarCollapsed ? '0 minmax(0, 1fr)' : `${sidebarWidth}px minmax(0, 1fr)`,
+        '--sidebar-w': sidebarCollapsed ? '0px' : `${sidebarWidth}px`,
+      }}
     >
       {bioGate.ready && bioGate.open && (
         <div
@@ -2152,18 +2187,6 @@ function App() {
       )}
       {/* Topbar */}
       <div className="topbar">
-        <button
-          type="button"
-          className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
-          onClick={() => setSidebarCollapsed((v) => !v)}
-          aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-          title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
-        >
-          <span className="sidebar-toggle-glyph" aria-hidden="true">
-            <span className="pane" />
-            <span className="divider" />
-          </span>
-        </button>
         <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Shogun AI · Home">
           <Kamon size={26} color="var(--text)"/>
           <div>
@@ -2243,7 +2266,7 @@ function App() {
             {(sec.label || sec.jp) && (
               <div className="section-label"><span className="en-only">{sec.label}</span><span className="en-only"> · </span><span className="jp">{sec.jp}</span></div>
             )}
-            {NAV.filter(n => n.section === sec.id).map(n => (
+            {effectiveNav.filter(n => n.section === sec.id).map(n => (
               <React.Fragment key={n.id}>
                 <div className={'nav-item '+(active===n.id?'active':'')} onClick={() => setActive(n.id)}>
                   <Icon name={n.icon} size={16}/>
@@ -2463,8 +2486,21 @@ function App() {
       </div>
       <button
         type="button"
+        className={'sidebar-toggle-btn' + (sidebarCollapsed ? ' collapsed' : '')}
+        onClick={() => setSidebarCollapsed((v) => !v)}
+        aria-label={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+        title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+      >
+        <span className="sidebar-toggle-glyph" aria-hidden="true">
+          <span className="pane" />
+          <span className="divider" />
+        </span>
+      </button>
+      <button
+        type="button"
         className={'sidebar-resizer' + (sidebarResizeHint ? ' show-hint' : '')}
         aria-label="Sidebar width resizer"
+        style={{ left: (sidebarCollapsed ? 0 : sidebarWidth) - 3 }}
         onMouseEnter={() => setSidebarResizeHint(true)}
         onMouseLeave={() => {
           if (!resizeStateRef.current.active) setSidebarResizeHint(false);
@@ -2821,11 +2857,9 @@ function App() {
               <button type="button" className="context-awareness-close" onClick={() => setContextPanelOpen(false)} aria-label="Close">
                 <Icon name="x" size={16} />
               </button>
-              <div style={{ fontSize: 22, fontWeight: 520, marginBottom: 6 }}>Context Awareness</div>
+              <div className="context-awareness-heading">Context Awareness</div>
               <div className="context-panel-body-copy">
-                Littlebird remembers your work across apps,
-                <br />
-                no integrations needed.
+                Littlebird remembers your work across apps, no integrations needed.
               </div>
               <button type="button" className="context-link-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
                 Learn more <Icon name="arrowUpRight" size={14} />
@@ -2840,10 +2874,8 @@ function App() {
               <Icon name="chevronRight" size={14} />
             </button>
             <div className="context-panel-foot">
-              <span className="context-panel-body-copy" style={{ fontSize: 14 }}>
-                Exclude apps and websites Littlebird
-                <br />
-                can access context from
+              <span className="context-panel-body-copy">
+                Exclude apps and websites Littlebird can access context from
               </span>
               <button type="button" className="context-manage-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
                 Manage
@@ -2959,20 +2991,23 @@ function App() {
                 }}
               />
             </div>
-            <div className="work-list">
-              {filteredWorkProjects.map((p) => (
-                <button key={p.id} type="button" className="work-list-item" onClick={() => assignChatToWork(p.id, p.name)}>
-                  <Icon name="folder" size={16}/>
-                  <span>{p.name}</span>
-                </button>
-              ))}
-              {filteredWorkProjects.length === 0 && (
-                <button type="button" className="work-list-item create" onClick={createAndAssignWork}>
-                  <Icon name="plus" size={16}/>
-                  <span>「{chatWorkModal.query.trim()}」を作成して追加</span>
-                </button>
-              )}
-            </div>
+            {filteredWorkProjects.length > 0 ? (
+              <div className="work-list">
+                {filteredWorkProjects.map((p) => (
+                  <button key={p.id} type="button" className="work-list-item" onClick={() => assignChatToWork(p.id, p.name)}>
+                    <Icon name="folder" size={14}/>
+                    <span>{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : chatWorkModal.query.trim() ? (
+              <button type="button" className="work-list-item create" style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} onClick={createAndAssignWork}>
+                <Icon name="plus" size={14}/>
+                <span>「{chatWorkModal.query.trim()}」を作成して追加</span>
+              </button>
+            ) : (
+              <div className="work-list-empty">プロジェクトはまだありません。名前を入力して作成してください。</div>
+            )}
           </div>
         </div>,
         document.body,
@@ -3171,73 +3206,92 @@ function App() {
           padding:18px;
         }
         .chat-dialog {
-          width:min(620px, calc(100vw - 36px));
-          background:color-mix(in srgb, var(--surface) 90%, #272727 10%);
+          width:min(400px, calc(100vw - 32px));
+          background:var(--surface);
           border:1px solid var(--border-hi);
-          border-radius:24px;
-          box-shadow:0 30px 70px -12px rgba(0,0,0,0.7), 0 4px 14px rgba(0,0,0,0.35);
-          padding:34px 38px 30px;
+          border-radius:var(--radius-lg);
+          box-shadow:var(--shadow-lg);
+          padding:18px 20px 16px;
           position:relative;
         }
-        .chat-dialog.rename { width:min(560px, calc(100vw - 36px)); border-radius:16px; padding:24px 22px 18px; }
-        .chat-dialog.work { width:min(760px, calc(100vw - 36px)); border-radius:22px; padding:30px 28px 24px; }
+        .chat-dialog.rename { width:min(380px, calc(100vw - 32px)); }
+        .chat-dialog.work { width:min(440px, calc(100vw - 32px)); padding:16px 18px 14px; }
         .chat-dialog-title {
-          font-size:21px; line-height:1.2; letter-spacing:-0.01em; color:var(--text); font-weight:600;
+          font-size:15px; line-height:1.3; letter-spacing:-0.005em; color:var(--text); font-weight:600;
         }
-        .chat-dialog.rename .chat-dialog-title { font-size:18px; letter-spacing:0; }
-        .chat-dialog.work .chat-dialog-title { font-size:42px; line-height:1.08; letter-spacing:-0.02em; }
+        .chat-dialog.rename .chat-dialog-title { font-size:14px; letter-spacing:0; }
+        .chat-dialog.work .chat-dialog-title { font-size:15px; letter-spacing:0; }
         .chat-dialog-desc {
-          margin-top:14px; color:var(--text-dim); font-size:14px; line-height:1.45;
+          margin-top:6px; color:var(--text-dim); font-size:12.5px; line-height:1.5;
         }
         .chat-dialog-actions {
-          margin-top:30px; display:flex; gap:12px; justify-content:flex-end;
+          margin-top:16px; display:flex; gap:8px; justify-content:flex-end;
         }
         .chat-dialog-btn {
-          min-width:122px; height:52px; border-radius:14px; border:1px solid transparent;
-          cursor:pointer; font-size:16px; font-weight:550; color:var(--text);
+          min-width:72px; height:32px; border-radius:var(--radius-sm); border:1px solid transparent;
+          cursor:pointer; font-size:13px; font-weight:500; color:var(--text);
           background:var(--surface-2);
+          padding:0 14px;
+          transition:background 120ms, border-color 120ms, color 120ms;
         }
+        .chat-dialog-btn:hover { background:color-mix(in srgb, var(--surface-2) 80%, var(--border-hi)); }
         .chat-dialog-btn.ghost { border-color:var(--border-hi); background:transparent; }
-        .chat-dialog-btn.solid { background:var(--text); color:var(--bg); }
-        .chat-dialog-btn.danger { background:var(--danger); color:var(--white); }
+        .chat-dialog-btn.ghost:hover { background:var(--surface-2); }
+        .chat-dialog-btn.solid { background:var(--gold); color:var(--bg); border-color:var(--gold); }
+        .chat-dialog-btn.solid:hover { background:var(--gold-hover); border-color:var(--gold-hover); }
+        .chat-dialog-btn.danger { background:var(--danger); color:#fff; border-color:var(--danger); }
+        .chat-dialog-btn.danger:hover { background:color-mix(in srgb, var(--danger) 80%, #000); }
         .chat-dialog-input {
-          width:100%; margin-top:14px; height:50px; border-radius:12px;
-          border:1px solid color-mix(in srgb, var(--gold) 35%, var(--border-hi));
-          background:color-mix(in srgb, var(--surface-2) 86%, #101010 14%);
-          color:var(--text); font-size:14px; padding:0 14px;
+          width:100%; margin-top:10px; height:34px; border-radius:var(--radius-sm);
+          border:1px solid var(--border-hi);
+          background:var(--surface-2);
+          color:var(--text); font-size:13px; padding:0 10px;
           outline:none;
+          transition:border-color 120ms, box-shadow 120ms;
         }
         .chat-dialog-input:focus {
           border-color:var(--gold);
-          box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 30%, transparent);
+          box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 28%, transparent);
         }
         .chat-dialog-close {
-          position:absolute; right:18px; top:16px; width:30px; height:30px;
-          border:0; background:transparent; color:var(--text-dim); border-radius:8px; cursor:pointer;
+          position:absolute; right:10px; top:10px; width:24px; height:24px;
+          border:0; background:transparent; color:var(--text-dim); border-radius:var(--radius-sm); cursor:pointer;
           display:flex; align-items:center; justify-content:center;
+          transition:background 120ms, color 120ms;
         }
         .chat-dialog-close:hover { color:var(--text); background:var(--surface-2); }
         .work-search-wrap {
-          margin-top:18px; height:56px; border-radius:14px;
-          border:1px solid var(--border);
-          display:flex; align-items:center; gap:10px; padding:0 14px;
+          margin-top:10px; height:34px; border-radius:var(--radius-sm);
+          border:1px solid var(--border-hi);
+          display:flex; align-items:center; gap:8px; padding:0 10px;
           color:var(--text-dim); background:var(--surface-2);
         }
         .work-search-input {
-          flex:1; min-width:0; border:0; background:transparent; outline:none; color:var(--text); font-size:17px;
+          flex:1; min-width:0; border:0; background:transparent; outline:none; color:var(--text); font-size:13px;
         }
         .work-list {
-          margin-top:0; border:1px solid var(--border); border-top:0;
-          border-radius:0 0 14px 14px; overflow:auto; max-height:320px; background:var(--surface);
+          margin-top:8px;
+          border:1px solid var(--border);
+          border-radius:var(--radius-sm);
+          overflow:auto;
+          max-height:220px;
+          background:var(--surface);
         }
+        .work-list:empty { display:none; }
         .work-list-item {
           width:100%; border:0; border-top:1px solid color-mix(in srgb, var(--border) 85%, transparent);
           background:transparent; color:var(--text); cursor:pointer; text-align:left;
-          display:flex; align-items:center; gap:12px; padding:13px 14px; font-size:16px;
+          display:flex; align-items:center; gap:10px; padding:8px 12px; font-size:13px;
+          transition:background 120ms;
         }
         .work-list-item:first-child { border-top:0; }
         .work-list-item:hover { background:var(--surface-2); }
         .work-list-item.create { color:var(--gold); }
+        .work-list-empty {
+          padding:16px 12px; text-align:center; color:var(--text-dim); font-size:12.5px;
+          border:1px dashed var(--border); border-radius:var(--radius-sm);
+          margin-top:8px;
+        }
 
         /* Floating system menu */
         .system-float {
@@ -3273,11 +3327,103 @@ function App() {
           pointer-events:none;
         }
 
+        /* Sidebar toggle (left of the brand) */
+        .sidebar-toggle-btn {
+          display:inline-flex; align-items:center; justify-content:center;
+          width:32px; height:32px;
+          margin-right:4px;
+          padding:0;
+          border:1px solid transparent;
+          border-radius:var(--radius-sm);
+          background:transparent;
+          color:var(--text-mute);
+          cursor:pointer;
+          transition:background 120ms, color 120ms, border-color 120ms;
+        }
+        .sidebar-toggle-btn:hover {
+          color:var(--text);
+          background:var(--surface);
+          border-color:var(--border);
+        }
+        .sidebar-toggle-btn:focus-visible {
+          outline:2px solid var(--gold);
+          outline-offset:2px;
+        }
+        .sidebar-toggle-glyph {
+          position:relative;
+          display:inline-block;
+          width:16px; height:14px;
+          border:1.5px solid currentColor;
+          border-radius:3px;
+        }
+        .sidebar-toggle-glyph .pane {
+          position:absolute; inset:0 auto 0 0;
+          width:5px;
+          background:currentColor;
+          border-top-left-radius:1.5px;
+          border-bottom-left-radius:1.5px;
+          opacity:0.9;
+        }
+        .sidebar-toggle-glyph .divider {
+          position:absolute; top:1px; bottom:1px; left:5px;
+          width:1.5px;
+          background:currentColor;
+          opacity:0.5;
+        }
+        .sidebar-toggle-btn.collapsed .sidebar-toggle-glyph .pane { opacity:0.35; }
+
+        /* Sidebar resizer — pulled out of the grid flow so it never steals a cell */
+        .app { position:relative; }
+        .sidebar-resizer {
+          position:absolute;
+          top:56px;
+          bottom:0;
+          width:6px;
+          padding:0;
+          border:0;
+          background:transparent;
+          cursor:col-resize;
+          z-index:40;
+          display:block;
+        }
+        .app.sidebar-collapsed .sidebar-resizer { display:none; }
+        .sidebar-resizer-hit {
+          position:absolute; inset:0;
+          background:transparent;
+        }
+        .sidebar-resizer:hover .sidebar-resizer-hit,
+        .sidebar-resizer.show-hint .sidebar-resizer-hit {
+          background:color-mix(in srgb, var(--gold) 35%, transparent);
+        }
+        .sidebar-resizer-tip {
+          position:absolute; left:12px; top:20px;
+          padding:6px 10px;
+          background:var(--surface);
+          border:1px solid var(--border-hi);
+          border-radius:8px;
+          font-size:11px; color:var(--text-mute);
+          white-space:nowrap;
+          box-shadow:0 6px 18px rgba(0,0,0,0.4);
+          pointer-events:none;
+        }
+        .sidebar-resizer-kbd {
+          display:inline-block;
+          margin-left:4px;
+          padding:1px 5px;
+          border:1px solid var(--border);
+          border-radius:4px;
+          font-family:var(--font-mono);
+          font-size:10px;
+        }
+
         /* User cluster (bottom-left sidebar) */
-        .user-cluster { padding:10px; border-top:1px solid var(--border); margin-top:auto; }
+        .user-cluster { padding:10px; margin-top:auto; }
         .context-enabled-pill {
           display:flex; align-items:center; justify-content:space-between; gap:10px;
-          min-height:44px; padding:0 16px;
+          box-sizing:border-box;
+          width:100%;
+          min-height:44px;
+          padding:0 14px;
           border-radius:13px;
           border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
           background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
@@ -3286,8 +3432,7 @@ function App() {
           font-size:13px;
           font-weight:480;
           letter-spacing:0.01em;
-          margin:2px 6px 12px;
-          width:calc(100% - 12px);
+          margin:0 0 8px;
           text-align:left;
           cursor:pointer;
           transition:border-color 120ms, background 120ms;
@@ -3346,9 +3491,16 @@ function App() {
           cursor:pointer;
         }
         .context-awareness-close:hover { background:var(--surface-2); color:var(--text); }
+        .context-awareness-heading {
+          font-size:16px;
+          font-weight:600;
+          letter-spacing:-0.01em;
+          margin-bottom:6px;
+          padding-right:28px;
+        }
         .context-panel-body-copy {
           color:var(--text-mute);
-          line-height:1.45;
+          line-height:1.5;
           font-size:13px;
         }
         .context-link-btn {
@@ -3398,17 +3550,18 @@ function App() {
         }
         .context-manage-btn:hover { border-color:var(--gold-dim); color:var(--gold); }
         .local-preview-row {
-          padding:11px 12px 8px;
-          margin:0 6px 8px;
-          border-top:1px solid color-mix(in srgb, var(--border) 88%, #1b1f27 12%);
+          padding:6px 2px 4px;
+          margin:0 0 4px;
+          border:0;
         }
         .local-preview-label {
-          font-size:13px;
-          letter-spacing:0.01em;
-          color:color-mix(in srgb, var(--text) 88%, #d7dce4 12%);
+          font-size:10px;
+          letter-spacing:0.04em;
+          text-transform:uppercase;
+          color:var(--text-dim);
         }
-        .user-row { display:flex; align-items:center; gap:6px; padding:2px 0; }
-        .user-row + .user-row { margin-top:8px; }
+        .user-row { display:flex; align-items:center; gap:6px; padding:0; }
+        .user-row + .user-row { margin-top:0; }
         .capturing-pill {
           display:inline-flex; align-items:center; gap:6px;
           font-family:var(--font-mono); font-size:9px; letter-spacing:0.12em;
@@ -3426,10 +3579,22 @@ function App() {
         }
         .mini-btn:hover { color:var(--text); border-color:var(--border-hi); background:var(--surface-2); }
         .user-pill {
-          padding:8px 10px; background:var(--surface); border:1px solid var(--border);
-          border-radius:var(--radius-md); cursor:pointer; transition:all 120ms;
+          box-sizing:border-box;
+          width:100%;
+          min-height:44px;
+          padding:6px 14px;
+          margin:0;
+          background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
+          border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
+          border-radius:13px;
+          box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);
+          cursor:pointer;
+          transition:border-color 120ms, background 120ms;
         }
-        .user-pill:hover { border-color:var(--border-hi); background:var(--surface-2); }
+        .user-pill:hover {
+          border-color:color-mix(in srgb, var(--border-hi) 88%, #8ea8ff 12%);
+          background:color-mix(in srgb, var(--surface) 72%, #101726 28%);
+        }
 
         /* User floating menu */
         .user-float {
@@ -3440,7 +3605,13 @@ function App() {
           padding:6px 0;
           overflow-x:hidden;
           overflow-y:auto;
-          min-width:220px;
+          /* width is pinned to the user-pill's width by setUserAnchor — no min */
+        }
+        .user-float-row .en-only,
+        .user-float-row .jp {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         @keyframes userFloatIn {
           from { opacity:0; transform:translateY(8px) scale(0.98); }
