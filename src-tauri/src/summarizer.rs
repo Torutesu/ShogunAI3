@@ -6,6 +6,49 @@
 use crate::summarizer_store::{Summary, SCHEMA_VERSION};
 use serde_json::{json, Value};
 
+pub const SUMMARIZER_MODEL: &str = "claude-sonnet-4-6";
+
+/// Anthropic tool_use で使う schema。emit_memory_summary ツール 1 本。
+pub fn emit_memory_summary_tool() -> Value {
+  json!({
+    "name": "emit_memory_summary",
+    "description": "Emit a single memory summary for display to the user.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "title":       { "type": "string", "maxLength": 80 },
+        "key_points":  {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 140 },
+          "minItems": 1,
+          "maxItems": 5
+        },
+        "source_type": {
+          "type": "string",
+          "enum": ["mail", "calendar", "meeting", "screen_session", "screen_day"]
+        },
+        "priority":    { "type": "string", "enum": ["high", "medium", "low"] },
+        "reason":      { "type": "string", "maxLength": 60 }
+      },
+      "required": ["title", "key_points", "source_type", "priority"]
+    }
+  })
+}
+
+const SYSTEM_PROMPT: &str = r#"You are a memory summarizer for a personal assistant app. Your job is to condense a single connector memory item (an email or a calendar event) into a short structured summary the user can scan quickly.
+
+Rules:
+- Always emit via the emit_memory_summary tool. Never respond with plain text.
+- title: <= 80 chars, single line, in the SAME language as the source content. For emails include the sender name when possible. For calendar events include the event title.
+- key_points: 1-5 short bullets, each <= 140 chars. Capture the important facts (deadline, decision needed, specific action, key figures). If there's nothing to say, emit a single bullet explaining so.
+- priority (required):
+    HIGH  = user action required (reply, decision, deadline within a few days), or calendar event starting within 24h, or message from a known frequent correspondent.
+    MEDIUM = informational but relevant (newsletter from a followed source, meeting invite >24h out, calendar event this week).
+    LOW   = automated notifications, bulk marketing, past events with no follow-up.
+- reason: one short sentence explaining why this priority was chosen (<= 60 chars).
+- source_type: 'mail' for Gmail input, 'calendar' for Google Calendar input.
+- Preserve the user's language: if the content is Japanese, write title/key_points/reason in Japanese."#;
+
 /// heuristic が自信を持って判定できた時のショートカット結果。
 #[derive(Debug, Clone)]
 pub struct PriorityGuess {
@@ -163,6 +206,108 @@ pub fn derive_source_type(source: &str) -> &'static str {
   }
 }
 
+/// Item を summary に変換する。Phase 1 のメインエントリ。
+///
+/// Flow:
+/// 1. heuristic_priority_guess で明らかな low 判定ならそれを使う (LLM スキップ)
+/// 2. LLM 呼び出し (anthropic_tool_complete) で構造化要約を取得
+/// 3. LLM 失敗時は heuristic_fallback で medium 固定の要約
+pub async fn summarize_item(item: &Value) -> Result<Summary, String> {
+  let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+  let source_type = derive_source_type(source);
+
+  // 1. Heuristic pre-filter
+  if let Some(guess) = heuristic_priority_guess(item) {
+    return Ok(summary_from_guess(item, source_type, &guess));
+  }
+
+  // 2. LLM tool_use call
+  let user_content = render_item_for_llm(item);
+  let tool = emit_memory_summary_tool();
+
+  match crate::llm::anthropic_tool_complete(SYSTEM_PROMPT, &user_content, &tool, SUMMARIZER_MODEL).await {
+    Ok(tool_input) => match build_summary_from_tool_input(item, source_type, &tool_input) {
+      Ok(s) => Ok(s),
+      Err(e) => {
+        log::warn!("summarizer tool_input parse error for {}: {}", target_id_of(item), e);
+        Ok(heuristic_fallback(item, source_type))
+      }
+    },
+    Err(e) => {
+      log::warn!("summarizer LLM error for {}: {}", target_id_of(item), e);
+      Ok(heuristic_fallback(item, source_type))
+    }
+  }
+}
+
+fn target_id_of(item: &Value) -> String {
+  item.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string()
+}
+
+/// LLM に渡す user メッセージを組み立てる。source 別にフィールドを整形。
+fn render_item_for_llm(item: &Value) -> String {
+  let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+  let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
+  let snippet = item.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
+  // snippet は 4000 文字で truncate (prompt 肥大化防止)
+  let snippet_trim: String = snippet.chars().take(4000).collect();
+  match source {
+    "gmail" => format!("Source: Gmail\n\nTitle: {}\n\nBody:\n{}", title, snippet_trim),
+    "google_calendar" => format!("Source: Google Calendar\n\nTitle: {}\n\nDetails:\n{}", title, snippet_trim),
+    _ => format!("Source: {}\n\nTitle: {}\n\nBody:\n{}", source, title, snippet_trim),
+  }
+}
+
+/// LLM が返した tool_input JSON (= emit_memory_summary の input) を Summary に変換。
+fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value) -> Result<Summary, String> {
+  let title = input
+    .get("title")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "tool_input.title missing".to_string())?
+    .to_string();
+
+  let key_points: Vec<String> = input
+    .get("key_points")
+    .and_then(|v| v.as_array())
+    .ok_or_else(|| "tool_input.key_points missing or not array".to_string())?
+    .iter()
+    .filter_map(|v| v.as_str().map(String::from))
+    .collect();
+
+  if key_points.is_empty() {
+    return Err("tool_input.key_points empty after parse".into());
+  }
+
+  let priority = input
+    .get("priority")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "tool_input.priority missing".to_string())?
+    .to_string();
+
+  if !matches!(priority.as_str(), "high" | "medium" | "low") {
+    return Err(format!("invalid priority: {}", priority));
+  }
+
+  let reason = input
+    .get("reason")
+    .and_then(|v| v.as_str())
+    .map(String::from);
+
+  Ok(Summary {
+    target_kind: "item".into(),
+    target_id: target_id_of(item),
+    title,
+    key_points,
+    source_type: source_type.to_string(),
+    priority,
+    reason,
+    model: SUMMARIZER_MODEL.to_string(),
+    schema_version: SCHEMA_VERSION,
+    generated_at: crate::memory_store::now_ms() as i64,
+    raw_json: serde_json::to_string(input).unwrap_or_default(),
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -296,5 +441,46 @@ mod tests {
     });
     let guess = heuristic_priority_guess(&item).expect("past all-day should match");
     assert_eq!(guess.priority, "low");
+  }
+
+  #[test]
+  fn build_summary_from_tool_input_ok() {
+    let item = json!({ "id": "m_10" });
+    let input = json!({
+      "title": "Q2 予算レビュー (Alice)",
+      "key_points": ["金曜までに承認要", "前年比 +8%"],
+      "source_type": "mail",
+      "priority": "high",
+      "reason": "Deadline Friday"
+    });
+    let s = build_summary_from_tool_input(&item, "mail", &input).unwrap();
+    assert_eq!(s.title, "Q2 予算レビュー (Alice)");
+    assert_eq!(s.priority, "high");
+    assert_eq!(s.key_points.len(), 2);
+    assert_eq!(s.model, SUMMARIZER_MODEL);
+  }
+
+  #[test]
+  fn build_summary_rejects_invalid_priority() {
+    let item = json!({ "id": "m_11" });
+    let input = json!({
+      "title": "t",
+      "key_points": ["a"],
+      "source_type": "mail",
+      "priority": "urgent"
+    });
+    assert!(build_summary_from_tool_input(&item, "mail", &input).is_err());
+  }
+
+  #[test]
+  fn build_summary_rejects_empty_key_points() {
+    let item = json!({ "id": "m_12" });
+    let input = json!({
+      "title": "t",
+      "key_points": [],
+      "source_type": "mail",
+      "priority": "medium"
+    });
+    assert!(build_summary_from_tool_input(&item, "mail", &input).is_err());
   }
 }
