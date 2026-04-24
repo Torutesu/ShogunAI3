@@ -6,5 +6,23 @@ playwright-report/
 blob-report/
 playwright/.cache/
 
+# Secrets / env
+.env
+.env.local
+*.env.local
+
 # Local-only Tauri signing overlay (see src-tauri/tauri.signing.local.example.json)
 src-tauri/tauri.signing.local.json
+
+# AI assistant / IDE local state — tool-specific, not versioned
+.agents/
+.claude/skills/
+.continue/
+.factory/
+.kiro/
+.pi/
+.trae/
+.vibe/
+.windsurf/
+skills/
+skills-lock.json
