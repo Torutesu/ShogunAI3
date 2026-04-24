@@ -34,6 +34,7 @@
       memorySummaryGet: (input) => call("shogun_memory_summary_get", input, READ),
       memorySummaryBatch: (input) => call("shogun_memory_summary_batch", input, READ),
       memorySummaryInvalidate: (input) => call("shogun_memory_summary_invalidate", input, WRITE),
+      memoryRollupGet: (input) => call("shogun_memory_rollup_get", input, READ),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
       memoryEmbedBackfill: (input) =>
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),

@@ -1244,6 +1244,8 @@ function ScreenMemory() {
   const [rawEvents, setRawEvents] = useState(() => []);
   const [summaryByMemId, setSummaryByMemId] = useState(() => ({}));
   const [batchSummarizing, setBatchSummarizing] = useState(0); // count of items being processed; 0 = idle
+  const [weekRollup, setWeekRollup] = useState(null); // { title, keyPoints, reason, generatedAt } or null
+  const [weekRollupLoading, setWeekRollupLoading] = useState(false);
   const [scrubIdx, setScrubIdx] = useState(0);
   const [timelineSpan, setTimelineSpan] = useState('week');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
@@ -1548,6 +1550,40 @@ function ScreenMemory() {
     // dedupe, but don't want to re-run when it changes (would thrash).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawEvents, summaryEnabled]);
+  // Phase 2: fetch a week rollup when the user is in Week span. The rollup
+  // is cached server-side per (week_start_ms, lang), so repeated visits are
+  // free. Re-runs when item summaries finish (batchSummarizing transition to 0)
+  // so the rollup sees freshly classified items.
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'week') {
+      setWeekRollup(null);
+      return;
+    }
+    const cursor = new Date(timelineCursor);
+    const day = cursor.getDay();
+    const mondayOffset = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(cursor);
+    monday.setDate(cursor.getDate() + mondayOffset);
+    monday.setHours(0, 0, 0, 0);
+    const weekStartMs = monday.getTime();
+    let cancelled = false;
+    setWeekRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.get', { weekStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setWeekRollup(res.data.rollup);
+        } else {
+          setWeekRollup(null);
+        }
+      } finally {
+        if (!cancelled) setWeekRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
   useEffect(() => {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
@@ -1692,15 +1728,23 @@ function ScreenMemory() {
   const hourIndexFromEvents = useMemo(() => {
     const counts = new Array(24).fill(0);
     const firstIdx = new Array(24).fill(-1);
+    const topPriority = new Array(24).fill(null); // best-tier priority found in the hour (or null)
+    const priorityRank = (p) => (p === 'high' ? 2 : p === 'medium' ? 1 : 0);
     events.forEach((e, i) => {
       const hh = Math.floor(Number(e.h));
       const h = Math.max(0, Math.min(23, Number.isFinite(hh) ? hh : 12));
       if (firstIdx[h] < 0) firstIdx[h] = i;
       counts[h] += 1;
+      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+      if (s && (s.priority === 'high' || s.priority === 'medium')) {
+        if (priorityRank(s.priority) > priorityRank(topPriority[h])) {
+          topPriority[h] = s.priority;
+        }
+      }
     });
     const maxC = Math.max(1, ...counts);
-    return { counts, firstIdx, maxC };
-  }, [events]);
+    return { counts, firstIdx, maxC, topPriority };
+  }, [events, summaryByMemId]);
 
   const timeSpanLabel = useMemo(() => {
     if (!events.length) return '—';
@@ -1914,6 +1958,74 @@ function ScreenMemory() {
           );
         })}
       </div>
+
+      {/* Week rollup banner — synthesized digest for the selected week. */}
+      {timelineSpan === 'week' && summaryEnabled && (weekRollup || weekRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">WEEK ROLLUP</span>
+                <span className="jp">週次サマリ</span>
+              </span>
+              {weekRollupLoading && !weekRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {weekRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const cursor = new Date(timelineCursor);
+                    const day = cursor.getDay();
+                    const mondayOffset = (day === 0 ? -6 : 1 - day);
+                    const monday = new Date(cursor);
+                    monday.setDate(cursor.getDate() + mondayOffset);
+                    monday.setHours(0, 0, 0, 0);
+                    setWeekRollupLoading(true);
+                    setWeekRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.get', {
+                      weekStartMs: monday.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setWeekRollup(res.data.rollup);
+                    setWeekRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate this week's rollup"
+                >Regenerate</button>
+              )}
+            </div>
+            {weekRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {weekRollup.title}
+                </div>
+                {Array.isArray(weekRollup.keyPoints) && weekRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {weekRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* River view: two-card split + hourly timeline scrubber */}
       {view === 'river' && (
@@ -2216,19 +2328,32 @@ function ScreenMemory() {
                 const height = count > 0 ? Math.round((count / hourIndexFromEvents.maxC) * 42) + 6 : 4;
                 const active = firstIdx >= 0 && scrubIdx >= firstIdx && scrubIdx < firstIdx + count;
                 const clickable = firstIdx >= 0;
+                const topTier = hourIndexFromEvents.topPriority[h];
+                // Color the bar by the BEST-tier event in the hour so the eye
+                // tracks "when did important stuff happen today".
+                const inactiveBg = topTier === 'high'
+                  ? 'var(--gold)'
+                  : topTier === 'medium'
+                    ? 'var(--border-hi)'
+                    : 'var(--border)';
+                const inactiveOpacity = topTier === 'high'
+                  ? 0.9
+                  : topTier === 'medium'
+                    ? 0.6
+                    : (clickable ? 0.4 : 0.3);
                 return (
                   <button
                     key={h}
                     type="button"
                     disabled={!clickable}
                     onClick={() => { if (clickable) setScrubIdx(firstIdx); }}
-                    aria-label={`${count} memories at ${String(h).padStart(2,'0')}:00`}
+                    aria-label={`${count} memories at ${String(h).padStart(2,'0')}:00${topTier ? ` (top priority: ${topTier})` : ''}`}
                     style={{
                       height,
                       padding:0,
                       border:'none',
-                      background: active ? 'var(--gold)' : (count > 0 ? 'var(--border-hi)' : 'var(--border)'),
-                      opacity: clickable ? (active ? 0.95 : 0.65) : 0.3,
+                      background: active ? 'var(--gold)' : inactiveBg,
+                      opacity: clickable ? (active ? 0.95 : inactiveOpacity) : 0.3,
                       borderRadius:2,
                       cursor: clickable ? 'pointer' : 'default',
                       transition: 'opacity 120ms, background 120ms',

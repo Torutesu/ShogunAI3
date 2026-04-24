@@ -56,6 +56,7 @@
     register("memory.summary.get", (payload) => api.memorySummaryGet(payload));
     register("memory.summary.batch", (payload) => api.memorySummaryBatch(payload));
     register("memory.summary.invalidate", (payload) => api.memorySummaryInvalidate(payload));
+    register("memory.rollup.get", (payload) => api.memoryRollupGet(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));

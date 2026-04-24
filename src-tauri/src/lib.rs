@@ -188,6 +188,7 @@ pub fn run() {
       commands::shogun_memory_summary_get,
       commands::shogun_memory_summary_batch,
       commands::shogun_memory_summary_invalidate,
+      commands::shogun_memory_rollup_get,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

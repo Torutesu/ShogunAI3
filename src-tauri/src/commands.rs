@@ -1197,3 +1197,36 @@ pub fn shogun_memory_summary_invalidate(payload: serde_json::Value) -> Result<se
   let deleted = crate::summarizer_store::delete(target_kind, target_id)?;
   Ok(serde_json::json!({ "deleted": deleted }))
 }
+
+/// 週次ロールアップ要約を取得 (キャッシュヒット時は即返、無ければ生成)。
+///
+/// payload: { "weekStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// weekStartMs は週の開始 (通常 Monday 00:00 local) の ms。UI で計算して渡す。
+#[tauri::command]
+pub async fn shogun_memory_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let week_start_ms = payload
+    .get("weekStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "weekStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let week_id = crate::summarizer::format_week_id(week_start_ms);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("week_rollup", &week_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_week_rollup(week_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
