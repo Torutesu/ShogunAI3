@@ -90,18 +90,28 @@ function openMemoryEntryInChat(entry, options) {
   const limRaw = opts.memoryAssemblyLimit != null ? Number(opts.memoryAssemblyLimit) : 14;
   const limit = Number.isFinite(limRaw) ? Math.min(80, Math.max(1, Math.floor(limRaw))) : 14;
   const semantic = opts.memoryAssemblySemantic !== false;
+  if (opts.newChat && typeof window.SHOGUN_RUNTIME?.createNewChat === 'function') {
+    window.SHOGUN_RUNTIME.createNewChat();
+  }
   const detail = {
     text,
     webSearch: !!opts.webSearch,
     assembleMemory: allowAsm,
+    autoSend: !!opts.autoSend,
   };
   if (allowAsm) {
     detail.memoryAssemblyPreset = { query: memQ, limit, semantic };
   } else {
     detail.clearMemoryAssemblyPreset = true;
   }
-  window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
+  const dispatch = () => window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
   window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+  if (opts.newChat) {
+    // Let React mount the new chat + composer listener before seeding.
+    setTimeout(dispatch, 0);
+  } else {
+    dispatch();
+  }
 }
 
 /** IANA zone from Shogun helper or `Intl` (browser / OS). */
@@ -1203,18 +1213,36 @@ function ScreenMemory() {
     setTimelineCursor(new Date());
     setSelectedDayOffset(0);
   }, []);
+  const spanDayCount = useMemo(() => {
+    if (timelineSpan === 'day') return 1;
+    if (timelineSpan === 'week') return 7;
+    if (timelineSpan === 'month') return 30;
+    return 12; // year: show 12 months as 12 "day" slots (one per month)
+  }, [timelineSpan]);
   const weekDays = useMemo(() => {
     const out = [];
     const base = new Date(timelineCursor);
     base.setHours(0, 0, 0, 0);
-    for (let i = 6; i >= 0; i -= 1) {
-      out.push(new Date(base.getTime() - i * 24 * 60 * 60 * 1000));
+    const count = timelineSpan === 'year' ? 12 : spanDayCount;
+    if (timelineSpan === 'year') {
+      // One slot per month: show last 12 months ending at cursor month.
+      for (let i = count - 1; i >= 0; i -= 1) {
+        const d = new Date(base);
+        d.setDate(1);
+        d.setMonth(d.getMonth() - i);
+        out.push(d);
+      }
+    } else {
+      for (let i = count - 1; i >= 0; i -= 1) {
+        out.push(new Date(base.getTime() - i * 24 * 60 * 60 * 1000));
+      }
     }
     return out;
-  }, [timelineCursor]);
+  }, [timelineCursor, timelineSpan, spanDayCount]);
   const fmtMonthDay = (d) => d.toLocaleString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
   const selectedDate = useMemo(() => {
-    const idx = Math.min(6, Math.max(0, 6 - selectedDayOffset));
+    const last = weekDays.length - 1;
+    const idx = Math.min(last, Math.max(0, last - selectedDayOffset));
     return weekDays[idx] || timelineCursor;
   }, [weekDays, selectedDayOffset, timelineCursor]);
   const fmtFullDate = (d) => {
@@ -1225,29 +1253,51 @@ function ScreenMemory() {
     try { return d.toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' }); }
     catch (_e) { return ''; }
   };
-  const rangeLabel = useMemo(() => `${fmtMonthDay(weekDays[0])} – ${fmtMonthDay(weekDays[weekDays.length - 1])}`, [weekDays]);
-  /** Per-day, 12-bucket (2h each) histograms sourced from real indexed events. */
+  const rangeLabel = useMemo(() => {
+    if (timelineSpan === 'day') return fmtMonthDay(weekDays[0]);
+    if (timelineSpan === 'year') {
+      const first = weekDays[0];
+      const last = weekDays[weekDays.length - 1];
+      return `${first.toLocaleString('en-US', { month: 'short', year: 'numeric' }).toUpperCase()} – ${last.toLocaleString('en-US', { month: 'short', year: 'numeric' }).toUpperCase()}`;
+    }
+    return `${fmtMonthDay(weekDays[0])} – ${fmtMonthDay(weekDays[weekDays.length - 1])}`;
+  }, [weekDays, timelineSpan]);
+  /** Per-slot histograms: day/week/month span = 12-bucket hour bars; year span = 12 monthly count bars. */
   const weekHistograms = useMemo(() => {
     let globalMax = 1;
     const perDay = weekDays.map((d) => {
-      const start = new Date(d);
-      start.setHours(0, 0, 0, 0);
-      const startMs = start.getTime();
-      const endMs = startMs + 24 * 60 * 60 * 1000;
       const bars = new Array(12).fill(0);
       let count = 0;
-      events.forEach((e) => {
-        if (!Number.isFinite(e.ts) || e.ts < startMs || e.ts >= endMs) return;
-        const h = Math.max(0, Math.min(23, Math.floor(Number(e.h))));
-        bars[Math.min(11, Math.floor(h / 2))] += 1;
-        count += 1;
-      });
+      if (timelineSpan === 'year') {
+        // Slot = one calendar month; use bars[0..11] for weeks-within-month.
+        const slotYear = d.getFullYear();
+        const slotMonth = d.getMonth();
+        events.forEach((e) => {
+          if (!Number.isFinite(e.ts)) return;
+          const ed = new Date(e.ts);
+          if (ed.getFullYear() !== slotYear || ed.getMonth() !== slotMonth) return;
+          // Spread within month across 12 buckets (~2.5 days each).
+          bars[Math.min(11, Math.floor((ed.getDate() - 1) / 2.6))] += 1;
+          count += 1;
+        });
+      } else {
+        const start = new Date(d);
+        start.setHours(0, 0, 0, 0);
+        const startMs = start.getTime();
+        const endMs = startMs + 24 * 60 * 60 * 1000;
+        events.forEach((e) => {
+          if (!Number.isFinite(e.ts) || e.ts < startMs || e.ts >= endMs) return;
+          const h = Math.max(0, Math.min(23, Math.floor(Number(e.h))));
+          bars[Math.min(11, Math.floor(h / 2))] += 1;
+          count += 1;
+        });
+      }
       const dayMax = bars.reduce((a, b) => Math.max(a, b), 0);
       if (dayMax > globalMax) globalMax = dayMax;
       return { bars, count, dayMax };
     });
     return { perDay, globalMax };
-  }, [weekDays, events]);
+  }, [weekDays, events, timelineSpan]);
   const memoryTotals = useMemo(() => {
     const counts = weekHistograms.perDay.map((d) => d.count);
     const total = counts.reduce((a, b) => a + b, 0);
@@ -1348,6 +1398,11 @@ function ScreenMemory() {
       return Math.min(i, events.length - 1);
     });
   }, [events.length]);
+  // Reset day selection when the timeline span changes so the active card
+  // always points to the last slot (most-recent day/month) in the new range.
+  useEffect(() => {
+    setSelectedDayOffset(0);
+  }, [timelineSpan]);
   useEffect(() => {
     const onJump = () => {
       setView('river');
@@ -1581,10 +1636,10 @@ function ScreenMemory() {
         <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>{memoryTotals.total} MEMORIES · {Math.round(memoryTotals.total * 0.25)}H</span>
       </div>
 
-      {/* 7-day week cards — each day shows a 12-bucket hour histogram */}
-      <div style={{padding:'18px 40px 0', display:'grid', gridTemplateColumns:'repeat(7, minmax(0, 1fr))', gap:10}}>
+      {/* Span cards — one per day/month depending on timelineSpan */}
+      <div style={{padding:'18px 40px 0', display:'grid', gridTemplateColumns:`repeat(${weekDays.length}, minmax(0, 1fr))`, gap:10}}>
         {weekDays.map((d, i)=>{
-          const offset = 6 - i;
+          const offset = (weekDays.length - 1) - i;
           const active = offset === selectedDayOffset;
           const { bars } = weekHistograms.perDay[i] || { bars: new Array(12).fill(0) };
           const maxBar = Math.max(1, weekHistograms.globalMax);
@@ -1600,7 +1655,11 @@ function ScreenMemory() {
               boxShadow: active ? '0 0 0 1px color-mix(in srgb, var(--gold) 25%, transparent)' : 'none',
               transition: 'border-color 120ms, background 120ms',
             }}>
-              <div className="t-mono" style={{fontSize:11, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>{fmtMonthDay(d)}</div>
+              <div className="t-mono" style={{fontSize:11, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>
+                {timelineSpan === 'year'
+                  ? d.toLocaleString('en-US', { month: 'short', year: '2-digit' }).toUpperCase()
+                  : fmtMonthDay(d)}
+              </div>
               <div style={{display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:2, height:28}} aria-hidden="true">
                 {bars.map((v, j)=>{
                   const h = v > 0 ? Math.round((v / maxBar) * 22) + 4 : 3;
@@ -1642,9 +1701,25 @@ function ScreenMemory() {
               {srcLabel(scrubbed.src).toUpperCase()} · {scrubbed.t}
             </div>
             {events.length > 0 && !timelineLoading && (
-              <span className="t-mono" style={{marginLeft:'auto', fontSize:10, color:'var(--text-dim)'}}>
-                {Math.min(scrubIdx + 1, events.length)} / {events.length}
-              </span>
+              <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:4}}>
+                <button
+                  type="button"
+                  aria-label="Previous memory"
+                  onClick={() => setScrubIdx((i) => Math.max(0, i - 1))}
+                  disabled={scrubIdx === 0}
+                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx === 0 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx === 0 ? 0.35 : 1}}
+                ><Icon name="chevronLeft" size={11}/></button>
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'0 2px'}}>
+                  {Math.min(scrubIdx + 1, events.length)} / {events.length}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Next memory"
+                  onClick={() => setScrubIdx((i) => Math.min(events.length - 1, i + 1))}
+                  disabled={scrubIdx >= events.length - 1}
+                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx >= events.length - 1 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx >= events.length - 1 ? 0.35 : 1}}
+                ><Icon name="chevronRight" size={11}/></button>
+              </div>
             )}
           </div>
           {timelineLoading && (
@@ -1749,10 +1824,17 @@ function ScreenMemory() {
             {scrubbed.memoryId && !timelineLoading && (
               <button
                 type="button"
-                onClick={() => openMemoryEntryInChat(
-                  { title: scrubbed.title, snippet: scrubbed.snippet },
-                  { memoryAssemblyQuery: scrubbed.title, memoryAssemblyLimit: 14, allowServerMemoryAssembly },
-                )}
+                onClick={() => {
+                  openMemoryEntryInChat(
+                    { title: scrubbed.title, snippet: scrubbed.snippet },
+                    {
+                      memoryAssemblyQuery: scrubbed.title,
+                      memoryAssemblyLimit: 14,
+                      allowServerMemoryAssembly,
+                      newChat: true,
+                    },
+                  );
+                }}
                 style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}
               >
                 <Icon name="chat" size={13}/>
@@ -1760,66 +1842,7 @@ function ScreenMemory() {
                 <span className="jp" style={{fontSize:11}}>チャットへ</span>
               </button>
             )}
-            <button
-              type="button"
-              disabled={timelineLoading || !scrubbed.title}
-              onClick={async () => {
-                const res = await runRuntimeActionA('memory.search', withSemantic({ query: scrubbed.title, limit: 10 }), { successMessage: 'Search run' });
-                mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
-              }}
-              style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit', opacity: (timelineLoading || !scrubbed.title) ? 0.5 : 1}}
-            >
-              <Icon name="search" size={13}/>Search title
-            </button>
-            {scrubbed.memoryId && !timelineLoading && (
-              <button
-                type="button"
-                onClick={() => {
-                  const prompt =
-                    'Turn this indexed memory into a concise Markdown work note (bullets OK).\n\n**Title:** ' +
-                    (scrubbed.title || '') +
-                    '\n\n**Snippet:**\n' +
-                    (scrubbed.snippet || '').slice(0, 4000);
-                  runRuntimeActionA(
-                    'draft.create',
-                    (() => {
-                      const p = { target: 'work_document', source: 'memory_timeline', prompt };
-                      if (allowServerMemoryAssembly) {
-                        p.memoryAssembly = {
-                          query: String(scrubbed.title || '').slice(0, 240),
-                          limit: 12,
-                          semantic: true,
-                        };
-                      }
-                      return p;
-                    })(),
-                    { successMessage: 'Draft ready' },
-                  );
-                }}
-                style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}
-              >
-                <Icon name="edit" size={13}/>
-                <span className="en-only">Draft</span>
-                <span className="jp" style={{fontSize:11}}>下書き</span>
-              </button>
-            )}
             <span style={{flex:1}}/>
-            {scrubbed.memoryId && (
-              <button
-                type="button"
-                onClick={() => requestWriteActionA(
-                  'memory.delete',
-                  { id: scrubbed.memoryId },
-                  'Remove from memory index',
-                  'Deletes this entry from the local memory index.',
-                )}
-                aria-label="Remove from index"
-                title="Remove from index"
-                style={{display:'inline-flex', alignItems:'center', justifyContent:'center', width:32, height:30, padding:0, borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer'}}
-              >
-                <Icon name="x" size={13}/>
-              </button>
-            )}
           </div>
         </div>
 
