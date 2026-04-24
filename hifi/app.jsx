@@ -732,6 +732,7 @@ function ensureRuntimeDeps() {
         notionSync: (input) => client.invoke('shogun_notion_sync', input),
         githubSync: (input) => client.invoke('shogun_github_sync', input),
         linearSync: (input) => client.invoke('shogun_linear_sync', input),
+        driveSync: (input) => client.invoke('shogun_drive_sync', input),
         capturePause: (input) => client.invoke('app_capture_pause', input),
         captureResume: (input) => client.invoke('app_capture_resume', input),
         permissionsManage: (input) => client.invoke('app_permissions_manage', input),
@@ -811,6 +812,7 @@ function ensureRuntimeDeps() {
           'notion.sync': api.notionSync,
           'github.sync': api.githubSync,
           'linear.sync': api.linearSync,
+          'drive.sync': api.driveSync,
           'capture.pause': api.capturePause,
           'capture.resume': api.captureResume,
           'permissions.manage': api.permissionsManage,
@@ -1016,6 +1018,9 @@ function App() {
   const toastTimerRef = useRef(null);
   const bioWantLockRef = useRef(false);
   const [bioGate, setBioGate] = useState({ ready: false, open: false });
+  // Sidebar Memory nav badge — count of HIGH-priority items from the last
+  // 7 days. Updated by ScreenHome's brief.get callback via a window event.
+  const [memoryHighUnreadCount, setMemoryHighUnreadCount] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try {
@@ -1204,7 +1209,7 @@ function App() {
   // Prompt the user to import historical data the first time they connect
   // Gmail or Google Calendar. Choice is persisted so we don't re-ask.
   useEffect(() => {
-    const HISTORICAL_PROVIDERS = new Set(['gmail', 'google_calendar', 'slack', 'notion', 'github', 'linear']);
+    const HISTORICAL_PROVIDERS = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear']);
     const onCred = async (ev) => {
       const detail = (ev && ev.detail) || {};
       const provider = String(detail.provider || '').trim();
@@ -1489,7 +1494,7 @@ function App() {
       createNewChat: () => createNewChat(),
       openHistoricalImport: (provider, defaultDays) => {
         const p = String(provider || '').trim();
-        const allowed = new Set(['gmail', 'google_calendar', 'slack', 'notion', 'github', 'linear']);
+        const allowed = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear']);
         if (!allowed.has(p)) return false;
         const d = Number.isFinite(Number(defaultDays)) ? Number(defaultDays) : 30;
         setHistoricalImport({ provider: p, days: d });
@@ -2005,6 +2010,16 @@ function App() {
     return () => window.removeEventListener('shogun-appearance-changed', onAppearance);
   }, []);
 
+  // Keep the sidebar Memory badge in sync with ScreenHome's digest load.
+  useEffect(() => {
+    const onHighCount = (e) => {
+      const n = Number(e && e.detail && e.detail.count);
+      setMemoryHighUnreadCount(Number.isFinite(n) && n > 0 ? n : 0);
+    };
+    window.addEventListener('shogun-memory-high-count', onHighCount);
+    return () => window.removeEventListener('shogun-memory-high-count', onHighCount);
+  }, []);
+
   const executeActionRef = useRef(executeAction);
   executeActionRef.current = executeAction;
 
@@ -2227,9 +2242,15 @@ function App() {
   };
 
   // Include memory_debug nav entry only when the dev gate returns available.
-  const effectiveNav = devGate.available
-    ? [...NAV, { id: "memory_debug", label: "Memory DBG", jp: "DBG", icon: "memory", section: "workspace" }]
-    : NAV;
+  // Also inject the HIGH-priority unread count onto the Memory item so the
+  // sidebar surfaces "you have N important things waiting" at a glance.
+  const effectiveNav = (() => {
+    const base = devGate.available
+      ? [...NAV, { id: "memory_debug", label: "Memory DBG", jp: "DBG", icon: "memory", section: "workspace" }]
+      : NAV;
+    if (!memoryHighUnreadCount) return base;
+    return base.map((n) => (n.id === 'memory' ? { ...n, count: memoryHighUnreadCount } : n));
+  })();
 
   return (
     <div
@@ -3270,7 +3291,9 @@ function App() {
                       ? 'Import past GitHub activity'
                       : historicalImport.provider === 'linear'
                         ? 'Import past Linear issues'
-                        : 'Import past Calendar events'}
+                        : historicalImport.provider === 'google_drive'
+                          ? 'Import past Drive files'
+                          : 'Import past Calendar events'}
             </div>
             <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.5, marginBottom:16}}>
               How far back should SHOGUN pull history into Memory? You can change this later in Settings. Up to 1 year.
@@ -3348,6 +3371,7 @@ function App() {
                   const providerLabels = {
                     gmail: 'Gmail',
                     google_calendar: 'Calendar',
+                    google_drive: 'Drive',
                     slack: 'Slack',
                     notion: 'Notion',
                     github: 'GitHub',
@@ -3356,6 +3380,7 @@ function App() {
                   const actionKeys = {
                     gmail: 'gmail.sync',
                     google_calendar: 'calendar.sync',
+                    google_drive: 'drive.sync',
                     slack: 'slack.sync',
                     notion: 'notion.sync',
                     github: 'github.sync',

@@ -6,7 +6,9 @@
 //! import, capped at 7). Respects per-provider enable toggle + interval in
 //! `settings.sections.integrations.*AutoSync` / `*SyncIntervalMins`.
 
-use crate::{github, gmail, integration_secrets, linear, notion, settings_store, slack};
+use crate::{
+  github, gmail, google_drive, integration_secrets, linear, notion, settings_store, slack,
+};
 use serde_json::Value;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,12 +19,13 @@ struct ProviderState {
   last_sync_ms: Option<u64>,
 }
 
-static STATES: Mutex<[ProviderState; 5]> = Mutex::new([
+static STATES: Mutex<[ProviderState; 6]> = Mutex::new([
   ProviderState { last_sync_ms: None }, // gmail
   ProviderState { last_sync_ms: None }, // slack
   ProviderState { last_sync_ms: None }, // notion
   ProviderState { last_sync_ms: None }, // github
   ProviderState { last_sync_ms: None }, // linear
+  ProviderState { last_sync_ms: None }, // google_drive
 ]);
 
 const IDX_GMAIL: usize = 0;
@@ -30,6 +33,7 @@ const IDX_SLACK: usize = 1;
 const IDX_NOTION: usize = 2;
 const IDX_GITHUB: usize = 3;
 const IDX_LINEAR: usize = 4;
+const IDX_DRIVE: usize = 5;
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -97,6 +101,10 @@ fn provider_key_camel(provider: &str) -> &'static str {
     "notion" => "notion",
     "github" => "github",
     "linear" => "linear",
+    // Settings keys use the same slug as the provider; for Drive this produces
+    // `google_driveAutoSync` / `google_driveSyncIntervalMins` which is
+    // intentionally consistent with how the frontend writes the flags.
+    "google_drive" => "google_drive",
     _ => "unknown",
   }
 }
@@ -256,6 +264,37 @@ async fn tick_linear(doc: &Value) {
   }
 }
 
+async fn tick_drive(doc: &Value) {
+  let (enabled, mins, decided, window) = provider_settings(doc, "google_drive", 60);
+  if !enabled || !decided {
+    return;
+  }
+  if integration_secrets::get_credentials("google_drive")
+    .ok()
+    .flatten()
+    .is_none()
+  {
+    return;
+  }
+  let now = now_ms();
+  let period_ms = mins.saturating_mul(60_000);
+  let due = last_sync_ms(IDX_DRIVE)
+    .map(|t| now.saturating_sub(t) >= period_ms)
+    .unwrap_or(true);
+  if !due {
+    return;
+  }
+  let days = if window == 0 { Some(1) } else { Some(window) };
+  match google_drive::sync_drive_to_memory(days, 200).await {
+    Ok(out) => {
+      let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+      log::info!("drive auto-sync: ingested {} file(s)", n);
+      record_sync_ms(IDX_DRIVE, now_ms());
+    }
+    Err(e) => log::warn!("drive auto-sync failed: {}", e),
+  }
+}
+
 /// Starts a single background loop that polls each connector in turn. The
 /// outer sleep is 60s; each provider self-gates on its own interval so the
 /// cadence stays correct.
@@ -270,6 +309,7 @@ pub fn spawn_background_connector_sync() {
       tick_notion(&doc).await;
       tick_github(&doc).await;
       tick_linear(&doc).await;
+      tick_drive(&doc).await;
       tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
   });

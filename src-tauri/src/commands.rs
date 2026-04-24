@@ -2,8 +2,8 @@
 
 use crate::{
   auth, biometric, brief, brief_actions, embed_backfill, github, gmail, google_calendar,
-  integration_secrets, integrations, linear, llm, macos_ax, memory_store, notion, secrets,
-  settings_store, slack,
+  google_drive, integration_secrets, integrations, linear, llm, macos_ax, memory_store, notion,
+  secrets, settings_store, slack,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -558,6 +558,20 @@ pub async fn shogun_linear_sync(payload: Value) -> Result<Value, String> {
     .unwrap_or(500)
     .clamp(1, 2000) as usize;
   linear::sync_activity_to_memory(days, max_items).await
+}
+
+#[tauri::command]
+pub async fn shogun_drive_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_files = payload
+    .get("maxFiles")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 3000) as usize;
+  google_drive::sync_drive_to_memory(days, max_files).await
 }
 
 #[tauri::command]

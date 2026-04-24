@@ -12,6 +12,7 @@ mod embed_backfill;
 mod embeddings;
 mod gmail;
 mod google_calendar;
+mod google_drive;
 mod google_oauth;
 mod http_retry;
 mod integration_secrets;
@@ -148,6 +149,7 @@ pub fn run() {
       commands::shogun_notion_sync,
       commands::shogun_github_sync,
       commands::shogun_linear_sync,
+      commands::shogun_drive_sync,
       commands::app_capture_pause,
       commands::app_capture_resume,
       commands::app_permissions_manage,

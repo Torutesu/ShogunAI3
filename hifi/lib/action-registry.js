@@ -42,6 +42,7 @@
     register("notion.sync", (payload) => api.notionSync(payload));
     register("github.sync", (payload) => api.githubSync(payload));
     register("linear.sync", (payload) => api.linearSync(payload));
+    register("drive.sync", (payload) => api.driveSync(payload));
     register("capture.pause", () => api.capturePause({ reason: "user_request" }));
     register("capture.resume", () => api.captureResume({ reason: "user_request" }));
     register("permissions.manage", (payload) => api.permissionsManage(payload));
