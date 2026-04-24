@@ -31,11 +31,52 @@ function ScreenWork() {
   const [newName, setNewName] = React.useState('');
   const [renaming, setRenaming] = React.useState({ id: null, value: '' });
   const [menuFor, setMenuFor] = React.useState(null);
+  const [memberships, setMemberships] = React.useState({});
 
   const visible = React.useMemo(
     () => projects.filter((p) => !!p.archived === showArchived),
     [projects, showArchived],
   );
+
+  // Assignment map written by the Memory screen lives in
+  // settings.sections.workspace_memberships.memberships.
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
+        if (cancelled) return;
+        const map = r && r.ok
+          && r.data && r.data.settings && r.data.settings.sections
+          && r.data.settings.sections.workspace_memberships
+          && r.data.settings.sections.workspace_memberships.memberships;
+        setMemberships(map && typeof map === 'object' ? map : {});
+      });
+    };
+    load();
+    const onChanged = (ev) => {
+      // Fast path: assignment events carry the new map directly.
+      const m = ev && ev.detail && ev.detail.memberships;
+      if (m && typeof m === 'object') {
+        setMemberships(m);
+      } else {
+        load();
+      }
+    };
+    window.addEventListener('shogun-workspace-memberships-changed', onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('shogun-workspace-memberships-changed', onChanged);
+    };
+  }, []);
+
+  const countByProject = React.useMemo(() => {
+    const out = {};
+    for (const v of Object.values(memberships)) {
+      if (!v) continue;
+      out[v] = (out[v] || 0) + 1;
+    }
+    return out;
+  }, [memberships]);
 
   const createProject = React.useCallback(() => {
     const name = newName.trim();
@@ -275,8 +316,12 @@ function ScreenWork() {
               )}
 
               <div style={{fontSize:11, color:'var(--text-dim)', marginTop:10, lineHeight:1.5}}>
-                <span className="en-only">Context assignment coming in a later phase.</span>
-                <span className="jp">コンテキスト割当は次フェーズ対応予定。</span>
+                {(() => {
+                  const n = countByProject[p.id] || 0;
+                  return n > 0
+                    ? `${n} memor${n === 1 ? 'y' : 'ies'} assigned`
+                    : 'No memories assigned yet — use "Assign to workspace" on a memory.';
+                })()}
               </div>
             </div>
           ))}

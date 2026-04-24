@@ -1376,6 +1376,59 @@ function ScreenMemory() {
   const [digestState, setDigestState] = useState({
     week: null, day: null, loading: false, error: null, generatingWeek: false, generatingDay: false,
   });
+  // { [memoryId]: workProjectId } assignment map, persisted in
+  // settings.sections.workspace_memberships.memberships.
+  const [workspaceAssignments, setWorkspaceAssignments] = useState({});
+  const [workProjects, setWorkProjectsLocal] = useState(() => {
+    const get = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.getWorkProjects;
+    return typeof get === 'function' ? get() : [];
+  });
+  const [assignMenuOpen, setAssignMenuOpen] = useState(false);
+  const [newWorkspaceDraft, setNewWorkspaceDraft] = useState('');
+
+  useEffect(() => {
+    // Hydrate workProjects from the shell on mount and keep in sync when the
+    // user creates / renames / archives one elsewhere.
+    const syncProjects = () => {
+      const get = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.getWorkProjects;
+      if (typeof get === 'function') setWorkProjectsLocal(get());
+    };
+    syncProjects();
+    window.addEventListener('shogun-work-projects-changed', syncProjects);
+    return () => window.removeEventListener('shogun-work-projects-changed', syncProjects);
+  }, []);
+
+  useEffect(() => {
+    // Load persisted { memoryId → workspaceId } map on first mount.
+    runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
+      const map = r && r.ok
+        && r.data && r.data.settings && r.data.settings.sections
+        && r.data.settings.sections.workspace_memberships
+        && r.data.settings.sections.workspace_memberships.memberships;
+      if (map && typeof map === 'object') {
+        setWorkspaceAssignments(map);
+      }
+    });
+  }, []);
+
+  const assignMemoryToWorkspace = useCallback(async (memoryId, workspaceId) => {
+    if (!memoryId) return;
+    const next = { ...workspaceAssignments };
+    if (workspaceId) next[memoryId] = workspaceId;
+    else delete next[memoryId];
+    setWorkspaceAssignments(next);
+    await runRuntimeActionA(
+      'settings.save',
+      { section: 'workspace_memberships', memberships: next },
+      { silentError: true },
+    );
+    // Let other screens (e.g. Work) refresh counts without polling.
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-workspace-memberships-changed', {
+        detail: { memberships: next },
+      }));
+    } catch (_) { /* ignore */ }
+  }, [workspaceAssignments]);
   const [rawEvents, setRawEvents] = useState(() => []);
   const [summaryByMemId, setSummaryByMemId] = useState(() => ({}));
   const [batchSummarizing, setBatchSummarizing] = useState(0); // count of items being processed; 0 = idle
@@ -2552,7 +2605,7 @@ function ScreenMemory() {
             </>
           )}
           <span style={{flex:1}}/>
-          <div style={{display:'flex', gap:8, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)', flexWrap:'wrap'}}>
+          <div style={{display:'flex', gap:8, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)', flexWrap:'wrap', alignItems:'center', position:'relative'}}>
             {scrubbed.memoryId && !timelineLoading && (
               <button
                 type="button"
@@ -2574,6 +2627,144 @@ function ScreenMemory() {
                 <span className="jp" style={{fontSize:11}}>チャットへ</span>
               </button>
             )}
+            {scrubbed.memoryId && !timelineLoading && (() => {
+              const assignedId = workspaceAssignments[scrubbed.memoryId];
+              const assignedProject = assignedId
+                ? workProjects.find((p) => p.id === assignedId)
+                : null;
+              const label = assignedProject ? assignedProject.name : 'Assign to workspace';
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setAssignMenuOpen((v) => !v)}
+                    style={{
+                      display:'inline-flex', alignItems:'center', gap:6,
+                      padding:'7px 12px', borderRadius:10,
+                      border:'1px solid ' + (assignedProject ? 'var(--gold-dim)' : 'var(--border)'),
+                      background: assignedProject ? 'color-mix(in srgb, var(--gold) 10%, var(--surface))' : 'var(--surface)',
+                      color: assignedProject ? 'var(--gold)' : 'var(--text-mute)',
+                      fontSize:12, cursor:'pointer', fontFamily:'inherit', maxWidth:240,
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                    }}
+                  >
+                    <Icon name="work" size={13}/>
+                    <span style={{overflow:'hidden', textOverflow:'ellipsis'}}>{label}</span>
+                  </button>
+                  {assignMenuOpen && (
+                    <>
+                      <div role="presentation" onMouseDown={()=>setAssignMenuOpen(false)} style={{position:'fixed', inset:0, zIndex:40}}/>
+                      <div
+                        role="menu"
+                        onMouseDown={(e)=>e.stopPropagation()}
+                        style={{
+                          position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:41,
+                          minWidth:240, padding:6, borderRadius:10,
+                          border:'1px solid var(--border-hi)', background:'var(--surface-2)',
+                          boxShadow:'0 10px 30px rgba(0,0,0,0.35)',
+                          display:'flex', flexDirection:'column', gap:2,
+                          maxHeight:280, overflowY:'auto',
+                        }}
+                      >
+                        {workProjects.length === 0 && (
+                          <div style={{padding:'8px 10px', fontSize:12, color:'var(--text-dim)'}}>
+                            No workspaces yet.
+                          </div>
+                        )}
+                        {workProjects
+                          .filter((p) => !p.archived)
+                          .map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={async () => {
+                                await assignMemoryToWorkspace(scrubbed.memoryId, p.id);
+                                setAssignMenuOpen(false);
+                              }}
+                              style={{
+                                textAlign:'left', padding:'8px 10px', borderRadius:6,
+                                border:0, background: p.id === assignedId ? 'color-mix(in srgb, var(--gold) 12%, transparent)' : 'transparent',
+                                color: 'var(--text)', fontSize:13, cursor:'pointer',
+                                display:'flex', alignItems:'center', gap:8, fontFamily:'inherit',
+                              }}
+                            >
+                              <Icon name="work" size={12} className={p.id === assignedId ? 'gold' : 'dim'}/>
+                              <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.name}</span>
+                              {p.id === assignedId && <Icon name="check" size={11} className="gold"/>}
+                            </button>
+                          ))}
+                        {assignedId && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await assignMemoryToWorkspace(scrubbed.memoryId, null);
+                              setAssignMenuOpen(false);
+                            }}
+                            style={{
+                              textAlign:'left', padding:'8px 10px', borderRadius:6,
+                              border:0, background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer',
+                              borderTop:'1px solid var(--border)', marginTop:2, fontFamily:'inherit',
+                            }}
+                          >
+                            Unassign
+                          </button>
+                        )}
+                        <div style={{borderTop:'1px solid var(--border)', marginTop:4, paddingTop:6, display:'flex', gap:6}}>
+                          <input
+                            type="text"
+                            value={newWorkspaceDraft}
+                            onChange={(e) => setNewWorkspaceDraft(e.target.value)}
+                            onKeyDown={async (e) => {
+                              if (e.key !== 'Enter') return;
+                              const name = newWorkspaceDraft.trim();
+                              if (!name) return;
+                              const create = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.createWorkProject;
+                              const newId = typeof create === 'function' ? create(name) : null;
+                              if (newId) {
+                                setNewWorkspaceDraft('');
+                                await assignMemoryToWorkspace(scrubbed.memoryId, newId);
+                                setAssignMenuOpen(false);
+                              }
+                            }}
+                            placeholder="New workspace…"
+                            style={{
+                              flex:1, padding:'6px 8px', borderRadius:6,
+                              border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)',
+                              fontSize:12, fontFamily:'inherit',
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const name = newWorkspaceDraft.trim();
+                              if (!name) return;
+                              const create = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.createWorkProject;
+                              const newId = typeof create === 'function' ? create(name) : null;
+                              if (newId) {
+                                setNewWorkspaceDraft('');
+                                await assignMemoryToWorkspace(scrubbed.memoryId, newId);
+                                setAssignMenuOpen(false);
+                              }
+                            }}
+                            disabled={!newWorkspaceDraft.trim()}
+                            style={{
+                              padding:'6px 10px', borderRadius:6,
+                              border:'1px solid var(--border-hi)',
+                              background:'var(--surface)', color:'var(--text)',
+                              fontSize:12, cursor: newWorkspaceDraft.trim() ? 'pointer' : 'default',
+                              opacity: newWorkspaceDraft.trim() ? 1 : 0.5,
+                              fontFamily:'inherit',
+                            }}
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              );
+            })()}
             <span style={{flex:1}}/>
           </div>
         </div>
