@@ -185,6 +185,9 @@ pub fn run() {
       #[cfg(debug_assertions)]
       commands::shogun_memory_debug_sync_status,
       commands::shogun_memory_debug_gate,
+      commands::shogun_memory_summary_get,
+      commands::shogun_memory_summary_batch,
+      commands::shogun_memory_summary_invalidate,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

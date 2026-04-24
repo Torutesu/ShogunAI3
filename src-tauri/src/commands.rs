@@ -1032,3 +1032,147 @@ pub fn shogun_memory_debug_gate() -> Result<serde_json::Value, String> {
     "reason": if enabled { "enabled" } else { "settings_disabled" },
   }))
 }
+
+// ---- Memory Digest Phase 1: summary commands ----
+
+/// target_kind="item" 指定で特定 item の summary を取得。キャッシュ優先、なければ同期生成。
+///
+/// payload: { "targetId": "m_...", "targetKind"?: "item" (default), "item"?: { ... } }
+///   - `item` が同梱されていれば再取得不要 (River 側で既に hit を持っている場合)
+///   - 無ければ mem_items から fetch (Phase 1 では item 同梱必須 = UI 側で用意)
+#[tauri::command]
+pub async fn shogun_memory_summary_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId is required".to_string())?
+    .to_string();
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item")
+    .to_string();
+
+  // 1. cache lookup
+  if let Some(cached) = crate::summarizer_store::get_cached(&target_kind, &target_id)? {
+    return Ok(serde_json::json!({ "summary": cached.to_json(), "cached": true }));
+  }
+
+  // 2. generate (Phase 1 は item のみサポート)
+  if target_kind != "item" {
+    return Err(format!("target_kind={} not supported in Phase 1", target_kind));
+  }
+
+  let item = payload
+    .get("item")
+    .cloned()
+    .ok_or_else(|| "item payload required when cache miss".to_string())?;
+
+  let summary = crate::summarizer::summarize_item(&item).await?;
+  crate::summarizer_store::upsert(&summary)?;
+
+  Ok(serde_json::json!({ "summary": summary.to_json(), "cached": false }))
+}
+
+/// 複数 item 分の summary を並列取得 (max 5)。Phase 1 では item のみ。
+///
+/// payload: { "items": [ { id, title, snippet, source, ... }, ... ] }
+#[tauri::command]
+pub async fn shogun_memory_summary_batch(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let items = payload
+    .get("items")
+    .and_then(|v| v.as_array())
+    .cloned()
+    .ok_or_else(|| "items array required".to_string())?;
+
+  if items.is_empty() {
+    return Ok(serde_json::json!({ "ok": [], "failed": [], "heuristicUsed": 0 }));
+  }
+
+  // 1. cache lookup for all ids at once
+  let ids: Vec<String> = items
+    .iter()
+    .filter_map(|it| it.get("id").and_then(|v| v.as_str()).map(String::from))
+    .collect();
+  let cached = crate::summarizer_store::get_cached_many("item", &ids)?;
+  let cached_ids: std::collections::HashSet<String> =
+    cached.iter().map(|s| s.target_id.clone()).collect();
+
+  let mut ok_results: Vec<serde_json::Value> = cached.iter().map(|s| s.to_json()).collect();
+  let mut failed_results: Vec<serde_json::Value> = Vec::new();
+  let mut heuristic_used: u32 = 0;
+
+  // 2. 未キャッシュの item を並列要約 (max 5 並列)
+  let to_generate: Vec<serde_json::Value> = items
+    .iter()
+    .filter(|it| {
+      it.get("id")
+        .and_then(|v| v.as_str())
+        .map_or(false, |id| !cached_ids.contains(id))
+    })
+    .cloned()
+    .collect();
+
+  for chunk in to_generate.chunks(5) {
+    let futures: Vec<_> = chunk
+      .iter()
+      .map(|item| {
+        let item_clone = item.clone();
+        async move {
+          let target_id = item_clone
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+          match crate::summarizer::summarize_item(&item_clone).await {
+            Ok(s) => {
+              if let Err(e) = crate::summarizer_store::upsert(&s) {
+                log::warn!("summary upsert failed for {}: {}", target_id, e);
+              }
+              Ok(s)
+            }
+            Err(e) => Err((target_id, e)),
+          }
+        }
+      })
+      .collect();
+
+    let results = futures::future::join_all(futures).await;
+    for r in results {
+      match r {
+        Ok(s) => {
+          if s.model == "heuristic" || s.model == "heuristic_prefilter" {
+            heuristic_used += 1;
+          }
+          ok_results.push(s.to_json());
+        }
+        Err((id, e)) => {
+          failed_results.push(serde_json::json!({ "targetId": id, "error": e }));
+        }
+      }
+    }
+  }
+
+  Ok(serde_json::json!({
+    "ok": ok_results,
+    "failed": failed_results,
+    "heuristicUsed": heuristic_used,
+  }))
+}
+
+/// 特定 summary のキャッシュを削除。dev 用途 (次回 get で再生成)。
+///
+/// payload: { "targetId": "m_...", "targetKind"?: "item" }
+#[tauri::command]
+pub fn shogun_memory_summary_invalidate(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  let deleted = crate::summarizer_store::delete(target_kind, target_id)?;
+  Ok(serde_json::json!({ "deleted": deleted }))
+}
