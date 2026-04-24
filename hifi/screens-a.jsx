@@ -1197,7 +1197,8 @@ function ScreenHome() {
           main brief rendered, so users get value from Memory right on Home. */}
       {memoryDigest && (
         (memoryDigest.highlights && memoryDigest.highlights.length > 0) ||
-        memoryDigest.week_rollup
+        memoryDigest.week_rollup ||
+        memoryDigest.day_rollup
       ) && (
         <div className="card" style={{ width: '100%', maxWidth: 760, marginInline: 'auto', padding: 24, marginTop: 18, background: 'var(--surface)', display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="row" style={{ alignItems: 'baseline', gap: 12 }}>
@@ -1208,8 +1209,25 @@ function ScreenHome() {
             <span className="spacer" />
           </div>
 
-          {memoryDigest.week_rollup && (
+          {memoryDigest.day_rollup && (
             <div style={{ borderLeft: '2px solid var(--gold)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
+                <span className="en-only">TODAY</span>
+                <span className="jp">今日</span>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{memoryDigest.day_rollup.title}</div>
+              {Array.isArray(memoryDigest.day_rollup.keyPoints) && (
+                <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {memoryDigest.day_rollup.keyPoints.slice(0, 4).map((k, i) => (
+                    <li key={i} style={{ fontSize: 12, color: 'var(--text-mute)', lineHeight: 1.5 }}>{k}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {memoryDigest.week_rollup && (
+            <div style={{ borderLeft: '2px solid var(--border-hi)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
                 <span className="en-only">THIS WEEK</span>
                 <span className="jp">今週</span>
@@ -1323,6 +1341,8 @@ function ScreenMemory() {
   const [batchSummarizing, setBatchSummarizing] = useState(0); // count of items being processed; 0 = idle
   const [weekRollup, setWeekRollup] = useState(null); // { title, keyPoints, reason, generatedAt } or null
   const [weekRollupLoading, setWeekRollupLoading] = useState(false);
+  const [dayRollup, setDayRollup] = useState(null); // { title, keyPoints, reason, generatedAt } or null
+  const [dayRollupLoading, setDayRollupLoading] = useState(false);
   const [scrubIdx, setScrubIdx] = useState(0);
   const [timelineSpan, setTimelineSpan] = useState('week');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
@@ -1657,6 +1677,36 @@ function ScreenMemory() {
         }
       } finally {
         if (!cancelled) setWeekRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
+  // Phase 2.5: same pattern for day rollup. Triggers when the user selects
+  // the Day span so day_rollup gets generated on demand, then surfaces on
+  // Home via brief.get's cache-only read.
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'day') {
+      setDayRollup(null);
+      return;
+    }
+    const cursor = new Date(timelineCursor);
+    const day = new Date(cursor);
+    day.setHours(0, 0, 0, 0);
+    const dayStartMs = day.getTime();
+    let cancelled = false;
+    setDayRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.day.get', { dayStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setDayRollup(res.data.rollup);
+        } else {
+          setDayRollup(null);
+        }
+      } finally {
+        if (!cancelled) setDayRollupLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -2035,6 +2085,70 @@ function ScreenMemory() {
           );
         })}
       </div>
+
+      {/* Day rollup banner — reflection digest for the selected day. */}
+      {timelineSpan === 'day' && summaryEnabled && (dayRollup || dayRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">DAY ROLLUP</span>
+                <span className="jp">本日のまとめ</span>
+              </span>
+              {dayRollupLoading && !dayRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {dayRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const day = new Date(timelineCursor);
+                    day.setHours(0, 0, 0, 0);
+                    setDayRollupLoading(true);
+                    setDayRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.day.get', {
+                      dayStartMs: day.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setDayRollup(res.data.rollup);
+                    setDayRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate today's rollup"
+                >Regenerate</button>
+              )}
+            </div>
+            {dayRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {dayRollup.title}
+                </div>
+                {Array.isArray(dayRollup.keyPoints) && dayRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {dayRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Week rollup banner — synthesized digest for the selected week. */}
       {timelineSpan === 'week' && summaryEnabled && (weekRollup || weekRollupLoading) && (

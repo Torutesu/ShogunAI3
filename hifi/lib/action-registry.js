@@ -61,6 +61,7 @@
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));
     register("llm.save_api_key", (payload) => api.llmApiKeySet(payload));
+    register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
     register("llm.api_key_status", (payload) => api.llmApiKeyStatus(payload));
     register("llm.clear_api_key", (payload) => api.llmApiKeyClear(payload));
     register("shogun.open_pack", (payload) => api.openPack(payload));
