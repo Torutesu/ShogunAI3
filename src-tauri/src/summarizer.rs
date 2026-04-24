@@ -35,19 +35,51 @@ pub fn emit_memory_summary_tool() -> Value {
   })
 }
 
-const SYSTEM_PROMPT: &str = r#"You are a memory summarizer for a personal assistant app. Your job is to condense a single connector memory item (an email or a calendar event) into a short structured summary the user can scan quickly.
+/// Base system prompt (language-agnostic parts). Language-specific instructions
+/// are appended by `system_prompt_for_lang`.
+const SYSTEM_PROMPT_BASE: &str = r#"You are a memory summarizer for a personal assistant app. Your job is to produce a JUDGMENT-oriented summary of a single connector memory item (an email or a calendar event) so the user can decide in seconds what, if anything, to do about it.
 
 Rules:
 - Always emit via the emit_memory_summary tool. Never respond with plain text.
-- title: <= 80 chars, single line, in the SAME language as the source content. For emails include the sender name when possible. For calendar events include the event title.
-- key_points: 1-5 short bullets, each <= 140 chars. Capture the important facts (deadline, decision needed, specific action, key figures). If there's nothing to say, emit a single bullet explaining so.
+- title: <= 80 chars, single line. For emails: include sender short-name when possible. For calendar events: include event title + start time when within the next week.
+- key_points: 2-4 short bullets (<= 140 chars each). DO NOT just restate the subject. The first bullet MUST state the USER'S ACTION. Subsequent bullets carry the actual content (deadline, figures, attendees, decision needed, key numbers). Skip boilerplate. For purely marketing/auto-notification items, one action bullet + one content bullet is enough.
 - priority (required):
-    HIGH  = user action required (reply, decision, deadline within a few days), or calendar event starting within 24h, or message from a known frequent correspondent.
-    MEDIUM = informational but relevant (newsletter from a followed source, meeting invite >24h out, calendar event this week).
-    LOW   = automated notifications, bulk marketing, past events with no follow-up.
-- reason: one short sentence explaining why this priority was chosen (<= 60 chars).
-- source_type: 'mail' for Gmail input, 'calendar' for Google Calendar input.
-- Preserve the user's language: if the content is Japanese, write title/key_points/reason in Japanese."#;
+    HIGH   = reply/decision required within ~48h, calendar event starts within 24h, or message from a known frequent correspondent needing action.
+    MEDIUM = informational but relevant (newsletter you follow, meeting invite >24h out, calendar event this week, order/receipt worth noting).
+    LOW    = automated notifications, bulk marketing, past events without follow-up, generic no-reply addresses.
+- reason: one short sentence (<= 60 chars) explaining WHY this priority was chosen — grounded in the content, not the category label.
+- source_type: 'mail' for Gmail input, 'calendar' for Google Calendar input."#;
+
+/// Build the full SYSTEM_PROMPT for the user's configured UI language.
+/// Accepted codes: "en", "jp", "bi" (bilingual = match source content).
+fn system_prompt_for_lang(lang: &str) -> String {
+  let lang_directive = match lang {
+    "jp" => r#"
+- OUTPUT LANGUAGE: Always Japanese, regardless of the source content's language. If the email is in English, still summarize in Japanese.
+- Action label (first bullet) — use these Japanese phrases verbatim:
+    * 「返信不要」 for automated notifications, marketing, receipts, FYI
+    * 「返信推奨」 when a human response is expected. Append deadline if stated: 「返信推奨 · 4/28まで」
+    * 「確認のみ」 for calendar invites already accepted, informational meetings
+    * 「要対応: <短い説明>」 for specific tasks/decisions requested
+"#,
+    "bi" => r#"
+- OUTPUT LANGUAGE: Match the source content's language. If the email is in Japanese, summarize in Japanese. If English, summarize in English.
+- Action label (first bullet) — use the matching set:
+    English: "No action needed" / "Reply recommended" (append "· by <date>") / "FYI only" / "Action required: <phrase>"
+    Japanese: 「返信不要」 / 「返信推奨」 (append "· <日付>まで") / 「確認のみ」 / 「要対応: <短い説明>」
+"#,
+    // "en" and any unknown value fall through to English (safe default)
+    _ => r#"
+- OUTPUT LANGUAGE: Always English, regardless of the source content's language. If the email is in Japanese, still summarize in English.
+- Action label (first bullet) — use these English phrases verbatim:
+    * "No action needed" — automated notification, marketing, receipt, FYI
+    * "Reply recommended" — a human response is expected. Append deadline if stated: "Reply recommended · by Apr 28"
+    * "FYI only" — calendar invites already accepted, informational meetings
+    * "Action required: <short phrase>" — a specific task/decision is requested
+"#,
+  };
+  format!("{}{}", SYSTEM_PROMPT_BASE, lang_directive)
+}
 
 /// heuristic が自信を持って判定できた時のショートカット結果。
 #[derive(Debug, Clone)]
@@ -57,25 +89,35 @@ pub struct PriorityGuess {
   pub title_hint: String,
 }
 
+/// Localized short strings used by heuristic paths (no LLM needed).
+/// Covers: automated notification reason, past-event reason/title-hint, LLM-fallback reason.
+fn loc(lang: &str, en: &str, jp: &str) -> String {
+  match lang {
+    "jp" => jp.to_string(),
+    _ => en.to_string(), // "en" and "bi" both default to English short strings
+  }
+}
+
 /// Item が bulk / 自動通知 / 過去カレンダーかを判定。
 /// Some(guess) なら LLM スキップ、None なら LLM 実行。
-pub fn heuristic_priority_guess(item: &Value) -> Option<PriorityGuess> {
+pub fn heuristic_priority_guess(item: &Value, lang: &str) -> Option<PriorityGuess> {
   let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
   let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
   let snippet = item.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
 
+  // Shortcut is purely for FILTERING. Low-priority items are hidden from the
+  // River, so an LLM summary would never be read by the user. Save the tokens.
   match source {
-    "gmail" => gmail_heuristic(title, snippet),
-    "google_calendar" => calendar_heuristic(snippet),
+    "gmail" => gmail_heuristic(title, snippet, lang),
+    "google_calendar" => calendar_heuristic(snippet, lang),
     _ => None,
   }
 }
 
-fn gmail_heuristic(title: &str, snippet: &str) -> Option<PriorityGuess> {
+fn gmail_heuristic(title: &str, snippet: &str, lang: &str) -> Option<PriorityGuess> {
   let lower_body = snippet.to_lowercase();
   let has_unsubscribe = lower_body.contains("unsubscribe") || lower_body.contains("配信停止");
 
-  // Sender detection limited to the From: line to avoid body false positives.
   let from_line_lower = snippet
     .lines()
     .find(|l| l.starts_with("From:"))
@@ -93,14 +135,15 @@ fn gmail_heuristic(title: &str, snippet: &str) -> Option<PriorityGuess> {
   if has_unsubscribe || is_no_reply || is_github_noreply || is_ci_sender {
     return Some(PriorityGuess {
       priority: "low".to_string(),
-      reason: "Automated/bulk notification".to_string(),
+      reason: loc(lang, "Automated notification", "自動通知"),
       title_hint: title_first_line(title, 60),
     });
   }
   None
 }
 
-fn calendar_heuristic(snippet: &str) -> Option<PriorityGuess> {
+
+fn calendar_heuristic(snippet: &str, lang: &str) -> Option<PriorityGuess> {
   // Calendar snippet 例: "Google Calendar · 2026-05-01T09:00:00+09:00 · https://..."
   // 過去の event かつ最近更新されてない = low 扱い
   let start_ms = parse_calendar_start_ms(snippet)?;
@@ -108,8 +151,8 @@ fn calendar_heuristic(snippet: &str) -> Option<PriorityGuess> {
   if start_ms < now_ms - 24 * 3600 * 1000 {
     return Some(PriorityGuess {
       priority: "low".to_string(),
-      reason: "Past event, >24h ago".to_string(),
-      title_hint: "Calendar (past)".to_string(),
+      reason: loc(lang, "Past event, >24h ago", "過去のイベント"),
+      title_hint: loc(lang, "Calendar (past)", "カレンダー（過去）"),
     });
   }
   None
@@ -149,7 +192,7 @@ fn title_first_line(s: &str, max: usize) -> String {
 }
 
 /// LLM 失敗時のフォールバック要約。medium 固定、タイトル/snippet を truncate。
-pub fn heuristic_fallback(item: &Value, source_type: &str) -> Summary {
+pub fn heuristic_fallback(item: &Value, source_type: &str, lang: &str) -> Summary {
   let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
   let title_raw = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
   let snippet_raw = item.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
@@ -162,24 +205,28 @@ pub fn heuristic_fallback(item: &Value, source_type: &str) -> Summary {
     .chars()
     .take(140)
     .collect::<String>();
+  let no_title = loc(lang, "(no title)", "（無題）");
+  let no_content = loc(lang, "(no content)", "（本文なし）");
+  let fallback_reason = loc(lang, "LLM unavailable, heuristic fallback", "LLM 不使用 / 暫定要約");
 
   Summary {
     target_kind: "item".into(),
     target_id: id,
-    title: if title.is_empty() { "(no title)".into() } else { title },
-    key_points: vec![if first_sentence.is_empty() { "(no content)".into() } else { first_sentence }],
+    title: if title.is_empty() { no_title } else { title },
+    key_points: vec![if first_sentence.is_empty() { no_content } else { first_sentence }],
     source_type: source_type.to_string(),
     priority: "medium".into(),
-    reason: Some("LLM unavailable, heuristic fallback".into()),
+    reason: Some(fallback_reason),
     model: "heuristic".into(),
     schema_version: SCHEMA_VERSION,
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: json!({"fallback": true}).to_string(),
+    lang: lang.to_string(),
   }
 }
 
 /// heuristic_priority_guess が Some を返した時、Summary に変換。
-pub fn summary_from_guess(item: &Value, source_type: &str, guess: &PriorityGuess) -> Summary {
+pub fn summary_from_guess(item: &Value, source_type: &str, guess: &PriorityGuess, lang: &str) -> Summary {
   let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
   Summary {
     target_kind: "item".into(),
@@ -193,6 +240,7 @@ pub fn summary_from_guess(item: &Value, source_type: &str, guess: &PriorityGuess
     schema_version: SCHEMA_VERSION,
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: json!({"prefilter": true, "reason": guess.reason}).to_string(),
+    lang: lang.to_string(),
   }
 }
 
@@ -212,30 +260,31 @@ pub fn derive_source_type(source: &str) -> &'static str {
 /// 1. heuristic_priority_guess で明らかな low 判定ならそれを使う (LLM スキップ)
 /// 2. LLM 呼び出し (anthropic_tool_complete) で構造化要約を取得
 /// 3. LLM 失敗時は heuristic_fallback で medium 固定の要約
-pub async fn summarize_item(item: &Value) -> Result<Summary, String> {
+pub async fn summarize_item(item: &Value, lang: &str) -> Result<Summary, String> {
   let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
   let source_type = derive_source_type(source);
 
-  // 1. Heuristic pre-filter
-  if let Some(guess) = heuristic_priority_guess(item) {
-    return Ok(summary_from_guess(item, source_type, &guess));
+  // 1. Heuristic pre-filter (returns localized action labels)
+  if let Some(guess) = heuristic_priority_guess(item, lang) {
+    return Ok(summary_from_guess(item, source_type, &guess, lang));
   }
 
-  // 2. LLM tool_use call
+  // 2. LLM tool_use call (prompt respects user's UI language)
   let user_content = render_item_for_llm(item);
   let tool = emit_memory_summary_tool();
+  let system = system_prompt_for_lang(lang);
 
-  match crate::llm::anthropic_tool_complete(SYSTEM_PROMPT, &user_content, &tool, SUMMARIZER_MODEL).await {
-    Ok(tool_input) => match build_summary_from_tool_input(item, source_type, &tool_input) {
+  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
+    Ok(tool_input) => match build_summary_from_tool_input(item, source_type, &tool_input, lang) {
       Ok(s) => Ok(s),
       Err(e) => {
         log::warn!("summarizer tool_input parse error for {}: {}", target_id_of(item), e);
-        Ok(heuristic_fallback(item, source_type))
+        Ok(heuristic_fallback(item, source_type, lang))
       }
     },
     Err(e) => {
       log::warn!("summarizer LLM error for {}: {}", target_id_of(item), e);
-      Ok(heuristic_fallback(item, source_type))
+      Ok(heuristic_fallback(item, source_type, lang))
     }
   }
 }
@@ -259,7 +308,7 @@ fn render_item_for_llm(item: &Value) -> String {
 }
 
 /// LLM が返した tool_input JSON (= emit_memory_summary の input) を Summary に変換。
-fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value) -> Result<Summary, String> {
+fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value, lang: &str) -> Result<Summary, String> {
   let title = input
     .get("title")
     .and_then(|v| v.as_str())
@@ -305,6 +354,7 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value)
     schema_version: SCHEMA_VERSION,
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: serde_json::to_string(input).unwrap_or_default(),
+    lang: lang.to_string(),
   })
 }
 
@@ -321,7 +371,7 @@ mod tests {
       "title": "Gmail: Sale ends tonight!",
       "snippet": "Subject: Sale ends\nFrom: promo@shop.com\nClick here to unsubscribe at any time.",
     });
-    let guess = heuristic_priority_guess(&item).expect("should match");
+    let guess = heuristic_priority_guess(&item, "en").expect("should match");
     assert_eq!(guess.priority, "low");
     assert!(guess.reason.contains("Automated"));
   }
@@ -334,7 +384,7 @@ mod tests {
       "title": "Gmail: [org/repo] PR opened",
       "snippet": "Subject: PR\nFrom: noreply@github.com\nYou were mentioned in...",
     });
-    let guess = heuristic_priority_guess(&item).expect("should match");
+    let guess = heuristic_priority_guess(&item, "en").expect("should match");
     assert_eq!(guess.priority, "low");
   }
 
@@ -346,7 +396,7 @@ mod tests {
       "title": "Gmail: Q2 review needed",
       "snippet": "Subject: Q2 review\nFrom: alice@example.com\nCan you approve by Friday?",
     });
-    assert!(heuristic_priority_guess(&item).is_none());
+    assert!(heuristic_priority_guess(&item, "en").is_none());
   }
 
   #[test]
@@ -362,7 +412,7 @@ mod tests {
       "title": "Calendar: Future meeting",
       "snippet": format!("Google Calendar · {} · https://calendar.google.com/...", future_iso),
     });
-    assert!(heuristic_priority_guess(&item).is_none());
+    assert!(heuristic_priority_guess(&item, "en").is_none());
   }
 
   #[test]
@@ -378,7 +428,7 @@ mod tests {
       "title": "Calendar: Past meeting",
       "snippet": format!("Google Calendar · {} · https://...", past_iso),
     });
-    let guess = heuristic_priority_guess(&item).expect("past should match");
+    let guess = heuristic_priority_guess(&item, "en").expect("past should match");
     assert_eq!(guess.priority, "low");
   }
 
@@ -390,7 +440,7 @@ mod tests {
       "title": "Whatever",
       "snippet": "Some content here. More content.",
     });
-    let s = heuristic_fallback(&item, "mail");
+    let s = heuristic_fallback(&item, "mail", "en");
     assert_eq!(s.priority, "medium");
     assert_eq!(s.model, "heuristic");
     assert_eq!(s.target_id, "m_99");
@@ -414,7 +464,7 @@ mod tests {
       "title": "Gmail: メルマガ",
       "snippet": "Subject: メルマガ\nFrom: news@shop.co.jp\n配信停止はこちら",
     });
-    let guess = heuristic_priority_guess(&item).expect("Japanese unsubscribe should match");
+    let guess = heuristic_priority_guess(&item, "en").expect("Japanese unsubscribe should match");
     assert_eq!(guess.priority, "low");
   }
 
@@ -427,7 +477,7 @@ mod tests {
       "title": "Gmail: Re: vendor setup",
       "snippet": "Subject: Re: vendor setup\nFrom: alice@example.com\nHey, the vendor's no-reply@vendor.com address is down; use support@vendor.com instead.",
     });
-    assert!(heuristic_priority_guess(&item).is_none(), "body mention should not trigger low");
+    assert!(heuristic_priority_guess(&item, "en").is_none(), "body mention should not trigger low");
   }
 
   #[test]
@@ -439,7 +489,7 @@ mod tests {
       "title": "Calendar: Holiday",
       "snippet": "Google Calendar · 2020-01-01 · https://calendar.google.com/...",
     });
-    let guess = heuristic_priority_guess(&item).expect("past all-day should match");
+    let guess = heuristic_priority_guess(&item, "en").expect("past all-day should match");
     assert_eq!(guess.priority, "low");
   }
 
@@ -453,7 +503,7 @@ mod tests {
       "priority": "high",
       "reason": "Deadline Friday"
     });
-    let s = build_summary_from_tool_input(&item, "mail", &input).unwrap();
+    let s = build_summary_from_tool_input(&item, "mail", &input, "en").unwrap();
     assert_eq!(s.title, "Q2 予算レビュー (Alice)");
     assert_eq!(s.priority, "high");
     assert_eq!(s.key_points.len(), 2);
@@ -469,7 +519,7 @@ mod tests {
       "source_type": "mail",
       "priority": "urgent"
     });
-    assert!(build_summary_from_tool_input(&item, "mail", &input).is_err());
+    assert!(build_summary_from_tool_input(&item, "mail", &input, "en").is_err());
   }
 
   #[test]
@@ -481,6 +531,6 @@ mod tests {
       "source_type": "mail",
       "priority": "medium"
     });
-    assert!(build_summary_from_tool_input(&item, "mail", &input).is_err());
+    assert!(build_summary_from_tool_input(&item, "mail", &input, "en").is_err());
   }
 }

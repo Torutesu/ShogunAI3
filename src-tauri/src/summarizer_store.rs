@@ -21,6 +21,7 @@ pub struct Summary {
   pub schema_version: i64,
   pub generated_at: i64,
   pub raw_json: String,
+  pub lang: String,       // 'en' | 'jp' | 'bi' — matches tweaks.language at generation time
 }
 
 impl Summary {
@@ -37,15 +38,19 @@ impl Summary {
       "model": self.model,
       "schemaVersion": self.schema_version,
       "generatedAt": self.generated_at,
+      "lang": self.lang,
     })
   }
 }
 
-pub fn get_cached(target_kind: &str, target_id: &str) -> Result<Option<Summary>, String> {
+/// Fetch cached summary. Returns None if no row exists OR if the cached row's
+/// `lang` differs from the requested `want_lang` (cache miss — triggers
+/// regeneration in the requested language).
+pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result<Option<Summary>, String> {
   let conn = open_conn()?;
   let row = conn.query_row(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json
+            reason, model, schema_version, generated_at, raw_json, lang
      FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
     params![target_kind, target_id],
     |r| {
@@ -63,17 +68,19 @@ pub fn get_cached(target_kind: &str, target_id: &str) -> Result<Option<Summary>,
         schema_version: r.get(8)?,
         generated_at: r.get(9)?,
         raw_json: r.get(10)?,
+        lang: r.get(11)?,
       })
     },
   );
   match row {
-    Ok(s) => Ok(Some(s)),
+    Ok(s) if s.lang == want_lang => Ok(Some(s)),
+    Ok(_) => Ok(None), // language mismatch → treat as cache miss
     Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
     Err(e) => Err(format!("mem_summaries read: {}", e)),
   }
 }
 
-pub fn get_cached_many(target_kind: &str, ids: &[String]) -> Result<Vec<Summary>, String> {
+pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Result<Vec<Summary>, String> {
   if ids.is_empty() {
     return Ok(Vec::new());
   }
@@ -81,17 +88,19 @@ pub fn get_cached_many(target_kind: &str, ids: &[String]) -> Result<Vec<Summary>
   let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i + 1)).collect();
   let sql = format!(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json
+            reason, model, schema_version, generated_at, raw_json, lang
      FROM mem_summaries
-     WHERE target_kind = ?1 AND target_id IN ({})",
-    placeholders.join(",")
+     WHERE target_kind = ?1 AND target_id IN ({}) AND lang = ?{}",
+    placeholders.join(","),
+    ids.len() + 2
   );
   let mut stmt = conn.prepare(&sql).map_err(|e| format!("prepare: {}", e))?;
-  let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 1);
+  let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 2);
   bound.push(&target_kind);
   for id in ids {
     bound.push(id);
   }
+  bound.push(&want_lang);
   let rows = stmt.query_map(bound.as_slice(), |r| {
     let kp_json: String = r.get(3)?;
     let key_points: Vec<String> = serde_json::from_str(&kp_json).unwrap_or_default();
@@ -107,6 +116,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String]) -> Result<Vec<Summary>
       schema_version: r.get(8)?,
       generated_at: r.get(9)?,
       raw_json: r.get(10)?,
+      lang: r.get(11)?,
     })
   }).map_err(|e| format!("query: {}", e))?;
 
@@ -124,8 +134,8 @@ pub fn upsert(s: &Summary) -> Result<(), String> {
   conn.execute(
     "INSERT INTO mem_summaries
        (target_kind, target_id, title, key_points, source_type, priority,
-        reason, model, schema_version, generated_at, raw_json)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        reason, model, schema_version, generated_at, raw_json, lang)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
      ON CONFLICT(target_kind, target_id) DO UPDATE SET
        title = excluded.title,
        key_points = excluded.key_points,
@@ -135,10 +145,11 @@ pub fn upsert(s: &Summary) -> Result<(), String> {
        model = excluded.model,
        schema_version = excluded.schema_version,
        generated_at = excluded.generated_at,
-       raw_json = excluded.raw_json",
+       raw_json = excluded.raw_json,
+       lang = excluded.lang",
     params![
       s.target_kind, s.target_id, s.title, kp_json, s.source_type,
-      s.priority, s.reason, s.model, s.schema_version, s.generated_at, s.raw_json
+      s.priority, s.reason, s.model, s.schema_version, s.generated_at, s.raw_json, s.lang
     ],
   ).map_err(|e| format!("mem_summaries upsert: {}", e))?;
   Ok(())
@@ -170,6 +181,7 @@ mod tests {
       schema_version: 1,
       generated_at: 1700000000,
       raw_json: "{\"x\":1}".into(),
+      lang: "en".into(),
     }
   }
 

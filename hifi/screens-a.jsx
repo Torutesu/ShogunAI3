@@ -1183,14 +1183,15 @@ function ScreenHome() {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenMemory() {
   const [view, setView] = useState('river');
-  const [events, setEvents] = useState(() => []);
+  const [rawEvents, setRawEvents] = useState(() => []);
+  const [summaryByMemId, setSummaryByMemId] = useState(() => ({}));
   const [scrubIdx, setScrubIdx] = useState(0);
   const [timelineSpan, setTimelineSpan] = useState('week');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [activeFilters, setActiveFilters] = useState(() => ({
-    sources: { screen: true, audio: true, input: true, calendar: true, mail: true },
+    sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
     priority: { high: true, medium: true, low: false },
   }));
   const timelineScrollRef = useRef(null);
@@ -1216,24 +1217,31 @@ function ScreenMemory() {
   const spanDayCount = useMemo(() => {
     if (timelineSpan === 'day') return 1;
     if (timelineSpan === 'week') return 7;
-    if (timelineSpan === 'month') return 30;
-    return 12; // year: show 12 months as 12 "day" slots (one per month)
+    if (timelineSpan === 'month') return 12; // last 12 months (one slot per month)
+    return 12; // year: show 12 months as 12 slots (one per month)
   }, [timelineSpan]);
   const weekDays = useMemo(() => {
     const out = [];
     const base = new Date(timelineCursor);
     base.setHours(0, 0, 0, 0);
-    const count = timelineSpan === 'year' ? 12 : spanDayCount;
     if (timelineSpan === 'year') {
+      // One slot per year: show last 12 years ending at cursor year.
+      for (let i = 12 - 1; i >= 0; i -= 1) {
+        const d = new Date(base);
+        d.setMonth(0, 1);
+        d.setFullYear(d.getFullYear() - i);
+        out.push(d);
+      }
+    } else if (timelineSpan === 'month') {
       // One slot per month: show last 12 months ending at cursor month.
-      for (let i = count - 1; i >= 0; i -= 1) {
+      for (let i = 12 - 1; i >= 0; i -= 1) {
         const d = new Date(base);
         d.setDate(1);
         d.setMonth(d.getMonth() - i);
         out.push(d);
       }
     } else {
-      for (let i = count - 1; i >= 0; i -= 1) {
+      for (let i = spanDayCount - 1; i >= 0; i -= 1) {
         out.push(new Date(base.getTime() - i * 24 * 60 * 60 * 1000));
       }
     }
@@ -1258,34 +1266,56 @@ function ScreenMemory() {
     if (timelineSpan === 'year') {
       const first = weekDays[0];
       const last = weekDays[weekDays.length - 1];
+      return `${first.getFullYear()} – ${last.getFullYear()}`;
+    }
+    if (timelineSpan === 'month') {
+      const first = weekDays[0];
+      const last = weekDays[weekDays.length - 1];
       return `${first.toLocaleString('en-US', { month: 'short', year: 'numeric' }).toUpperCase()} – ${last.toLocaleString('en-US', { month: 'short', year: 'numeric' }).toUpperCase()}`;
     }
     return `${fmtMonthDay(weekDays[0])} – ${fmtMonthDay(weekDays[weekDays.length - 1])}`;
   }, [weekDays, timelineSpan]);
-  /** Per-slot histograms: day/week/month span = 12-bucket hour bars; year span = 12 monthly count bars. */
+  /** Per-slot histograms:
+   *  - day/week span → slot = 1 day, 12 bars (2-hour buckets)
+   *  - month span    → slot = 1 month, 4 bars (weeks-within-month)
+   *  - year span     → slot = 1 year, 12 bars (months-within-year)
+   */
   const weekHistograms = useMemo(() => {
     let globalMax = 1;
+    const src = Array.isArray(rawEvents) ? rawEvents : [];
     const perDay = weekDays.map((d) => {
-      const bars = new Array(12).fill(0);
+      let bars;
       let count = 0;
       if (timelineSpan === 'year') {
-        // Slot = one calendar month; use bars[0..11] for weeks-within-month.
+        // Slot = one calendar year; bars[0..11] = months of that year.
+        bars = new Array(12).fill(0);
+        const slotYear = d.getFullYear();
+        src.forEach((e) => {
+          if (!Number.isFinite(e.ts)) return;
+          const ed = new Date(e.ts);
+          if (ed.getFullYear() !== slotYear) return;
+          bars[Math.min(11, ed.getMonth())] += 1;
+          count += 1;
+        });
+      } else if (timelineSpan === 'month') {
+        // Slot = one calendar month; bars[0..3] for weeks-within-month.
+        bars = new Array(4).fill(0);
         const slotYear = d.getFullYear();
         const slotMonth = d.getMonth();
-        events.forEach((e) => {
+        src.forEach((e) => {
           if (!Number.isFinite(e.ts)) return;
           const ed = new Date(e.ts);
           if (ed.getFullYear() !== slotYear || ed.getMonth() !== slotMonth) return;
-          // Spread within month across 12 buckets (~2.5 days each).
-          bars[Math.min(11, Math.floor((ed.getDate() - 1) / 2.6))] += 1;
+          bars[Math.min(3, Math.floor((ed.getDate() - 1) / 7))] += 1;
           count += 1;
         });
       } else {
+        bars = new Array(12).fill(0);
         const start = new Date(d);
         start.setHours(0, 0, 0, 0);
         const startMs = start.getTime();
         const endMs = startMs + 24 * 60 * 60 * 1000;
-        events.forEach((e) => {
+        src.forEach((e) => {
           if (!Number.isFinite(e.ts) || e.ts < startMs || e.ts >= endMs) return;
           const h = Math.max(0, Math.min(23, Math.floor(Number(e.h))));
           bars[Math.min(11, Math.floor(h / 2))] += 1;
@@ -1297,7 +1327,7 @@ function ScreenMemory() {
       return { bars, count, dayMax };
     });
     return { perDay, globalMax };
-  }, [weekDays, events, timelineSpan]);
+  }, [weekDays, rawEvents, timelineSpan]);
   const memoryTotals = useMemo(() => {
     const counts = weekHistograms.perDay.map((d) => d.count);
     const total = counts.reduce((a, b) => a + b, 0);
@@ -1373,25 +1403,76 @@ function ScreenMemory() {
     window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
     return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
   }, []);
+  const activeKinds = useMemo(
+    () => Object.entries(activeFilters.sources).filter(([, on]) => on).map(([k]) => k),
+    [activeFilters.sources],
+  );
+  // River = rawEvents filtered by priority. Low-priority (自動通知など) items
+  // stay in Memory but are hidden from the surface unless the user toggles
+  // the Low filter on.
+  const events = useMemo(() => {
+    const showLow = !!activeFilters.priority.low;
+    if (showLow) return rawEvents;
+    return rawEvents.filter((e) => {
+      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+      if (!s) return true; // pending summary → keep visible until classified
+      return s.priority !== 'low';
+    });
+  }, [rawEvents, summaryByMemId, activeFilters.priority.low]);
+  // Batch-summarize connector items on River load so priority data is ready
+  // for filtering. Cached summaries short-circuit on the backend.
+  useEffect(() => {
+    if (!summaryEnabled || rawEvents.length === 0) return;
+    let cancelled = false;
+    const connectorItems = rawEvents
+      .filter((e) => {
+        const r = String(e.sourceRaw || '').toLowerCase();
+        const isConnector = r === 'gmail' || r === 'google_calendar' || e.provenance === 'connector';
+        return isConnector && e.memoryId && !summaryByMemId[e.memoryId];
+      })
+      .slice(0, 30)
+      .map((e) => ({
+        id: e.memoryId,
+        title: e.title || '',
+        snippet: e.snippet || '',
+        source: e.sourceRaw || '',
+      }));
+    if (connectorItems.length === 0) return;
+    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+    (async () => {
+      const res = await runRuntimeActionA('memory.summary.batch', { items: connectorItems, lang }, { silentError: true });
+      if (cancelled || !res?.ok || !res.data?.ok) return;
+      const next = {};
+      for (const s of res.data.ok) {
+        if (s && s.targetId) next[s.targetId] = s;
+      }
+      if (Object.keys(next).length === 0) return;
+      setSummaryByMemId((prev) => ({ ...prev, ...next }));
+    })();
+    return () => { cancelled = true; };
+    // summaryByMemId intentionally omitted: we read it inside the effect to
+    // dedupe, but don't want to re-run when it changes (would thrash).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawEvents, summaryEnabled]);
   useEffect(() => {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
     (async () => {
-      const res = await runRuntimeActionA('memory.search', withSemantic({ query: '', limit: 40 }), { silentError: true });
+      const res = await runRuntimeActionA('memory.search', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
       if (cancelled) return;
-      mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
+      mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
     })();
     return () => { cancelled = true; };
-  }, [memorySettingsLoaded, withSemantic]);
+  }, [memorySettingsLoaded, withSemantic, activeKinds]);
   useEffect(() => {
     const onIndexChanged = async () => {
-      const r = await runRuntimeActionA('memory.search', withSemantic({ query: '', limit: 40 }), { silentError: true });
-      mergeIndexHitsIntoRiver(r, setEvents, setScrubIdx);
+      const r = await runRuntimeActionA('memory.search', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
+      mergeIndexHitsIntoRiver(r, setRawEvents, setScrubIdx);
       refreshSourceEntities();
     };
     window.addEventListener('shogun-memory-index-changed', onIndexChanged);
     return () => window.removeEventListener('shogun-memory-index-changed', onIndexChanged);
-  }, [withSemantic]);
+  }, [withSemantic, activeKinds]);
   useEffect(() => {
     setScrubIdx((i) => {
       if (events.length === 0) return 0;
@@ -1461,28 +1542,38 @@ function ScreenMemory() {
     }
 
     setShowRaw(false);
+    // Cache-first: the River batch effect likely already populated this.
+    const cached = summaryByMemId[scrubbed.memoryId];
+    if (cached) {
+      setScrubSummary(cached);
+      setScrubSummaryLoading(false);
+      return;
+    }
     setScrubSummary(null);
     setScrubSummaryLoading(true);
 
     let cancelled = false;
     (async () => {
       try {
-        const api = window.ShogunAPI;
-        const res = api && typeof api.memorySummaryGet === 'function'
-          ? await api.memorySummaryGet({
-              targetId: scrubbed.memoryId,
-              targetKind: 'item',
-              item: {
-                id: scrubbed.memoryId,
-                title: scrubbed.title || '',
-                snippet: scrubbed.snippet || '',
-                source: scrubbed.sourceRaw || '',
-              },
-            })
-          : null;
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.summary.get', {
+          targetId: scrubbed.memoryId,
+          targetKind: 'item',
+          lang,
+          item: {
+            id: scrubbed.memoryId,
+            title: scrubbed.title || '',
+            snippet: scrubbed.snippet || '',
+            source: scrubbed.sourceRaw || '',
+          },
+        }, { silentError: true });
         if (cancelled) return;
         if (res && res.ok && res.data && res.data.summary) {
           setScrubSummary(res.data.summary);
+          const s = res.data.summary;
+          if (s.targetId) {
+            setSummaryByMemId((prev) => (prev[s.targetId] ? prev : { ...prev, [s.targetId]: s }));
+          }
         } else {
           setScrubSummary(null);
         }
@@ -1493,7 +1584,7 @@ function ScreenMemory() {
       }
     })();
     return () => { cancelled = true; };
-  }, [scrubbed?.memoryId, scrubbed?.sourceRaw, scrubbed?.provenance, summaryEnabled]);
+  }, [scrubbed?.memoryId, scrubbed?.sourceRaw, scrubbed?.provenance, summaryEnabled, summaryByMemId]);
   const memoryHeadDate = useMemo(() => {
     const d = new Date();
     return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -1591,11 +1682,11 @@ function ScreenMemory() {
                     <button type="button" onClick={async ()=>{
                       const kinds = Object.entries(activeFilters.sources).filter(([,on])=>on).map(([x])=>x);
                       const res = await runRuntimeActionA('memory.search', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
-                      mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
+                      mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
                       setFiltersOpen(false);
                     }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
                     <button type="button" onClick={()=>{ setActiveFilters({
-                      sources: { screen: true, audio: true, input: true, calendar: true, mail: true },
+                      sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
                       priority: { high: true, medium: true, low: false },
                     }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
                   </div>
@@ -1657,24 +1748,68 @@ function ScreenMemory() {
             }}>
               <div className="t-mono" style={{fontSize:11, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>
                 {timelineSpan === 'year'
-                  ? d.toLocaleString('en-US', { month: 'short', year: '2-digit' }).toUpperCase()
-                  : fmtMonthDay(d)}
+                  ? String(d.getFullYear())
+                  : timelineSpan === 'month'
+                    ? d.toLocaleString('en-US', { month: 'short', year: '2-digit' }).toUpperCase()
+                    : fmtMonthDay(d)}
               </div>
-              <div style={{display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:2, height:28}} aria-hidden="true">
-                {bars.map((v, j)=>{
-                  const h = v > 0 ? Math.round((v / maxBar) * 22) + 4 : 3;
-                  return (
-                    <span key={j} style={{
-                      flex:'1 1 0',
-                      height: h,
-                      borderRadius:2,
+              <div style={{position:'relative', height:28}} aria-hidden="true">
+                {/* Faint grid guides so empty cells still read as a timeline */}
+                <div style={{position:'absolute', inset:0, display:'flex', justifyContent:'space-between', pointerEvents:'none'}}>
+                  {[0,1,2,3,4].map((k)=>(
+                    <span key={k} style={{
+                      width:1,
                       background: active
-                        ? (v > 0 ? 'var(--gold)' : 'color-mix(in srgb, var(--gold) 18%, transparent)')
-                        : (v > 0 ? 'var(--border-hi)' : 'var(--border)'),
-                      opacity: active ? (v > 0 ? 0.95 : 0.4) : (v > 0 ? 0.7 : 0.45),
+                        ? 'color-mix(in srgb, var(--gold) 22%, transparent)'
+                        : 'color-mix(in srgb, var(--border) 90%, transparent)',
+                      opacity: (k === 0 || k === 4) ? 0 : 0.55,
                     }}/>
-                  );
-                })}
+                  ))}
+                </div>
+                <div style={{display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:2, height:'100%'}}>
+                  {bars.map((v, j)=>{
+                    const h = v > 0 ? Math.round((v / maxBar) * 22) + 4 : 3;
+                    return (
+                      <span key={j} style={{
+                        flex:'1 1 0',
+                        height: h,
+                        borderRadius:2,
+                        background: active
+                          ? (v > 0 ? 'var(--gold)' : 'color-mix(in srgb, var(--gold) 18%, transparent)')
+                          : (v > 0 ? 'var(--border-hi)' : 'var(--border)'),
+                        opacity: active ? (v > 0 ? 0.95 : 0.4) : (v > 0 ? 0.7 : 0.45),
+                      }}/>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="t-mono" style={{
+                display:'flex',
+                justifyContent:'space-between',
+                fontSize:9,
+                color: active ? 'color-mix(in srgb, var(--gold) 70%, var(--text-dim))' : 'var(--text-dim)',
+                letterSpacing:0,
+                opacity:0.75,
+                marginTop:3,
+                pointerEvents:'none',
+              }} aria-hidden="true">
+                {timelineSpan === 'year' ? (
+                  <>
+                    <span>Jan</span>
+                    <span>Dec</span>
+                  </>
+                ) : timelineSpan === 'month' ? (
+                  <>
+                    <span>W1</span>
+                    <span>W4</span>
+                  </>
+                ) : (
+                  <>
+                    <span>0</span>
+                    <span>12</span>
+                    <span>24</span>
+                  </>
+                )}
               </div>
             </button>
           );
@@ -1711,6 +1846,11 @@ function ScreenMemory() {
                 ><Icon name="chevronLeft" size={11}/></button>
                 <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'0 2px'}}>
                   {Math.min(scrubIdx + 1, events.length)} / {events.length}
+                  {rawEvents.length > events.length && (
+                    <span style={{marginLeft:6, color:'var(--text-mute)'}} title="Low-priority items hidden. Toggle in Filters to show.">
+                      (+{rawEvents.length - events.length})
+                    </span>
+                  )}
                 </span>
                 <button
                   type="button"
@@ -1758,39 +1898,26 @@ function ScreenMemory() {
           )}
           {!timelineLoading && scrubSummary && !showRaw && (
             <div className="memory-summary-card" style={{
-              display:'flex', flexDirection:'column', gap:12,
-              padding:'16px 18px',
-              marginBottom:16,
-              background:'var(--surface)',
-              border:'1px solid var(--border)',
-              borderRadius:12,
-              borderLeftWidth: 3,
-              borderLeftStyle: 'solid',
-              borderLeftColor:
-                scrubSummary.priority === 'high' ? 'var(--gold)' :
-                scrubSummary.priority === 'medium' ? 'var(--border-hi)' :
-                'transparent',
-              opacity: scrubSummary.priority === 'low' ? 0.6 : 1,
+              display:'flex', flexDirection:'column', gap:10,
+              marginBottom:14,
+              borderLeft: scrubSummary.priority === 'high'
+                ? '2px solid var(--gold)'
+                : '2px solid var(--border)',
+              paddingLeft:14,
             }}>
-              <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
-                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, flex:1, wordBreak:'break-word'}}>{scrubSummary.title}</div>
-                <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'3px 8px', borderRadius:6, border:'1px solid var(--border)'}}>
-                  {String(scrubSummary.priority || 'med').toUpperCase()}
-                </div>
-              </div>
+              <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>{scrubSummary.title}</div>
               {Array.isArray(scrubSummary.keyPoints) && scrubSummary.keyPoints.length > 0 && (
-                <ul style={{margin:0, paddingLeft:18, display:'flex', flexDirection:'column', gap:6}}>
-                  {scrubSummary.keyPoints.map((k, i) => (
-                    <li key={i} style={{fontSize:14, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                  {scrubSummary.keyPoints.slice(0, 4).map((k, i) => (
+                    <li key={i} style={{fontSize:13, color: i === 0 ? 'var(--text)' : 'var(--text-mute)', lineHeight:1.5}}>{k}</li>
                   ))}
                 </ul>
               )}
-              <div style={{display:'flex', gap:8, marginTop:4}}>
-                <button type="button" onClick={() => setShowRaw(true)} style={{
-                  padding:'6px 12px', borderRadius:8, border:'1px solid var(--border)',
-                  background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit',
-                }}>Show raw</button>
-              </div>
+              <button type="button" onClick={() => setShowRaw(true)} style={{
+                alignSelf:'flex-start', marginTop:2,
+                padding:'4px 0', borderRadius:0, border:'none',
+                background:'transparent', color:'var(--text-dim)', fontSize:11, cursor:'pointer', fontFamily:'inherit', textDecoration:'underline',
+              }}>Show raw</button>
             </div>
           )}
           {!timelineLoading && scrubSummaryLoading && !scrubSummary && (
@@ -1804,11 +1931,11 @@ function ScreenMemory() {
               <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
                 {renderHighlighted(scrubbed.titleHighlight || scrubbed.title)}
               </h2>
-              <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
+              <div style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap', maxHeight:320, overflowY:'auto', wordBreak:'break-word'}}>
                 {scrubbed.snippetHighlight
                   ? renderHighlighted(scrubbed.snippetHighlight)
                   : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')}
-              </p>
+              </div>
               {scrubSummary && (
                 <div style={{marginBottom:16}}>
                   <button type="button" onClick={() => setShowRaw(false)} style={{
@@ -1869,23 +1996,24 @@ function ScreenMemory() {
                   <span style={{color:'var(--text)', wordBreak:'break-word'}}>{scrubbed.sourceRaw || srcLabel(scrubbed.src)}</span>
                   <span className="t-mono" style={{color:'var(--text-dim)'}}>Captured</span>
                   <span style={{color:'var(--text)'}}>{scrubbed.t}</span>
+                  {scrubSummary && scrubSummary.priority && (
+                    <>
+                      <span className="t-mono" style={{color:'var(--text-dim)'}}>Priority</span>
+                      <span style={{color:'var(--text)'}}>{String(scrubSummary.priority).toUpperCase()}</span>
+                    </>
+                  )}
+                  {scrubSummary && scrubSummary.reason && (
+                    <>
+                      <span className="t-mono" style={{color:'var(--text-dim)'}}>Reason</span>
+                      <span style={{color:'var(--text-mute)', wordBreak:'break-word', fontSize:12}}>{scrubSummary.reason}</span>
+                    </>
+                  )}
                   {scrubbed.entityId && (
                     <>
                       <span className="t-mono" style={{color:'var(--text-dim)'}}>Entity</span>
                       <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.entityId}</span>
                     </>
                   )}
-                  {scrubbed.memoryId && (
-                    <>
-                      <span className="t-mono" style={{color:'var(--text-dim)'}}>ID</span>
-                      <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.memoryId}</span>
-                    </>
-                  )}
-                </div>
-                <div style={{borderTop:'1px solid var(--border)', paddingTop:14, fontSize:13, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
-                  {scrubbed.snippetHighlight
-                    ? renderHighlighted(scrubbed.snippetHighlight)
-                    : scrubbed.snippet || <span className="muted">No snippet text for this entry.</span>}
                 </div>
               </>
             ) : (

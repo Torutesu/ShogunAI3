@@ -409,6 +409,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
       schema_version INTEGER NOT NULL DEFAULT 1,
       generated_at   INTEGER NOT NULL,
       raw_json       TEXT    NOT NULL,
+      lang           TEXT    NOT NULL DEFAULT 'en',
       PRIMARY KEY (target_kind, target_id)
     );
     CREATE INDEX IF NOT EXISTS idx_mem_summaries_generated_at
@@ -416,6 +417,18 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     CREATE INDEX IF NOT EXISTS idx_mem_summaries_priority
       ON mem_summaries(priority, generated_at DESC);"
   ).map_err(|e| format!("mem_summaries DDL: {}", e))?;
+  // Migration: add lang column to pre-existing tables (idempotent).
+  let has_lang = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'lang'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_lang == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'",
+      [],
+    ).map_err(|e| format!("mem_summaries add lang: {}", e))?;
+  }
 
   crate::meeting_store::ensure_meeting_schema(conn)?;
   Ok(())

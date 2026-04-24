@@ -53,6 +53,9 @@
     register("memory.delete", (payload) => api.memoryDelete(payload));
     register("memory.embed_backfill", (payload) => api.memoryEmbedBackfill(payload));
     register("memory.embed_backfill_cancel", () => api.memoryEmbedBackfillCancel({}));
+    register("memory.summary.get", (payload) => api.memorySummaryGet(payload));
+    register("memory.summary.batch", (payload) => api.memorySummaryBatch(payload));
+    register("memory.summary.invalidate", (payload) => api.memorySummaryInvalidate(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));
