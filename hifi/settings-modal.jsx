@@ -1308,7 +1308,33 @@ function PanePrivacy() {
 }
 
 function PaneData() {
-  const { confirmWrite } = useRuntimeActions();
+  const { run, confirmWrite, toast } = useRuntimeActions();
+  const onExport = React.useCallback(async () => {
+    const res = await run('settings.export', {}, { silentError: true });
+    if (res && res.ok) {
+      if (res.data && res.data.cancelled) return;
+      const p = (res.data && res.data.path) || '';
+      toast(p ? `Exported to ${p}` : 'Settings exported', 'success');
+    } else {
+      const msg = (res && res.error && res.error.message) || 'Export failed';
+      toast(msg, 'error');
+    }
+  }, [run, toast]);
+  const onImport = React.useCallback(async () => {
+    const ok = typeof window.confirm === 'function'
+      ? window.confirm('Import settings from file? Existing sections in the backup will be replaced.')
+      : true;
+    if (!ok) return;
+    const res = await run('settings.import', {}, { silentError: true });
+    if (res && res.ok) {
+      if (res.data && res.data.cancelled) return;
+      const n = (res.data && res.data.sections) || 0;
+      toast(`Imported ${n} section(s). Reload the app to see all changes.`, 'success');
+    } else {
+      const msg = (res && res.error && res.error.message) || 'Import failed';
+      toast(msg, 'error');
+    }
+  }, [run, toast]);
   return (
     <Pane
       title="Data Controls"
@@ -1322,7 +1348,23 @@ function PaneData() {
         </span>
       }
     >
-      <div className="s-field-label">Manage Context Collected</div>
+      <div className="s-field-label">Backup & Restore</div>
+      <div className="s-card">
+        <Row
+          title="Export settings"
+          desc="Save all app settings (integrations toggles, workspaces, preferences) as a JSON file. Credentials and memory data are NOT included."
+        >
+          <button className="btn btn-sm btn-secondary" onClick={onExport}>Export…</button>
+        </Row>
+        <Row
+          title="Import settings"
+          desc="Restore settings from a previously exported JSON file. Existing sections in the backup will replace current values."
+          last
+        >
+          <button className="btn btn-sm btn-secondary" onClick={onImport}>Import…</button>
+        </Row>
+      </div>
+      <div className="s-field-label" style={{marginTop:22}}>Manage Context Collected</div>
       <div className="s-card">
         <Row title="Delete Last Hour of Context" desc="Remove all context collected in the last hour">
           <button className="btn btn-sm btn-secondary" onClick={()=>confirmWrite('data.delete_range', { range:'last_hour' }, 'Delete last hour', 'This permanently deletes local memory for the selected range.')}>Delete</button>

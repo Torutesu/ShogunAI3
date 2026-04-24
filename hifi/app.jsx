@@ -720,6 +720,8 @@ function ensureRuntimeDeps() {
         appCreateShareLink: (input) => client.invoke('app_create_share_link', input),
         settingsLoad: (input) => client.invoke('app_settings_load', input),
         settingsSave: (input) => client.invoke('app_settings_save', input),
+        settingsExport: (input) => client.invoke('app_settings_export', input || {}),
+        settingsImport: (input) => client.invoke('app_settings_import', input || {}),
         integrationConnect: (input) => client.invoke('app_integration_connect', input),
         integrationImportCredentials: (input) =>
           client.invoke('app_integration_import_credentials', input),
@@ -803,6 +805,8 @@ function ensureRuntimeDeps() {
           'app.create_share_link': api.appCreateShareLink,
           'settings.save': api.settingsSave,
           'settings.load': api.settingsLoad,
+          'settings.export': api.settingsExport,
+          'settings.import': api.settingsImport,
           'integrations.connect': api.integrationConnect,
           'integrations.import_credentials': api.integrationImportCredentials,
           'integrations.credentials_status': api.integrationCredentialsStatus,

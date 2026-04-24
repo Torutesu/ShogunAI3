@@ -60,6 +60,8 @@
       appCreateShareLink: (input) => call("app_create_share_link", input, WRITE),
       settingsLoad: (input) => call("app_settings_load", input, READ),
       settingsSave: (input) => call("app_settings_save", input, WRITE),
+      settingsExport: (input) => call("app_settings_export", input || {}, WRITE),
+      settingsImport: (input) => call("app_settings_import", input || {}, WRITE),
       llmApiKeySet: (input) => call("app_llm_api_key_set", input, WRITE),
       llmApiKeyStatus: (input) => call("app_llm_api_key_status", input, READ),
       llmApiKeyClear: (input) => call("app_llm_api_key_clear", input, WRITE),

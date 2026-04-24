@@ -28,6 +28,8 @@
     register("app.create_share_link", (payload) => api.appCreateShareLink(payload));
     register("settings.save", (payload) => api.settingsSave(payload));
     register("settings.load", (payload) => api.settingsLoad(payload));
+    register("settings.export", (payload) => api.settingsExport(payload));
+    register("settings.import", (payload) => api.settingsImport(payload));
     register("integrations.connect", (payload) => api.integrationConnect(payload));
     register("integrations.import_credentials", (payload) =>
       api.integrationImportCredentials(payload),

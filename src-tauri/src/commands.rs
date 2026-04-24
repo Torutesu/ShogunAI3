@@ -574,6 +574,104 @@ pub async fn shogun_drive_sync(payload: Value) -> Result<Value, String> {
   google_drive::sync_drive_to_memory(days, max_files).await
 }
 
+/// Export the full settings document as JSON to a user-picked file. Skips
+/// credential secrets (those live in Keychain / integration_secrets, not in
+/// settings.json, so the settings file is already safe to share).
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn app_settings_export(payload: Value) -> Result<Value, String> {
+  #[cfg(target_os = "macos")]
+  {
+    use std::io::Write;
+    let doc = settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
+    let exported_at = ts();
+    let envelope = json!({
+      "app": "SHOGUN",
+      "kind": "settings_backup",
+      "schemaVersion": 1,
+      "exportedAt": exported_at,
+      "settings": doc,
+    });
+    let Some(path) = rfd::FileDialog::new()
+      .set_file_name("shogun-settings.json")
+      .save_file()
+    else {
+      return Ok(json!({ "cancelled": true, "stub": false, "echo": payload }));
+    };
+    let body = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
+    std::fs::File::create(&path)
+      .and_then(|mut f| f.write_all(body.as_bytes()))
+      .map_err(|e| e.to_string())?;
+    Ok(json!({
+      "exported": true,
+      "path": path.display().to_string(),
+      "exportedAt": exported_at,
+      "stub": false,
+      "echo": payload,
+    }))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("Settings export is only available on macOS.".to_string())
+  }
+}
+
+/// Import a settings JSON file (previously produced by `app_settings_export`)
+/// and merge each top-level section via `save_patch`. Individual sections are
+/// replaced wholesale — the user explicitly chose this file, so we trust it
+/// over the current state. Credentials are untouched.
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn app_settings_import(payload: Value) -> Result<Value, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let Some(path) = rfd::FileDialog::new()
+      .add_filter("SHOGUN settings", &["json"])
+      .pick_file()
+    else {
+      return Ok(json!({ "cancelled": true, "stub": false, "echo": payload }));
+    };
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("Parse failed: {}", e))?;
+    let kind = parsed
+      .get("kind")
+      .and_then(|v| v.as_str())
+      .unwrap_or("");
+    if kind != "settings_backup" {
+      return Err("File is not a SHOGUN settings backup.".to_string());
+    }
+    let sections = parsed
+      .pointer("/settings/sections")
+      .and_then(|x| x.as_object())
+      .ok_or_else(|| "Backup has no settings.sections".to_string())?;
+
+    let mut restored = 0u32;
+    for (section_name, section_val) in sections.iter() {
+      let Some(obj) = section_val.as_object() else {
+        continue;
+      };
+      let mut patch = serde_json::Map::new();
+      patch.insert("section".to_string(), json!(section_name));
+      for (k, v) in obj.iter() {
+        patch.insert(k.clone(), v.clone());
+      }
+      settings_store::save_patch(&Value::Object(patch))?;
+      restored += 1;
+    }
+    Ok(json!({
+      "imported": true,
+      "sections": restored,
+      "path": path.display().to_string(),
+      "stub": false,
+      "echo": payload,
+    }))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("Settings import is only available on macOS.".to_string())
+  }
+}
+
 #[tauri::command]
 pub async fn shogun_zoom_sync(payload: Value) -> Result<Value, String> {
   let days = payload
@@ -1281,6 +1379,65 @@ pub fn shogun_memory_summary_invalidate(payload: serde_json::Value) -> Result<se
     .unwrap_or("item");
   let deleted = crate::summarizer_store::delete(target_kind, target_id)?;
   Ok(serde_json::json!({ "deleted": deleted }))
+}
+
+/// 要約を "既読" にする (または未読に戻す)。`items` の配列で複数を一括処理可能。
+/// unread に戻す場合は `acknowledged: false` を渡す (デフォルトは true = now_ms())。
+///
+/// payload: {
+///   "items": [{ "targetId": "m_...", "targetKind"?: "item" }, ...],
+///   "acknowledged"?: bool (default true)
+/// }
+#[tauri::command]
+pub fn shogun_memory_summary_acknowledge(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let items = payload
+    .get("items")
+    .and_then(|v| v.as_array())
+    .cloned()
+    .ok_or_else(|| "items array required".to_string())?;
+  let acknowledged = payload
+    .get("acknowledged")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let ack_ms: Option<i64> = if acknowledged {
+    Some(
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0),
+    )
+  } else {
+    None
+  };
+
+  let pairs_owned: Vec<(String, String)> = items
+    .iter()
+    .filter_map(|it| {
+      let id = it.get("targetId").and_then(|v| v.as_str())?.to_string();
+      let kind = it
+        .get("targetKind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("item")
+        .to_string();
+      Some((kind, id))
+    })
+    .collect();
+  let pairs_ref: Vec<(&str, &str)> = pairs_owned
+    .iter()
+    .map(|(k, i)| (k.as_str(), i.as_str()))
+    .collect();
+  let updated = if let Some(ms) = ack_ms {
+    crate::summarizer_store::acknowledge_many(&pairs_ref, ms)?
+  } else {
+    let mut n: u64 = 0;
+    for (k, id) in &pairs_ref {
+      if crate::summarizer_store::set_acknowledged(k, id, None)? {
+        n += 1;
+      }
+    }
+    n
+  };
+  Ok(serde_json::json!({ "updated": updated, "acknowledged": acknowledged }))
 }
 
 /// 週次ロールアップ要約を取得 (キャッシュヒット時は即返、無ければ生成)。
