@@ -1973,7 +1973,6 @@ function App() {
     chat: ScreenChat,
     agents: ScreenAgents,
     work: ScreenWork,
-    tasks: ScreenTasks,
     meetings: ScreenMeetings,
     memory_debug: ScreenMemoryDebug,
   }[active] || ScreenHome;

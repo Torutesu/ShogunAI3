@@ -26,3 +26,6 @@ src-tauri/tauri.signing.local.json
 .windsurf/
 skills/
 skills-lock.json
+
+# Local Google OAuth helper secrets
+scripts/.env.google-oauth

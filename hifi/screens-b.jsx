@@ -252,8 +252,8 @@ function ScreenChat() {
       }
     }
     const manualCtx = (memoryContext || '').trim();
-    if (global.BriefTelemetry && global.BriefTelemetry.log && global.BriefTelemetry.EVENTS) {
-      global.BriefTelemetry.log(global.BriefTelemetry.EVENTS.CHAT_COMPLETION_CONTEXT, {
+    if (window.BriefTelemetry && window.BriefTelemetry.log && window.BriefTelemetry.EVENTS) {
+      window.BriefTelemetry.log(window.BriefTelemetry.EVENTS.CHAT_COMPLETION_CONTEXT, {
         hasManualMemoryContext: manualCtx.length > 0,
         manualMemoryContextChars: manualCtx.length,
         memoryAssemblyRequested: shouldAssemble,

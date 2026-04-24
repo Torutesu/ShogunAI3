@@ -537,6 +537,12 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
 /// - `tool`: JSON schema (`{"name": ..., "description": ..., "input_schema": ...}` の中身)。
 /// - `model`: 例 "claude-sonnet-4-6"。
 ///
+/// 注: Phase 1 では Anthropic エンドポイント (`https://api.anthropic.com/v1/messages`) に固定。
+/// `chat_complete` と異なり `llm_providers` を経由せず baseUrl override や host allowlist 検証を行わない。
+/// Phase 2 で `llm_providers` 経由に refactor 予定。
+///
+/// 複数 tool_use が返った場合は最初に一致したものを採用。tool_choice 強制モードでは通常 1 件のみ。
+///
 /// 戻り値: LLM が emit したツールの input JSON (= summary の構造化データ)。
 pub async fn anthropic_tool_complete(
   system: &str,
@@ -569,7 +575,7 @@ pub async fn anthropic_tool_complete(
 
   let resp = client
     .post("https://api.anthropic.com/v1/messages")
-    .header("x-api-key", key)
+    .header("x-api-key", key.trim())
     .header("anthropic-version", "2023-06-01")
     .header("content-type", "application/json")
     .json(&body)

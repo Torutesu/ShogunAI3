@@ -1179,7 +1179,7 @@ function ScreenMemory() {
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [activeFilters, setActiveFilters] = useState(() => ({ screen: true, audio: true, input: true }));
+  const [activeFilters, setActiveFilters] = useState(() => ({ screen: true, audio: true, input: true, calendar: true, mail: true }));
   const timelineScrollRef = useRef(null);
   const scrollTimeline = useCallback((dir) => {
     const el = timelineScrollRef.current;
@@ -1434,7 +1434,7 @@ function ScreenMemory() {
                   boxShadow:'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
                 }}>
                   <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Sources</div>
-                  {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input']].map(([k,l])=>(
+                  {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input'],['calendar','Calendar'],['mail','Mail']].map(([k,l])=>(
                     <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
                       <input type="checkbox" checked={!!activeFilters[k]} onChange={()=>toggleFilter(k)}/>
                       <span>{l}</span>
@@ -1447,7 +1447,7 @@ function ScreenMemory() {
                       mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
                       setFiltersOpen(false);
                     }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
-                    <button type="button" onClick={()=>{ setActiveFilters({ screen:true, audio:true, input:true }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
+                    <button type="button" onClick={()=>{ setActiveFilters({ screen:true, audio:true, input:true, calendar:true, mail:true }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
                   </div>
                 </div>
               </>
