@@ -3,8 +3,63 @@
 
 use crate::meeting_store;
 use crate::memory_store;
-use chrono::{SecondsFormat, Utc};
+use crate::summarizer;
+use crate::summarizer_store;
+use chrono::{Datelike, NaiveDate, SecondsFormat, TimeZone, Utc};
 use serde_json::{json, Value};
+
+/// Build a memory-backed digest for the brief: top HIGH/MED item summaries
+/// from the last 7 days + the current week's rollup (if cached).
+///
+/// Read-only: never triggers LLM generation. If no summaries exist yet, the
+/// returned object has empty `highlights` and `week_rollup: null`. The user
+/// populates the cache by visiting Memory → River (batch) or Memory → Week.
+pub fn build_memory_digest(lang: &str) -> Value {
+  let now_ms = memory_store::now_ms() as i64;
+  let window_ms: i64 = 7 * 24 * 3600 * 1000;
+  let start_ms = now_ms - window_ms;
+
+  // Fetch HIGH + MEDIUM summaries in the last 7 days (LOW stays in memory).
+  let summaries = summarizer_store::get_summaries_in_window(start_ms, now_ms, lang)
+    .unwrap_or_default();
+  let highlights: Vec<Value> = summaries
+    .iter()
+    .filter(|s| s.priority == "high" || s.priority == "medium")
+    .take(8)
+    .map(|s| json!({
+      "targetId": s.target_id,
+      "title": s.title,
+      "keyPoints": s.key_points,
+      "priority": s.priority,
+      "reason": s.reason,
+      "sourceType": s.source_type,
+      "generatedAt": s.generated_at,
+    }))
+    .collect();
+
+  // Current week's Monday 00:00 UTC, matching the id format used by rollup
+  // generation so a cached entry hits cleanly.
+  let today = Utc::now().date_naive();
+  let weekday_from_mon = today.weekday().num_days_from_monday() as i64;
+  let monday = today
+    .checked_sub_signed(chrono::Duration::days(weekday_from_mon))
+    .unwrap_or(today);
+  let monday_ms = NaiveDate::from_ymd_opt(monday.year(), monday.month(), monday.day())
+    .and_then(|d| d.and_hms_opt(0, 0, 0))
+    .map(|ndt| Utc.from_utc_datetime(&ndt).timestamp_millis())
+    .unwrap_or(0);
+  let week_id = summarizer::format_week_id(monday_ms);
+
+  let week_rollup = summarizer_store::get_cached("week_rollup", &week_id, lang)
+    .ok()
+    .flatten()
+    .map(|s| s.to_json());
+
+  json!({
+    "highlights": highlights,
+    "week_rollup": week_rollup,
+  })
+}
 
 pub fn morning_brief_v2_stub(_generated_ms: u64, user_tz: &str, payload: &Value) -> Value {
   let now = Utc::now();
@@ -108,6 +163,15 @@ pub fn morning_brief_v2_stub(_generated_ms: u64, user_tz: &str, payload: &Value)
   if !meeting_bullets.is_empty() {
     out["meetings_recent"] = json!(meeting_bullets);
   }
+
+  // Attach memory-backed digest (highlights + week rollup). Empty for new
+  // users; populated as the user interacts with Memory.
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en");
+  out["memory_digest"] = build_memory_digest(lang);
+
   out
 }
 

@@ -323,6 +323,7 @@ function pickHomeText(item, uiLang) {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenHome() {
   const [morningBrief, setMorningBrief] = useState(null);
+  const [memoryDigest, setMemoryDigest] = useState(null); // { highlights: [], week_rollup: {...} | null }
   const [memoryTotal, setMemoryTotal] = useState(null);
   const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
@@ -452,17 +453,22 @@ function ScreenHome() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
       const res = await runRuntimeActionA(
         "brief.get",
-        { span: "today", source: "home", user_tz: resolveUserTimeZoneId() },
+        { span: "today", source: "home", user_tz: resolveUserTimeZoneId(), lang },
         { silentError: true }
       );
       if (cancelled) return;
       if (!res.ok || !res.data) {
         setMorningBrief(null);
+        setMemoryDigest(null);
         return;
       }
       const inner = res.data;
+      // Memory digest rides alongside the brief. Always surface it when the
+      // backend provides it, even if the main brief is skipped / unavailable.
+      if (inner.memory_digest) setMemoryDigest(inner.memory_digest);
       if (inner.skipped || !inner.brief) {
         setMorningBrief(null);
         return;
@@ -1185,6 +1191,77 @@ function ScreenHome() {
           </div>
         </div>
       )}
+
+      {/* Memory digest — HIGH/MED item highlights from the last week +
+          current week rollup. Surfaces here regardless of whether the
+          main brief rendered, so users get value from Memory right on Home. */}
+      {memoryDigest && (
+        (memoryDigest.highlights && memoryDigest.highlights.length > 0) ||
+        memoryDigest.week_rollup
+      ) && (
+        <div className="card" style={{ width: '100%', maxWidth: 760, marginInline: 'auto', padding: 24, marginTop: 18, background: 'var(--surface)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="row" style={{ alignItems: 'baseline', gap: 12 }}>
+            <div className="t-mono gold" style={{ textTransform: 'none', letterSpacing: '0.02em' }}>
+              <span className="en-only">Memory digest</span>
+              <span className="jp">メモリのハイライト</span>
+            </div>
+            <span className="spacer" />
+          </div>
+
+          {memoryDigest.week_rollup && (
+            <div style={{ borderLeft: '2px solid var(--gold)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
+                <span className="en-only">THIS WEEK</span>
+                <span className="jp">今週</span>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{memoryDigest.week_rollup.title}</div>
+              {Array.isArray(memoryDigest.week_rollup.keyPoints) && (
+                <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {memoryDigest.week_rollup.keyPoints.slice(0, 4).map((k, i) => (
+                    <li key={i} style={{ fontSize: 12, color: 'var(--text-mute)', lineHeight: 1.5 }}>{k}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {Array.isArray(memoryDigest.highlights) && memoryDigest.highlights.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
+                <span className="en-only">NEEDS ATTENTION</span>
+                <span className="jp">要確認</span>
+              </div>
+              {memoryDigest.highlights.slice(0, 5).map((h) => (
+                <div key={h.targetId} style={{
+                  borderLeft: h.priority === 'high' ? '2px solid var(--gold)' : '2px solid var(--border)',
+                  paddingLeft: 12,
+                  display: 'flex', flexDirection: 'column', gap: 3,
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35, wordBreak: 'break-word' }}>{h.title}</div>
+                  {Array.isArray(h.keyPoints) && h.keyPoints[0] && (
+                    <div style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{h.keyPoints[0]}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            style={{ alignSelf: 'flex-start', fontSize: 11 }}
+            onClick={() => {
+              window.dispatchEvent(new Event('shogun-jump-memory-timeline'));
+              window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
+            }}
+          >
+            <span className="en-only">Open Memory</span>
+            <span className="jp">メモリを開く</span>
+            <Icon name="arrowRight" size={12} />
+          </button>
+        </div>
+      )}
+
       <style>{`
         .home-composer-dropzone.is-drag-over {
           background:color-mix(in srgb, var(--gold) 6%, var(--surface) 94%);

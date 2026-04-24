@@ -423,8 +423,14 @@ pub async fn brief_generate(
       assembled_block: Some(block.clone()),
     });
   }
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en");
+  let memory_digest = crate::brief::build_memory_digest(lang);
   Ok(json!({
     "sections": sections,
+    "memory_digest": memory_digest,
     "generatedAt": generated,
     "echo": payload,
     "stub": false,
