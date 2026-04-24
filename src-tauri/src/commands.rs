@@ -475,22 +475,32 @@ pub async fn shogun_google_calendar_sync(payload: Value) -> Result<Value, String
     .get("calendarId")
     .and_then(|c| c.as_str())
     .unwrap_or("primary");
+  let days_opt = payload.get("days").and_then(|d| d.as_u64());
+  let is_historical = days_opt.is_some();
+  let default_max: u64 = if is_historical { 500 } else { 25 };
+  let cap_max: u64 = if is_historical { 2500 } else { 50 };
   let max = payload
     .get("maxResults")
     .and_then(|m| m.as_u64())
-    .unwrap_or(25)
-    .clamp(1, 50) as usize;
-  google_calendar::sync_events_to_memory(cal, max).await
+    .unwrap_or(default_max)
+    .clamp(1, cap_max) as usize;
+  let past_days = days_opt.unwrap_or(0).min(366) as u32;
+  google_calendar::sync_events_to_memory(cal, max, past_days).await
 }
 
 #[tauri::command]
 pub async fn shogun_gmail_sync(payload: Value) -> Result<Value, String> {
+  let days_opt = payload.get("days").and_then(|d| d.as_u64());
+  let is_historical = days_opt.is_some();
+  let default_max: u64 = if is_historical { 500 } else { 20 };
+  let cap_max: u64 = if is_historical { 500 } else { 50 };
   let max = payload
     .get("maxResults")
     .and_then(|m| m.as_u64())
-    .unwrap_or(20)
-    .clamp(1, 50) as usize;
-  gmail::sync_inbox_to_memory(max).await
+    .unwrap_or(default_max)
+    .clamp(1, cap_max) as usize;
+  let days = days_opt.map(|d| d.min(366) as u32);
+  gmail::sync_inbox_to_memory(max, days).await
 }
 
 #[tauri::command]
@@ -1052,9 +1062,14 @@ pub async fn shogun_memory_summary_get(payload: serde_json::Value) -> Result<ser
     .and_then(|v| v.as_str())
     .unwrap_or("item")
     .to_string();
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
 
-  // 1. cache lookup
-  if let Some(cached) = crate::summarizer_store::get_cached(&target_kind, &target_id)? {
+  // 1. cache lookup (lang-aware: mismatched language → cache miss → regen)
+  if let Some(cached) = crate::summarizer_store::get_cached(&target_kind, &target_id, &lang)? {
     return Ok(serde_json::json!({ "summary": cached.to_json(), "cached": true }));
   }
 
@@ -1068,7 +1083,7 @@ pub async fn shogun_memory_summary_get(payload: serde_json::Value) -> Result<ser
     .cloned()
     .ok_or_else(|| "item payload required when cache miss".to_string())?;
 
-  let summary = crate::summarizer::summarize_item(&item).await?;
+  let summary = crate::summarizer::summarize_item(&item, &lang).await?;
   crate::summarizer_store::upsert(&summary)?;
 
   Ok(serde_json::json!({ "summary": summary.to_json(), "cached": false }))
@@ -1084,6 +1099,11 @@ pub async fn shogun_memory_summary_batch(payload: serde_json::Value) -> Result<s
     .and_then(|v| v.as_array())
     .cloned()
     .ok_or_else(|| "items array required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
 
   if items.is_empty() {
     return Ok(serde_json::json!({ "ok": [], "failed": [], "heuristicUsed": 0 }));
@@ -1094,7 +1114,7 @@ pub async fn shogun_memory_summary_batch(payload: serde_json::Value) -> Result<s
     .iter()
     .filter_map(|it| it.get("id").and_then(|v| v.as_str()).map(String::from))
     .collect();
-  let cached = crate::summarizer_store::get_cached_many("item", &ids)?;
+  let cached = crate::summarizer_store::get_cached_many("item", &ids, &lang)?;
   let cached_ids: std::collections::HashSet<String> =
     cached.iter().map(|s| s.target_id.clone()).collect();
 
@@ -1118,13 +1138,14 @@ pub async fn shogun_memory_summary_batch(payload: serde_json::Value) -> Result<s
       .iter()
       .map(|item| {
         let item_clone = item.clone();
+        let lang_clone = lang.clone();
         async move {
           let target_id = item_clone
             .get("id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
-          match crate::summarizer::summarize_item(&item_clone).await {
+          match crate::summarizer::summarize_item(&item_clone, &lang_clone).await {
             Ok(s) => {
               if let Err(e) = crate::summarizer_store::upsert(&s) {
                 log::warn!("summary upsert failed for {}: {}", target_id, e);
