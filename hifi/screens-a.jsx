@@ -1243,6 +1243,7 @@ function ScreenMemory() {
   const [view, setView] = useState('river');
   const [rawEvents, setRawEvents] = useState(() => []);
   const [summaryByMemId, setSummaryByMemId] = useState(() => ({}));
+  const [batchSummarizing, setBatchSummarizing] = useState(0); // count of items being processed; 0 = idle
   const [scrubIdx, setScrubIdx] = useState(0);
   const [timelineSpan, setTimelineSpan] = useState('week');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
@@ -1479,7 +1480,26 @@ function ScreenMemory() {
         });
     // Collapse consecutive capture_ax/capture_sampler items into session cards
     // so that enabling the Screen filter doesn't flood the River.
-    return clusterScreenSessions(filtered);
+    const clustered = clusterScreenSessions(filtered);
+    // Surface HIGH first, then MED, then unclassified, then LOW. Within the
+    // same tier, newer events come first. This makes the top of the River
+    // read as a "what needs attention" feed.
+    const rank = (e) => {
+      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+      if (!s) return 2; // unclassified sits between MED and LOW
+      if (s.priority === 'high') return 0;
+      if (s.priority === 'medium') return 1;
+      if (s.priority === 'low') return 3;
+      return 2;
+    };
+    return clustered
+      .slice()
+      .sort((a, b) => {
+        const rA = rank(a);
+        const rB = rank(b);
+        if (rA !== rB) return rA - rB;
+        return (b.ts || 0) - (a.ts || 0);
+      });
   }, [rawEvents, summaryByMemId, activeFilters.priority.low]);
   // Batch-summarize connector items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
@@ -1508,15 +1528,20 @@ function ScreenMemory() {
       }));
     if (connectorItems.length === 0) return;
     const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+    setBatchSummarizing(connectorItems.length);
     (async () => {
-      const res = await runRuntimeActionA('memory.summary.batch', { items: connectorItems, lang }, { silentError: true });
-      if (cancelled || !res?.ok || !res.data?.ok) return;
-      const next = {};
-      for (const s of res.data.ok) {
-        if (s && s.targetId) next[s.targetId] = s;
+      try {
+        const res = await runRuntimeActionA('memory.summary.batch', { items: connectorItems, lang }, { silentError: true });
+        if (cancelled || !res?.ok || !res.data?.ok) return;
+        const next = {};
+        for (const s of res.data.ok) {
+          if (s && s.targetId) next[s.targetId] = s;
+        }
+        if (Object.keys(next).length === 0) return;
+        setSummaryByMemId((prev) => ({ ...prev, ...next }));
+      } finally {
+        if (!cancelled) setBatchSummarizing(0);
       }
-      if (Object.keys(next).length === 0) return;
-      setSummaryByMemId((prev) => ({ ...prev, ...next }));
     })();
     return () => { cancelled = true; };
     // summaryByMemId intentionally omitted: we read it inside the effect to
@@ -1925,6 +1950,11 @@ function ScreenMemory() {
                       (+{rawEvents.length - events.length})
                     </span>
                   )}
+                  {batchSummarizing > 0 && (
+                    <span style={{marginLeft:8, color:'var(--gold)'}} title={`Summarizing ${batchSummarizing} item(s)…`}>
+                      · summarizing {batchSummarizing}
+                    </span>
+                  )}
                 </span>
                 <button
                   type="button"
@@ -1987,11 +2017,57 @@ function ScreenMemory() {
                   ))}
                 </ul>
               )}
-              <button type="button" onClick={() => setShowRaw(true)} style={{
-                alignSelf:'flex-start', marginTop:2,
-                padding:'4px 0', borderRadius:0, border:'none',
-                background:'transparent', color:'var(--text-dim)', fontSize:11, cursor:'pointer', fontFamily:'inherit', textDecoration:'underline',
-              }}>Show raw</button>
+              <div style={{display:'flex', gap:14, marginTop:2, alignItems:'center'}}>
+                <button type="button" onClick={() => setShowRaw(true)} style={{
+                  padding:'4px 0', borderRadius:0, border:'none',
+                  background:'transparent', color:'var(--text-dim)', fontSize:11, cursor:'pointer', fontFamily:'inherit', textDecoration:'underline',
+                }}>Show raw</button>
+                <button
+                  type="button"
+                  disabled={scrubSummaryLoading}
+                  onClick={async () => {
+                    if (!scrubbed?.memoryId) return;
+                    const targetId = scrubbed.memoryId;
+                    setScrubSummaryLoading(true);
+                    setScrubSummary(null);
+                    setSummaryByMemId((prev) => {
+                      const next = { ...prev };
+                      delete next[targetId];
+                      return next;
+                    });
+                    await runRuntimeActionA('memory.summary.invalidate', {
+                      targetId, targetKind: 'item',
+                    }, { silentError: true });
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.summary.get', {
+                      targetId, targetKind: 'item', lang,
+                      item: {
+                        id: targetId,
+                        title: scrubbed.title || '',
+                        snippet: scrubbed.snippet || '',
+                        source: scrubbed.sourceRaw || '',
+                      },
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.summary) {
+                      setScrubSummary(res.data.summary);
+                      setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
+                    }
+                    setScrubSummaryLoading(false);
+                  }}
+                  style={{
+                    padding:'4px 0', borderRadius:0, border:'none',
+                    background:'transparent',
+                    color: scrubSummaryLoading ? 'var(--text-mute)' : 'var(--text-dim)',
+                    fontSize:11,
+                    cursor: scrubSummaryLoading ? 'default' : 'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                    opacity: scrubSummaryLoading ? 0.5 : 1,
+                  }}
+                  title="Regenerate this summary (clears cache)"
+                >
+                  {scrubSummaryLoading ? 'Regenerating…' : 'Regenerate'}
+                </button>
+              </div>
             </div>
           )}
           {!timelineLoading && scrubSummaryLoading && !scrubSummary && (
