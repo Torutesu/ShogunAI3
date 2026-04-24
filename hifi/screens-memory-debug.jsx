@@ -34,11 +34,13 @@ function TabQueryTester() {
     setBusy(true);
     setErr(null);
     try {
-      const api = window.ShogunAPI;
-      if (!api || !api.memoryDebugQuery) {
-        throw new Error("API unavailable");
+      const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      if (!invoke) {
+        throw new Error("Tauri IPC unavailable");
       }
-      const out = await api.memoryDebugQuery({ query, limit, semantic });
+      const out = await invoke("shogun_memory_debug_query", {
+        payload: { query, limit, semantic },
+      });
       setResult(out);
     } catch (e) {
       setErr(String(e && e.message ? e.message : e));
@@ -101,8 +103,12 @@ function TabRecentCalls() {
 
   const refresh = useCallback(async () => {
     try {
-      const out = await window.ShogunAPI.memoryDebugRecentCalls({ limit: 50 });
-      setItems(out.calls || []);
+      const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      if (!invoke) return;
+      const out = await invoke("shogun_memory_debug_recent_calls", {
+        payload: { limit: 50 },
+      });
+      setItems((out && out.calls) || []);
     } catch (e) {
       setErr(String(e));
     }
@@ -161,7 +167,9 @@ function TabSyncHealth() {
 
   const refresh = useCallback(async () => {
     try {
-      const out = await window.ShogunAPI.memoryDebugSyncStatus();
+      const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      if (!invoke) return;
+      const out = await invoke("shogun_memory_debug_sync_status", { payload: {} });
       setData(out);
     } catch (e) {
       setErr(String(e));
@@ -216,7 +224,9 @@ function TabDbStats() {
 
   const refresh = useCallback(async () => {
     try {
-      const out = await window.ShogunAPI.memoryDebugStats();
+      const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      if (!invoke) return;
+      const out = await invoke("shogun_memory_debug_stats", { payload: {} });
       setData(out);
     } catch (e) {
       setErr(String(e));
