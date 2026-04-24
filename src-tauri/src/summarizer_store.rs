@@ -127,6 +127,51 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
   Ok(out)
 }
 
+/// Fetch item-level summaries generated within a time window.
+/// Used by the week-rollup generator to synthesize a higher-order digest.
+pub fn get_summaries_in_window(
+  start_ms: i64,
+  end_ms: i64,
+  want_lang: &str,
+) -> Result<Vec<Summary>, String> {
+  let conn = open_conn()?;
+  let mut stmt = conn.prepare(
+    "SELECT target_kind, target_id, title, key_points, source_type, priority,
+            reason, model, schema_version, generated_at, raw_json, lang
+     FROM mem_summaries
+     WHERE target_kind = 'item'
+       AND lang = ?1
+       AND generated_at >= ?2
+       AND generated_at <  ?3
+     ORDER BY
+       CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+       generated_at DESC"
+  ).map_err(|e| format!("prepare window: {}", e))?;
+  let rows = stmt.query_map(params![want_lang, start_ms, end_ms], |r| {
+    let kp_json: String = r.get(3)?;
+    let key_points: Vec<String> = serde_json::from_str(&kp_json).unwrap_or_default();
+    Ok(Summary {
+      target_kind: r.get(0)?,
+      target_id: r.get(1)?,
+      title: r.get(2)?,
+      key_points,
+      source_type: r.get(4)?,
+      priority: r.get(5)?,
+      reason: r.get(6)?,
+      model: r.get(7)?,
+      schema_version: r.get(8)?,
+      generated_at: r.get(9)?,
+      raw_json: r.get(10)?,
+      lang: r.get(11)?,
+    })
+  }).map_err(|e| format!("query window: {}", e))?;
+  let mut out = Vec::new();
+  for row in rows {
+    out.push(row.map_err(|e| format!("row: {}", e))?);
+  }
+  Ok(out)
+}
+
 pub fn upsert(s: &Summary) -> Result<(), String> {
   let conn = open_conn()?;
   let kp_json = serde_json::to_string(&s.key_points)
