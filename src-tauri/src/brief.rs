@@ -22,15 +22,20 @@ pub fn build_memory_digest(lang: &str) -> Value {
   // Fetch HIGH + MEDIUM summaries in the last 7 days (LOW stays in memory).
   let summaries = summarizer_store::get_summaries_in_window(start_ms, now_ms, lang)
     .unwrap_or_default();
+  // Respect the user's manual priority override when selecting highlights.
   let highlights: Vec<Value> = summaries
     .iter()
-    .filter(|s| s.priority == "high" || s.priority == "medium")
+    .filter(|s| {
+      let p: &str = s.user_priority.as_deref().unwrap_or(&s.priority);
+      p == "high" || p == "medium"
+    })
     .take(8)
     .map(|s| json!({
       "targetId": s.target_id,
       "title": s.title,
       "keyPoints": s.key_points,
       "priority": s.priority,
+      "userPriority": s.user_priority,
       "reason": s.reason,
       "sourceType": s.source_type,
       "generatedAt": s.generated_at,

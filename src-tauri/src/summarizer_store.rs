@@ -15,13 +15,14 @@ pub struct Summary {
   pub title: String,
   pub key_points: Vec<String>,
   pub source_type: String,
-  pub priority: String,   // 'high' | 'medium' | 'low'
+  pub priority: String,            // LLM-assigned priority: 'high' | 'medium' | 'low'
   pub reason: Option<String>,
   pub model: String,
   pub schema_version: i64,
   pub generated_at: i64,
   pub raw_json: String,
-  pub lang: String,       // 'en' | 'jp' | 'bi' — matches tweaks.language at generation time
+  pub lang: String,                // 'en' | 'jp' | 'bi' — matches tweaks.language at generation time
+  pub user_priority: Option<String>, // Manual override from the user. None = no override.
 }
 
 impl Summary {
@@ -39,6 +40,7 @@ impl Summary {
       "schemaVersion": self.schema_version,
       "generatedAt": self.generated_at,
       "lang": self.lang,
+      "userPriority": self.user_priority,
     })
   }
 }
@@ -50,7 +52,7 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
   let conn = open_conn()?;
   let row = conn.query_row(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority
      FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
     params![target_kind, target_id],
     |r| {
@@ -69,6 +71,7 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
         generated_at: r.get(9)?,
         raw_json: r.get(10)?,
         lang: r.get(11)?,
+        user_priority: r.get(12)?,
       })
     },
   );
@@ -88,7 +91,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
   let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i + 1)).collect();
   let sql = format!(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority
      FROM mem_summaries
      WHERE target_kind = ?1 AND target_id IN ({}) AND lang = ?{}",
     placeholders.join(","),
@@ -117,6 +120,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
       generated_at: r.get(9)?,
       raw_json: r.get(10)?,
       lang: r.get(11)?,
+      user_priority: r.get(12)?,
     })
   }).map_err(|e| format!("query: {}", e))?;
 
@@ -137,7 +141,7 @@ pub fn get_summaries_in_window(
   let conn = open_conn()?;
   let mut stmt = conn.prepare(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority
      FROM mem_summaries
      WHERE target_kind = 'item'
        AND lang = ?1
@@ -163,6 +167,7 @@ pub fn get_summaries_in_window(
       generated_at: r.get(9)?,
       raw_json: r.get(10)?,
       lang: r.get(11)?,
+      user_priority: r.get(12)?,
     })
   }).map_err(|e| format!("query window: {}", e))?;
   let mut out = Vec::new();
@@ -200,6 +205,27 @@ pub fn upsert(s: &Summary) -> Result<(), String> {
   Ok(())
 }
 
+/// Set or clear the user's manual priority override on an existing summary.
+/// Pass Some("high"|"medium"|"low") to override the LLM priority, or None
+/// to clear the override. Errors if the row doesn't exist.
+pub fn set_user_priority(
+  target_kind: &str,
+  target_id: &str,
+  user_priority: Option<&str>,
+) -> Result<bool, String> {
+  if let Some(p) = user_priority {
+    if !matches!(p, "high" | "medium" | "low") {
+      return Err(format!("invalid user_priority: {}", p));
+    }
+  }
+  let conn = open_conn()?;
+  let n = conn.execute(
+    "UPDATE mem_summaries SET user_priority = ?3 WHERE target_kind = ?1 AND target_id = ?2",
+    params![target_kind, target_id, user_priority],
+  ).map_err(|e| format!("mem_summaries set_user_priority: {}", e))?;
+  Ok(n > 0)
+}
+
 pub fn delete(target_kind: &str, target_id: &str) -> Result<bool, String> {
   let conn = open_conn()?;
   let n = conn.execute(
@@ -227,6 +253,7 @@ mod tests {
       generated_at: 1700000000,
       raw_json: "{\"x\":1}".into(),
       lang: "en".into(),
+      user_priority: None,
     }
   }
 

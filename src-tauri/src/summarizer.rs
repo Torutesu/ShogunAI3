@@ -223,6 +223,7 @@ pub fn heuristic_fallback(item: &Value, source_type: &str, lang: &str) -> Summar
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: json!({"fallback": true}).to_string(),
     lang: lang.to_string(),
+    user_priority: None,
   }
 }
 
@@ -242,6 +243,7 @@ pub fn summary_from_guess(item: &Value, source_type: &str, guess: &PriorityGuess
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: json!({"prefilter": true, "reason": guess.reason}).to_string(),
     lang: lang.to_string(),
+    user_priority: None,
   }
 }
 
@@ -360,6 +362,7 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value,
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: serde_json::to_string(input).unwrap_or_default(),
     lang: lang.to_string(),
+    user_priority: None,
   })
 }
 
@@ -462,6 +465,7 @@ async fn summarize_rollup(
       generated_at: crate::memory_store::now_ms() as i64,
       raw_json: json!({"rollup": "empty", "kind": kind.target_kind()}).to_string(),
       lang: lang.to_string(),
+    user_priority: None,
     });
   }
 
@@ -567,6 +571,7 @@ fn build_rollup_from_tool_input(id: &str, kind: RollupKind, input: &Value, lang:
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: serde_json::to_string(input).unwrap_or_default(),
     lang: lang.to_string(),
+    user_priority: None,
   })
 }
 
@@ -603,6 +608,7 @@ fn rollup_heuristic_fallback(id: &str, items: &[Summary], kind: RollupKind, lang
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: json!({"rollup": "heuristic", "items": items.len()}).to_string(),
     lang: lang.to_string(),
+    user_priority: None,
   }
 }
 
