@@ -893,9 +893,14 @@ function App() {
     let cancel = false;
     (async () => {
       try {
-        const out = await (window.ShogunAPI && window.ShogunAPI.memoryDebugGate && window.ShogunAPI.memoryDebugGate());
-        if (!cancel && out) setDevGate(out);
-      } catch (_) { /* ignore */ }
+        // Call the backend command directly via Tauri v2 bridge. The devGate
+        // only exists inside runtimeRef.current once it's built — we need
+        // this at mount time, so skip the runtime layer.
+        const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+        if (!invoke) return;
+        const out = await invoke('shogun_memory_debug_gate', { payload: {} });
+        if (!cancel && out && typeof out === 'object') setDevGate(out);
+      } catch (_) { /* ignore — release build returns available:false anyway */ }
     })();
     return () => { cancel = true; };
   }, []);
