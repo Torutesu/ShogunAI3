@@ -1179,7 +1179,10 @@ function ScreenMemory() {
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [activeFilters, setActiveFilters] = useState(() => ({ screen: true, audio: true, input: true, calendar: true, mail: true }));
+  const [activeFilters, setActiveFilters] = useState(() => ({
+    sources: { screen: true, audio: true, input: true, calendar: true, mail: true },
+    priority: { high: true, medium: true, low: false },
+  }));
   const timelineScrollRef = useRef(null);
   const scrollTimeline = useCallback((dir) => {
     const el = timelineScrollRef.current;
@@ -1250,9 +1253,14 @@ function ScreenMemory() {
     const total = counts.reduce((a, b) => a + b, 0);
     return { counts, total };
   }, [weekHistograms]);
-  const activeFilterCount = Object.values(activeFilters).filter(Boolean).length;
-  const toggleFilter = useCallback((key) => {
-    setActiveFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+  const activeFilterCount =
+    Object.values(activeFilters.sources).filter(Boolean).length +
+    Object.values(activeFilters.priority).filter(Boolean).length;
+  const toggleFilter = useCallback((group, key) => {
+    setActiveFilters((prev) => ({
+      ...prev,
+      [group]: { ...prev[group], [key]: !prev[group][key] },
+    }));
   }, []);
   const [sourceEntities, setSourceEntities] = useState([]);
   const [semanticMemorySearch, setSemanticMemorySearch] = useState(true);
@@ -1429,25 +1437,41 @@ function ScreenMemory() {
                 <div role="presentation" onMouseDown={()=>setFiltersOpen(false)} style={{position:'fixed', inset:0, zIndex:40}}/>
                 <div role="menu" onMouseDown={(e)=>e.stopPropagation()} style={{
                   position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41,
-                  minWidth:220, padding:10, borderRadius:12,
+                  minWidth:360, padding:10, borderRadius:12,
                   border:'1px solid var(--border-hi)', background:'var(--surface-2)',
                   boxShadow:'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
                 }}>
-                  <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Sources</div>
-                  {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input'],['calendar','Calendar'],['mail','Mail']].map(([k,l])=>(
-                    <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
-                      <input type="checkbox" checked={!!activeFilters[k]} onChange={()=>toggleFilter(k)}/>
-                      <span>{l}</span>
-                    </label>
-                  ))}
+                  <div style={{ display: 'flex', gap: 20 }}>
+                    <div style={{ flex: 1 }}>
+                      <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Sources</div>
+                      {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input'],['calendar','Calendar'],['mail','Mail']].map(([k,l])=>(
+                        <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
+                          <input type="checkbox" checked={!!activeFilters.sources[k]} onChange={()=>toggleFilter('sources', k)}/>
+                          <span>{l}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Priority</div>
+                      {[['high','High'],['medium','Medium'],['low','Low']].map(([k,l])=>(
+                        <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
+                          <input type="checkbox" checked={!!activeFilters.priority[k]} onChange={()=>toggleFilter('priority', k)}/>
+                          <span>{l}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                   <div style={{display:'flex', gap:8, marginTop:8}}>
                     <button type="button" onClick={async ()=>{
-                      const kinds = Object.entries(activeFilters).filter(([,on])=>on).map(([x])=>x);
+                      const kinds = Object.entries(activeFilters.sources).filter(([,on])=>on).map(([x])=>x);
                       const res = await runRuntimeActionA('memory.search', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
                       mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
                       setFiltersOpen(false);
                     }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
-                    <button type="button" onClick={()=>{ setActiveFilters({ screen:true, audio:true, input:true, calendar:true, mail:true }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
+                    <button type="button" onClick={()=>{ setActiveFilters({
+                      sources: { screen: true, audio: true, input: true, calendar: true, mail: true },
+                      priority: { high: true, medium: true, low: false },
+                    }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
                   </div>
                 </div>
               </>
