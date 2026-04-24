@@ -492,7 +492,19 @@ function ScreenHome() {
       const inner = res.data;
       // Memory digest rides alongside the brief. Always surface it when the
       // backend provides it, even if the main brief is skipped / unavailable.
-      if (inner.memory_digest) setMemoryDigest(inner.memory_digest);
+      if (inner.memory_digest) {
+        setMemoryDigest(inner.memory_digest);
+        // Tell the App-level sidebar how many HIGH items to badge.
+        try {
+          const highlights = Array.isArray(inner.memory_digest.highlights)
+            ? inner.memory_digest.highlights
+            : [];
+          const highCount = highlights.filter(
+            (h) => (h.userPriority || h.priority) === 'high',
+          ).length;
+          window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: highCount } }));
+        } catch (_) { /* ignore */ }
+      }
       if (inner.skipped || !inner.brief) {
         setMorningBrief(null);
         return;
