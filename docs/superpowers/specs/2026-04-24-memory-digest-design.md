@@ -14,6 +14,7 @@
 - 要約は一度生成したら永続化・再利用する (on-demand + cache)。
 - Priority 判定 (high / medium / low) で画面のノイズを下げる。
 - Screen capture は単発ではなくアクティビティセッション単位で集約する。
+- **Heuristic pre-filter でコスト削減**: LLM 呼び出し前に bulk メール/CI 通知等を除外し、明らかな `low` は LLM なしで heuristic 判定。
 - 既存の `mem_items` テーブルは破壊変更しない (non-breaking)。
 - 既存 Morning Brief パイプラインは summary を入力として受けるよう拡張 (非依存サーフェスでは完全に維持)。
 
@@ -23,7 +24,8 @@
 - V1 では複数モデルの切り替えをしない (Sonnet 4.6 で統一)。
 - V1 ではキャッシュ無効化の自動化 (TTL など) をしない。schema_version bump 時のみ全削除。
 - `low` priority アイテムのグルーピング UI (「その他 N 件」集約) は V1 対象外。
-- Realtime (on-ingest) の要約生成はしない。on-demand + 朝バッチのみ。
+- Realtime (on-ingest) の要約生成はしない。on-demand + **週次バッチ**のみ (日次バッチは採用しない)。
+- 日次の振り返り (Yesterday's Summary) は V1 で採用せず、**週次の Last Week's Summary** に集約。
 
 ---
 
@@ -47,7 +49,7 @@ src-tauri/src/
 
 | コマンド | 用途 | 呼び出し元 |
 |----------|------|-----------|
-| `shogun_memory_summary_get` | 単一 item / session / day_rollup の要約取得 (キャッシュ優先、無ければ同期生成) | River カード、Chat context assembly |
+| `shogun_memory_summary_get` | 単一 item / session / week_rollup の要約取得 (キャッシュ優先、無ければ同期生成) | River カード、Chat context assembly |
 | `shogun_memory_summary_batch` | 複数 id の一括要約 (並列 max 5、朝バッチ用) | Morning Brief ロード時 |
 | `shogun_memory_session_list` | 指定日の sealed session 一覧 + 各要約 | Memory River (screen ソース表示) |
 | `shogun_memory_summary_invalidate` | 特定 id のキャッシュ削除 | dev only |
@@ -96,8 +98,8 @@ src-tauri/src/
 
 ```sql
 CREATE TABLE IF NOT EXISTS mem_summaries (
-  target_kind    TEXT    NOT NULL,           -- 'item' | 'session' | 'day_rollup'
-  target_id      TEXT    NOT NULL,           -- item.id / session.id / date (YYYY-MM-DD)
+  target_kind    TEXT    NOT NULL,           -- 'item' | 'session' | 'week_rollup'
+  target_id      TEXT    NOT NULL,           -- item.id / session.id / ISO week ("2026-W17")
   title          TEXT    NOT NULL,           -- 要約見出し (<=80 文字)
   key_points     TEXT    NOT NULL,           -- JSON array of strings (1-5 個、各 <=140 文字)
   source_type    TEXT    NOT NULL,           -- 'mail' | 'calendar' | 'meeting' | 'screen_session' | 'screen_day'
@@ -142,7 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_mem_sessions_sealed
 **`target_kind` で 3 種類を統一管理**
 - `item` → connector (mail/calendar) / meeting の単発 (`target_id` = `mem_items.id`)
 - `session` → screen capture セッション (`target_id` = `mem_sessions.id`)
-- `day_rollup` → 日次集約 (`target_id` = `"YYYY-MM-DD"`)
+- `week_rollup` → 週次集約 (`target_id` = ISO 週番号 `"2026-W17"`)
 
 `summarizer_store::get_cached(kind, id)` 1 関数で 3 パターン対応。
 
@@ -180,9 +182,58 @@ CREATE INDEX IF NOT EXISTS idx_mem_sessions_sealed
 |-----------|--------|------|
 | item (mail/calendar/meeting) | sonnet-4-6 | 単一ドキュメントの抽出的要約 |
 | session | sonnet-4-6 | 時系列 capture からパターン抽出 |
-| day_rollup | sonnet-4-6 | 前段要約が済んだ入力の統合 |
+| week_rollup | sonnet-4-6 | 前段要約が済んだ入力の統合 |
 
 Anthropic prompt caching 有効化、system prompt は `cache_control: { type: "ephemeral" }` (5 分 TTL)。
+
+### Pre-filter (Heuristic Priority)
+
+LLM 呼び出し前に `summarizer.rs::heuristic_priority_guess(item)` を実行。明らかに `low` 判定できる item は LLM 呼ばずに heuristic 出力で完了させる:
+
+```rust
+fn heuristic_priority_guess(item: &MemItem) -> Option<PriorityGuess> {
+  // Returns Some(low) if item matches known noise patterns, else None.
+
+  // Bulk / marketing mail
+  if item.source == "gmail" {
+    let snippet_lower = item.snippet.to_lowercase();
+    let has_unsubscribe = snippet_lower.contains("unsubscribe")
+                      || snippet_lower.contains("配信停止");
+    let is_no_reply = item.sender.map_or(false, |s|
+      s.contains("no-reply") || s.contains("noreply") || s.contains("donotreply"));
+    let is_notification_domain = item.sender.map_or(false, |s|
+      s.ends_with("@github.com") && s.contains("noreply"));
+    if has_unsubscribe || is_no_reply || is_notification_domain {
+      return Some(PriorityGuess {
+        priority: "low",
+        reason: "Automated/bulk notification",
+        title_hint: extract_subject(item),
+      });
+    }
+  }
+
+  // CI / automated calendar reminders
+  if item.source == "google_calendar" {
+    let is_past = event_start_ms(item) < now_ms() - 24 * 3600 * 1000;
+    if is_past && !has_recent_ping(item) {
+      return Some(PriorityGuess {
+        priority: "low",
+        reason: "Past event, no follow-up",
+        title_hint: item.title.clone(),
+      });
+    }
+  }
+
+  None  // uncertain — fall through to LLM
+}
+```
+
+**効果**:
+- Bulk メール / 過去カレンダー event が日の 30-50% を占める典型的なユーザで、LLM 呼び出しを半減可能
+- heuristic 判定の出力も `mem_summaries` に保存 (`model = "heuristic_prefilter"`)
+- ユーザが「これは重要だった」と感じれば invalidate + LLM 再生成で訂正可能 (V2 以降)
+
+**パターンの追加**: `heuristic_patterns.toml` に外出しして ship 後も改修容易にする (V1 は hardcode で十分)。
 
 ### Tool Use スキーマ (共通)
 
@@ -243,15 +294,29 @@ LOW:
 | `prompt_item_mail.txt` | Gmail 1 件 (subject + from + snippet + body ≤4000 文字) | 抽出要約、sender を title に含む、action 必要なら high、bulk なら low |
 | `prompt_item_calendar.txt` | Calendar 1 件 (summary + start/end + attendees + description) | 開始時刻相対で priority、参加者から会議性格推定、準備事項を key_points に |
 | `prompt_session_screen.txt` | 1 session の capture 配列 (window title + 抜粋、最大 30 件) | 主要活動・使用アプリ・作業内容を抽出、意味ある作業は medium 以上 |
-| `prompt_day_rollup.txt` | 同日の session 要約 + priority=high/medium の item 要約 | 全体像、主要トピック (最大 3)、未完了アクション、翌日への申し送り |
+| `prompt_week_rollup.txt` | 同日の session 要約 + priority=high/medium の item 要約 | 全体像、主要トピック (最大 3)、未完了アクション、翌日への申し送り |
 
-### コスト試算
+### コスト試算 (1 ユーザあたり)
 
-- item summary: ~1500 input + 300 output = **~0.005 USD**
-- session summary: ~4000 input + 400 output = **~0.013 USD**
-- day_rollup: ~3000 input + 600 output = **~0.015 USD**
+**単価**:
+- item summary: ~1500 input + 300 output = **~$0.005**
+- session summary: ~4000 input + 400 output = **~$0.013**
+- week_rollup: ~5000 input + 800 output = **~$0.020**
 
-朝バッチ想定 (前日 30 items + 4 sessions + 1 day_rollup): **~0.22 USD / 日** → 月 ~6.6 USD
+**週次バッチ前提 + heuristic pre-filter 40% 除外を想定**:
+
+| 項目 | 件数/週 | 単価 | 小計 |
+|-----|--------|------|------|
+| item summary (LLM、60% pass-through) | 30/日 × 7 × 0.6 = 126 | $0.005 | $0.63 |
+| item heuristic (40% 除外) | 84/週 | $0 | $0 |
+| session summary (screen) | 4/日 × 7 = 28 | $0.013 | $0.36 |
+| week_rollup (月 1 回) | 1 | $0.020 | $0.020 |
+| **週合計** | | | **~$1.01** |
+| **月換算** | | | **~$4.0** |
+
+ユーザ使用パターンで大きく変動:
+- 軽量ユーザ (mail 少、screen ほぼなし): ~$1-2/月
+- ヘビーユーザ (mail 100+/日、screen 常時): ~$15-20/月
 
 ### Fallback: Heuristic
 
@@ -308,17 +373,24 @@ Screen capture の扱い:
 Home 画面ロード
   ↓
 shogun_brief_get (既存) が走る
-  ↓ (パイプライン入力に summary を注入)
-shogun_memory_summary_batch で昨日分 connector item + sealed session を要約
   ↓
-Morning Brief の候補生成ステップに summary を input (既存: raw snippet)
-  (入力がクリーンになるので出力品質↑)
+Morning Brief の候補生成: 直近 24h の mem_items から summary キャッシュを参照
+  ├─ キャッシュあり → summary を input (クリーンな入力で品質向上)
+  └─ キャッシュなし → raw snippet のまま (従来動作、daily batch は行わない)
   ↓
-shogun_memory_summary_get(kind="day_rollup", target_id=yesterday_date)
-  → 結果を「Yesterday's Summary」セクションに表示
+[Monday AND week_rollup が先週分未生成の場合のみ]
+  shogun_memory_summary_get(kind="week_rollup", target_id=prev_iso_week)
+    → 内部で先週の item/session 要約を batch-generate してから rollup 作成
+    → バックグラウンド実行 (Morning Brief 表示をブロックしない)
+  ↓
+「Last Week's Summary」セクションは月曜朝のみ表示
 ```
 
-既存 Morning Brief の動作は維持、入力層の改善のみ (non-breaking change)。
+**重要な変更**:
+- 日次バッチは廃止。Morning Brief は既存のキャッシュのみ利用
+- 週次 rollup は月曜朝にトリガー (ユーザがアプリを開いた最初に 1 回)
+- キャッシュが乏しい週の rollup は item summary 生成も込みでコスト高 → 月曜初回は 10-30 秒かかる可能性あり (トースト表示)
+- 他曜日の Morning Brief は高速 (on-demand 生成なし)
 
 ### Surface C: Chat Context Assembly
 
@@ -421,22 +493,23 @@ Chat は on-demand 生成しない: ユーザ入力から応答までの P50 レ
 
 ### Morning Brief (Surface A)
 
-既存 `BriefItemCard` は変更なし。画面下部に新規セクション:
+既存 `BriefItemCard` は変更なし。**月曜朝のみ**、画面下部に新規セクション:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ Yesterday's Summary                              │
+│ Last Week's Summary (2026-W16)                  │
 ├─────────────────────────────────────────────────┤
-│ 2026-04-23 の主要トピック:                         │
+│ 先週の主要トピック:                                │
 │ • Q2 予算レビュー (Alice から金曜期限)             │
-│ • Figma mobile 設計 (2h 作業)                     │
-│ • 会議 3 件完了 (議事録未確認: 1 件)               │
+│ • Figma mobile 設計 (計 8h 作業)                  │
+│ • 会議 12 件完了 (議事録未確認: 2 件)              │
+│ • 次週への持ち越し: X のレビュー, Y のフォロー        │
 │                                                  │
 │ [View full Memory →]                            │
 └─────────────────────────────────────────────────┘
 ```
 
-`shogun_memory_summary_get(kind="day_rollup", target_id=yesterday_date)` の結果を描画。
+`shogun_memory_summary_get(kind="week_rollup", target_id=prev_iso_week)` の結果を描画。火〜日曜は非表示。
 
 ### Chat Context (Surface C)
 
@@ -550,12 +623,13 @@ UI 側で failed 件数をトースト表示、再試行ボタン提供。
 ### Phase 1 (MVP, 推定 1 週間)
 
 - `mem_summaries` テーブル + `target_kind="item"` のみ
-- connector (mail/calendar) の per-item summary
+- **Heuristic pre-filter**: bulk メール・CI 通知・過去カレンダーの LLM スキップ
+- connector (mail/calendar) の per-item summary (pre-filter 通過分のみ LLM)
 - Memory River への組み込み
 - Priority enum + filter UI に追加
-- Heuristic fallback 一式
+- Heuristic fallback (LLM 失敗時の保険) 一式
 
-この時点で **主要ニーズ「重要ポイントだけ見たい」は約 80% 達成** (connector が主ノイズ源)。
+この時点で **主要ニーズ「重要ポイントだけ見たい」は約 80% 達成** (connector が主ノイズ源) + **LLM コストも heuristic で抑制**。
 
 ### Phase 2 (1-2 週間)
 
@@ -565,8 +639,9 @@ UI 側で failed 件数をトースト表示、再試行ボタン提供。
 
 ### Phase 3 (1 週間)
 
-- `target_kind="day_rollup"` 対応
-- Morning Brief の Yesterday's Summary 統合
+- `target_kind="week_rollup"` 対応
+- Morning Brief の **Last Week's Summary** 統合 (月曜朝のみ表示)
+- 週次 rollup の背景トリガー実装 (月曜初回アクセス時)
 - Chat context assembly への summary 注入
 
 ### Phase 4 (未スケジュール)
@@ -588,11 +663,13 @@ UI 側で failed 件数をトースト表示、再試行ボタン提供。
 
 ## Open Questions / Future Work
 
+- **Heuristic pre-filter の外部化**: `heuristic_patterns.toml` にパターン定義を移す (ユーザごとにカスタマイズ、ML 学習シグナル統合などに拡張)。
 - **Priority=low のグルーピング UI**: Phase 4 以降で「その他 N 件」集約形式を検討。
-- **Summary の手動編集**: ユーザが要約を訂正 → raw_json に store、再学習シグナルへ。
+- **Summary の手動編集**: ユーザが要約を訂正 → raw_json に store、再学習シグナルへ。heuristic 誤検出のリカバリ経路としても重要。
 - **多言語対応**: Sonnet 4.6 は多言語対応しているが、プロンプトの明示的な言語指定が必要か要検討。
 - **Entity 抽出**: summary から人物・プロジェクト名を抽出して Kakejiku ビューに反映 (別 spec)。
-- **Embedding ベース priority ランク**: 現在 LLM 判定のみ、将来 VIP sender のベクトル学習なども。
+- **Embedding ベース priority ランク**: 現在 LLM + heuristic 判定のみ、将来 VIP sender のベクトル学習なども。
+- **日次 rollup の再導入検討**: コスト許容範囲が広がれば、Monday-only ではなく毎朝 Yesterday's Summary を再生成するプランも。
 
 ---
 
@@ -603,5 +680,6 @@ V1 デプロイ後に以下で判断:
 1. Memory River で raw snippet が表示される頻度が 10% 以下 (low priority 除外後)。
 2. Morning Brief のロード時間が従来比 +2 秒以内 (キャッシュ効く前提)。
 3. Chat 応答の引用が summary ベースに切り替わっているか (ログで検証)。
-4. Phase 1 (connector item のみ) で LLM コストが 1 日あたり $0.25 以下。V1 全体 (+ session + day_rollup) で 1 日あたり $0.50 以下。超過時は朝バッチ頻度を下げて調整可能なこと。
+4. Phase 1 (connector item + heuristic pre-filter) で 1 ユーザ月 $2 以下 (軽-中量ユーザ前提)。V1 全体 (+ session + week_rollup) で 1 ユーザ月 $5 以下。ヘビーユーザの上振れは許容、heuristic pre-filter の通過率 (LLM 呼び出し割合) を計測してチューニング余地を見る。
+6. Heuristic pre-filter の誤検出率 (本来 medium/high を low と誤判定) が 5% 以下。ユーザの invalidate 頻度で間接計測。
 5. `enable_memory_summary=false` に戻しても従来機能が壊れないこと (ロールバック検証)。
