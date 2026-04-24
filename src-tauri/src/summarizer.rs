@@ -48,7 +48,8 @@ Rules:
     MEDIUM = informational but relevant (newsletter you follow, meeting invite >24h out, calendar event this week, order/receipt worth noting).
     LOW    = automated notifications, bulk marketing, past events without follow-up, generic no-reply addresses.
 - reason: one short sentence (<= 60 chars) explaining WHY this priority was chosen — grounded in the content, not the category label.
-- source_type: 'mail' for Gmail input, 'calendar' for Google Calendar input."#;
+- source_type: 'mail' for Gmail input, 'calendar' for Google Calendar input, 'meeting' for a meeting transcript / notes.
+- For meeting items: action label signals follow-ups, not reply. Examples of first bullet: "No action needed" (meeting closed), "Action required: <owner + task>" (an action item was assigned), "FYI only" (informational sync). Subsequent bullets carry decisions made, action items with owners, key figures, next steps — not a play-by-play of the transcript."#;
 
 /// Build the full SYSTEM_PROMPT for the user's configured UI language.
 /// Accepted codes: "en", "jp", "bi" (bilingual = match source content).
@@ -249,7 +250,7 @@ pub fn derive_source_type(source: &str) -> &'static str {
   match source {
     "gmail" => "mail",
     "google_calendar" => "calendar",
-    "meeting_note" | "audio_meeting" => "meeting",
+    "meetings" | "meeting_note" | "audio_meeting" => "meeting",
     _ => "mail", // 未知ソースは mail fallback (Phase 1 の enum にない場合)
   }
 }
@@ -303,6 +304,10 @@ fn render_item_for_llm(item: &Value) -> String {
   match source {
     "gmail" => format!("Source: Gmail\n\nTitle: {}\n\nBody:\n{}", title, snippet_trim),
     "google_calendar" => format!("Source: Google Calendar\n\nTitle: {}\n\nDetails:\n{}", title, snippet_trim),
+    "meetings" | "meeting_note" | "audio_meeting" => format!(
+      "Source: Meeting\n\nTitle: {}\n\nTranscript/Notes:\n{}",
+      title, snippet_trim
+    ),
     _ => format!("Source: {}\n\nTitle: {}\n\nBody:\n{}", source, title, snippet_trim),
   }
 }

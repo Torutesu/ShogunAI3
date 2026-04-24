@@ -59,6 +59,64 @@ function memoryHitToRiverEvent(hit) {
   };
 }
 
+/** Parse a window/app identifier out of the AX snippet dump.
+ *  Falls back to the first 40 chars of the snippet when nothing matches. */
+function extractWindowLabel(snippet) {
+  const s = String(snippet || '');
+  const winMatch = s.match(/^window=([^\n]{1,80})/m);
+  if (winMatch) {
+    const w = winMatch[1].trim();
+    // "App — Document — claude — 120x30" → keep up to 2 segments for brevity
+    const parts = w.split(/\s*[—·]\s*/);
+    return parts.slice(0, 2).join(' · ').slice(0, 60);
+  }
+  const titleMatch = s.match(/^title=([^\n]{1,80})/m);
+  if (titleMatch) return titleMatch[1].trim().slice(0, 60);
+  const roleDesc = s.match(/^roleDesc=([^\n]{1,40})/m);
+  if (roleDesc) return `AX · ${roleDesc[1].trim()}`;
+  return 'Screen capture';
+}
+
+/** Collapse consecutive capture_ax / capture_sampler events with the same
+ *  window label into a single "session" card. Gap > `gapMs` starts a new
+ *  session. Non-screen events are passed through unchanged. */
+function clusterScreenSessions(events, gapMs = 15 * 60 * 1000) {
+  if (!Array.isArray(events) || events.length === 0) return events;
+  const out = [];
+  let current = null;
+  for (const e of events) {
+    const raw = String(e.sourceRaw || '').toLowerCase();
+    const isScreen = raw === 'capture_ax' || raw === 'capture_sampler';
+    if (!isScreen) {
+      if (current) { out.push(current); current = null; }
+      out.push(e);
+      continue;
+    }
+    const label = extractWindowLabel(e.snippet);
+    if (current && current.clusterLabel === label && Math.abs(e.ts - current.ts) <= gapMs) {
+      current.clusterCount += 1;
+      current.clusterStart = Math.min(current.clusterStart, e.ts);
+      current.clusterEnd = Math.max(current.clusterEnd, e.ts);
+      // Prefer the longest snippet so the raw view is informative.
+      if ((e.snippet || '').length > (current.snippet || '').length) {
+        current.snippet = e.snippet;
+      }
+    } else {
+      if (current) out.push(current);
+      current = {
+        ...e,
+        title: `Session · ${label}`,
+        clusterLabel: label,
+        clusterCount: 1,
+        clusterStart: e.ts,
+        clusterEnd: e.ts,
+      };
+    }
+  }
+  if (current) out.push(current);
+  return out;
+}
+
 /** Shared FTS5 highlight renderer. Definition lives in `hifi/lib/highlight.js`. */
 const renderHighlighted = (text) =>
   (window.ShogunHighlight && window.ShogunHighlight.renderHighlighted)
@@ -1407,17 +1465,21 @@ function ScreenMemory() {
     () => Object.entries(activeFilters.sources).filter(([, on]) => on).map(([k]) => k),
     [activeFilters.sources],
   );
-  // River = rawEvents filtered by priority. Low-priority (自動通知など) items
-  // stay in Memory but are hidden from the surface unless the user toggles
-  // the Low filter on.
+  // River = rawEvents filtered by priority, then screen-captures clustered
+  // into sessions. Low-priority (自動通知など) items stay in Memory but are
+  // hidden from the surface unless the user toggles the Low filter on.
   const events = useMemo(() => {
     const showLow = !!activeFilters.priority.low;
-    if (showLow) return rawEvents;
-    return rawEvents.filter((e) => {
-      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      if (!s) return true; // pending summary → keep visible until classified
-      return s.priority !== 'low';
-    });
+    const filtered = showLow
+      ? rawEvents
+      : rawEvents.filter((e) => {
+          const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+          if (!s) return true; // pending summary → keep visible until classified
+          return s.priority !== 'low';
+        });
+    // Collapse consecutive capture_ax/capture_sampler items into session cards
+    // so that enabling the Screen filter doesn't flood the River.
+    return clusterScreenSessions(filtered);
   }, [rawEvents, summaryByMemId, activeFilters.priority.low]);
   // Batch-summarize connector items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
@@ -1427,8 +1489,15 @@ function ScreenMemory() {
     const connectorItems = rawEvents
       .filter((e) => {
         const r = String(e.sourceRaw || '').toLowerCase();
-        const isConnector = r === 'gmail' || r === 'google_calendar' || e.provenance === 'connector';
-        return isConnector && e.memoryId && !summaryByMemId[e.memoryId];
+        const isSummarizable =
+          r === 'gmail' ||
+          r === 'google_calendar' ||
+          r === 'meetings' ||
+          r === 'meeting_note' ||
+          r === 'audio_meeting' ||
+          e.provenance === 'connector' ||
+          e.provenance === 'meeting';
+        return isSummarizable && e.memoryId && !summaryByMemId[e.memoryId];
       })
       .slice(0, 30)
       .map((e) => ({
@@ -1529,13 +1598,18 @@ function ScreenMemory() {
       setShowRaw(false);
       return;
     }
-    // Only summarize connector items (gmail/google_calendar). Others stay raw.
+    // Summarize connector (gmail/google_calendar) and meeting items. Screen
+    // capture and other raw-only items stay on the raw snippet.
     const rawSrc = String(scrubbed.sourceRaw || '').toLowerCase();
-    const isConnector =
+    const isSummarizable =
       rawSrc === 'gmail' ||
       rawSrc === 'google_calendar' ||
-      scrubbed.provenance === 'connector';
-    if (!isConnector) {
+      rawSrc === 'meetings' ||
+      rawSrc === 'meeting_note' ||
+      rawSrc === 'audio_meeting' ||
+      scrubbed.provenance === 'connector' ||
+      scrubbed.provenance === 'meeting';
+    if (!isSummarizable) {
       setScrubSummary(null);
       setShowRaw(true);
       return;
@@ -1931,6 +2005,13 @@ function ScreenMemory() {
               <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
                 {renderHighlighted(scrubbed.titleHighlight || scrubbed.title)}
               </h2>
+              {scrubbed.clusterCount > 1 && (
+                <div className="t-mono" style={{margin:'-8px 0 14px', fontSize:11, color:'var(--text-dim)', letterSpacing:'0.06em'}}>
+                  {scrubbed.clusterCount} captures · {new Date(scrubbed.clusterStart).toTimeString().slice(0,5)}
+                  {' – '}
+                  {new Date(scrubbed.clusterEnd).toTimeString().slice(0,5)}
+                </div>
+              )}
               <div style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap', maxHeight:320, overflowY:'auto', wordBreak:'break-word'}}>
                 {scrubbed.snippetHighlight
                   ? renderHighlighted(scrubbed.snippetHighlight)
