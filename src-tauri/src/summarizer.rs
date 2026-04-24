@@ -31,14 +31,21 @@ pub fn heuristic_priority_guess(item: &Value) -> Option<PriorityGuess> {
 fn gmail_heuristic(title: &str, snippet: &str) -> Option<PriorityGuess> {
   let lower_body = snippet.to_lowercase();
   let has_unsubscribe = lower_body.contains("unsubscribe") || lower_body.contains("配信停止");
-  let is_no_reply = snippet.contains("no-reply@")
-    || snippet.contains("noreply@")
-    || snippet.contains("donotreply@");
-  let is_github_noreply = snippet.contains("noreply@github.com")
-    || snippet.contains("notifications@github.com");
-  let is_ci_sender = snippet.contains("builds@")
-    || snippet.contains("ci@")
-    || snippet.contains("actions@github.com");
+
+  // Sender detection limited to the From: line to avoid body false positives.
+  let from_line_lower = snippet
+    .lines()
+    .find(|l| l.starts_with("From:"))
+    .map(|l| l.to_lowercase())
+    .unwrap_or_default();
+  let is_no_reply = from_line_lower.contains("no-reply@")
+    || from_line_lower.contains("noreply@")
+    || from_line_lower.contains("donotreply@");
+  let is_github_noreply = from_line_lower.contains("noreply@github.com")
+    || from_line_lower.contains("notifications@github.com");
+  let is_ci_sender = from_line_lower.contains("builds@")
+    || from_line_lower.contains("ci@")
+    || from_line_lower.contains("actions@github.com");
 
   if has_unsubscribe || is_no_reply || is_github_noreply || is_ci_sender {
     return Some(PriorityGuess {
@@ -71,10 +78,21 @@ fn parse_calendar_start_ms(snippet: &str) -> Option<i64> {
   // 区切り文字 (空白 / '·') で分割してトークンを取り出し RFC3339 で試す。
   for token in snippet.split(|c: char| c.is_whitespace() || c == '·' || c == '·') {
     let token = token.trim();
-    // "T" を含む 20 文字以上のトークンが datetime 候補
-    if token.len() >= 20 && token.contains('T') && token.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if !token.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+      continue;
+    }
+    // RFC3339: "T" を含む 20 文字以上のトークンが datetime 候補
+    if token.len() >= 20 && token.contains('T') {
       if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(token) {
         return Some(dt.timestamp_millis());
+      }
+    }
+    // All-day event: YYYY-MM-DD only (no T)
+    if token.len() == 10 && token.chars().filter(|&c| c == '-').count() == 2 {
+      if let Ok(d) = chrono::NaiveDate::parse_from_str(token, "%Y-%m-%d") {
+        if let Some(ndt) = d.and_hms_opt(0, 0, 0) {
+          return Some(ndt.and_utc().timestamp_millis());
+        }
       }
     }
   }
@@ -241,5 +259,42 @@ mod tests {
     assert_eq!(derive_source_type("google_calendar"), "calendar");
     assert_eq!(derive_source_type("meeting_note"), "meeting");
     assert_eq!(derive_source_type("unknown"), "mail");
+  }
+
+  #[test]
+  fn gmail_japanese_unsubscribe_is_low() {
+    let item = json!({
+      "id": "m_jp",
+      "source": "gmail",
+      "title": "Gmail: メルマガ",
+      "snippet": "Subject: メルマガ\nFrom: news@shop.co.jp\n配信停止はこちら",
+    });
+    let guess = heuristic_priority_guess(&item).expect("Japanese unsubscribe should match");
+    assert_eq!(guess.priority, "low");
+  }
+
+  #[test]
+  fn gmail_body_mention_of_noreply_is_not_low() {
+    // Personal email that mentions a noreply address in the body should NOT be low.
+    let item = json!({
+      "id": "m_body_mention",
+      "source": "gmail",
+      "title": "Gmail: Re: vendor setup",
+      "snippet": "Subject: Re: vendor setup\nFrom: alice@example.com\nHey, the vendor's no-reply@vendor.com address is down; use support@vendor.com instead.",
+    });
+    assert!(heuristic_priority_guess(&item).is_none(), "body mention should not trigger low");
+  }
+
+  #[test]
+  fn calendar_all_day_past_is_low() {
+    // All-day past event (YYYY-MM-DD only)
+    let item = json!({
+      "id": "m_allday",
+      "source": "google_calendar",
+      "title": "Calendar: Holiday",
+      "snippet": "Google Calendar · 2020-01-01 · https://calendar.google.com/...",
+    });
+    let guess = heuristic_priority_guess(&item).expect("past all-day should match");
+    assert_eq!(guess.priority, "low");
   }
 }
