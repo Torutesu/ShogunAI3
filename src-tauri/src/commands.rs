@@ -1,8 +1,9 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
 use crate::{
-  auth, biometric, brief, brief_actions, embed_backfill, gmail, google_calendar, integration_secrets,
-  integrations, llm, macos_ax, memory_store, secrets, settings_store,
+  auth, biometric, brief, brief_actions, embed_backfill, github, gmail, google_calendar,
+  integration_secrets, integrations, linear, llm, macos_ax, memory_store, notion, secrets,
+  settings_store, slack,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -501,6 +502,62 @@ pub async fn shogun_gmail_sync(payload: Value) -> Result<Value, String> {
     .clamp(1, cap_max) as usize;
   let days = days_opt.map(|d| d.min(366) as u32);
   gmail::sync_inbox_to_memory(max, days).await
+}
+
+#[tauri::command]
+pub async fn shogun_slack_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_per_channel = payload
+    .get("maxPerChannel")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 1000) as usize;
+  slack::sync_workspace_to_memory(days, max_per_channel).await
+}
+
+#[tauri::command]
+pub async fn shogun_notion_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_pages = payload
+    .get("maxPages")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(1000)
+    .clamp(1, 5000) as usize;
+  notion::sync_workspace_to_memory(days, max_pages).await
+}
+
+#[tauri::command]
+pub async fn shogun_github_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_items = payload
+    .get("maxItems")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 2000) as usize;
+  github::sync_activity_to_memory(days, max_items).await
+}
+
+#[tauri::command]
+pub async fn shogun_linear_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_items = payload
+    .get("maxItems")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 2000) as usize;
+  linear::sync_activity_to_memory(days, max_items).await
 }
 
 #[tauri::command]
@@ -1262,4 +1319,38 @@ pub async fn shogun_memory_day_rollup_get(payload: serde_json::Value) -> Result<
   let rollup = crate::summarizer::summarize_day_rollup(day_start_ms, &lang).await?;
   crate::summarizer_store::upsert(&rollup)?;
   Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW
+/// even when the LLM classified it differently, or clear the override back to
+/// the LLM assignment. `priority: null` clears the override.
+///
+/// payload: { "targetId": "m_...", "targetKind"?: "item", "priority"?: "high" | "medium" | "low" | null }
+#[tauri::command]
+pub fn shogun_memory_summary_set_priority(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  // priority: either a string ('high'|'medium'|'low') to set, or explicit
+  // null / missing key to clear the override.
+  let priority_opt: Option<String> = match payload.get("priority") {
+    Some(v) if v.is_null() => None,
+    Some(v) => Some(
+      v.as_str()
+        .ok_or_else(|| "priority must be a string or null".to_string())?
+        .to_string(),
+    ),
+    None => None,
+  };
+  let updated = crate::summarizer_store::set_user_priority(
+    target_kind,
+    target_id,
+    priority_opt.as_deref(),
+  )?;
+  Ok(serde_json::json!({ "updated": updated, "userPriority": priority_opt }))
 }

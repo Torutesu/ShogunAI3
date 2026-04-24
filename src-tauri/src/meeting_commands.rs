@@ -1,8 +1,8 @@
 //! Tauri commands: `shogun_meeting_*` (Granola / meetings PRD).
 
 use crate::{
-  meeting_enhance, meeting_mic, meeting_mcp, meeting_recipes, meeting_session, meeting_store,
-  meeting_stt, memory_store,
+  meeting_enhance, meeting_import, meeting_mic, meeting_mcp, meeting_recipes, meeting_session,
+  meeting_store, meeting_stt, memory_store,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rusqlite::params;
@@ -443,4 +443,46 @@ pub fn shogun_meeting_mcp_tools(payload: Value) -> Result<Value, String> {
     "stub": false,
     "echo": payload,
   }))
+}
+
+/// Native file picker that returns selected audio / video file paths.
+/// UI asks the user, then invokes `shogun_meeting_import_file` per path.
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn shogun_meeting_import_pick(payload: Value) -> Result<Value, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let picked = rfd::FileDialog::new()
+      .set_title("Select audio or video recordings to import")
+      .add_filter(
+        "Audio / Video",
+        &["mp3", "m4a", "mp4", "mov", "wav", "webm", "ogg", "oga", "aac", "flac"],
+      )
+      .pick_files();
+    let paths: Vec<String> = picked
+      .unwrap_or_default()
+      .into_iter()
+      .map(|p| p.display().to_string())
+      .collect();
+    Ok(json!({
+      "cancelled": paths.is_empty(),
+      "paths": paths,
+      "stub": false,
+      "echo": payload,
+    }))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("File picker is only available on macOS in this build.".to_string())
+  }
+}
+
+/// Transcribes a single local audio/video file and stores it as a meeting.
+#[tauri::command]
+pub async fn shogun_meeting_import_file(payload: Value) -> Result<Value, String> {
+  let path = payload
+    .get("path")
+    .and_then(|p| p.as_str())
+    .ok_or_else(|| "path is required".to_string())?;
+  meeting_import::import_recording_file(path).await
 }

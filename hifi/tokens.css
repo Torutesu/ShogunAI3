@@ -22,6 +22,11 @@
   /* Calendar / “Coming up” rail — gold + success from palette (no ad-hoc hex) */
   --accent-schedule: color-mix(in srgb, var(--gold) 78%, var(--success) 22%);
 
+  /* Pill / floating-panel tint — blended into surface for depth; theme-aware */
+  --pill-tint:        #0b0f16;
+  --pill-tint-hover:  #101726;
+  --pill-tint-panel:  #070b13;
+
   --font-en:   "Helvetica Neue", "Inter", system-ui, sans-serif;
   --font-jp:   "Noto Sans JP", "Hiragino Sans", sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", monospace;
@@ -70,6 +75,11 @@ html[data-color-mode="light"] {
   --danger:      #8a4545;
 
   --accent-schedule: color-mix(in srgb, var(--gold) 75%, var(--success) 25%);
+
+  /* Warm beige tints so pills don't muddy the white background */
+  --pill-tint:        #e8e1d2;
+  --pill-tint-hover:  #ddd4c0;
+  --pill-tint-panel:  #ece5d6;
 }
 html[data-font-size="compact"] { font-size: 13px; }
 html[data-font-size="comfortable"] { font-size: 15px; }

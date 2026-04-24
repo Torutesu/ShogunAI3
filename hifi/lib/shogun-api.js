@@ -36,6 +36,7 @@
       memorySummaryInvalidate: (input) => call("shogun_memory_summary_invalidate", input, WRITE),
       memoryRollupGet: (input) => call("shogun_memory_rollup_get", input, READ),
       memoryDayRollupGet: (input) => call("shogun_memory_day_rollup_get", input, READ),
+      memorySummarySetPriority: (input) => call("shogun_memory_summary_set_priority", input, WRITE),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
       memoryEmbedBackfill: (input) =>
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),
@@ -70,6 +71,10 @@
       integrationToggle: (input) => call("app_integration_toggle", input, WRITE),
       googleCalendarSync: (input) => call("shogun_google_calendar_sync", input, WRITE),
       gmailSync: (input) => call("shogun_gmail_sync", input, WRITE),
+      slackSync: (input) => call("shogun_slack_sync", input, WRITE, { timeoutMs: 900000 }),
+      notionSync: (input) => call("shogun_notion_sync", input, WRITE, { timeoutMs: 900000 }),
+      githubSync: (input) => call("shogun_github_sync", input, WRITE, { timeoutMs: 900000 }),
+      linearSync: (input) => call("shogun_linear_sync", input, WRITE, { timeoutMs: 900000 }),
       capturePause: (input) => call("app_capture_pause", input, WRITE),
       captureResume: (input) => call("app_capture_resume", input, WRITE),
       permissionsManage: (input) => call("app_permissions_manage", input, WRITE),

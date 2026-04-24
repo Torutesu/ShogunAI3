@@ -69,8 +69,9 @@ async fn calendar_events_request(
   Ok((status, text))
 }
 
-fn ingest_event_items(items: &[Value], max_results: usize) -> Result<u32, String> {
+fn ingest_event_items(items: &[Value], max_results: usize) -> Result<(u32, u32), String> {
   let mut ingested = 0u32;
+  let mut skipped = 0u32;
   for item in items.iter().take(max_results) {
     let title = item
       .get("summary")
@@ -97,10 +98,14 @@ fn ingest_event_items(items: &[Value], max_results: usize) -> Result<u32, String
     if !ev_id.is_empty() {
       ing["entity_id"] = json!(ev_id);
     }
-    memory_store::ingest(&ing)?;
-    ingested += 1;
+    let out = memory_store::ingest(&ing)?;
+    if out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false) {
+      skipped += 1;
+    } else {
+      ingested += 1;
+    }
   }
-  Ok(ingested)
+  Ok((ingested, skipped))
 }
 
 pub async fn sync_events_to_memory(
@@ -147,10 +152,11 @@ pub async fn sync_events_to_memory(
     .cloned()
     .unwrap_or_default();
 
-  let ingested = ingest_event_items(&items, max_results)?;
+  let (ingested, skipped) = ingest_event_items(&items, max_results)?;
 
   Ok(json!({
     "ingested": ingested,
+    "skipped": skipped,
     "calendarId": cal,
     "pastDays": past_days,
     "stub": false,

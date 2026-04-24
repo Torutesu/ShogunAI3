@@ -429,6 +429,49 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
       [],
     ).map_err(|e| format!("mem_summaries add lang: {}", e))?;
   }
+  // Migration: user_priority override ('high'|'medium'|'low' or NULL).
+  // When non-NULL, UI uses it instead of the LLM-assigned priority.
+  // Added 2026-04-24 for the manual-override UX.
+  let has_user_priority = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'user_priority'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_user_priority == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN user_priority TEXT",
+      [],
+    ).map_err(|e| format!("mem_summaries add user_priority: {}", e))?;
+  }
+
+
+  // Partial UNIQUE index to dedupe historical-sync ingestion keyed by
+  // (source, entity_id). Skipped for rows without an entity_id (e.g. screen
+  // captures, free-form notes) so those remain append-only.
+  //
+  // Because pre-existing databases may already contain duplicates from prior
+  // calendar / gmail re-runs, compress dupes first (keep the oldest rowid per
+  // (source, entity_id)) so the index creation doesn't abort.
+  conn
+    .execute(
+      "DELETE FROM mem_items \
+       WHERE entity_id IS NOT NULL AND entity_id != '' \
+         AND rowid NOT IN ( \
+           SELECT MIN(rowid) FROM mem_items \
+           WHERE entity_id IS NOT NULL AND entity_id != '' \
+           GROUP BY source, entity_id \
+         )",
+      [],
+    )
+    .map_err(|e| format!("mem_items dedupe pre-index: {}", e))?;
+  conn
+    .execute(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_items_entity_unique \
+       ON mem_items(source, entity_id) \
+       WHERE entity_id IS NOT NULL AND entity_id != ''",
+      [],
+    )
+    .map_err(|e| format!("mem_items entity unique index: {}", e))?;
 
   crate::meeting_store::ensure_meeting_schema(conn)?;
   Ok(())
@@ -844,9 +887,9 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
   let id = format!("m_{}_{}", now_ms(), seq);
   let created = now_ms() as i64;
 
-  conn
+  let affected = conn
     .execute(
-      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction) \
+      "INSERT OR IGNORE INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction) \
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
       params![
         id,
@@ -862,6 +905,7 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
       ],
     )
     .map_err(|e| e.to_string())?;
+  let skipped = affected == 0;
 
   let mut item_map = serde_json::Map::new();
   item_map.insert("id".to_string(), json!(id));
@@ -884,12 +928,13 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
 
   let out = json!({
     "item": item,
+    "skipped": skipped,
     "echo": payload,
     "stub": false,
   });
 
   let skip_embed = source == "capture_sampler" || source == "capture_ax";
-  if !skip_embed {
+  if !skipped && !skip_embed {
     let id_spawn = id.clone();
     tauri::async_runtime::spawn(async move {
       if let Err(e) = embed_row_by_id(&id_spawn).await {

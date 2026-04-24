@@ -121,7 +121,9 @@ fn header_value(msg: &Value, name: &str) -> Option<String> {
   None
 }
 
-fn ingest_gmail_message(message_id: &str, msg: &Value) -> Result<(), String> {
+/// Returns `Ok(true)` when the row was skipped by the entity-id UNIQUE index
+/// (i.e. already ingested previously); `Ok(false)` when newly inserted.
+fn ingest_gmail_message(message_id: &str, msg: &Value) -> Result<bool, String> {
   let subject = header_value(msg, "Subject").unwrap_or_else(|| "(no subject)".to_string());
   let from = header_value(msg, "From").unwrap_or_default();
   let snippet = msg
@@ -137,7 +139,8 @@ fn ingest_gmail_message(message_id: &str, msg: &Value) -> Result<(), String> {
     "provenance": "connector",
     "entity_id": message_id,
   });
-  memory_store::ingest(&ing).map(|_| ())
+  let out = memory_store::ingest(&ing)?;
+  Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
 async fn refresh_and_persist_creds(creds: &Value) -> Result<Value, String> {
@@ -246,7 +249,14 @@ pub async fn sync_inbox_to_memory(
   }
 
   let mut ingested = 0u32;
-  for id in collected_ids.iter() {
+  let mut skipped = 0u32;
+  let total = collected_ids.len() as u64;
+  crate::progress_emitter::emit("gmail", 0, Some(total), "ingest");
+  for (i, id) in collected_ids.iter().enumerate() {
+    // Throttle progress events: emit roughly every 10 items.
+    if i % 10 == 0 {
+      crate::progress_emitter::emit("gmail", i as u64, Some(total), "ingest");
+    }
     // Network errors on individual message fetches must not abort a long
     // historical import — log and move on.
     let first = match gmail_get_message_metadata(&token, id).await {
@@ -275,18 +285,23 @@ pub async fn sync_inbox_to_memory(
       continue;
     }
     let msg: Value = serde_json::from_str(&txt).unwrap_or(json!({}));
-    if let Err(e) = ingest_gmail_message(id, &msg) {
-      log::warn!("Skipping message {} (ingest failed): {}", id, e);
-      continue;
+    match ingest_gmail_message(id, &msg) {
+      Ok(true) => skipped += 1,
+      Ok(false) => ingested += 1,
+      Err(e) => {
+        log::warn!("Skipping message {} (ingest failed): {}", id, e);
+        continue;
+      }
     }
-    ingested += 1;
   }
+  crate::progress_emitter::emit("gmail", total, Some(total), "done");
 
   let elapsed_ms = start.elapsed().as_millis() as u64;
   crate::memory_obs::emit(
     "gmail_sync_done",
     &[
       ("ingested", ingested.to_string()),
+      ("skipped", skipped.to_string()),
       ("max_results", total_cap.to_string()),
       ("days", days.map(|d| d.to_string()).unwrap_or_default()),
       ("elapsed_ms", elapsed_ms.to_string()),
@@ -300,6 +315,7 @@ pub async fn sync_inbox_to_memory(
   }
   Ok(json!({
     "ingested": ingested,
+    "skipped": skipped,
     "days": days,
     "stub": false,
   }))

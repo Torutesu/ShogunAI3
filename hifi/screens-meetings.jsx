@@ -138,6 +138,7 @@ function ScreenMeetings() {
   granolaDraftRef.current = granolaDraft;
 
   const [userMeetingItems, setUserMeetingItems] = useState([]);
+  const [importedMeetings, setImportedMeetings] = useState([]);
   const [listTick, setListTick] = useState(0);
   const [audioRecSession, setAudioRecSession] = useState(null);
   const [recTick, setRecTick] = useState(0);
@@ -285,6 +286,30 @@ function ScreenMeetings() {
     };
     window.addEventListener('shogun-user-meeting-log-changed', onLog);
     return function () { window.removeEventListener('shogun-user-meeting-log-changed', onLog); };
+  }, []);
+
+  // Imported recordings (com.shogun.import): query the backend meetings list
+  // and filter on app_bundle_id. Refreshes when a new import completes via
+  // the `shogun-meetings-changed` event.
+  useEffect(function () {
+    let cancelled = false;
+    const load = function () {
+      runRuntimeActionM('meetings.list', { limit: 50 }, { silentError: true }).then(function (r) {
+        if (cancelled) return;
+        const items = r && r.ok && Array.isArray(r.data && r.data.items) ? r.data.items : [];
+        const filtered = items.filter(function (m) {
+          return m && m.app_bundle_id === 'com.shogun.import';
+        });
+        setImportedMeetings(filtered);
+      });
+    };
+    load();
+    const onChanged = function () { load(); };
+    window.addEventListener('shogun-meetings-changed', onChanged);
+    return function () {
+      cancelled = true;
+      window.removeEventListener('shogun-meetings-changed', onChanged);
+    };
   }, []);
 
   useEffect(function () {
@@ -1034,9 +1059,121 @@ function ScreenMeetings() {
       </section>
 
       {/* Divider */}
-      <div style={{height:1, background:'var(--border)', marginBottom:28, position:'relative'}}>
+      <div style={{height:1, background:'var(--border)', marginBottom:18, position:'relative'}}>
         <span style={{position:'absolute', left:'50%', top:-7, transform:'translateX(-50%)', padding:'0 10px', background:'var(--bg)', fontFamily:'var(--font-jp)', fontSize:11, color:'var(--text-dim)'}} className="jp">記録</span>
       </div>
+
+      {/* Import past recordings */}
+      <div className="row" style={{justifyContent:'center', marginBottom:24, gap:10, flexWrap:'wrap', alignItems:'center'}}>
+        <button
+          type="button"
+          className="btn btn-sm btn-secondary"
+          onClick={async () => {
+            const pick = await runRuntimeActionM('meetings.import.pick', {}, { silentError: true });
+            const paths = pick && pick.ok && Array.isArray(pick.data?.paths) ? pick.data.paths : [];
+            if (!paths.length) return;
+            window.SHOGUN_RUNTIME?.pushToast?.(
+              `Importing ${paths.length} recording${paths.length > 1 ? 's' : ''}…`,
+              'info',
+            );
+            let succeeded = 0;
+            let failed = 0;
+            for (const p of paths) {
+              const r = await runRuntimeActionM('meetings.import.file', { path: p }, { silentError: true });
+              if (r && r.ok) succeeded += 1;
+              else {
+                failed += 1;
+                const msg = (r && r.error && r.error.message) || `Failed: ${p}`;
+                window.SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
+              }
+            }
+            if (succeeded > 0) {
+              window.SHOGUN_RUNTIME?.pushToast?.(
+                failed === 0
+                  ? `Imported ${succeeded} recording${succeeded > 1 ? 's' : ''}`
+                  : `Imported ${succeeded}, failed ${failed}`,
+                failed === 0 ? 'success' : 'warn',
+              );
+              window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
+            }
+          }}
+        >
+          <Icon name="file" size={13} />
+          <span className="en-only">Import past recording</span>
+          <span className="jp" style={{fontSize:12}}>過去の録音を取り込む</span>
+        </button>
+        <span className="s-field-hint" style={{fontSize:11}}>
+          <span className="en-only">Audio / video files (mp3, m4a, mp4, wav…) are transcribed via Deepgram.</span>
+          <span className="jp">音声・動画 (mp3, m4a, mp4, wav など) を Deepgram で文字起こしします。</span>
+        </span>
+      </div>
+
+      {/* Imported recordings */}
+      {importedMeetings.length > 0 && (
+        <div style={{marginBottom:36}}>
+          <div className="row" style={{marginBottom:16, gap:14}}>
+            <span className="t-mono" style={{color:'var(--gold)'}}>IMPORTED</span>
+            <span className="jp dim" style={{fontSize:11}}>取り込み済み</span>
+            <span style={{height:1, flex:1, background:'var(--border)'}}/>
+            <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>{importedMeetings.length} ITEMS</span>
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            {importedMeetings.map(function (m) {
+              const started = Number(m.started_at) || 0;
+              const ended = Number(m.ended_at) || 0;
+              const durMs = Math.max(0, ended - started);
+              const durMin = Math.floor(durMs / 60000);
+              const durSec = Math.floor((durMs % 60000) / 1000);
+              const durationLabel = durMs > 0
+                ? (durMin > 0 ? durMin + 'm ' + String(durSec).padStart(2, '0') + 's' : durSec + 's')
+                : '—';
+              const date = started > 0 ? new Date(started) : null;
+              const dateLabel = date
+                ? date.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : '';
+              return (
+                <div
+                  key={m.id}
+                  className="card card-interactive"
+                  style={{padding:14, display:'flex', gap:14, alignItems:'center'}}
+                >
+                  <Icon name="calendar" size={14} className="gold" style={{flexShrink:0}}/>
+                  <div style={{flex:1, minWidth:0}}>
+                    <div style={{fontSize:14, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                      {m.title || 'Imported recording'}
+                    </div>
+                    <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginTop:2}}>
+                      {dateLabel} · {durationLabel}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    title="Remove imported recording"
+                    onClick={function () {
+                      const ok = typeof window.confirm === 'function'
+                        ? window.confirm('Remove "' + (m.title || 'this recording') + '" and its transcript?')
+                        : true;
+                      if (!ok) return;
+                      runRuntimeActionM('meetings.purge', { meeting_id: m.id }, { silentError: true }).then(function (r) {
+                        if (r && r.ok) {
+                          window.SHOGUN_RUNTIME?.pushToast?.('Recording removed', 'success');
+                          window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
+                        } else {
+                          const msg = (r && r.error && r.error.message) || 'Remove failed';
+                          window.SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
+                        }
+                      });
+                    }}
+                  >
+                    <Icon name="x" size={12}/>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Your sessions today (from Start meeting) */}
       {userMeetingItems.length > 0 && (

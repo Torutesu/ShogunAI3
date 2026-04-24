@@ -38,6 +38,10 @@
     register("integrations.toggle", (payload) => api.integrationToggle(payload));
     register("calendar.sync", (payload) => api.googleCalendarSync(payload));
     register("gmail.sync", (payload) => api.gmailSync(payload));
+    register("slack.sync", (payload) => api.slackSync(payload));
+    register("notion.sync", (payload) => api.notionSync(payload));
+    register("github.sync", (payload) => api.githubSync(payload));
+    register("linear.sync", (payload) => api.linearSync(payload));
     register("capture.pause", () => api.capturePause({ reason: "user_request" }));
     register("capture.resume", () => api.captureResume({ reason: "user_request" }));
     register("permissions.manage", (payload) => api.permissionsManage(payload));
@@ -57,11 +61,12 @@
     register("memory.summary.batch", (payload) => api.memorySummaryBatch(payload));
     register("memory.summary.invalidate", (payload) => api.memorySummaryInvalidate(payload));
     register("memory.rollup.get", (payload) => api.memoryRollupGet(payload));
+    register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
+    register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));
     register("llm.save_api_key", (payload) => api.llmApiKeySet(payload));
-    register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
     register("llm.api_key_status", (payload) => api.llmApiKeyStatus(payload));
     register("llm.clear_api_key", (payload) => api.llmApiKeyClear(payload));
     register("shogun.open_pack", (payload) => api.openPack(payload));

@@ -278,14 +278,6 @@ function ScreenChat() {
     setMessages((prev) => prev.concat({ role: 'assistant', content: assistantText }));
   };
 
-  const newChat = () => {
-    setMessages([]);
-    setMemoryContext('');
-    setMemoryContextHits(null);
-    setComposerText('');
-    pendingMemoryAssemblyRef.current = null;
-  };
-
   const openLlmSettings = () => {
     if (window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.openSettingsPane) {
       window.SHOGUN_RUNTIME.openSettingsPane('llm');
@@ -356,8 +348,6 @@ function ScreenChat() {
       />
       <div className="shogun-chat-main">
         <div className="shogun-chat-header">
-          <button className="btn btn-sm btn-ghost" onClick={newChat} style={{padding:'0 8px'}}><Icon name="plus" size={13}/>New</button>
-          <div style={{width:1, height:20, background:'var(--border)'}}/>
           <div>
             <div style={{fontSize:14, fontWeight:500}}>Chat <span className="jp dim" style={{fontSize:11, marginLeft:6}}>対話</span></div>
             <div className="t-mono" style={{fontSize:9, marginTop:2}}>

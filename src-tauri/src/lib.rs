@@ -4,6 +4,7 @@ mod brief;
 mod brief_actions;
 mod calendar_sync;
 mod capture_sampler;
+mod connector_sync;
 mod context_assembly;
 mod commands;
 mod deep_link_credentials;
@@ -12,13 +13,16 @@ mod embeddings;
 mod gmail;
 mod google_calendar;
 mod google_oauth;
+mod http_retry;
 mod integration_secrets;
 mod integrations;
+mod linear;
 mod llm;
 mod llm_providers;
 mod macos_ax;
 mod meeting_commands;
 mod meeting_enhance;
+mod meeting_import;
 mod meeting_mic;
 mod meeting_mcp;
 mod meeting_recipes;
@@ -31,9 +35,13 @@ mod memory_store;
 mod summarizer_store;
 mod summarizer;
 mod paths;
+mod progress_emitter;
 mod schedule_queue;
 mod secrets;
 mod settings_store;
+mod slack;
+mod notion;
+mod github;
 
 fn load_dotenv() {
   let _ = dotenvy::dotenv();
@@ -103,6 +111,8 @@ pub fn run() {
       }
       capture_sampler::start_background_sampler(app.handle().clone());
       calendar_sync::spawn_background_calendar_sync();
+      connector_sync::spawn_background_connector_sync();
+      progress_emitter::set_app_handle(app.handle().clone());
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -134,6 +144,10 @@ pub fn run() {
       commands::app_integration_toggle,
       commands::shogun_google_calendar_sync,
       commands::shogun_gmail_sync,
+      commands::shogun_slack_sync,
+      commands::shogun_notion_sync,
+      commands::shogun_github_sync,
+      commands::shogun_linear_sync,
       commands::app_capture_pause,
       commands::app_capture_resume,
       commands::app_permissions_manage,
@@ -176,6 +190,8 @@ pub fn run() {
       meeting_commands::shogun_meeting_mic_stop,
       meeting_commands::shogun_meeting_transcribe_pcm,
       meeting_commands::shogun_meeting_mcp_tools,
+      meeting_commands::shogun_meeting_import_pick,
+      meeting_commands::shogun_meeting_import_file,
       #[cfg(debug_assertions)]
       commands::shogun_memory_debug_query,
       #[cfg(debug_assertions)]
@@ -190,6 +206,7 @@ pub fn run() {
       commands::shogun_memory_summary_invalidate,
       commands::shogun_memory_rollup_get,
       commands::shogun_memory_day_rollup_get,
+      commands::shogun_memory_summary_set_priority,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

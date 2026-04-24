@@ -20,6 +20,30 @@ function deriveLocalProvenance(source) {
   return 'user';
 }
 
+/** Collapse a raw `sources` row value into a filter bucket. */
+function memoryProviderKey(sourceRaw) {
+  const s = String(sourceRaw || '').toLowerCase();
+  if (s === 'capture_sampler' || s === 'capture_ax') return 'screen';
+  if (s === 'gmail') return 'gmail';
+  if (s === 'google_calendar') return 'google_calendar';
+  if (s === 'slack') return 'slack';
+  if (s === 'notion') return 'notion';
+  if (s === 'github') return 'github';
+  if (s === 'meeting' || s.startsWith('meetings')) return 'meeting';
+  return 'manual';
+}
+
+const MEMORY_PROVIDER_META = {
+  screen:          { en: 'Screen',   jp: '画面',   color: 'var(--text-mute)' },
+  meeting:         { en: 'Meeting',  jp: '会議',   color: 'var(--success)' },
+  gmail:           { en: 'Gmail',    jp: 'メール', color: '#D93025' },
+  google_calendar: { en: 'Calendar', jp: '予定',   color: '#1A73E8' },
+  slack:           { en: 'Slack',    jp: 'Slack',  color: '#4A154B' },
+  notion:          { en: 'Notion',   jp: 'Notion', color: 'var(--text)' },
+  github:          { en: 'GitHub',   jp: 'GitHub', color: 'var(--text-mute)' },
+  manual:          { en: 'Manual',   jp: '手動',   color: 'var(--text-dim)' },
+};
+
 function memoryProvenanceLabel(prov) {
   const p = prov || 'user';
   if (p === 'screen') return { en: 'Screen', jp: '画面' };
@@ -1351,6 +1375,18 @@ function ScreenMemory() {
   const [activeFilters, setActiveFilters] = useState(() => ({
     sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
     priority: { high: true, medium: true, low: false },
+    // Filter by the raw provider source (screen captures, connector imports, ...).
+    // All on by default so new users see everything they've indexed.
+    providers: {
+      screen: true,
+      meeting: true,
+      gmail: true,
+      google_calendar: true,
+      slack: true,
+      notion: true,
+      github: true,
+      manual: true,
+    },
   }));
   const timelineScrollRef = useRef(null);
   const scrollTimeline = useCallback((dir) => {
@@ -1493,7 +1529,10 @@ function ScreenMemory() {
   }, [weekHistograms]);
   const activeFilterCount =
     Object.values(activeFilters.sources).filter(Boolean).length +
-    Object.values(activeFilters.priority).filter(Boolean).length;
+    Object.values(activeFilters.priority).filter(Boolean).length +
+    // Providers: count the ones that are explicitly OFF so the Filters button
+    // advertises that results are narrowed.
+    Object.values(activeFilters.providers || {}).filter((v) => v === false).length;
   const toggleFilter = useCallback((group, key) => {
     setActiveFilters((prev) => ({
       ...prev,
@@ -1570,13 +1609,17 @@ function ScreenMemory() {
   // hidden from the surface unless the user toggles the Low filter on.
   const events = useMemo(() => {
     const showLow = !!activeFilters.priority.low;
-    const filtered = showLow
-      ? rawEvents
-      : rawEvents.filter((e) => {
-          const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-          if (!s) return true; // pending summary → keep visible until classified
-          return s.priority !== 'low';
-        });
+    const provs = activeFilters.providers || {};
+    const matchesProvider = (e) => provs[memoryProviderKey(e.sourceRaw)] !== false;
+    // effective = user's manual override takes precedence over LLM priority.
+    const effectivePriority = (s) => (s && (s.userPriority || s.priority)) || null;
+    const filtered = rawEvents.filter((e) => {
+      if (!matchesProvider(e)) return false;
+      if (showLow) return true;
+      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+      if (!s) return true;
+      return effectivePriority(s) !== 'low';
+    });
     // Collapse consecutive capture_ax/capture_sampler items into session cards
     // so that enabling the Screen filter doesn't flood the River.
     const clustered = clusterScreenSessions(filtered);
@@ -1585,10 +1628,11 @@ function ScreenMemory() {
     // read as a "what needs attention" feed.
     const rank = (e) => {
       const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      if (!s) return 2; // unclassified sits between MED and LOW
-      if (s.priority === 'high') return 0;
-      if (s.priority === 'medium') return 1;
-      if (s.priority === 'low') return 3;
+      const p = effectivePriority(s);
+      if (!p) return 2; // unclassified sits between MED and LOW
+      if (p === 'high') return 0;
+      if (p === 'medium') return 1;
+      if (p === 'low') return 3;
       return 2;
     };
     return clustered
@@ -1599,7 +1643,7 @@ function ScreenMemory() {
         if (rA !== rB) return rA - rB;
         return (b.ts || 0) - (a.ts || 0);
       });
-  }, [rawEvents, summaryByMemId, activeFilters.priority.low]);
+  }, [rawEvents, summaryByMemId, activeFilters.priority.low, activeFilters.providers]);
   // Batch-summarize connector items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
   useEffect(() => {
@@ -1863,9 +1907,10 @@ function ScreenMemory() {
       if (firstIdx[h] < 0) firstIdx[h] = i;
       counts[h] += 1;
       const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      if (s && (s.priority === 'high' || s.priority === 'medium')) {
-        if (priorityRank(s.priority) > priorityRank(topPriority[h])) {
-          topPriority[h] = s.priority;
+      const p = s && (s.userPriority || s.priority);
+      if (p === 'high' || p === 'medium') {
+        if (priorityRank(p) > priorityRank(topPriority[h])) {
+          topPriority[h] = p;
         }
       }
     });
@@ -1924,7 +1969,7 @@ function ScreenMemory() {
                 <div role="presentation" onMouseDown={()=>setFiltersOpen(false)} style={{position:'fixed', inset:0, zIndex:40}}/>
                 <div role="menu" onMouseDown={(e)=>e.stopPropagation()} style={{
                   position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41,
-                  minWidth:360, padding:10, borderRadius:12,
+                  minWidth:420, padding:10, borderRadius:12,
                   border:'1px solid var(--border-hi)', background:'var(--surface-2)',
                   boxShadow:'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
                 }}>
@@ -1947,6 +1992,18 @@ function ScreenMemory() {
                         </label>
                       ))}
                     </div>
+                    <div style={{ flex: 1 }}>
+                      <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Providers</div>
+                      {Object.entries(MEMORY_PROVIDER_META).map(([k,meta])=>(
+                        <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
+                          <input type="checkbox" checked={activeFilters.providers?.[k] !== false} onChange={()=>toggleFilter('providers', k)}/>
+                          <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                            <span style={{width:8, height:8, borderRadius:2, background: meta.color, flexShrink:0}} aria-hidden="true"/>
+                            {meta.en}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                   <div style={{display:'flex', gap:8, marginTop:8}}>
                     <button type="button" onClick={async ()=>{
@@ -1958,6 +2015,10 @@ function ScreenMemory() {
                     <button type="button" onClick={()=>{ setActiveFilters({
                       sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
                       priority: { high: true, medium: true, low: false },
+                      providers: {
+                        screen: true, meeting: true, gmail: true, google_calendar: true,
+                        slack: true, notion: true, github: true, manual: true,
+                      },
                     }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
                   </div>
                 </div>
@@ -2237,6 +2298,25 @@ function ScreenMemory() {
             <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>
               {srcLabel(scrubbed.src).toUpperCase()} · {scrubbed.t}
             </div>
+            {(() => {
+              const pk = memoryProviderKey(scrubbed.sourceRaw);
+              const meta = MEMORY_PROVIDER_META[pk];
+              if (!meta) return null;
+              return (
+                <span style={{
+                  display:'inline-flex', alignItems:'center', gap:5,
+                  padding:'2px 7px', borderRadius:4,
+                  border:`1px solid color-mix(in srgb, ${meta.color} 50%, var(--border))`,
+                  background:`color-mix(in srgb, ${meta.color} 10%, transparent)`,
+                  color: meta.color,
+                  fontSize:10, letterSpacing:'0.06em',
+                  fontFamily:'var(--font-mono)',
+                }}>
+                  <span style={{width:6, height:6, borderRadius:'50%', background: meta.color}} aria-hidden="true"/>
+                  {meta.en}
+                </span>
+              );
+            })()}
             {events.length > 0 && !timelineLoading && (
               <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:4}}>
                 <button
@@ -2303,16 +2383,40 @@ function ScreenMemory() {
               )}
             </div>
           )}
-          {!timelineLoading && scrubSummary && !showRaw && (
+          {!timelineLoading && scrubSummary && !showRaw && (() => {
+            const effPriority = scrubSummary.userPriority || scrubSummary.priority;
+            const pinned = !!scrubSummary.userPriority;
+            const setPinPriority = async (tier) => {
+              if (!scrubbed?.memoryId) return;
+              const targetId = scrubbed.memoryId;
+              // Clicking the currently-active tier clears the override.
+              const nextValue = tier === scrubSummary.userPriority ? null : tier;
+              // Optimistic update.
+              const nextSummary = { ...scrubSummary, userPriority: nextValue };
+              setScrubSummary(nextSummary);
+              setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+              await runRuntimeActionA('memory.summary.set_priority', {
+                targetId, targetKind: 'item', priority: nextValue,
+              }, { silentError: true });
+            };
+            return (
             <div className="memory-summary-card" style={{
               display:'flex', flexDirection:'column', gap:10,
               marginBottom:14,
-              borderLeft: scrubSummary.priority === 'high'
+              borderLeft: effPriority === 'high'
                 ? '2px solid var(--gold)'
                 : '2px solid var(--border)',
               paddingLeft:14,
             }}>
-              <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>{scrubSummary.title}</div>
+              <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap'}}>
+                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, wordBreak:'break-word', flex:1, minWidth:0}}>{scrubSummary.title}</div>
+                {pinned && (
+                  <span className="t-mono" style={{fontSize:9, color:'var(--gold)', letterSpacing:'0.12em', padding:'2px 6px', border:'1px solid var(--gold-dim)', borderRadius:4}}>
+                    <span className="en-only">PINNED</span>
+                    <span className="jp">手動</span>
+                  </span>
+                )}
+              </div>
               {Array.isArray(scrubSummary.keyPoints) && scrubSummary.keyPoints.length > 0 && (
                 <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
                   {scrubSummary.keyPoints.slice(0, 4).map((k, i) => (
@@ -2320,7 +2424,31 @@ function ScreenMemory() {
                   ))}
                 </ul>
               )}
-              <div style={{display:'flex', gap:14, marginTop:2, alignItems:'center'}}>
+              <div style={{display:'flex', gap:14, marginTop:2, alignItems:'center', flexWrap:'wrap'}}>
+                {/* Priority override: click a tier to pin; click the active tier again to clear. */}
+                <div style={{display:'flex', gap:4, alignItems:'center'}} title="Set the priority for this item. Click the active tier to clear the override.">
+                  <span className="t-mono" style={{fontSize:9, color:'var(--text-dim)', letterSpacing:'0.1em', marginRight:2}}>PIN</span>
+                  {[{k:'high', label:'H'}, {k:'medium', label:'M'}, {k:'low', label:'L'}].map(({k, label}) => {
+                    const active = effPriority === k;
+                    const isOverride = scrubSummary.userPriority === k;
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setPinPriority(k)}
+                        style={{
+                          width:18, height:18, padding:0,
+                          border:'1px solid ' + (active ? (k === 'high' ? 'var(--gold)' : 'var(--border-hi)') : 'var(--border)'),
+                          background: active ? (k === 'high' ? 'var(--gold)' : 'var(--border-hi)') : 'transparent',
+                          color: active ? 'var(--bg)' : 'var(--text-dim)',
+                          fontFamily: 'inherit', fontSize: 10, fontWeight: isOverride ? 700 : 500,
+                          borderRadius: 3, cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >{label}</button>
+                    );
+                  })}
+                </div>
                 <button type="button" onClick={() => setShowRaw(true)} style={{
                   padding:'4px 0', borderRadius:0, border:'none',
                   background:'transparent', color:'var(--text-dim)', fontSize:11, cursor:'pointer', fontFamily:'inherit', textDecoration:'underline',
@@ -2372,7 +2500,8 @@ function ScreenMemory() {
                 </button>
               </div>
             </div>
-          )}
+            );
+          })()}
           {!timelineLoading && scrubSummaryLoading && !scrubSummary && (
             <div style={{padding:'20px 18px', marginBottom:16, color:'var(--text-dim)', fontSize:13, textAlign:'center', border:'1px solid var(--border)', borderRadius:12, background:'var(--surface)'}}>
               <span className="en-only">Generating summary…</span>
