@@ -8,7 +8,7 @@ use crate::{embeddings, paths, secrets};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
 
 const MEMORY_DB: &str = "memory.db";
@@ -393,6 +393,30 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
       )
       .map_err(|e| e.to_string())?;
   }
+  // Memory Digest (Phase 1): per-item summary cache.
+  // target_kind: 'item' | 'session' | 'week_rollup' (Phase 1 uses 'item' only)
+  // target_id: item.id / session.id / ISO week
+  conn.execute_batch(
+    "CREATE TABLE IF NOT EXISTS mem_summaries (
+      target_kind    TEXT    NOT NULL,
+      target_id      TEXT    NOT NULL,
+      title          TEXT    NOT NULL,
+      key_points     TEXT    NOT NULL,
+      source_type    TEXT    NOT NULL,
+      priority       TEXT    NOT NULL,
+      reason         TEXT,
+      model          TEXT    NOT NULL,
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      generated_at   INTEGER NOT NULL,
+      raw_json       TEXT    NOT NULL,
+      PRIMARY KEY (target_kind, target_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mem_summaries_generated_at
+      ON mem_summaries(generated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mem_summaries_priority
+      ON mem_summaries(priority, generated_at DESC);"
+  ).map_err(|e| format!("mem_summaries DDL: {}", e))?;
+
   crate::meeting_store::ensure_meeting_schema(conn)?;
   Ok(())
 }
@@ -802,7 +826,9 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
     .filter(|s| is_valid_redaction(s))
     .map(String::from);
 
-  let id = format!("m_{}", now_ms());
+  static INGEST_SEQ: AtomicU64 = AtomicU64::new(0);
+  let seq = INGEST_SEQ.fetch_add(1, Ordering::Relaxed);
+  let id = format!("m_{}_{}", now_ms(), seq);
   let created = now_ms() as i64;
 
   conn
@@ -1720,5 +1746,44 @@ mod tests {
       None,
     );
     assert_eq!(v.get("kinds"), Some(&json!(["note", "screen"])));
+  }
+
+  #[test]
+  fn init_schema_creates_mem_summaries_table() {
+    use rusqlite::Connection;
+    let conn = Connection::open_in_memory().expect("open in-memory");
+    // Mirror the same CREATE TABLE statement from init_schema.
+    conn.execute_batch(
+      "CREATE TABLE IF NOT EXISTS mem_summaries (
+        target_kind    TEXT    NOT NULL,
+        target_id      TEXT    NOT NULL,
+        title          TEXT    NOT NULL,
+        key_points     TEXT    NOT NULL,
+        source_type    TEXT    NOT NULL,
+        priority       TEXT    NOT NULL,
+        reason         TEXT,
+        model          TEXT    NOT NULL,
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        generated_at   INTEGER NOT NULL,
+        raw_json       TEXT    NOT NULL,
+        PRIMARY KEY (target_kind, target_id)
+      );"
+    ).expect("create mem_summaries");
+
+    // Verify we can insert a row.
+    conn.execute(
+      "INSERT INTO mem_summaries
+         (target_kind, target_id, title, key_points, source_type, priority, reason, model, generated_at, raw_json)
+       VALUES
+         ('item', 'm_1', 'T', '[\"k\"]', 'mail', 'medium', 'r', 'heuristic', 1, '{}')",
+      [],
+    ).expect("insert row");
+
+    let count: i64 = conn.query_row(
+      "SELECT COUNT(*) FROM mem_summaries",
+      [],
+      |r| r.get(0),
+    ).expect("count");
+    assert_eq!(count, 1);
   }
 }
