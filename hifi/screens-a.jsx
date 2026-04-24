@@ -1372,6 +1372,10 @@ function ScreenHome() {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenMemory() {
   const [view, setView] = useState('river');
+  // Rollup cache keyed by lang. `week` is Monday-start; `day` is local midnight.
+  const [digestState, setDigestState] = useState({
+    week: null, day: null, loading: false, error: null, generatingWeek: false, generatingDay: false,
+  });
   const [rawEvents, setRawEvents] = useState(() => []);
   const [summaryByMemId, setSummaryByMemId] = useState(() => ({}));
   const [batchSummarizing, setBatchSummarizing] = useState(0); // count of items being processed; 0 = idle
@@ -1957,7 +1961,7 @@ function ScreenMemory() {
         </div>
         <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
           <div style={{display:'inline-flex', border:'1px solid var(--border)', borderRadius:999, padding:2, background:'var(--surface)'}}>
-            {[['river','River'],['kakejiku','Kakejiku'],['heatmap','Heatmap']].map(([k,l])=>(
+            {[['river','River'],['kakejiku','Kakejiku'],['heatmap','Heatmap'],['digest','Digest']].map(([k,l])=>(
               <button key={k} type="button" onClick={()=>setView(k)} style={{
                 padding:'6px 14px', borderRadius:999, border:'none',
                 background: view===k ? 'var(--surface-2)' : 'transparent',
@@ -2885,6 +2889,10 @@ function ScreenMemory() {
         </div>
       )}
 
+      {view === 'digest' && (
+        <MemoryDigestView state={digestState} setState={setDigestState} />
+      )}
+
       {/* FTS5 highlight styles */}
       <style>{`
         .memory-scrub-stage mark {
@@ -2894,6 +2902,204 @@ function ScreenMemory() {
           border-radius: 2px;
         }
       `}</style>
+    </div>
+  );
+}
+
+/** Helpers for `MemoryDigestView` below. */
+function startOfDayMs(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x.getTime();
+}
+/** ISO Monday (day index 1). Returns ms of local midnight on that Monday. */
+function startOfWeekMs(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  // JS: getDay() 0=Sun..6=Sat. Shift so Mon=0.
+  const offset = (x.getDay() + 6) % 7;
+  x.setDate(x.getDate() - offset);
+  return x.getTime();
+}
+
+function MemoryDigestView({ state, setState }) {
+  const now = new Date();
+  const weekStartMs = useMemo(() => startOfWeekMs(now), [now.getDate()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dayStartMs = useMemo(() => startOfDayMs(now), [now.getDate()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lang = 'en';
+
+  const loadRollups = useCallback(async (regenerate) => {
+    setState((prev) => ({
+      ...prev,
+      loading: !regenerate,
+      generatingWeek: !!regenerate,
+      generatingDay: !!regenerate,
+      error: null,
+    }));
+    const [weekRes, dayRes] = await Promise.all([
+      runRuntimeActionA(
+        'memory.rollup.get',
+        { weekStartMs, lang, regenerate: !!regenerate },
+        { silentError: true },
+      ),
+      runRuntimeActionA(
+        'memory.rollup.day.get',
+        { dayStartMs, lang, regenerate: !!regenerate },
+        { silentError: true },
+      ),
+    ]);
+    const weekRollup = weekRes && weekRes.ok && weekRes.data ? weekRes.data.rollup : null;
+    const dayRollup = dayRes && dayRes.ok && dayRes.data ? dayRes.data.rollup : null;
+    const errMsg = (!weekRes || !weekRes.ok) && (!dayRes || !dayRes.ok)
+      ? ((weekRes && weekRes.error && weekRes.error.message)
+         || (dayRes && dayRes.error && dayRes.error.message)
+         || 'Rollup failed')
+      : null;
+    setState({
+      week: weekRollup,
+      day: dayRollup,
+      loading: false,
+      generatingWeek: false,
+      generatingDay: false,
+      error: errMsg,
+    });
+  }, [setState, weekStartMs, dayStartMs]);
+
+  useEffect(() => {
+    // Only load on first entry to this view (state.week / .day null).
+    if (state.week == null && state.day == null && !state.loading) {
+      void loadRollups(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fmtRange = (startMs, endMs) => {
+    try {
+      const s = new Date(startMs);
+      const e = new Date(endMs);
+      const opts = { month: 'short', day: 'numeric' };
+      if (s.getFullYear() !== e.getFullYear()) {
+        opts.year = 'numeric';
+      }
+      return `${s.toLocaleDateString('en-US', opts)} – ${e.toLocaleDateString('en-US', opts)}`;
+    } catch (_e) {
+      return '';
+    }
+  };
+
+  const renderCard = (rollup, label, onRegen, generating) => {
+    const priority = rollup && typeof rollup === 'object'
+      ? String(rollup.userPriority || rollup.priority || '').toLowerCase()
+      : '';
+    const priColor = priority === 'high'
+      ? 'var(--danger)'
+      : priority === 'medium'
+        ? 'var(--gold)'
+        : 'var(--text-dim)';
+    return (
+      <div className="card" style={{padding:22, display:'flex', flexDirection:'column', gap:14}}>
+        <div className="row" style={{gap:10, alignItems:'center'}}>
+          <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>{label.toUpperCase()}</span>
+          {rollup && priority && (
+            <span className="label" style={{fontSize:10, borderColor:priColor, color:priColor, textTransform:'uppercase'}}>
+              {priority}
+            </span>
+          )}
+          <span style={{flex:1}}/>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={generating}
+            onClick={() => void onRegen()}
+            style={generating ? {opacity:0.55, cursor:'default'} : undefined}
+          >
+            {generating ? 'Regenerating…' : 'Regenerate'}
+          </button>
+        </div>
+        {!rollup ? (
+          <div style={{color:'var(--text-dim)', fontSize:13, lineHeight:1.5}}>
+            No summary yet. Run Regenerate to build one from your indexed memory.
+          </div>
+        ) : (
+          <>
+            <div style={{fontSize:18, fontWeight:500, lineHeight:1.35}}>
+              {rollup.title || 'Untitled digest'}
+            </div>
+            {Array.isArray(rollup.keyPoints) && rollup.keyPoints.length > 0 && (
+              <ul style={{margin:0, paddingLeft:20, fontSize:13, lineHeight:1.6, color:'var(--text)'}}>
+                {rollup.keyPoints.map((p, i) => (
+                  <li key={i} style={{marginBottom:4}}>{p}</li>
+                ))}
+              </ul>
+            )}
+            {rollup.reason && (
+              <div style={{fontSize:11, color:'var(--text-dim)', lineHeight:1.5}}>
+                <span className="t-mono" style={{fontSize:9, letterSpacing:'0.1em'}}>WHY</span>{' '}{rollup.reason}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{flex:1, padding:'24px 40px 40px', minHeight:0, overflowY:'auto'}}>
+      <div style={{maxWidth:820, margin:'0 auto', display:'flex', flexDirection:'column', gap:18}}>
+        {state.loading ? (
+          <div style={{padding:32, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>Loading digest…</div>
+        ) : state.error ? (
+          <div className="card" style={{padding:18, color:'var(--danger)', fontSize:13}}>
+            {state.error}
+          </div>
+        ) : null}
+
+        <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>
+          WEEK · {fmtRange(weekStartMs, weekStartMs + 6 * 86_400_000)}
+        </div>
+        {renderCard(
+          state.week,
+          'Weekly digest',
+          async () => {
+            setState((prev) => ({ ...prev, generatingWeek: true }));
+            const res = await runRuntimeActionA(
+              'memory.rollup.get',
+              { weekStartMs, lang, regenerate: true },
+              { silentError: true },
+            );
+            setState((prev) => ({
+              ...prev,
+              week: res && res.ok && res.data ? res.data.rollup : prev.week,
+              generatingWeek: false,
+              error: res && res.ok ? null : ((res && res.error && res.error.message) || 'Regenerate failed'),
+            }));
+          },
+          state.generatingWeek,
+        )}
+
+        <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em', marginTop:8}}>
+          DAY · {(() => { try { return new Date(dayStartMs).toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }); } catch (_) { return ''; } })()}
+        </div>
+        {renderCard(
+          state.day,
+          'Daily digest',
+          async () => {
+            setState((prev) => ({ ...prev, generatingDay: true }));
+            const res = await runRuntimeActionA(
+              'memory.rollup.day.get',
+              { dayStartMs, lang, regenerate: true },
+              { silentError: true },
+            );
+            setState((prev) => ({
+              ...prev,
+              day: res && res.ok && res.data ? res.data.rollup : prev.day,
+              generatingDay: false,
+              error: res && res.ok ? null : ((res && res.error && res.error.message) || 'Regenerate failed'),
+            }));
+          },
+          state.generatingDay,
+        )}
+      </div>
     </div>
   );
 }
