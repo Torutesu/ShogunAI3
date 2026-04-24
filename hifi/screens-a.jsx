@@ -1266,6 +1266,11 @@ function ScreenMemory() {
   const [semanticMemorySearch, setSemanticMemorySearch] = useState(true);
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
   const [memorySettingsLoaded, setMemorySettingsLoaded] = useState(false);
+  // Memory Digest Phase 1: River summary card state.
+  const [scrubSummary, setScrubSummary] = useState(null);         // { title, keyPoints, priority, ... } or null
+  const [scrubSummaryLoading, setScrubSummaryLoading] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
+  const [summaryEnabled, setSummaryEnabled] = useState(true);     // feature flag from sections.memory.enableMemorySummary
   const timelineLoading = !memorySettingsLoaded;
   const withSemantic = useCallback(
     (payload) => {
@@ -1293,6 +1298,10 @@ function ScreenMemory() {
       const mem = r?.ok && r.data?.settings?.sections?.memory;
       if (mem && typeof mem === 'object' && typeof mem.semanticRerank === 'boolean') {
         setSemanticMemorySearch(mem.semanticRerank);
+      }
+      if (mem && typeof mem === 'object') {
+        // Default to true when the flag is unset; only disable when explicitly false.
+        setSummaryEnabled(mem.enableMemorySummary !== false);
       }
       const priv = r?.ok && r.data?.settings?.sections?.privacy;
       if (priv && typeof priv === 'object') {
@@ -1368,6 +1377,68 @@ function ScreenMemory() {
       : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null };
   const srcIcon = s => s==='chat'?'chat':s==='meet'?'calendar':s==='note'?'note':s==='mail'?'mail':s==='agent'?'bot':s==='code'?'terminal':'file';
   const srcLabel = s => ({chat:'Conversation',meet:'Meeting',note:'Note',mail:'Email',agent:'Agent run',code:'Code'})[s]||'Event';
+
+  // Memory Digest Phase 1: Fetch a summary for the currently scrubbed item when
+  // it comes from a connector source (gmail / google_calendar). Screen/meeting
+  // items stay on the raw snippet for now.
+  useEffect(() => {
+    // Guard: feature flag OFF → always show raw, skip fetch.
+    if (!summaryEnabled) {
+      setScrubSummary(null);
+      setShowRaw(true);
+      return;
+    }
+    if (!scrubbed || !scrubbed.memoryId) {
+      setScrubSummary(null);
+      setShowRaw(false);
+      return;
+    }
+    // Only summarize connector items (gmail/google_calendar). Others stay raw.
+    const rawSrc = String(scrubbed.sourceRaw || '').toLowerCase();
+    const isConnector =
+      rawSrc === 'gmail' ||
+      rawSrc === 'google_calendar' ||
+      scrubbed.provenance === 'connector';
+    if (!isConnector) {
+      setScrubSummary(null);
+      setShowRaw(true);
+      return;
+    }
+
+    setShowRaw(false);
+    setScrubSummary(null);
+    setScrubSummaryLoading(true);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = window.ShogunAPI;
+        const res = api && typeof api.memorySummaryGet === 'function'
+          ? await api.memorySummaryGet({
+              targetId: scrubbed.memoryId,
+              targetKind: 'item',
+              item: {
+                id: scrubbed.memoryId,
+                title: scrubbed.title || '',
+                snippet: scrubbed.snippet || '',
+                source: scrubbed.sourceRaw || '',
+              },
+            })
+          : null;
+        if (cancelled) return;
+        if (res && res.ok && res.data && res.data.summary) {
+          setScrubSummary(res.data.summary);
+        } else {
+          setScrubSummary(null);
+        }
+      } catch {
+        if (!cancelled) setScrubSummary(null);
+      } finally {
+        if (!cancelled) setScrubSummaryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scrubbed?.memoryId, scrubbed?.sourceRaw, scrubbed?.provenance, summaryEnabled]);
   const memoryHeadDate = useMemo(() => {
     const d = new Date();
     return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -1576,44 +1647,103 @@ function ScreenMemory() {
               </span>
             )}
           </div>
-          <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
-            {timelineLoading ? (
-              <span className="muted" style={{fontWeight:400, fontSize:16}}>
-                <span className="en-only">Loading timeline…</span>
-                <span className="jp">読み込み中…</span>
-              </span>
-            ) : (
-              renderHighlighted(scrubbed.titleHighlight || scrubbed.title)
-            )}
-          </h2>
-          <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:16}}>
-            {scrubbed.memoryId && (
-              <span className="label">index</span>
-            )}
-            {scrubbed.provenance && (
-              <span className="label" style={{borderColor:'var(--gold-dim)', color:'var(--gold)'}} title={scrubbed.sourceRaw || ''}>
-                <span className="en-only">{memoryProvenanceLabel(scrubbed.provenance).en}</span>
-                <span className="jp" style={{fontSize:10}}>{memoryProvenanceLabel(scrubbed.provenance).jp}</span>
-              </span>
-            )}
-            {scrubbed.entityId && (
-              <span className="label t-mono" style={{fontSize:9, maxWidth:140, overflow:'hidden', textOverflow:'ellipsis'}} title={scrubbed.entityId}>
-                id · {scrubbed.entityId.slice(0, 24)}{scrubbed.entityId.length > 24 ? '…' : ''}
-              </span>
-            )}
-          </div>
-          <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
-            {timelineLoading ? (
-              <span className="muted">
-                <span className="en-only">Applying Memory search preferences before the first fetch.</span>
-                <span className="jp" style={{display:'block', marginTop:4}}>初回取得の前に設定を適用しています。</span>
-              </span>
-            ) : (
-              scrubbed.snippetHighlight
-                ? renderHighlighted(scrubbed.snippetHighlight)
-                : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')
-            )}
-          </p>
+          {timelineLoading && (
+            <>
+              <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
+                <span className="muted" style={{fontWeight:400, fontSize:16}}>
+                  <span className="en-only">Loading timeline…</span>
+                  <span className="jp">読み込み中…</span>
+                </span>
+              </h2>
+              <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
+                <span className="muted">
+                  <span className="en-only">Applying Memory search preferences before the first fetch.</span>
+                  <span className="jp" style={{display:'block', marginTop:4}}>初回取得の前に設定を適用しています。</span>
+                </span>
+              </p>
+            </>
+          )}
+          {!timelineLoading && (
+            <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
+              {scrubbed.memoryId && (
+                <span className="label">index</span>
+              )}
+              {scrubbed.provenance && (
+                <span className="label" style={{borderColor:'var(--gold-dim)', color:'var(--gold)'}} title={scrubbed.sourceRaw || ''}>
+                  <span className="en-only">{memoryProvenanceLabel(scrubbed.provenance).en}</span>
+                  <span className="jp" style={{fontSize:10}}>{memoryProvenanceLabel(scrubbed.provenance).jp}</span>
+                </span>
+              )}
+              {scrubbed.entityId && (
+                <span className="label t-mono" style={{fontSize:9, maxWidth:140, overflow:'hidden', textOverflow:'ellipsis'}} title={scrubbed.entityId}>
+                  id · {scrubbed.entityId.slice(0, 24)}{scrubbed.entityId.length > 24 ? '…' : ''}
+                </span>
+              )}
+            </div>
+          )}
+          {!timelineLoading && scrubSummary && !showRaw && (
+            <div className="memory-summary-card" style={{
+              display:'flex', flexDirection:'column', gap:12,
+              padding:'16px 18px',
+              marginBottom:16,
+              background:'var(--surface)',
+              border:'1px solid var(--border)',
+              borderRadius:12,
+              borderLeftWidth: 3,
+              borderLeftStyle: 'solid',
+              borderLeftColor:
+                scrubSummary.priority === 'high' ? 'var(--gold)' :
+                scrubSummary.priority === 'medium' ? 'var(--border-hi)' :
+                'transparent',
+              opacity: scrubSummary.priority === 'low' ? 0.6 : 1,
+            }}>
+              <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
+                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, flex:1, wordBreak:'break-word'}}>{scrubSummary.title}</div>
+                <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'3px 8px', borderRadius:6, border:'1px solid var(--border)'}}>
+                  {String(scrubSummary.priority || 'med').toUpperCase()}
+                </div>
+              </div>
+              {Array.isArray(scrubSummary.keyPoints) && scrubSummary.keyPoints.length > 0 && (
+                <ul style={{margin:0, paddingLeft:18, display:'flex', flexDirection:'column', gap:6}}>
+                  {scrubSummary.keyPoints.map((k, i) => (
+                    <li key={i} style={{fontSize:14, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                  ))}
+                </ul>
+              )}
+              <div style={{display:'flex', gap:8, marginTop:4}}>
+                <button type="button" onClick={() => setShowRaw(true)} style={{
+                  padding:'6px 12px', borderRadius:8, border:'1px solid var(--border)',
+                  background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit',
+                }}>Show raw</button>
+              </div>
+            </div>
+          )}
+          {!timelineLoading && scrubSummaryLoading && !scrubSummary && (
+            <div style={{padding:'20px 18px', marginBottom:16, color:'var(--text-dim)', fontSize:13, textAlign:'center', border:'1px solid var(--border)', borderRadius:12, background:'var(--surface)'}}>
+              <span className="en-only">Generating summary…</span>
+              <span className="jp">要約を生成中…</span>
+            </div>
+          )}
+          {!timelineLoading && (showRaw || (!scrubSummary && !scrubSummaryLoading)) && (
+            <>
+              <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
+                {renderHighlighted(scrubbed.titleHighlight || scrubbed.title)}
+              </h2>
+              <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
+                {scrubbed.snippetHighlight
+                  ? renderHighlighted(scrubbed.snippetHighlight)
+                  : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')}
+              </p>
+              {scrubSummary && (
+                <div style={{marginBottom:16}}>
+                  <button type="button" onClick={() => setShowRaw(false)} style={{
+                    padding:'6px 12px', borderRadius:8, border:'1px solid var(--border)',
+                    background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit',
+                  }}>Show summary</button>
+                </div>
+              )}
+            </>
+          )}
           <span style={{flex:1}}/>
           <div style={{display:'flex', gap:8, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)', flexWrap:'wrap'}}>
             {scrubbed.memoryId && !timelineLoading && (
