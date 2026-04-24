@@ -29,6 +29,7 @@ mod memory_debug;
 mod memory_obs;
 mod memory_store;
 mod summarizer_store;
+mod summarizer;
 mod paths;
 mod schedule_queue;
 mod secrets;
