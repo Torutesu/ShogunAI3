@@ -55,9 +55,21 @@ pub fn build_memory_digest(lang: &str) -> Value {
     .flatten()
     .map(|s| s.to_json());
 
+  // Today's day rollup (Phase 2.5). Cache-only: not triggered from brief.get.
+  let today_ms = NaiveDate::from_ymd_opt(today.year(), today.month(), today.day())
+    .and_then(|d| d.and_hms_opt(0, 0, 0))
+    .map(|ndt| Utc.from_utc_datetime(&ndt).timestamp_millis())
+    .unwrap_or(0);
+  let day_id = summarizer::format_week_id(today_ms); // YYYY-MM-DD
+  let day_rollup = summarizer_store::get_cached("day_rollup", &day_id, lang)
+    .ok()
+    .flatten()
+    .map(|s| s.to_json());
+
   json!({
     "highlights": highlights,
     "week_rollup": week_rollup,
+    "day_rollup": day_rollup,
   })
 }
 

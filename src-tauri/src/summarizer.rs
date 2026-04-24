@@ -363,23 +363,45 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value,
   })
 }
 
-// ---- Phase 2: week-level rollup -------------------------------------------
+// ---- Phase 2 / 2.5: rollup digests (week + day) ---------------------------
 
-/// Build the week-rollup SYSTEM_PROMPT for a given UI language.
-fn rollup_system_prompt_for_lang(lang: &str) -> String {
-  let base = r#"You are creating a WEEKLY ROLLUP digest of a user's memory — one synthesized summary that captures the week's themes, action items, and decisions from a batch of per-item summaries already produced for this week.
+/// Build the rollup SYSTEM_PROMPT for a given UI language + scope.
+fn rollup_system_prompt_for_lang(lang: &str, kind: RollupKind) -> String {
+  let (scope_title_format, scope_desc, emphasis) = match kind {
+    RollupKind::Week => (
+      r#""Week of <Mon date>" (e.g., "Week of Apr 20")"#,
+      "this week",
+      "group related threads, surface pending action items with owners, flag any deadlines this week or next week, and note notable decisions",
+    ),
+    RollupKind::Day => (
+      r#""<Day-of-week date>" (e.g., "Fri Apr 24") or simply "Today""#,
+      "today",
+      "surface what moved forward, what's still pending for tomorrow, and any explicit decisions made today. Tighter than a weekly roll-up — 3-4 bullets is usually enough",
+    ),
+  };
+  let target_kind = kind.target_kind();
+
+  let base = format!(
+    r#"You are creating a {scope_desc_upper} ROLLUP digest of a user's memory — one synthesized summary that captures the {scope_desc}'s themes, action items, and decisions from a batch of per-item summaries already produced for this window.
 
 Rules:
 - Always emit via the emit_memory_summary tool. Never respond with plain text.
-- title: <= 80 chars. Use the format "Week of <Mon date>" (e.g., "Week of Apr 20") or the locale-appropriate equivalent.
-- key_points: 3-6 short bullets (<= 140 chars each). DO NOT just list the items. Synthesize: group related threads, surface pending action items with owners, flag any deadlines this week or next week, and note notable decisions. Skip items with no follow-up.
+- title: <= 80 chars. Use the format {scope_title_format} or the locale-appropriate equivalent.
+- key_points: 3-6 short bullets (<= 140 chars each). DO NOT just list the items. Synthesize: {emphasis}. Skip items with no follow-up.
 - priority: always "medium" for rollups (rollups themselves are ambient context, not individually actionable).
-- reason: one short sentence describing what made this week notable (e.g., "Two deadline-driven replies, one new project kickoff").
-- source_type: always "week_rollup"."#;
+- reason: one short sentence describing what made {scope_desc} notable.
+- source_type: always "{target_kind}"."#,
+    scope_desc = scope_desc,
+    scope_desc_upper = scope_desc.to_uppercase(),
+    scope_title_format = scope_title_format,
+    emphasis = emphasis,
+    target_kind = target_kind,
+  );
 
-  let lang_directive = match lang {
-    "jp" => "\n- OUTPUT LANGUAGE: Japanese. title の形式は「今週（Mon月Dd日週）」のように日本語化する。",
-    "bi" => "\n- OUTPUT LANGUAGE: Match the dominant language of the source items.",
+  let lang_directive = match (lang, kind) {
+    ("jp", RollupKind::Week) => "\n- OUTPUT LANGUAGE: Japanese. title の形式は「今週（Mon月Dd日週）」のように日本語化する。",
+    ("jp", RollupKind::Day) => "\n- OUTPUT LANGUAGE: Japanese. title の形式は「M月D日（曜日）」のように日本語化する。",
+    ("bi", _) => "\n- OUTPUT LANGUAGE: Match the dominant language of the source items.",
     _ => "\n- OUTPUT LANGUAGE: English.",
   };
   format!("{}{}", base, lang_directive)
@@ -398,51 +420,109 @@ pub fn format_week_id(week_start_ms: i64) -> String {
 /// caches the result with target_kind="week_rollup".
 pub async fn summarize_week_rollup(week_start_ms: i64, lang: &str) -> Result<Summary, String> {
   let end_ms = week_start_ms + 7 * 24 * 3600 * 1000;
-  let items = crate::summarizer_store::get_summaries_in_window(week_start_ms, end_ms, lang)?;
+  summarize_rollup(week_start_ms, end_ms, RollupKind::Week, lang).await
+}
 
-  let week_id = format_week_id(week_start_ms);
+/// Phase 2.5: daily rollup over a 24h window. target_id is `YYYY-MM-DD` for
+/// the calendar day starting at `day_start_ms` (UTC).
+pub async fn summarize_day_rollup(day_start_ms: i64, lang: &str) -> Result<Summary, String> {
+  let end_ms = day_start_ms + 24 * 3600 * 1000;
+  summarize_rollup(day_start_ms, end_ms, RollupKind::Day, lang).await
+}
+
+/// Shared rollup pipeline: lookup → empty-case → LLM call → fallback.
+async fn summarize_rollup(
+  start_ms: i64,
+  end_ms: i64,
+  kind: RollupKind,
+  lang: &str,
+) -> Result<Summary, String> {
+  let items = crate::summarizer_store::get_summaries_in_window(start_ms, end_ms, lang)?;
+  let id = format_week_id(start_ms); // YYYY-MM-DD works for both scopes
 
   if items.is_empty() {
-    let no_items = loc(lang, "No activity this week.", "今週のアクティビティなし");
+    let (title_en, title_jp) = match kind {
+      RollupKind::Week => ("Quiet week", "静かな週"),
+      RollupKind::Day => ("Quiet day", "静かな一日"),
+    };
+    let (no_items_en, no_items_jp) = match kind {
+      RollupKind::Week => ("No activity this week.", "今週のアクティビティなし"),
+      RollupKind::Day => ("No activity today.", "今日のアクティビティなし"),
+    };
     return Ok(Summary {
-      target_kind: "week_rollup".into(),
-      target_id: week_id,
-      title: loc(lang, "Quiet week", "静かな週"),
-      key_points: vec![no_items],
-      source_type: "week_rollup".into(),
+      target_kind: kind.target_kind().into(),
+      target_id: id,
+      title: loc(lang, title_en, title_jp),
+      key_points: vec![loc(lang, no_items_en, no_items_jp)],
+      source_type: kind.target_kind().into(),
       priority: "low".into(),
       reason: Some(loc(lang, "No indexed activity in this window", "インデックス済みの活動なし")),
       model: "heuristic".into(),
       schema_version: SCHEMA_VERSION,
       generated_at: crate::memory_store::now_ms() as i64,
-      raw_json: json!({"rollup": "empty"}).to_string(),
+      raw_json: json!({"rollup": "empty", "kind": kind.target_kind()}).to_string(),
       lang: lang.to_string(),
     });
   }
 
-  // Keep prompt bounded: cap to 40 item summaries, prioritized by priority then recency.
-  let context_items: Vec<&Summary> = items.iter().take(40).collect();
-  let user_content = render_rollup_context(&context_items, &week_id);
+  // Keep prompt bounded: cap context window size by scope. Day needs fewer.
+  let cap = match kind { RollupKind::Week => 40, RollupKind::Day => 20 };
+  let context_items: Vec<&Summary> = items.iter().take(cap).collect();
+  let user_content = render_rollup_context(&context_items, &id, kind);
   let tool = emit_memory_summary_tool();
-  let system = rollup_system_prompt_for_lang(lang);
+  let system = rollup_system_prompt_for_lang(lang, kind);
 
   match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
-    Ok(tool_input) => match build_rollup_from_tool_input(&week_id, &tool_input, lang) {
+    Ok(tool_input) => match build_rollup_from_tool_input(&id, kind, &tool_input, lang) {
       Ok(s) => Ok(s),
       Err(e) => {
-        log::warn!("rollup tool_input parse error for {}: {}", week_id, e);
-        Ok(rollup_heuristic_fallback(&week_id, &items, lang))
+        log::warn!("rollup tool_input parse error for {}: {}", id, e);
+        Ok(rollup_heuristic_fallback(&id, &items, kind, lang))
       }
     },
     Err(e) => {
-      log::warn!("rollup LLM error for {}: {}", week_id, e);
-      Ok(rollup_heuristic_fallback(&week_id, &items, lang))
+      log::warn!("rollup LLM error for {}: {}", id, e);
+      Ok(rollup_heuristic_fallback(&id, &items, kind, lang))
     }
   }
 }
 
-fn render_rollup_context(items: &[&Summary], week_id: &str) -> String {
-  let mut buf = format!("Week starting: {}\n\nItems this week (sorted by priority):\n", week_id);
+/// Identifies a rollup scope (week vs day). Drives target_kind, prompt text,
+/// and fallback titling. Added in Phase 2.5 to avoid duplicating rollup
+/// plumbing between weekly and daily digests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RollupKind { Week, Day }
+
+impl RollupKind {
+  pub fn target_kind(&self) -> &'static str {
+    match self { Self::Week => "week_rollup", Self::Day => "day_rollup" }
+  }
+  fn window_label(&self) -> &'static str {
+    match self { Self::Week => "Week starting", Self::Day => "Day" }
+  }
+  fn items_intro(&self) -> &'static str {
+    match self {
+      Self::Week => "Items this week (sorted by priority):",
+      Self::Day => "Items today (sorted by priority):",
+    }
+  }
+  fn fallback_title(&self, id: &str, lang: &str) -> String {
+    match (self, lang) {
+      (Self::Week, "jp") => format!("今週（{}週）", id),
+      (Self::Day, "jp") => format!("{} の記録", id),
+      (Self::Week, _) => format!("Week of {}", id),
+      (Self::Day, _) => format!("Day of {}", id),
+    }
+  }
+}
+
+fn render_rollup_context(items: &[&Summary], id: &str, kind: RollupKind) -> String {
+  let mut buf = format!(
+    "{}: {}\n\n{}\n",
+    kind.window_label(),
+    id,
+    kind.items_intro()
+  );
   for (idx, s) in items.iter().enumerate() {
     buf.push_str(&format!(
       "\n[{}] [{}] {} — {}\n  · {}\n",
@@ -456,7 +536,7 @@ fn render_rollup_context(items: &[&Summary], week_id: &str) -> String {
   buf
 }
 
-fn build_rollup_from_tool_input(week_id: &str, input: &Value, lang: &str) -> Result<Summary, String> {
+fn build_rollup_from_tool_input(id: &str, kind: RollupKind, input: &Value, lang: &str) -> Result<Summary, String> {
   let title = input
     .get("title")
     .and_then(|v| v.as_str())
@@ -475,11 +555,11 @@ fn build_rollup_from_tool_input(week_id: &str, input: &Value, lang: &str) -> Res
   let reason = input.get("reason").and_then(|v| v.as_str()).map(String::from);
 
   Ok(Summary {
-    target_kind: "week_rollup".into(),
-    target_id: week_id.to_string(),
+    target_kind: kind.target_kind().into(),
+    target_id: id.to_string(),
     title,
     key_points,
-    source_type: "week_rollup".into(),
+    source_type: kind.target_kind().into(),
     priority: "medium".into(), // rollups are ambient, never HIGH
     reason,
     model: SUMMARIZER_MODEL.to_string(),
@@ -490,12 +570,12 @@ fn build_rollup_from_tool_input(week_id: &str, input: &Value, lang: &str) -> Res
   })
 }
 
-fn rollup_heuristic_fallback(week_id: &str, items: &[Summary], lang: &str) -> Summary {
+fn rollup_heuristic_fallback(id: &str, items: &[Summary], kind: RollupKind, lang: &str) -> Summary {
   let high_count = items.iter().filter(|s| s.priority == "high").count();
   let med_count = items.iter().filter(|s| s.priority == "medium").count();
   let total = items.len();
 
-  let title = loc(lang, &format!("Week of {}", week_id), &format!("今週（{}週）", week_id));
+  let title = kind.fallback_title(id, lang);
   let summary_line = match lang {
     "jp" => format!("{} 件の要記録（要対応 {} / 注目 {}）", total, high_count, med_count),
     _ => format!("{} items indexed (HIGH: {}, MED: {})", total, high_count, med_count),
@@ -511,11 +591,11 @@ fn rollup_heuristic_fallback(week_id: &str, items: &[Summary], lang: &str) -> Su
   }
 
   Summary {
-    target_kind: "week_rollup".into(),
-    target_id: week_id.to_string(),
+    target_kind: kind.target_kind().into(),
+    target_id: id.to_string(),
     title,
     key_points,
-    source_type: "week_rollup".into(),
+    source_type: kind.target_kind().into(),
     priority: "medium".into(),
     reason: Some(loc(lang, "LLM unavailable — heuristic rollup", "LLM 不使用 / 集計のみ")),
     model: "heuristic".into(),

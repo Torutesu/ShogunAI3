@@ -1230,3 +1230,36 @@ pub async fn shogun_memory_rollup_get(payload: serde_json::Value) -> Result<serd
   crate::summarizer_store::upsert(&rollup)?;
   Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
 }
+
+/// 日次ロールアップ要約 (Phase 2.5)。週と同じキャッシュインフラ、target_kind="day_rollup"。
+///
+/// payload: { "dayStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// dayStartMs は日の開始 (通常 00:00 local) の ms。UI で計算して渡す。
+#[tauri::command]
+pub async fn shogun_memory_day_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let day_start_ms = payload
+    .get("dayStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "dayStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let day_id = crate::summarizer::format_week_id(day_start_ms); // YYYY-MM-DD
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("day_rollup", &day_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_day_rollup(day_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
