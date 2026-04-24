@@ -291,6 +291,86 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'shogun_memory_summary_get':
+      return {
+        ok: true,
+        data: {
+          summary: {
+            targetKind: 'item',
+            targetId: String((echo && echo.targetId) || 'm_stub'),
+            title: 'Stub summary',
+            keyPoints: ['This is a mocked summary'],
+            sourceType: 'mail',
+            priority: 'medium',
+            reason: 'mock',
+            model: 'mock',
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          },
+          cached: false,
+        },
+      };
+    case 'shogun_memory_summary_batch':
+      return {
+        ok: true,
+        data: {
+          ok: ((echo && echo.items) || []).map((it) => ({
+            targetKind: 'item',
+            targetId: String((it && it.id) || 'm_stub'),
+            title: `Stub: ${(it && it.title) || 'untitled'}`,
+            keyPoints: ['mock point'],
+            sourceType: 'mail',
+            priority: 'medium',
+            reason: 'mock',
+            model: 'mock',
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          })),
+          failed: [],
+          heuristicUsed: 0,
+        },
+      };
+    case 'shogun_memory_summary_invalidate':
+      return { ok: true, data: { deleted: true } };
+    case 'shogun_memory_debug_gate':
+      return { ok: true, data: { available: false, reason: 'mock_browser' } };
+    case 'shogun_memory_debug_recent_calls':
+      return { ok: true, data: { calls: [], capacity: 50 } };
+    case 'shogun_memory_debug_query':
+      return {
+        ok: true,
+        data: {
+          hits: [],
+          draft_block: '',
+          brief_block: '',
+          reply_block: '',
+          query: (echo && echo.query) || '',
+          limit: (echo && echo.limit) || 12,
+          semantic: !!(echo && echo.semantic),
+        },
+      };
+    case 'shogun_memory_debug_stats':
+      return {
+        ok: true,
+        data: {
+          total: 0,
+          fts_total: 0,
+          fts_integrity: true,
+          by_source: [],
+          by_provenance: [],
+          earliest_ms: null,
+          latest_ms: null,
+          db_bytes: 0,
+        },
+      };
+    case 'shogun_memory_debug_sync_status':
+      return {
+        ok: true,
+        data: {
+          google_calendar: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
+          gmail: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
+        },
+      };
     case 'shogun_stats': {
       const DEMO = typeof window !== 'undefined' ? window.SHOGUN_DEMO_SEED : null;
       const empty = {

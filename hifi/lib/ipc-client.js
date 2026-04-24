@@ -491,6 +491,41 @@
           google_calendar: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
           gmail: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
         };
+      case "shogun_memory_summary_get":
+        return {
+          summary: {
+            targetKind: "item",
+            targetId: String((echo && echo.targetId) || "m_stub"),
+            title: "Stub summary",
+            keyPoints: ["This is a mocked summary"],
+            sourceType: "mail",
+            priority: "medium",
+            reason: "mock",
+            model: "mock",
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          },
+          cached: false,
+        };
+      case "shogun_memory_summary_batch":
+        return {
+          ok: ((echo && echo.items) || []).map((it) => ({
+            targetKind: "item",
+            targetId: String((it && it.id) || "m_stub"),
+            title: `Stub: ${(it && it.title) || "untitled"}`,
+            keyPoints: ["mock point"],
+            sourceType: "mail",
+            priority: "medium",
+            reason: "mock",
+            model: "mock",
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          })),
+          failed: [],
+          heuristicUsed: 0,
+        };
+      case "shogun_memory_summary_invalidate":
+        return { deleted: true };
       case "shogun_entity_query":
         return {
           entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],

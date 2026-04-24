@@ -31,6 +31,9 @@
       memorySearch: (input) => call("shogun_memory_search", input, READ),
       memoryFetch: (input) => call("shogun_memory_fetch", input, READ),
       memoryIngest: (input) => call("shogun_memory_ingest", input, WRITE),
+      memorySummaryGet: (input) => call("shogun_memory_summary_get", input, READ),
+      memorySummaryBatch: (input) => call("shogun_memory_summary_batch", input, READ),
+      memorySummaryInvalidate: (input) => call("shogun_memory_summary_invalidate", input, WRITE),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
       memoryEmbedBackfill: (input) =>
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),
