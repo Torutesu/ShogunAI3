@@ -43,6 +43,7 @@ mod settings_store;
 mod slack;
 mod notion;
 mod github;
+mod zoom;
 
 fn load_dotenv() {
   let _ = dotenvy::dotenv();
@@ -150,6 +151,7 @@ pub fn run() {
       commands::shogun_github_sync,
       commands::shogun_linear_sync,
       commands::shogun_drive_sync,
+      commands::shogun_zoom_sync,
       commands::app_capture_pause,
       commands::app_capture_resume,
       commands::app_permissions_manage,

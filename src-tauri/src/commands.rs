@@ -3,7 +3,7 @@
 use crate::{
   auth, biometric, brief, brief_actions, embed_backfill, github, gmail, google_calendar,
   google_drive, integration_secrets, integrations, linear, llm, macos_ax, memory_store, notion,
-  secrets, settings_store, slack,
+  secrets, settings_store, slack, zoom,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -572,6 +572,20 @@ pub async fn shogun_drive_sync(payload: Value) -> Result<Value, String> {
     .unwrap_or(500)
     .clamp(1, 3000) as usize;
   google_drive::sync_drive_to_memory(days, max_files).await
+}
+
+#[tauri::command]
+pub async fn shogun_zoom_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_meetings = payload
+    .get("maxMeetings")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(50)
+    .clamp(1, 200) as usize;
+  zoom::sync_recordings_to_memory(days, max_meetings).await
 }
 
 #[tauri::command]

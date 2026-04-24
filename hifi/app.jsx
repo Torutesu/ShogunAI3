@@ -733,6 +733,7 @@ function ensureRuntimeDeps() {
         githubSync: (input) => client.invoke('shogun_github_sync', input),
         linearSync: (input) => client.invoke('shogun_linear_sync', input),
         driveSync: (input) => client.invoke('shogun_drive_sync', input),
+        zoomSync: (input) => client.invoke('shogun_zoom_sync', input),
         capturePause: (input) => client.invoke('app_capture_pause', input),
         captureResume: (input) => client.invoke('app_capture_resume', input),
         permissionsManage: (input) => client.invoke('app_permissions_manage', input),
@@ -813,6 +814,7 @@ function ensureRuntimeDeps() {
           'github.sync': api.githubSync,
           'linear.sync': api.linearSync,
           'drive.sync': api.driveSync,
+          'zoom.sync': api.zoomSync,
           'capture.pause': api.capturePause,
           'capture.resume': api.captureResume,
           'permissions.manage': api.permissionsManage,
@@ -1209,7 +1211,7 @@ function App() {
   // Prompt the user to import historical data the first time they connect
   // Gmail or Google Calendar. Choice is persisted so we don't re-ask.
   useEffect(() => {
-    const HISTORICAL_PROVIDERS = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear']);
+    const HISTORICAL_PROVIDERS = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear', 'zoom']);
     const onCred = async (ev) => {
       const detail = (ev && ev.detail) || {};
       const provider = String(detail.provider || '').trim();
@@ -1494,7 +1496,7 @@ function App() {
       createNewChat: () => createNewChat(),
       openHistoricalImport: (provider, defaultDays) => {
         const p = String(provider || '').trim();
-        const allowed = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear']);
+        const allowed = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear', 'zoom']);
         if (!allowed.has(p)) return false;
         const d = Number.isFinite(Number(defaultDays)) ? Number(defaultDays) : 30;
         setHistoricalImport({ provider: p, days: d });
@@ -1502,7 +1504,7 @@ function App() {
       },
       openPasteToken: (provider) => {
         const p = String(provider || '').trim();
-        const allowed = new Set(['slack', 'notion', 'github', 'linear']);
+        const allowed = new Set(['slack', 'notion', 'github', 'linear', 'zoom']);
         if (!allowed.has(p)) return false;
         setPasteTokenModal({ provider: p, token: '', busy: false });
         return true;
@@ -3293,7 +3295,9 @@ function App() {
                         ? 'Import past Linear issues'
                         : historicalImport.provider === 'google_drive'
                           ? 'Import past Drive files'
-                          : 'Import past Calendar events'}
+                          : historicalImport.provider === 'zoom'
+                            ? 'Import past Zoom recordings'
+                            : 'Import past Calendar events'}
             </div>
             <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.5, marginBottom:16}}>
               How far back should SHOGUN pull history into Memory? You can change this later in Settings. Up to 1 year.
@@ -3376,6 +3380,7 @@ function App() {
                     notion: 'Notion',
                     github: 'GitHub',
                     linear: 'Linear',
+                    zoom: 'Zoom',
                   };
                   const actionKeys = {
                     gmail: 'gmail.sync',
@@ -3385,6 +3390,7 @@ function App() {
                     notion: 'notion.sync',
                     github: 'github.sync',
                     linear: 'linear.sync',
+                    zoom: 'zoom.sync',
                   };
                   const label = providerLabels[provider] || provider;
                   const actionKey = actionKeys[provider] || `${provider}.sync`;
@@ -3469,7 +3475,9 @@ function App() {
                   ? 'Connect Notion'
                   : pasteTokenModal.provider === 'linear'
                     ? 'Connect Linear'
-                    : 'Connect GitHub'}
+                    : pasteTokenModal.provider === 'zoom'
+                      ? 'Connect Zoom'
+                      : 'Connect GitHub'}
             </div>
             <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.55, marginBottom:14}}>
               {pasteTokenModal.provider === 'slack' ? (
@@ -3478,6 +3486,8 @@ function App() {
                 <>Paste a Notion <em>Internal Integration Token</em> (<code>ntn_…</code> / <code>secret_…</code>). Share each page/database with the integration from Notion.</>
               ) : pasteTokenModal.provider === 'linear' ? (
                 <>Paste a Linear <em>Personal API Key</em> (starts with <code>lin_api_…</code>) from Linear → Settings → API, or a Linear OAuth access token.</>
+              ) : pasteTokenModal.provider === 'zoom' ? (
+                <>Paste a Zoom OAuth access token. Required scope: <code>cloud_recording:read</code> (User OAuth) or the Server-to-Server equivalent. Only cloud-recorded meetings are accessible.</>
               ) : (
                 <>Paste a GitHub Personal Access Token. Recommended scopes: <code>repo</code>, <code>read:user</code>. Fine-grained PATs work too with read permissions on your repos.</>
               )}

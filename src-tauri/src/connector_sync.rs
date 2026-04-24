@@ -7,7 +7,7 @@
 //! `settings.sections.integrations.*AutoSync` / `*SyncIntervalMins`.
 
 use crate::{
-  github, gmail, google_drive, integration_secrets, linear, notion, settings_store, slack,
+  github, gmail, google_drive, integration_secrets, linear, notion, settings_store, slack, zoom,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -19,13 +19,14 @@ struct ProviderState {
   last_sync_ms: Option<u64>,
 }
 
-static STATES: Mutex<[ProviderState; 6]> = Mutex::new([
+static STATES: Mutex<[ProviderState; 7]> = Mutex::new([
   ProviderState { last_sync_ms: None }, // gmail
   ProviderState { last_sync_ms: None }, // slack
   ProviderState { last_sync_ms: None }, // notion
   ProviderState { last_sync_ms: None }, // github
   ProviderState { last_sync_ms: None }, // linear
   ProviderState { last_sync_ms: None }, // google_drive
+  ProviderState { last_sync_ms: None }, // zoom
 ]);
 
 const IDX_GMAIL: usize = 0;
@@ -34,6 +35,7 @@ const IDX_NOTION: usize = 2;
 const IDX_GITHUB: usize = 3;
 const IDX_LINEAR: usize = 4;
 const IDX_DRIVE: usize = 5;
+const IDX_ZOOM: usize = 6;
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -105,6 +107,7 @@ fn provider_key_camel(provider: &str) -> &'static str {
     // `google_driveAutoSync` / `google_driveSyncIntervalMins` which is
     // intentionally consistent with how the frontend writes the flags.
     "google_drive" => "google_drive",
+    "zoom" => "zoom",
     _ => "unknown",
   }
 }
@@ -295,6 +298,39 @@ async fn tick_drive(doc: &Value) {
   }
 }
 
+async fn tick_zoom(doc: &Value) {
+  // Default to a long interval — each tick can transcribe many hours of
+  // audio through Deepgram, so we don't want to hammer it every hour.
+  let (enabled, mins, decided, window) = provider_settings(doc, "zoom", 360);
+  if !enabled || !decided {
+    return;
+  }
+  if integration_secrets::get_credentials("zoom")
+    .ok()
+    .flatten()
+    .is_none()
+  {
+    return;
+  }
+  let now = now_ms();
+  let period_ms = mins.saturating_mul(60_000);
+  let due = last_sync_ms(IDX_ZOOM)
+    .map(|t| now.saturating_sub(t) >= period_ms)
+    .unwrap_or(true);
+  if !due {
+    return;
+  }
+  let days = if window == 0 { Some(1) } else { Some(window) };
+  match zoom::sync_recordings_to_memory(days, 10).await {
+    Ok(out) => {
+      let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+      log::info!("zoom auto-sync: ingested {} meeting(s)", n);
+      record_sync_ms(IDX_ZOOM, now_ms());
+    }
+    Err(e) => log::warn!("zoom auto-sync failed: {}", e),
+  }
+}
+
 /// Starts a single background loop that polls each connector in turn. The
 /// outer sleep is 60s; each provider self-gates on its own interval so the
 /// cadence stays correct.
@@ -310,6 +346,7 @@ pub fn spawn_background_connector_sync() {
       tick_github(&doc).await;
       tick_linear(&doc).await;
       tick_drive(&doc).await;
+      tick_zoom(&doc).await;
       tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
   });

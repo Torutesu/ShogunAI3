@@ -512,6 +512,7 @@ function ScreenIntegrations() {
   const [githubCred, setGithubCred] = React.useState(false);
   const [linearCred, setLinearCred] = React.useState(false);
   const [driveCred, setDriveCred] = React.useState(false);
+  const [zoomCred, setZoomCred] = React.useState(false);
   const [calHistDays, setCalHistDays] = React.useState(null);
   const [gmailHistDays, setGmailHistDays] = React.useState(null);
   const [slackHistDays, setSlackHistDays] = React.useState(null);
@@ -519,6 +520,7 @@ function ScreenIntegrations() {
   const [githubHistDays, setGithubHistDays] = React.useState(null);
   const [linearHistDays, setLinearHistDays] = React.useState(null);
   const [driveHistDays, setDriveHistDays] = React.useState(null);
+  const [zoomHistDays, setZoomHistDays] = React.useState(null);
   // Per-provider auto-sync toggle. Backend reads
   // `sections.integrations.<provider>AutoSync`.
   const [autoSync, setAutoSync] = React.useState({
@@ -528,6 +530,7 @@ function ScreenIntegrations() {
     github: false,
     linear: false,
     google_drive: false,
+    zoom: false,
   });
   const [tools, setTools] = React.useState(() => {
     const C = typeof window !== 'undefined' ? window.ShogunIntegrationConnectors : null;
@@ -614,6 +617,14 @@ function ScreenIntegrations() {
       return res;
     });
   }, []);
+  const refreshZoomStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'zoom' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setZoomCred(!!res.data.configured);
+      }
+      return res;
+    });
+  }, []);
   const refreshHistSettings = React.useCallback(() => {
     return runRuntimeAction('settings.load', {}, { silentError:true }).then((res) => {
       const sec = res && res.ok && res.data && res.data.settings && res.data.settings.sections;
@@ -625,6 +636,7 @@ function ScreenIntegrations() {
         const gh = sec.github && typeof sec.github === 'object' ? sec.github.historicalSyncDays : null;
         const li = sec.linear && typeof sec.linear === 'object' ? sec.linear.historicalSyncDays : null;
         const dr = sec.google_drive && typeof sec.google_drive === 'object' ? sec.google_drive.historicalSyncDays : null;
+        const zm = sec.zoom && typeof sec.zoom === 'object' ? sec.zoom.historicalSyncDays : null;
         setGmailHistDays(Number.isFinite(Number(g)) ? Number(g) : null);
         setCalHistDays(Number.isFinite(Number(c)) ? Number(c) : null);
         setSlackHistDays(Number.isFinite(Number(s)) ? Number(s) : null);
@@ -632,6 +644,7 @@ function ScreenIntegrations() {
         setGithubHistDays(Number.isFinite(Number(gh)) ? Number(gh) : null);
         setLinearHistDays(Number.isFinite(Number(li)) ? Number(li) : null);
         setDriveHistDays(Number.isFinite(Number(dr)) ? Number(dr) : null);
+        setZoomHistDays(Number.isFinite(Number(zm)) ? Number(zm) : null);
         const integ = sec.integrations && typeof sec.integrations === 'object' ? sec.integrations : {};
         setAutoSync({
           gmail: !!integ.gmailAutoSync,
@@ -640,6 +653,7 @@ function ScreenIntegrations() {
           github: !!integ.githubAutoSync,
           linear: !!integ.linearAutoSync,
           google_drive: !!integ.google_driveAutoSync,
+          zoom: !!integ.zoomAutoSync,
         });
       }
       return res;
@@ -653,8 +667,9 @@ function ScreenIntegrations() {
     refreshGithubStatus();
     refreshLinearStatus();
     refreshDriveStatus();
+    refreshZoomStatus();
     refreshHistSettings();
-  }, [refreshCalStatus, refreshGmailStatus, refreshSlackStatus, refreshNotionStatus, refreshGithubStatus, refreshLinearStatus, refreshDriveStatus, refreshHistSettings]);
+  }, [refreshCalStatus, refreshGmailStatus, refreshSlackStatus, refreshNotionStatus, refreshGithubStatus, refreshLinearStatus, refreshDriveStatus, refreshZoomStatus, refreshHistSettings]);
   React.useEffect(() => {
     const onCred = () => {
       void refreshCalStatus();
@@ -664,6 +679,7 @@ function ScreenIntegrations() {
       void refreshGithubStatus();
       void refreshLinearStatus();
       void refreshDriveStatus();
+      void refreshZoomStatus();
       void refreshHistSettings();
       const C = window.ShogunIntegrationConnectors;
       if (C && typeof C.hydrateTools === 'function') {
@@ -672,7 +688,7 @@ function ScreenIntegrations() {
     };
     window.addEventListener('shogun-credentials-updated', onCred);
     return () => window.removeEventListener('shogun-credentials-updated', onCred);
-  }, [refreshCalStatus, refreshGmailStatus, refreshSlackStatus, refreshNotionStatus, refreshGithubStatus, refreshLinearStatus, refreshDriveStatus, refreshHistSettings]);
+  }, [refreshCalStatus, refreshGmailStatus, refreshSlackStatus, refreshNotionStatus, refreshGithubStatus, refreshLinearStatus, refreshDriveStatus, refreshZoomStatus, refreshHistSettings]);
   const nConnected = tools.filter((t) => t.connected).length;
 
   return (
@@ -1062,6 +1078,58 @@ function ScreenIntegrations() {
               OAuth token needed: import via app_integration_import_credentials (provider: google_drive, scope: drive.readonly)
             </span>
           )}
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginTop:10}}>
+          <span style={{fontSize:13, minWidth:120}}>Zoom</span>
+          {zoomCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {zoomHistDays != null && zoomHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {zoomHistDays}d</span>
+          ) : zoomHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {!zoomCred && (
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={() => {
+                const rt = window.SHOGUN_RUNTIME;
+                if (rt && typeof rt.openPasteToken === 'function') {
+                  rt.openPasteToken('zoom');
+                }
+              }}
+            >
+              Paste token…
+            </button>
+          )}
+          {zoomCred && zoomHistDays != null && zoomHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.zoom}
+                onChange={(e) => { void toggleAutoSync('zoom', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!zoomCred}
+            style={!zoomCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('zoom', zoomHistDays && zoomHistDays > 0 ? zoomHistDays : 30);
+              }
+            }}
+          >
+            {zoomHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
         </div>
       </div>
     </div>

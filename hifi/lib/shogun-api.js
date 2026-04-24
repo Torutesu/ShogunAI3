@@ -76,6 +76,7 @@
       githubSync: (input) => call("shogun_github_sync", input, WRITE, { timeoutMs: 900000 }),
       linearSync: (input) => call("shogun_linear_sync", input, WRITE, { timeoutMs: 900000 }),
       driveSync: (input) => call("shogun_drive_sync", input, WRITE, { timeoutMs: 900000 }),
+      zoomSync: (input) => call("shogun_zoom_sync", input, WRITE, { timeoutMs: 900000 }),
       capturePause: (input) => call("app_capture_pause", input, WRITE),
       captureResume: (input) => call("app_capture_resume", input, WRITE),
       permissionsManage: (input) => call("app_permissions_manage", input, WRITE),
