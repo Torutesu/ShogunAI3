@@ -1336,19 +1336,72 @@ function ScreenHome() {
             );
           })()}
 
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            style={{ alignSelf: 'flex-start', fontSize: 11 }}
-            onClick={() => {
-              window.dispatchEvent(new Event('shogun-jump-memory-timeline'));
-              window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
-            }}
-          >
-            <span className="en-only">Open Memory</span>
-            <span className="jp">メモリを開く</span>
-            <Icon name="arrowRight" size={12} />
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignSelf: 'stretch', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11 }}
+              onClick={() => {
+                window.dispatchEvent(new Event('shogun-jump-memory-timeline'));
+                window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
+              }}
+            >
+              <span className="en-only">Open Memory</span>
+              <span className="jp">メモリを開く</span>
+              <Icon name="arrowRight" size={12} />
+            </button>
+            <span className="spacer" />
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11 }}
+              title="Copy this digest as Markdown (for weekly status notes, journals, etc.)"
+              onClick={async () => {
+                const md = (() => {
+                  // Build a Markdown representation of the current digest.
+                  const lines = [];
+                  const day = memoryDigest && memoryDigest.day_rollup;
+                  const week = memoryDigest && memoryDigest.week_rollup;
+                  const highlights = (memoryDigest && memoryDigest.highlights) || [];
+                  if (day) {
+                    lines.push(`## Today — ${day.title || ''}`.trim());
+                    (day.keyPoints || []).forEach((k) => lines.push(`- ${k}`));
+                    lines.push('');
+                  }
+                  if (week) {
+                    lines.push(`## This week — ${week.title || ''}`.trim());
+                    (week.keyPoints || []).forEach((k) => lines.push(`- ${k}`));
+                    lines.push('');
+                  }
+                  const unread = highlights.filter((h) => !h.acknowledgedAt);
+                  if (unread.length > 0) {
+                    lines.push('## Needs attention');
+                    unread.slice(0, 8).forEach((h) => {
+                      const tag = (h.userPriority || h.priority || '').toUpperCase();
+                      lines.push(`- **[${tag}] ${h.title}**${h.keyPoints && h.keyPoints[0] ? ` — ${h.keyPoints[0]}` : ''}`);
+                    });
+                    lines.push('');
+                  }
+                  if (lines.length === 0) lines.push('_(empty digest)_');
+                  return lines.join('\n').trimEnd() + '\n';
+                })();
+                try {
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(md);
+                    window.SHOGUN_RUNTIME?.pushToast?.('Digest copied as Markdown', 'success');
+                  } else {
+                    window.SHOGUN_RUNTIME?.pushToast?.('Clipboard unavailable', 'warn');
+                  }
+                } catch (_) {
+                  window.SHOGUN_RUNTIME?.pushToast?.('Copy failed', 'error');
+                }
+              }}
+            >
+              <Icon name="file" size={12} />
+              <span className="en-only">Copy as Markdown</span>
+              <span className="jp">Markdown でコピー</span>
+            </button>
+          </div>
         </div>
       )}
 
