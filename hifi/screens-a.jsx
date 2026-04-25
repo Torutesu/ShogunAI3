@@ -500,7 +500,7 @@ function ScreenHome() {
             ? inner.memory_digest.highlights
             : [];
           const highCount = highlights.filter(
-            (h) => (h.userPriority || h.priority) === 'high',
+            (h) => (h.userPriority || h.priority) === 'high' && !h.acknowledgedAt,
           ).length;
           window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: highCount } }));
         } catch (_) { /* ignore */ }
@@ -1279,26 +1279,62 @@ function ScreenHome() {
             </div>
           )}
 
-          {Array.isArray(memoryDigest.highlights) && memoryDigest.highlights.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
-                <span className="en-only">NEEDS ATTENTION</span>
-                <span className="jp">要確認</span>
-              </div>
-              {memoryDigest.highlights.slice(0, 5).map((h) => (
-                <div key={h.targetId} style={{
-                  borderLeft: h.priority === 'high' ? '2px solid var(--gold)' : '2px solid var(--border)',
-                  paddingLeft: 12,
-                  display: 'flex', flexDirection: 'column', gap: 3,
-                }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35, wordBreak: 'break-word' }}>{h.title}</div>
-                  {Array.isArray(h.keyPoints) && h.keyPoints[0] && (
-                    <div style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{h.keyPoints[0]}</div>
-                  )}
+          {(() => {
+            // Hide items the user already marked as read — they've been dealt with.
+            const unreadHighlights = Array.isArray(memoryDigest.highlights)
+              ? memoryDigest.highlights.filter((h) => !h.acknowledgedAt)
+              : [];
+            if (unreadHighlights.length === 0) return null;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
+                    <span className="en-only">NEEDS ATTENTION</span>
+                    <span className="jp">要確認</span>
+                  </div>
+                  <span className="spacer" />
+                  <button
+                    type="button"
+                    style={{
+                      padding: '2px 0', border: 'none', background: 'transparent',
+                      color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer',
+                      fontFamily: 'inherit', textDecoration: 'underline',
+                    }}
+                    title="Mark all shown items as read"
+                    onClick={async () => {
+                      const items = unreadHighlights.map((h) => ({
+                        targetId: h.targetId, targetKind: h.targetKind || 'item',
+                      }));
+                      if (items.length === 0) return;
+                      // Optimistic UI: clear local badge + highlights immediately.
+                      setMemoryDigest((prev) => prev ? {
+                        ...prev,
+                        highlights: (prev.highlights || []).map((h) => ({
+                          ...h, acknowledgedAt: h.acknowledgedAt || Date.now(),
+                        })),
+                      } : prev);
+                      window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: 0 } }));
+                      await runRuntimeActionA('memory.summary.acknowledge', {
+                        items, acknowledged: true,
+                      }, { silentError: true });
+                    }}
+                  >Mark all read</button>
                 </div>
-              ))}
-            </div>
-          )}
+                {unreadHighlights.slice(0, 5).map((h) => (
+                  <div key={h.targetId} style={{
+                    borderLeft: (h.userPriority || h.priority) === 'high' ? '2px solid var(--gold)' : '2px solid var(--border)',
+                    paddingLeft: 12,
+                    display: 'flex', flexDirection: 'column', gap: 3,
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35, wordBreak: 'break-word' }}>{h.title}</div>
+                    {Array.isArray(h.keyPoints) && h.keyPoints[0] && (
+                      <div style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{h.keyPoints[0]}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           <button
             type="button"

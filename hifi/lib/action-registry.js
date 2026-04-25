@@ -67,6 +67,7 @@
     register("memory.rollup.get", (payload) => api.memoryRollupGet(payload));
     register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
     register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));
+    register("memory.summary.acknowledge", (payload) => api.memorySummaryAcknowledge(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));

@@ -224,6 +224,7 @@ pub fn heuristic_fallback(item: &Value, source_type: &str, lang: &str) -> Summar
     raw_json: json!({"fallback": true}).to_string(),
     lang: lang.to_string(),
     user_priority: None,
+    acknowledged_at: None,
   }
 }
 
@@ -244,6 +245,7 @@ pub fn summary_from_guess(item: &Value, source_type: &str, guess: &PriorityGuess
     raw_json: json!({"prefilter": true, "reason": guess.reason}).to_string(),
     lang: lang.to_string(),
     user_priority: None,
+    acknowledged_at: None,
   }
 }
 
@@ -363,6 +365,7 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value,
     raw_json: serde_json::to_string(input).unwrap_or_default(),
     lang: lang.to_string(),
     user_priority: None,
+    acknowledged_at: None,
   })
 }
 
@@ -547,6 +550,7 @@ async fn summarize_rollup(
       raw_json: json!({"rollup": "empty", "kind": kind.target_kind()}).to_string(),
       lang: lang.to_string(),
     user_priority: None,
+    acknowledged_at: None,
     });
   }
 
@@ -653,6 +657,7 @@ fn build_rollup_from_tool_input(id: &str, kind: RollupKind, input: &Value, lang:
     raw_json: serde_json::to_string(input).unwrap_or_default(),
     lang: lang.to_string(),
     user_priority: None,
+    acknowledged_at: None,
   })
 }
 
@@ -690,6 +695,7 @@ fn rollup_heuristic_fallback(id: &str, items: &[Summary], kind: RollupKind, lang
     raw_json: json!({"rollup": "heuristic", "items": items.len()}).to_string(),
     lang: lang.to_string(),
     user_priority: None,
+    acknowledged_at: None,
   }
 }
 

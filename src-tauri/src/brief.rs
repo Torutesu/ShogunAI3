@@ -32,6 +32,7 @@ pub fn build_memory_digest(lang: &str) -> Value {
     .take(8)
     .map(|s| json!({
       "targetId": s.target_id,
+      "targetKind": s.target_kind,
       "title": s.title,
       "keyPoints": s.key_points,
       "priority": s.priority,
@@ -39,6 +40,7 @@ pub fn build_memory_digest(lang: &str) -> Value {
       "reason": s.reason,
       "sourceType": s.source_type,
       "generatedAt": s.generated_at,
+      "acknowledgedAt": s.acknowledged_at,
     }))
     .collect();
 

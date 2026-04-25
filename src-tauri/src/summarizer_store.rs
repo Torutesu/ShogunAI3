@@ -23,6 +23,7 @@ pub struct Summary {
   pub raw_json: String,
   pub lang: String,                // 'en' | 'jp' | 'bi' — matches tweaks.language at generation time
   pub user_priority: Option<String>, // Manual override from the user. None = no override.
+  pub acknowledged_at: Option<i64>,  // When the user marked this summary as read. None = unread.
 }
 
 impl Summary {
@@ -41,6 +42,7 @@ impl Summary {
       "generatedAt": self.generated_at,
       "lang": self.lang,
       "userPriority": self.user_priority,
+      "acknowledgedAt": self.acknowledged_at,
     })
   }
 }
@@ -52,7 +54,7 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
   let conn = open_conn()?;
   let row = conn.query_row(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang, user_priority
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at
      FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
     params![target_kind, target_id],
     |r| {
@@ -72,6 +74,7 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
         raw_json: r.get(10)?,
         lang: r.get(11)?,
         user_priority: r.get(12)?,
+        acknowledged_at: r.get(13)?,
       })
     },
   );
@@ -91,7 +94,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
   let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i + 1)).collect();
   let sql = format!(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang, user_priority
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at
      FROM mem_summaries
      WHERE target_kind = ?1 AND target_id IN ({}) AND lang = ?{}",
     placeholders.join(","),
@@ -121,6 +124,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
       raw_json: r.get(10)?,
       lang: r.get(11)?,
       user_priority: r.get(12)?,
+      acknowledged_at: r.get(13)?,
     })
   }).map_err(|e| format!("query: {}", e))?;
 
@@ -141,7 +145,7 @@ pub fn get_summaries_in_window(
   let conn = open_conn()?;
   let mut stmt = conn.prepare(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang, user_priority
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at
      FROM mem_summaries
      WHERE target_kind = 'item'
        AND lang = ?1
@@ -168,6 +172,7 @@ pub fn get_summaries_in_window(
       raw_json: r.get(10)?,
       lang: r.get(11)?,
       user_priority: r.get(12)?,
+      acknowledged_at: r.get(13)?,
     })
   }).map_err(|e| format!("query window: {}", e))?;
   let mut out = Vec::new();
@@ -203,6 +208,44 @@ pub fn upsert(s: &Summary) -> Result<(), String> {
     ],
   ).map_err(|e| format!("mem_summaries upsert: {}", e))?;
   Ok(())
+}
+
+/// Mark the summary as read (ack = now_ms) or unread (ack = None).
+/// Returns true if a row was updated.
+pub fn set_acknowledged(
+  target_kind: &str,
+  target_id: &str,
+  acknowledged_ms: Option<i64>,
+) -> Result<bool, String> {
+  let conn = open_conn()?;
+  let n = conn.execute(
+    "UPDATE mem_summaries SET acknowledged_at = ?3 WHERE target_kind = ?1 AND target_id = ?2",
+    params![target_kind, target_id, acknowledged_ms],
+  ).map_err(|e| format!("mem_summaries set_acknowledged: {}", e))?;
+  Ok(n > 0)
+}
+
+/// Bulk mark as read for a set of (target_kind, target_id) pairs, all at once.
+pub fn acknowledge_many(pairs: &[(&str, &str)], acknowledged_ms: i64) -> Result<u64, String> {
+  if pairs.is_empty() {
+    return Ok(0);
+  }
+  let mut conn = open_conn()?;
+  let tx = conn.transaction().map_err(|e| format!("acknowledge_many tx: {}", e))?;
+  let mut total: u64 = 0;
+  {
+    let mut stmt = tx.prepare(
+      "UPDATE mem_summaries SET acknowledged_at = ?3 WHERE target_kind = ?1 AND target_id = ?2"
+    ).map_err(|e| format!("acknowledge_many prepare: {}", e))?;
+    for (kind, id) in pairs {
+      let n = stmt
+        .execute(params![kind, id, acknowledged_ms])
+        .map_err(|e| format!("acknowledge_many exec: {}", e))?;
+      total += n as u64;
+    }
+  }
+  tx.commit().map_err(|e| format!("acknowledge_many commit: {}", e))?;
+  Ok(total)
 }
 
 /// Set or clear the user's manual priority override on an existing summary.
@@ -254,6 +297,7 @@ mod tests {
       raw_json: "{\"x\":1}".into(),
       lang: "en".into(),
       user_priority: None,
+      acknowledged_at: None,
     }
   }
 

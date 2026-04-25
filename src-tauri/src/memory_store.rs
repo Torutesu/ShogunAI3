@@ -443,6 +443,21 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
       [],
     ).map_err(|e| format!("mem_summaries add user_priority: {}", e))?;
   }
+  // Migration: acknowledged_at (ms) for "mark as read" UX. NULL = unread.
+  // Reset to NULL when the summary is invalidated/regenerated so a refreshed
+  // HIGH item resurfaces in the unread badge.
+  let has_acknowledged_at = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'acknowledged_at'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_acknowledged_at == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN acknowledged_at INTEGER",
+      [],
+    ).map_err(|e| format!("mem_summaries add acknowledged_at: {}", e))?;
+  }
+
 
 
   // Partial UNIQUE index to dedupe historical-sync ingestion keyed by
