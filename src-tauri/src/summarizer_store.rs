@@ -210,6 +210,56 @@ pub fn upsert(s: &Summary) -> Result<(), String> {
   Ok(())
 }
 
+/// Fetch item-level summaries for a single entity (joins mem_summaries
+/// against mem_items by id). Used by the entity-rollup generator.
+/// Sorted HIGH → MED → LOW, then by recency. Caps at `limit` rows.
+pub fn get_summaries_for_entity(
+  entity_id: &str,
+  want_lang: &str,
+  limit: usize,
+) -> Result<Vec<Summary>, String> {
+  let conn = open_conn()?;
+  let mut stmt = conn.prepare(
+    "SELECT s.target_kind, s.target_id, s.title, s.key_points, s.source_type, s.priority,
+            s.reason, s.model, s.schema_version, s.generated_at, s.raw_json, s.lang,
+            s.user_priority, s.acknowledged_at
+     FROM mem_summaries s
+     INNER JOIN mem_items i ON i.id = s.target_id
+     WHERE s.target_kind = 'item'
+       AND s.lang = ?1
+       AND i.entity_id = ?2
+     ORDER BY
+       CASE s.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+       s.generated_at DESC
+     LIMIT ?3"
+  ).map_err(|e| format!("prepare entity: {}", e))?;
+  let rows = stmt.query_map(params![want_lang, entity_id, limit as i64], |r| {
+    let kp_json: String = r.get(3)?;
+    let key_points: Vec<String> = serde_json::from_str(&kp_json).unwrap_or_default();
+    Ok(Summary {
+      target_kind: r.get(0)?,
+      target_id: r.get(1)?,
+      title: r.get(2)?,
+      key_points,
+      source_type: r.get(4)?,
+      priority: r.get(5)?,
+      reason: r.get(6)?,
+      model: r.get(7)?,
+      schema_version: r.get(8)?,
+      generated_at: r.get(9)?,
+      raw_json: r.get(10)?,
+      lang: r.get(11)?,
+      user_priority: r.get(12)?,
+      acknowledged_at: r.get(13)?,
+    })
+  }).map_err(|e| format!("query entity: {}", e))?;
+  let mut out = Vec::new();
+  for row in rows {
+    out.push(row.map_err(|e| format!("row: {}", e))?);
+  }
+  Ok(out)
+}
+
 /// Mark the summary as read (ack = now_ms) or unread (ack = None).
 /// Returns true if a row was updated.
 pub fn set_acknowledged(

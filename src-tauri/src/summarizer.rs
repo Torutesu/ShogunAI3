@@ -369,6 +369,170 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value,
   })
 }
 
+// ---- Phase 3: entity rollup ----------------------------------------------
+
+fn entity_rollup_system_prompt(lang: &str) -> String {
+  let base = r#"You are creating an ENTITY ROLLUP digest of a user's memory — one synthesized story summarizing recent activity related to a single person, project, or topic. The user wants to scan this and answer "what's the state of things with X."
+
+Rules:
+- Always emit via the emit_memory_summary tool. Never respond with plain text.
+- title: <= 80 chars. The entity's name + a short qualifier (e.g. "Alex — recent threads", "Project Aurora — Q2 status"). The entity name is given in the user message as `Entity:`.
+- key_points: 3-6 bullets (<= 140 chars each). Synthesize across the items: outstanding action items / replies awaited, key decisions made, deadlines coming up, themes / project state. Use chronological ordering only when meaningful — group by theme otherwise. Skip routine notifications.
+- priority: always "medium" for entity rollups (they're ambient context, not individually actionable).
+- reason: one short sentence on what makes this entity notable right now.
+- source_type: always "entity_rollup"."#;
+
+  let lang_directive = match lang {
+    "jp" => "\n- OUTPUT LANGUAGE: Japanese.",
+    "bi" => "\n- OUTPUT LANGUAGE: Match the dominant language of the source items.",
+    _ => "\n- OUTPUT LANGUAGE: English.",
+  };
+  format!("{}{}", base, lang_directive)
+}
+
+/// Generate (or regenerate) an entity rollup. target_id = entity_id directly,
+/// target_kind = "entity_rollup". Empty entities get a "Quiet" summary
+/// without an LLM call.
+pub async fn summarize_entity_rollup(
+  entity_id: &str,
+  entity_label: &str,
+  lang: &str,
+) -> Result<Summary, String> {
+  let items = crate::summarizer_store::get_summaries_for_entity(entity_id, lang, 40)?;
+
+  if items.is_empty() {
+    return Ok(Summary {
+      target_kind: "entity_rollup".into(),
+      target_id: entity_id.to_string(),
+      title: loc(
+        lang,
+        &format!("{} — no recent activity", entity_label),
+        &format!("{}: 最近の動きなし", entity_label),
+      ),
+      key_points: vec![loc(
+        lang,
+        "No indexed items linked to this entity.",
+        "このエンティティに紐づくアイテムなし",
+      )],
+      source_type: "entity_rollup".into(),
+      priority: "low".into(),
+      reason: Some(loc(lang, "Empty entity window", "対象アイテムなし")),
+      model: "heuristic".into(),
+      schema_version: SCHEMA_VERSION,
+      generated_at: crate::memory_store::now_ms() as i64,
+      raw_json: json!({"entity_rollup": "empty", "entity_id": entity_id}).to_string(),
+      lang: lang.to_string(),
+      user_priority: None,
+      acknowledged_at: None,
+    });
+  }
+
+  // Render context: entity name + items list (priority + source + title + first key point).
+  let mut user_content = format!(
+    "Entity: {}\nEntity ID: {}\n\nRecent items linked to this entity (sorted by priority):\n",
+    entity_label, entity_id
+  );
+  for (idx, s) in items.iter().enumerate() {
+    user_content.push_str(&format!(
+      "\n[{}] [{}] {} — {}\n  · {}\n",
+      idx + 1,
+      s.priority.to_uppercase(),
+      s.source_type,
+      s.title,
+      s.key_points.join("; "),
+    ));
+  }
+
+  let tool = emit_memory_summary_tool();
+  let system = entity_rollup_system_prompt(lang);
+
+  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
+    Ok(tool_input) => {
+      let title = tool_input
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or(entity_label)
+        .to_string();
+      let key_points: Vec<String> = tool_input
+        .get("key_points")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+      if key_points.is_empty() {
+        return Ok(entity_heuristic_fallback(entity_id, entity_label, &items, lang));
+      }
+      let reason = tool_input.get("reason").and_then(|v| v.as_str()).map(String::from);
+      Ok(Summary {
+        target_kind: "entity_rollup".into(),
+        target_id: entity_id.to_string(),
+        title,
+        key_points,
+        source_type: "entity_rollup".into(),
+        priority: "medium".into(),
+        reason,
+        model: SUMMARIZER_MODEL.to_string(),
+        schema_version: SCHEMA_VERSION,
+        generated_at: crate::memory_store::now_ms() as i64,
+        raw_json: serde_json::to_string(&tool_input).unwrap_or_default(),
+        lang: lang.to_string(),
+        user_priority: None,
+        acknowledged_at: None,
+      })
+    }
+    Err(e) => {
+      log::warn!("entity rollup LLM error for {}: {}", entity_id, e);
+      Ok(entity_heuristic_fallback(entity_id, entity_label, &items, lang))
+    }
+  }
+}
+
+fn entity_heuristic_fallback(
+  entity_id: &str,
+  entity_label: &str,
+  items: &[Summary],
+  lang: &str,
+) -> Summary {
+  let high_count = items.iter().filter(|s| s.priority == "high").count();
+  let med_count = items.iter().filter(|s| s.priority == "medium").count();
+  let total = items.len();
+
+  let summary_line = match lang {
+    "jp" => format!(
+      "{} 件 (要対応 {} / 注目 {})",
+      total, high_count, med_count
+    ),
+    _ => format!(
+      "{} item(s) indexed (HIGH {}, MED {})",
+      total, high_count, med_count
+    ),
+  };
+  let mut key_points = vec![summary_line];
+  for s in items.iter().take(3) {
+    key_points.push(format!("· {}", s.title));
+  }
+
+  Summary {
+    target_kind: "entity_rollup".into(),
+    target_id: entity_id.to_string(),
+    title: loc(
+      lang,
+      &format!("{} — recent activity", entity_label),
+      &format!("{}: 最近の動き", entity_label),
+    ),
+    key_points,
+    source_type: "entity_rollup".into(),
+    priority: "medium".into(),
+    reason: Some(loc(lang, "LLM unavailable — heuristic rollup", "LLM 不使用 / 集計のみ")),
+    model: "heuristic".into(),
+    schema_version: SCHEMA_VERSION,
+    generated_at: crate::memory_store::now_ms() as i64,
+    raw_json: json!({"entity_rollup": "heuristic", "items": items.len()}).to_string(),
+    lang: lang.to_string(),
+    user_priority: None,
+    acknowledged_at: None,
+  }
+}
+
 // ---- Phase 3: meeting auto-summary ----------------------------------------
 
 /// Build a synthetic item Value from a stored meeting's detail / transcript /
