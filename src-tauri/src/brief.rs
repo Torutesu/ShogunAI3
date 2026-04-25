@@ -8,6 +8,21 @@ use crate::summarizer_store;
 use chrono::{Datelike, NaiveDate, SecondsFormat, TimeZone, Utc};
 use serde_json::{json, Value};
 
+/// Read mem_items.entity_id for a single id without imposing a full row read.
+/// Returns None if the row doesn't exist or has NULL/empty entity_id.
+fn lookup_item_entity_id(target_id: &str) -> Option<String> {
+  let conn = memory_store::open_conn().ok()?;
+  conn
+    .query_row(
+      "SELECT entity_id FROM mem_items WHERE id = ?1",
+      [target_id],
+      |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .filter(|s| !s.is_empty())
+}
+
 /// Build a memory-backed digest for the brief: top HIGH/MED item summaries
 /// from the last 7 days + the current week's rollup (if cached).
 ///
@@ -30,18 +45,24 @@ pub fn build_memory_digest(lang: &str) -> Value {
       p == "high" || p == "medium"
     })
     .take(8)
-    .map(|s| json!({
-      "targetId": s.target_id,
-      "targetKind": s.target_kind,
-      "title": s.title,
-      "keyPoints": s.key_points,
-      "priority": s.priority,
-      "userPriority": s.user_priority,
-      "reason": s.reason,
-      "sourceType": s.source_type,
-      "generatedAt": s.generated_at,
-      "acknowledgedAt": s.acknowledged_at,
-    }))
+    .map(|s| {
+      // Look up the underlying mem_item to surface its entity_id (if any)
+      // so the UI can offer a "Related" view via the entity rollup.
+      let entity_id = lookup_item_entity_id(&s.target_id);
+      json!({
+        "targetId": s.target_id,
+        "targetKind": s.target_kind,
+        "title": s.title,
+        "keyPoints": s.key_points,
+        "priority": s.priority,
+        "userPriority": s.user_priority,
+        "reason": s.reason,
+        "sourceType": s.source_type,
+        "generatedAt": s.generated_at,
+        "acknowledgedAt": s.acknowledged_at,
+        "entityId": entity_id,
+      })
+    })
     .collect();
 
   // Current week's Monday 00:00 UTC, matching the id format used by rollup
