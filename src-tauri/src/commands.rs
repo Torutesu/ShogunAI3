@@ -1,9 +1,9 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
 use crate::{
-  auth, biometric, brief, brief_actions, embed_backfill, github, gmail, google_calendar,
-  google_drive, integration_secrets, integrations, linear, llm, macos_ax, memory_store, notion,
-  secrets, settings_store, slack, zoom,
+  auth, biometric, brief, brief_actions, dead_letter, embed_backfill, github, gmail,
+  google_calendar, google_drive, integration_secrets, integrations, linear, llm, macos_ax,
+  memory_store, notion, secrets, settings_store, slack, zoom,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -684,6 +684,47 @@ pub async fn shogun_zoom_sync(payload: Value) -> Result<Value, String> {
     .unwrap_or(50)
     .clamp(1, 200) as usize;
   zoom::sync_recordings_to_memory(days, max_meetings).await
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_list(payload: Value) -> Result<Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|x| x.as_i64())
+    .unwrap_or(200);
+  let source = payload
+    .get("source")
+    .and_then(|x| x.as_str())
+    .filter(|s| !s.is_empty())
+    .map(|s| s.to_string());
+  let items = dead_letter::list(limit, source.as_deref())?;
+  let counts = dead_letter::counts()?;
+  Ok(json!({ "items": items, "counts": counts }))
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_retry(payload: Value) -> Result<Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|x| x.as_i64())
+    .unwrap_or(500);
+  let source = payload
+    .get("source")
+    .and_then(|x| x.as_str())
+    .filter(|s| !s.is_empty())
+    .map(|s| s.to_string());
+  dead_letter::retry_all(limit, source.as_deref())
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_clear(payload: Value) -> Result<Value, String> {
+  let source = payload
+    .get("source")
+    .and_then(|x| x.as_str())
+    .filter(|s| !s.is_empty())
+    .map(|s| s.to_string());
+  let removed = dead_letter::clear(source.as_deref())?;
+  Ok(json!({ "removed": removed }))
 }
 
 #[tauri::command]

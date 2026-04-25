@@ -356,7 +356,10 @@ pub async fn sync_workspace_to_memory(
             ingested += 1;
           }
         }
-        Err(e) => log::warn!("Notion ingest failed for {}: {}", page_id, e),
+        Err(e) => {
+          log::warn!("Notion ingest failed for {}: {}", page_id, e);
+          let _ = crate::dead_letter::record("notion", &ing, &e);
+        }
       }
       // Emit progress every few pages so the UI can follow along.
       if (considered as usize) % 5 == 0 {

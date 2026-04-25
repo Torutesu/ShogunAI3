@@ -139,8 +139,13 @@ fn ingest_gmail_message(message_id: &str, msg: &Value) -> Result<bool, String> {
     "provenance": "connector",
     "entity_id": message_id,
   });
-  let out = memory_store::ingest(&ing)?;
-  Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false))
+  match memory_store::ingest(&ing) {
+    Ok(out) => Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false)),
+    Err(e) => {
+      let _ = crate::dead_letter::record("gmail", &ing, &e);
+      Err(e)
+    }
+  }
 }
 
 async fn refresh_and_persist_creds(creds: &Value) -> Result<Value, String> {

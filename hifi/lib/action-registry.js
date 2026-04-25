@@ -30,6 +30,9 @@
     register("settings.load", (payload) => api.settingsLoad(payload));
     register("settings.export", (payload) => api.settingsExport(payload));
     register("settings.import", (payload) => api.settingsImport(payload));
+    register("dead_letter.list", (payload) => api.deadLetterList(payload));
+    register("dead_letter.retry", (payload) => api.deadLetterRetry(payload));
+    register("dead_letter.clear", (payload) => api.deadLetterClear(payload));
     register("integrations.connect", (payload) => api.integrationConnect(payload));
     register("integrations.import_credentials", (payload) =>
       api.integrationImportCredentials(payload),

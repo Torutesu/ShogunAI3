@@ -156,8 +156,13 @@ fn ingest_issue(item: &Value) -> Result<bool, String> {
     "provenance": "connector",
     "entity_id": id,
   });
-  let out = memory_store::ingest(&ing)?;
-  Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false))
+  match memory_store::ingest(&ing) {
+    Ok(out) => Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false)),
+    Err(e) => {
+      let _ = crate::dead_letter::record("linear", &ing, &e);
+      Err(e)
+    }
+  }
 }
 
 pub async fn sync_activity_to_memory(

@@ -6,6 +6,7 @@ mod calendar_sync;
 mod capture_sampler;
 mod connector_sync;
 mod context_assembly;
+mod dead_letter;
 mod commands;
 mod deep_link_credentials;
 mod embed_backfill;
@@ -156,6 +157,9 @@ pub fn run() {
       commands::shogun_linear_sync,
       commands::shogun_drive_sync,
       commands::shogun_zoom_sync,
+      commands::shogun_dead_letter_list,
+      commands::shogun_dead_letter_retry,
+      commands::shogun_dead_letter_clear,
       commands::app_capture_pause,
       commands::app_capture_resume,
       commands::app_permissions_manage,

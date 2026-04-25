@@ -1309,6 +1309,50 @@ function PanePrivacy() {
 
 function PaneData() {
   const { run, confirmWrite, toast } = useRuntimeActions();
+  const [deadLetter, setDeadLetter] = useStateS({ total: 0, bySource: {}, busy: false });
+  const refreshDeadLetter = React.useCallback(async () => {
+    const res = await run('dead_letter.list', { limit: 1 }, { silentError: true });
+    if (res && res.ok && res.data && res.data.counts) {
+      const c = res.data.counts;
+      setDeadLetter((prev) => ({
+        ...prev,
+        total: Number(c.total) || 0,
+        bySource: c.bySource && typeof c.bySource === 'object' ? c.bySource : {},
+      }));
+    }
+  }, [run]);
+  React.useEffect(() => { void refreshDeadLetter(); }, [refreshDeadLetter]);
+  const onRetryDeadLetter = React.useCallback(async () => {
+    setDeadLetter((prev) => ({ ...prev, busy: true }));
+    const res = await run('dead_letter.retry', { limit: 500 }, { silentError: true });
+    if (res && res.ok && res.data) {
+      const ok = Number(res.data.succeeded) || 0;
+      const bad = Number(res.data.failed) || 0;
+      toast(
+        bad > 0
+          ? `Retried: ${ok} succeeded, ${bad} still failing`
+          : `Retried ${ok} item(s) successfully`,
+        bad > 0 ? 'warn' : 'success',
+      );
+    } else {
+      toast((res && res.error && res.error.message) || 'Retry failed', 'error');
+    }
+    await refreshDeadLetter();
+    setDeadLetter((prev) => ({ ...prev, busy: false }));
+  }, [run, toast, refreshDeadLetter]);
+  const onClearDeadLetter = React.useCallback(async () => {
+    if (!(typeof window.confirm === 'function' && window.confirm('Clear the failed-ingest queue? Items cannot be recovered.'))) return;
+    setDeadLetter((prev) => ({ ...prev, busy: true }));
+    const res = await run('dead_letter.clear', {}, { silentError: true });
+    if (res && res.ok) {
+      const n = (res.data && res.data.removed) || 0;
+      toast(`Cleared ${n} item(s)`, 'success');
+    } else {
+      toast((res && res.error && res.error.message) || 'Clear failed', 'error');
+    }
+    await refreshDeadLetter();
+    setDeadLetter((prev) => ({ ...prev, busy: false }));
+  }, [run, toast, refreshDeadLetter]);
   const onExport = React.useCallback(async () => {
     const res = await run('settings.export', {}, { silentError: true });
     if (res && res.ok) {
@@ -1362,6 +1406,46 @@ function PaneData() {
           last
         >
           <button className="btn btn-sm btn-secondary" onClick={onImport}>Import…</button>
+        </Row>
+      </div>
+
+      <div className="s-field-label" style={{marginTop:22}}>Failed Ingests</div>
+      <div className="s-card">
+        <Row
+          title={
+            <span>
+              {deadLetter.total > 0
+                ? `${deadLetter.total} item${deadLetter.total === 1 ? '' : 's'} pending retry`
+                : 'No failed ingests'}
+              {deadLetter.total > 0 && (
+                <span style={{display:'block', fontSize:11, color:'var(--text-dim)', marginTop:4, fontWeight:400}}>
+                  By source:{' '}
+                  {Object.entries(deadLetter.bySource || {})
+                    .map(([s, n]) => `${s} ${n}`)
+                    .join(' · ')}
+                </span>
+              )}
+            </span>
+          }
+          desc="Items that failed to ingest during a connector sync. Retry replays each through the normal ingest path; succeeded rows are removed from the queue."
+          last
+        >
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={onRetryDeadLetter}
+            disabled={deadLetter.busy || deadLetter.total === 0}
+            style={(deadLetter.busy || deadLetter.total === 0) ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+          >
+            {deadLetter.busy ? 'Retrying…' : 'Retry all'}
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={onClearDeadLetter}
+            disabled={deadLetter.busy || deadLetter.total === 0}
+            style={(deadLetter.busy || deadLetter.total === 0) ? {opacity:0.5, cursor:'not-allowed', marginLeft:6} : {marginLeft:6}}
+          >
+            Clear
+          </button>
         </Row>
       </div>
       <div className="s-field-label" style={{marginTop:22}}>Manage Context Collected</div>

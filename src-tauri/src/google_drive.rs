@@ -170,7 +170,11 @@ fn ingest_drive_file(file: &Value, body_text: &str) -> Result<(), String> {
     "provenance": "connector",
     "entity_id": id,
   });
-  memory_store::ingest(&ing).map(|_| ())
+  if let Err(e) = memory_store::ingest(&ing) {
+    let _ = crate::dead_letter::record("google_drive", &ing, &e);
+    return Err(e);
+  }
+  Ok(())
 }
 
 /// Top-level sync. Filters files by `modifiedTime > cutoff`, fetches text

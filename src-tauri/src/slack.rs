@@ -269,8 +269,13 @@ fn ingest_slack_message(channel: &Value, msg: &Value) -> Result<bool, String> {
     "provenance": "connector",
     "entity_id": format!("{}:{}", channel_id, ts),
   });
-  let out = memory_store::ingest(&ing)?;
-  Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false))
+  match memory_store::ingest(&ing) {
+    Ok(out) => Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false)),
+    Err(e) => {
+      let _ = crate::dead_letter::record("slack", &ing, &e);
+      Err(e)
+    }
+  }
 }
 
 /// Top-level workspace sync. When `days` is `Some`, only messages newer than

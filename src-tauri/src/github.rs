@@ -181,8 +181,13 @@ fn ingest_issue_or_pr(item: &Value) -> Result<bool, String> {
     "provenance": "connector",
     "entity_id": html_url,
   });
-  let out = memory_store::ingest(&ing)?;
-  Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false))
+  match memory_store::ingest(&ing) {
+    Ok(out) => Ok(out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false)),
+    Err(e) => {
+      let _ = crate::dead_letter::record("github", &ing, &e);
+      Err(e)
+    }
+  }
 }
 
 /// Top-level activity sync. Fetches issues/PRs the authenticated user is
