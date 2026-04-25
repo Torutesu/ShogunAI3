@@ -348,6 +348,11 @@ function pickHomeText(item, uiLang) {
 function ScreenHome() {
   const [morningBrief, setMorningBrief] = useState(null);
   const [memoryDigest, setMemoryDigest] = useState(null); // { highlights: [], week_rollup: {...} | null }
+  // Item-detail expansion: when the user clicks a highlight, show full
+  // keyPoints + reason + (if entityId present) an entity rollup of related
+  // items underneath.
+  const [expandedHighlightId, setExpandedHighlightId] = useState(null);
+  const [entityRollupCache, setEntityRollupCache] = useState({}); // { [entityId]: { rollup, loading } }
   const [memoryTotal, setMemoryTotal] = useState(null);
   const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
@@ -1320,18 +1325,126 @@ function ScreenHome() {
                     }}
                   >Mark all read</button>
                 </div>
-                {unreadHighlights.slice(0, 5).map((h) => (
-                  <div key={h.targetId} style={{
-                    borderLeft: (h.userPriority || h.priority) === 'high' ? '2px solid var(--gold)' : '2px solid var(--border)',
-                    paddingLeft: 12,
-                    display: 'flex', flexDirection: 'column', gap: 3,
-                  }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35, wordBreak: 'break-word' }}>{h.title}</div>
-                    {Array.isArray(h.keyPoints) && h.keyPoints[0] && (
-                      <div style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{h.keyPoints[0]}</div>
-                    )}
-                  </div>
-                ))}
+                {unreadHighlights.slice(0, 5).map((h) => {
+                  const expanded = expandedHighlightId === h.targetId;
+                  const allPoints = Array.isArray(h.keyPoints) ? h.keyPoints : [];
+                  const ent = h.entityId
+                    ? (entityRollupCache[h.entityId] || null)
+                    : null;
+                  const toggleExpand = () => {
+                    if (expanded) {
+                      setExpandedHighlightId(null);
+                      return;
+                    }
+                    setExpandedHighlightId(h.targetId);
+                    // Lazy-load the entity rollup the first time the user
+                    // expands a highlight that has an entity_id.
+                    if (h.entityId && !entityRollupCache[h.entityId]) {
+                      setEntityRollupCache((prev) => ({ ...prev, [h.entityId]: { rollup: null, loading: true } }));
+                      const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                      runRuntimeActionA('memory.rollup.entity.get', {
+                        entityId: h.entityId, entityLabel: h.entityId, lang,
+                      }, { silentError: true }).then((res) => {
+                        const rollup = res?.ok && res.data?.rollup ? res.data.rollup : null;
+                        setEntityRollupCache((prev) => ({ ...prev, [h.entityId]: { rollup, loading: false } }));
+                      }).catch(() => {
+                        setEntityRollupCache((prev) => ({ ...prev, [h.entityId]: { rollup: null, loading: false } }));
+                      });
+                    }
+                  };
+                  return (
+                    <div
+                      key={h.targetId}
+                      role="button"
+                      tabIndex={0}
+                      onClick={toggleExpand}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(); } }}
+                      style={{
+                        borderLeft: (h.userPriority || h.priority) === 'high' ? '2px solid var(--gold)' : '2px solid var(--border)',
+                        paddingLeft: 12,
+                        display: 'flex', flexDirection: 'column', gap: expanded ? 8 : 3,
+                        cursor: 'pointer',
+                        transition: 'gap 120ms',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35, wordBreak: 'break-word', flex: 1, minWidth: 0 }}>{h.title}</div>
+                        <span className="t-mono" style={{ fontSize: 9, color: 'var(--text-dim)' }}>{expanded ? '−' : '+'}</span>
+                      </div>
+                      {!expanded && allPoints[0] && (
+                        <div style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{allPoints[0]}</div>
+                      )}
+                      {expanded && (
+                        <>
+                          {allPoints.length > 0 && (
+                            <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              {allPoints.map((p, i) => (
+                                <li key={i} style={{ fontSize: 12, color: i === 0 ? 'var(--text)' : 'var(--text-mute)', lineHeight: 1.5 }}>{p}</li>
+                              ))}
+                            </ul>
+                          )}
+                          {h.reason && (
+                            <div style={{ fontSize: 10, color: 'var(--text-dim)', fontStyle: 'italic' }}>{h.reason}</div>
+                          )}
+                          <div className="t-mono" style={{ fontSize: 9, color: 'var(--text-dim)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <span>{(h.sourceType || '').toUpperCase()}</span>
+                            {h.entityId && <span title={h.entityId}>· entity {String(h.entityId).slice(0, 16)}…</span>}
+                          </div>
+                          {h.entityId && ent && (
+                            <div style={{ marginTop: 4, padding: '8px 10px', background: 'color-mix(in srgb, var(--surface-2) 80%, var(--bg))', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <div className="t-mono" style={{ fontSize: 9, color: 'var(--text-mute)', letterSpacing: '0.1em' }}>RELATED · 関連</div>
+                              {ent.loading && (
+                                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                                  <span className="en-only">Loading related items…</span>
+                                  <span className="jp">関連アイテムを読み込み中…</span>
+                                </div>
+                              )}
+                              {ent.rollup && (
+                                <>
+                                  <div style={{ fontSize: 12, fontWeight: 500 }}>{ent.rollup.title}</div>
+                                  {Array.isArray(ent.rollup.keyPoints) && ent.rollup.keyPoints.length > 0 && (
+                                    <ul style={{ margin: 0, paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                      {ent.rollup.keyPoints.slice(0, 4).map((k, i) => (
+                                        <li key={i} style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{k}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                await runRuntimeActionA('memory.summary.acknowledge', {
+                                  items: [{ targetId: h.targetId, targetKind: h.targetKind || 'item' }],
+                                  acknowledged: true,
+                                }, { silentError: true });
+                                // Optimistic local update.
+                                setMemoryDigest((prev) => prev ? {
+                                  ...prev,
+                                  highlights: (prev.highlights || []).map((x) => x.targetId === h.targetId ? { ...x, acknowledgedAt: Date.now() } : x),
+                                } : prev);
+                              }}
+                              style={{ padding: '2px 0', border: 'none', background: 'transparent', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+                            >Mark read</button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.dispatchEvent(new Event('shogun-jump-memory-timeline'));
+                                window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
+                              }}
+                              style={{ padding: '2px 0', border: 'none', background: 'transparent', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+                            >Open in Memory</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             );
           })()}
@@ -2103,7 +2216,7 @@ function ScreenMemory() {
         </div>
         <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
           <div style={{display:'inline-flex', border:'1px solid var(--border)', borderRadius:999, padding:2, background:'var(--surface)'}}>
-            {[['river','River'],['kakejiku','Kakejiku'],['heatmap','Heatmap'],['digest','Digest']].map(([k,l])=>(
+            {[['river','River'],['kakejiku','Kakejiku'],['heatmap','Heatmap'],['digest','Digest'],['search','Search']].map(([k,l])=>(
               <button key={k} type="button" onClick={()=>setView(k)} style={{
                 padding:'6px 14px', borderRadius:999, border:'none',
                 background: view===k ? 'var(--surface-2)' : 'transparent',
@@ -3173,6 +3286,14 @@ function ScreenMemory() {
         <MemoryDigestView state={digestState} setState={setDigestState} />
       )}
 
+      {view === 'search' && (
+        <MemorySearchView
+          workProjects={workProjects}
+          assignments={workspaceAssignments}
+          setAssignments={setWorkspaceAssignments}
+        />
+      )}
+
       {/* FTS5 highlight styles */}
       <style>{`
         .memory-scrub-stage mark {
@@ -3380,6 +3501,265 @@ function MemoryDigestView({ state, setState }) {
           state.generatingDay,
         )}
       </div>
+    </div>
+  );
+}
+
+function MemorySearchView({ workProjects, assignments, setAssignments }) {
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [targetWorkspace, setTargetWorkspace] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [newDraft, setNewDraft] = useState('');
+
+  // Initial load: most recent hits, no query.
+  useEffect(() => {
+    let cancelled = false;
+    setSearching(true);
+    runRuntimeActionA('memory.search', { query: '', limit: 60 }, { silentError: true })
+      .then((r) => {
+        if (cancelled) return;
+        setSearching(false);
+        const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];
+        setHits(arr);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Debounced search as the user types.
+  useEffect(() => {
+    if (query === '') return undefined;
+    const t = setTimeout(() => {
+      setSearching(true);
+      runRuntimeActionA('memory.search', { query, limit: 60 }, { silentError: true })
+        .then((r) => {
+          setSearching(false);
+          const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];
+          setHits(arr);
+        });
+    }, 220);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const toggleOne = useCallback((id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const selectAllVisible = useCallback(() => {
+    setSelected(new Set(hits.map((h) => h.id).filter(Boolean)));
+  }, [hits]);
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const applyAssign = useCallback(async () => {
+    if (selected.size === 0 || !targetWorkspace) return;
+    setBusy(true);
+    const next = { ...assignments };
+    let resolvedTarget = targetWorkspace;
+    if (targetWorkspace === '__new__') {
+      const name = newDraft.trim();
+      if (!name) { setBusy(false); return; }
+      const create = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.createWorkProject;
+      const id = typeof create === 'function' ? create(name) : null;
+      if (!id) { setBusy(false); return; }
+      resolvedTarget = id;
+      setNewDraft('');
+    } else if (targetWorkspace === '__unassign__') {
+      resolvedTarget = '';
+    }
+    selected.forEach((id) => {
+      if (resolvedTarget) next[id] = resolvedTarget;
+      else delete next[id];
+    });
+    setAssignments(next);
+    await runRuntimeActionA(
+      'settings.save',
+      { section: 'workspace_memberships', memberships: next },
+      { silentError: true },
+    );
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-workspace-memberships-changed', { detail: { memberships: next } }));
+    } catch (_) { /* ignore */ }
+    window.SHOGUN_RUNTIME?.pushToast?.(
+      resolvedTarget
+        ? `Assigned ${selected.size} memor${selected.size === 1 ? 'y' : 'ies'}`
+        : `Unassigned ${selected.size} memor${selected.size === 1 ? 'y' : 'ies'}`,
+      'success',
+    );
+    setSelected(new Set());
+    if (targetWorkspace !== '__new__') setTargetWorkspace('');
+    setBusy(false);
+  }, [assignments, selected, targetWorkspace, newDraft, setAssignments]);
+
+  const visibleProjects = workProjects.filter((p) => !p.archived);
+  const renderHL = window.ShogunHighlight && window.ShogunHighlight.renderHighlighted
+    ? window.ShogunHighlight.renderHighlighted
+    : ((t) => t);
+
+  return (
+    <div style={{flex:1, padding:'24px 40px 40px', minHeight:0, display:'flex', flexDirection:'column', gap:14}}>
+      <div className="row" style={{gap:10, alignItems:'center'}}>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search indexed memory…"
+          autoFocus
+          style={{
+            flex:1, padding:'10px 14px', borderRadius:10,
+            border:'1px solid var(--border-hi)', background:'var(--bg)',
+            color:'var(--text)', fontSize:14, fontFamily:'inherit',
+          }}
+        />
+        <span className="t-mono" style={{fontSize:11, color:'var(--text-dim)'}}>
+          {searching ? 'Searching…' : `${hits.length} hits`}
+        </span>
+        {hits.length > 0 && (
+          selected.size === hits.length ? (
+            <button
+              type="button" className="btn btn-sm btn-ghost"
+              onClick={clearSelection}
+            >Clear</button>
+          ) : (
+            <button
+              type="button" className="btn btn-sm btn-secondary"
+              onClick={selectAllVisible}
+            >Select all</button>
+          )
+        )}
+      </div>
+
+      <div style={{flex:1, minHeight:0, overflowY:'auto', display:'flex', flexDirection:'column', gap:8, paddingRight:4}}>
+        {hits.length === 0 ? (
+          <div style={{padding:32, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
+            {searching ? 'Loading…' : 'No matches.'}
+          </div>
+        ) : (
+          hits.map((h) => {
+            const id = h.id;
+            const isOn = !!id && selected.has(id);
+            const titleSrc = h.title_highlight || h.title || 'Untitled';
+            const snippetSrc = h.snippet_highlight || h.snippet || '';
+            const provider = memoryProviderKey(h.source);
+            const meta = MEMORY_PROVIDER_META[provider];
+            const assignedId = id ? assignments[id] : null;
+            const assignedProj = assignedId ? workProjects.find((p) => p.id === assignedId) : null;
+            return (
+              <label
+                key={id || h.title}
+                style={{
+                  display:'grid', gridTemplateColumns:'24px 1fr', columnGap:12,
+                  padding:'12px 14px', borderRadius:12,
+                  border:'1px solid ' + (isOn ? 'color-mix(in srgb, var(--gold) 65%, var(--border))' : 'var(--border)'),
+                  background: isOn ? 'color-mix(in srgb, var(--gold) 6%, var(--surface))' : 'var(--surface)',
+                  cursor: id ? 'pointer' : 'default',
+                  alignItems:'flex-start',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isOn}
+                  disabled={!id}
+                  onChange={() => id && toggleOne(id)}
+                  style={{marginTop:3}}
+                />
+                <div style={{minWidth:0}}>
+                  <div className="row" style={{gap:8, alignItems:'center', flexWrap:'wrap', marginBottom:4}}>
+                    {meta && (
+                      <span style={{
+                        display:'inline-flex', alignItems:'center', gap:5,
+                        padding:'2px 7px', borderRadius:4,
+                        border:`1px solid color-mix(in srgb, ${meta.color} 50%, var(--border))`,
+                        background:`color-mix(in srgb, ${meta.color} 10%, transparent)`,
+                        color: meta.color,
+                        fontSize:9, letterSpacing:'0.06em', fontFamily:'var(--font-mono)',
+                      }}>
+                        <span style={{width:5, height:5, borderRadius:'50%', background: meta.color}} aria-hidden="true"/>
+                        {meta.en}
+                      </span>
+                    )}
+                    {assignedProj && (
+                      <span className="label" style={{fontSize:10, borderColor:'var(--gold-dim)', color:'var(--gold)'}}>
+                        ▣ {assignedProj.name}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{fontSize:14, fontWeight:500, lineHeight:1.35, marginBottom:4}}>
+                    {renderHL(titleSrc)}
+                  </div>
+                  {snippetSrc && (
+                    <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.55, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical'}}>
+                      {renderHL(snippetSrc)}
+                    </div>
+                  )}
+                </div>
+              </label>
+            );
+          })
+        )}
+      </div>
+
+      {selected.size > 0 && (
+        <div className="card" style={{padding:14, display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', borderColor:'var(--gold-dim)'}}>
+          <span style={{fontSize:13, fontWeight:500}}>
+            {selected.size} selected
+          </span>
+          <span style={{flex:1}}/>
+          <select
+            value={targetWorkspace}
+            onChange={(e) => setTargetWorkspace(e.target.value)}
+            disabled={busy}
+            style={{
+              padding:'6px 10px', borderRadius:8,
+              border:'1px solid var(--border-hi)', background:'var(--surface)', color:'var(--text)',
+              fontSize:12, fontFamily:'inherit',
+            }}
+          >
+            <option value="">Choose workspace…</option>
+            {visibleProjects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+            <option value="__new__">+ New workspace…</option>
+            <option value="__unassign__">Unassign</option>
+          </select>
+          {targetWorkspace === '__new__' && (
+            <input
+              type="text"
+              value={newDraft}
+              onChange={(e) => setNewDraft(e.target.value)}
+              placeholder="New workspace name"
+              disabled={busy}
+              style={{
+                padding:'6px 10px', borderRadius:8,
+                border:'1px solid var(--border-hi)', background:'var(--bg)', color:'var(--text)',
+                fontSize:12, fontFamily:'inherit', width:180,
+              }}
+            />
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            disabled={busy || !targetWorkspace || (targetWorkspace === '__new__' && !newDraft.trim())}
+            onClick={applyAssign}
+            style={(busy || !targetWorkspace || (targetWorkspace === '__new__' && !newDraft.trim())) ? {opacity:0.55, cursor:'not-allowed'} : undefined}
+          >
+            {busy ? 'Applying…' : 'Apply'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={busy}
+            onClick={clearSelection}
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }
