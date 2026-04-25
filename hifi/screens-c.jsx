@@ -1,4 +1,4 @@
-/* global Icon, Kamon, IntegrationLogo, React, ShogunIntegrationConnectors */
+/* global Icon, Kamon, IntegrationLogo, React, ReactDOM, ShogunIntegrationConnectors */
 
 function runRuntimeAction(key, payload, options) {
   if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok:false });
@@ -32,6 +32,8 @@ function ScreenWork() {
   const [renaming, setRenaming] = React.useState({ id: null, value: '' });
   const [menuFor, setMenuFor] = React.useState(null);
   const [memberships, setMemberships] = React.useState({});
+  // { project, memories, loading, busyId } when the detail modal is open.
+  const [detail, setDetail] = React.useState(null);
 
   const visible = React.useMemo(
     () => projects.filter((p) => !!p.archived === showArchived),
@@ -77,6 +79,69 @@ function ScreenWork() {
     }
     return out;
   }, [memberships]);
+
+  // Provider color metadata mirrors hifi/screens-a.jsx so detail rows look the
+  // same as Memory search / scrubbed cards. Keep in sync if either changes.
+  const PROVIDER_META = React.useMemo(() => ({
+    screen:          { en: 'Screen',   color: 'var(--text-mute)' },
+    meeting:         { en: 'Meeting',  color: 'var(--success)' },
+    gmail:           { en: 'Gmail',    color: '#D93025' },
+    google_calendar: { en: 'Calendar', color: '#1A73E8' },
+    google_drive:    { en: 'Drive',    color: '#0F9D58' },
+    slack:           { en: 'Slack',    color: '#4A154B' },
+    notion:          { en: 'Notion',   color: 'var(--text)' },
+    github:          { en: 'GitHub',   color: 'var(--text-mute)' },
+    linear:          { en: 'Linear',   color: '#5E6AD2' },
+    zoom:            { en: 'Zoom',     color: '#2D8CFF' },
+    manual:          { en: 'Manual',   color: 'var(--text-dim)' },
+  }), []);
+  const providerKey = React.useCallback((source) => {
+    const s = String(source || '').toLowerCase();
+    if (s === 'capture_sampler' || s === 'capture_ax') return 'screen';
+    if (s === 'gmail') return 'gmail';
+    if (s === 'google_calendar') return 'google_calendar';
+    if (s === 'google_drive') return 'google_drive';
+    if (s === 'slack') return 'slack';
+    if (s === 'notion') return 'notion';
+    if (s === 'github') return 'github';
+    if (s === 'linear') return 'linear';
+    if (s === 'zoom') return 'zoom';
+    if (s === 'meeting' || s.startsWith('meetings')) return 'meeting';
+    return 'manual';
+  }, []);
+
+  const openDetail = React.useCallback(async (project) => {
+    setDetail({ project, memories: [], loading: true, busyId: null });
+    const ids = Object.entries(memberships)
+      .filter(([, w]) => w === project.id)
+      .map(([m]) => m);
+    if (ids.length === 0) {
+      setDetail({ project, memories: [], loading: false, busyId: null });
+      return;
+    }
+    const r = await runRuntimeAction('memory.fetch', { ids }, { silentError: true });
+    const items = r && r.ok && Array.isArray(r.data?.items) ? r.data.items : [];
+    setDetail({ project, memories: items, loading: false, busyId: null });
+  }, [memberships]);
+
+  const removeFromWorkspace = React.useCallback(async (memoryId) => {
+    if (!detail) return;
+    setDetail((prev) => (prev ? { ...prev, busyId: memoryId } : prev));
+    const next = { ...memberships };
+    delete next[memoryId];
+    setMemberships(next);
+    await runRuntimeAction(
+      'settings.save',
+      { section: 'workspace_memberships', memberships: next },
+      { silentError: true },
+    );
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-workspace-memberships-changed', { detail: { memberships: next } }));
+    } catch (_) { /* ignore */ }
+    setDetail((prev) => prev
+      ? { ...prev, memories: prev.memories.filter((m) => m.id !== memoryId), busyId: null }
+      : prev);
+  }, [detail, memberships]);
 
   const createProject = React.useCallback(() => {
     const name = newName.trim();
@@ -198,7 +263,18 @@ function ScreenWork() {
       ) : (
         <div className="shogun-grid-cards">
           {visible.map((p) => (
-            <div key={p.id} className="card card-interactive" style={{padding:18, position:'relative'}}>
+            <div
+              key={p.id}
+              className="card card-interactive"
+              style={{padding:18, position:'relative', cursor: renaming.id === p.id ? 'default' : 'pointer'}}
+              onClick={(e) => {
+                // Ignore clicks bubbling from the menu / rename input / kebab
+                // button so they don't open the modal.
+                if (renaming.id === p.id || menuFor === p.id) return;
+                if (e.target.closest('button, input, [role="menu"]')) return;
+                openDetail(p);
+              }}
+            >
               <div className="row" style={{gap:8, marginBottom:10, flexWrap:'wrap', alignItems:'center'}}>
                 <Icon name="work" size={14} className="gold"/>
                 <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>WORKSPACE</span>
@@ -319,13 +395,134 @@ function ScreenWork() {
                 {(() => {
                   const n = countByProject[p.id] || 0;
                   return n > 0
-                    ? `${n} memor${n === 1 ? 'y' : 'ies'} assigned`
+                    ? `${n} memor${n === 1 ? 'y' : 'ies'} assigned · click to view`
                     : 'No memories assigned yet — use "Assign to workspace" on a memory.';
                 })()}
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {detail && ReactDOM.createPortal(
+        (() => {
+          const close = () => setDetail(null);
+          const items = detail.memories || [];
+          const fmtDate = (ms) => {
+            try { return new Date(Number(ms) || 0).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }); } catch (_) { return ''; }
+          };
+          return (
+            <div
+              style={{
+                position:'fixed', inset:0, zIndex:1098,
+                background:'color-mix(in srgb, var(--bg) 78%, transparent)',
+                backdropFilter:'blur(4px)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                padding:20,
+              }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                style={{
+                  width:'min(860px, 100%)',
+                  maxHeight:'min(82vh, 760px)',
+                  background:'var(--surface)',
+                  border:'1px solid var(--border-hi)',
+                  borderRadius:16,
+                  boxShadow:'0 30px 60px -16px rgba(0,0,0,0.6)',
+                  display:'flex', flexDirection:'column',
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div style={{padding:'18px 22px 14px', borderBottom:'1px solid var(--border)'}}>
+                  <div className="row" style={{gap:10, alignItems:'center', marginBottom:6}}>
+                    <Icon name="work" size={14} className="gold"/>
+                    <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.12em'}}>WORKSPACE</span>
+                    <span style={{flex:1}}/>
+                    <button
+                      type="button"
+                      aria-label="Close"
+                      onClick={close}
+                      style={{width:24, height:24, borderRadius:6, border:0, background:'transparent', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}
+                    >
+                      <Icon name="x" size={14}/>
+                    </button>
+                  </div>
+                  <div style={{fontSize:18, fontWeight:500, lineHeight:1.3}}>
+                    {detail.project?.name || 'Untitled workspace'}
+                  </div>
+                  <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginTop:6, letterSpacing:'0.06em'}}>
+                    {items.length} {items.length === 1 ? 'memory' : 'memories'} assigned
+                  </div>
+                </div>
+                <div style={{flex:1, overflowY:'auto', padding:'14px 22px 20px'}}>
+                  {detail.loading ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>Loading…</div>
+                  ) : items.length === 0 ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center', lineHeight:1.55}}>
+                      No memories yet. Use Memory → Search to bulk-assign, or click a memory's "Assign to workspace" chip.
+                    </div>
+                  ) : (
+                    <div style={{display:'flex', flexDirection:'column', gap:10}}>
+                      {items.map((m) => {
+                        const id = m.id;
+                        const busy = detail.busyId === id;
+                        const provKey = providerKey(m.source);
+                        const meta = PROVIDER_META[provKey];
+                        const created = Number(m.created_at) || 0;
+                        return (
+                          <div
+                            key={id}
+                            className="card"
+                            style={{padding:14, display:'flex', flexDirection:'column', gap:6}}
+                          >
+                            <div className="row" style={{gap:8, alignItems:'center', flexWrap:'wrap'}}>
+                              {meta && (
+                                <span style={{
+                                  display:'inline-flex', alignItems:'center', gap:5,
+                                  padding:'2px 7px', borderRadius:4,
+                                  border:`1px solid color-mix(in srgb, ${meta.color} 50%, var(--border))`,
+                                  background:`color-mix(in srgb, ${meta.color} 10%, transparent)`,
+                                  color: meta.color,
+                                  fontSize:9, letterSpacing:'0.06em', fontFamily:'var(--font-mono)',
+                                }}>
+                                  <span style={{width:5, height:5, borderRadius:'50%', background: meta.color}} aria-hidden="true"/>
+                                  {meta.en}
+                                </span>
+                              )}
+                              <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>{fmtDate(created)}</span>
+                              <span style={{flex:1}}/>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                disabled={busy}
+                                onClick={() => removeFromWorkspace(id)}
+                                style={busy ? {opacity:0.55, cursor:'default'} : undefined}
+                              >
+                                {busy ? 'Removing…' : 'Remove'}
+                              </button>
+                            </div>
+                            <div style={{fontSize:14, fontWeight:500, lineHeight:1.35}}>
+                              {m.title || 'Untitled'}
+                            </div>
+                            {m.snippet && (
+                              <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.55, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:3, WebkitBoxOrient:'vertical'}}>
+                                {m.snippet}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
       )}
     </div>
   );

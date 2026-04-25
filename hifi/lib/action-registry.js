@@ -62,6 +62,7 @@
     register("data.delete_all", () => api.accountDeleteAll({}));
     register("account.delete", () => api.accountDeleteSelf({}));
     register("memory.search", (payload) => api.memorySearch(payload));
+    register("memory.fetch", (payload) => api.memoryFetch(payload));
     register("memory.ingest", (payload) => api.memoryIngest(payload));
     register("memory.delete", (payload) => api.memoryDelete(payload));
     register("memory.embed_backfill", (payload) => api.memoryEmbedBackfill(payload));
@@ -74,6 +75,7 @@
     register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));
     register("memory.summary.acknowledge", (payload) => api.memorySummaryAcknowledge(payload));
     register("memory.rollup.entity.get", (payload) => api.memoryEntityRollupGet(payload));
+    register("memory.summary.snooze", (payload) => api.memorySummarySnooze(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));
