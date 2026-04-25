@@ -225,6 +225,7 @@ pub fn heuristic_fallback(item: &Value, source_type: &str, lang: &str) -> Summar
     lang: lang.to_string(),
     user_priority: None,
     acknowledged_at: None,
+    snooze_until: None,
   }
 }
 
@@ -246,6 +247,7 @@ pub fn summary_from_guess(item: &Value, source_type: &str, guess: &PriorityGuess
     lang: lang.to_string(),
     user_priority: None,
     acknowledged_at: None,
+    snooze_until: None,
   }
 }
 
@@ -366,6 +368,7 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value,
     lang: lang.to_string(),
     user_priority: None,
     acknowledged_at: None,
+    snooze_until: None,
   })
 }
 
@@ -424,6 +427,7 @@ pub async fn summarize_entity_rollup(
       lang: lang.to_string(),
       user_priority: None,
       acknowledged_at: None,
+    snooze_until: None,
     });
   }
 
@@ -477,6 +481,7 @@ pub async fn summarize_entity_rollup(
         lang: lang.to_string(),
         user_priority: None,
         acknowledged_at: None,
+    snooze_until: None,
       })
     }
     Err(e) => {
@@ -530,6 +535,7 @@ fn entity_heuristic_fallback(
     lang: lang.to_string(),
     user_priority: None,
     acknowledged_at: None,
+    snooze_until: None,
   }
 }
 
@@ -715,6 +721,7 @@ async fn summarize_rollup(
       lang: lang.to_string(),
     user_priority: None,
     acknowledged_at: None,
+    snooze_until: None,
     });
   }
 
@@ -822,6 +829,7 @@ fn build_rollup_from_tool_input(id: &str, kind: RollupKind, input: &Value, lang:
     lang: lang.to_string(),
     user_priority: None,
     acknowledged_at: None,
+    snooze_until: None,
   })
 }
 
@@ -860,6 +868,7 @@ fn rollup_heuristic_fallback(id: &str, items: &[Summary], kind: RollupKind, lang
     lang: lang.to_string(),
     user_priority: None,
     acknowledged_at: None,
+    snooze_until: None,
   }
 }
 

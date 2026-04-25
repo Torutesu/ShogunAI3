@@ -39,6 +39,7 @@
       memorySummarySetPriority: (input) => call("shogun_memory_summary_set_priority", input, WRITE),
       memorySummaryAcknowledge: (input) => call("shogun_memory_summary_acknowledge", input, WRITE),
       memoryEntityRollupGet: (input) => call("shogun_memory_entity_rollup_get", input, READ),
+      memorySummarySnooze: (input) => call("shogun_memory_summary_snooze", input, WRITE),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
       memoryEmbedBackfill: (input) =>
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),

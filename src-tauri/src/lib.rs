@@ -219,6 +219,7 @@ pub fn run() {
       commands::shogun_memory_summary_batch,
       commands::shogun_memory_summary_invalidate,
       commands::shogun_memory_summary_acknowledge,
+      commands::shogun_memory_summary_snooze,
       commands::shogun_memory_entity_rollup_get,
       commands::shogun_memory_rollup_get,
       commands::shogun_memory_day_rollup_get,

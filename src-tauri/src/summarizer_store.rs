@@ -24,6 +24,7 @@ pub struct Summary {
   pub lang: String,                // 'en' | 'jp' | 'bi' — matches tweaks.language at generation time
   pub user_priority: Option<String>, // Manual override from the user. None = no override.
   pub acknowledged_at: Option<i64>,  // When the user marked this summary as read. None = unread.
+  pub snooze_until: Option<i64>,     // Hidden from highlights while > now_ms.
 }
 
 impl Summary {
@@ -43,6 +44,7 @@ impl Summary {
       "lang": self.lang,
       "userPriority": self.user_priority,
       "acknowledgedAt": self.acknowledged_at,
+      "snoozeUntil": self.snooze_until,
     })
   }
 }
@@ -54,7 +56,7 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
   let conn = open_conn()?;
   let row = conn.query_row(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at, snooze_until
      FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
     params![target_kind, target_id],
     |r| {
@@ -75,6 +77,7 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
         lang: r.get(11)?,
         user_priority: r.get(12)?,
         acknowledged_at: r.get(13)?,
+        snooze_until: r.get(14)?,
       })
     },
   );
@@ -94,7 +97,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
   let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i + 1)).collect();
   let sql = format!(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at, snooze_until
      FROM mem_summaries
      WHERE target_kind = ?1 AND target_id IN ({}) AND lang = ?{}",
     placeholders.join(","),
@@ -125,6 +128,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
       lang: r.get(11)?,
       user_priority: r.get(12)?,
       acknowledged_at: r.get(13)?,
+      snooze_until: r.get(14)?,
     })
   }).map_err(|e| format!("query: {}", e))?;
 
@@ -145,7 +149,7 @@ pub fn get_summaries_in_window(
   let conn = open_conn()?;
   let mut stmt = conn.prepare(
     "SELECT target_kind, target_id, title, key_points, source_type, priority,
-            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at
+            reason, model, schema_version, generated_at, raw_json, lang, user_priority, acknowledged_at, snooze_until
      FROM mem_summaries
      WHERE target_kind = 'item'
        AND lang = ?1
@@ -173,6 +177,7 @@ pub fn get_summaries_in_window(
       lang: r.get(11)?,
       user_priority: r.get(12)?,
       acknowledged_at: r.get(13)?,
+      snooze_until: r.get(14)?,
     })
   }).map_err(|e| format!("query window: {}", e))?;
   let mut out = Vec::new();
@@ -251,6 +256,7 @@ pub fn get_summaries_for_entity(
       lang: r.get(11)?,
       user_priority: r.get(12)?,
       acknowledged_at: r.get(13)?,
+      snooze_until: r.get(14)?,
     })
   }).map_err(|e| format!("query entity: {}", e))?;
   let mut out = Vec::new();
@@ -258,6 +264,21 @@ pub fn get_summaries_for_entity(
     out.push(row.map_err(|e| format!("row: {}", e))?);
   }
   Ok(out)
+}
+
+/// Snooze a summary until `snooze_until_ms` (None clears the snooze).
+/// Returns true if a row was updated.
+pub fn set_snoozed(
+  target_kind: &str,
+  target_id: &str,
+  snooze_until_ms: Option<i64>,
+) -> Result<bool, String> {
+  let conn = open_conn()?;
+  let n = conn.execute(
+    "UPDATE mem_summaries SET snooze_until = ?3 WHERE target_kind = ?1 AND target_id = ?2",
+    params![target_kind, target_id, snooze_until_ms],
+  ).map_err(|e| format!("mem_summaries set_snoozed: {}", e))?;
+  Ok(n > 0)
 }
 
 /// Mark the summary as read (ack = now_ms) or unread (ack = None).
@@ -348,6 +369,7 @@ mod tests {
       lang: "en".into(),
       user_priority: None,
       acknowledged_at: None,
+      snooze_until: None,
     }
   }
 

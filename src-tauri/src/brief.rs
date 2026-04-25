@@ -38,11 +38,16 @@ pub fn build_memory_digest(lang: &str) -> Value {
   let summaries = summarizer_store::get_summaries_in_window(start_ms, now_ms, lang)
     .unwrap_or_default();
   // Respect the user's manual priority override when selecting highlights.
+  // Also drop items the user has snoozed past now (they re-surface
+  // automatically once snooze_until <= now_ms).
+  let now = now_ms;
   let highlights: Vec<Value> = summaries
     .iter()
     .filter(|s| {
       let p: &str = s.user_priority.as_deref().unwrap_or(&s.priority);
-      p == "high" || p == "medium"
+      let is_priority = p == "high" || p == "medium";
+      let snoozed = s.snooze_until.map(|t| t > now).unwrap_or(false);
+      is_priority && !snoozed
     })
     .take(8)
     .map(|s| {

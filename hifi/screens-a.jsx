@@ -504,8 +504,11 @@ function ScreenHome() {
           const highlights = Array.isArray(inner.memory_digest.highlights)
             ? inner.memory_digest.highlights
             : [];
+          const nowMs = Date.now();
           const highCount = highlights.filter(
-            (h) => (h.userPriority || h.priority) === 'high' && !h.acknowledgedAt,
+            (h) => (h.userPriority || h.priority) === 'high'
+              && !h.acknowledgedAt
+              && !(h.snoozeUntil && h.snoozeUntil > nowMs),
           ).length;
           window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: highCount } }));
         } catch (_) { /* ignore */ }
@@ -1286,8 +1289,12 @@ function ScreenHome() {
 
           {(() => {
             // Hide items the user already marked as read — they've been dealt with.
+            // Also hide currently-snoozed items (re-surface when snooze passes).
+            const nowMs = Date.now();
             const unreadHighlights = Array.isArray(memoryDigest.highlights)
-              ? memoryDigest.highlights.filter((h) => !h.acknowledgedAt)
+              ? memoryDigest.highlights.filter((h) =>
+                  !h.acknowledgedAt && !(h.snoozeUntil && h.snoozeUntil > nowMs),
+                )
               : [];
             if (unreadHighlights.length === 0) return null;
             return (
@@ -1439,6 +1446,36 @@ function ScreenHome() {
                               }}
                               style={{ padding: '2px 0', border: 'none', background: 'transparent', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
                             >Open in Memory</button>
+                            {/* Snooze: defer the item until later. Hides it
+                                from highlights + sidebar badge until the
+                                snooze deadline passes. */}
+                            {[
+                              { label: '1h', label_jp: '1時間', ms: 60 * 60 * 1000 },
+                              { label: 'Tomorrow', label_jp: '明日', ms: 24 * 60 * 60 * 1000 },
+                              { label: 'Next week', label_jp: '来週', ms: 7 * 24 * 60 * 60 * 1000 },
+                            ].map((opt) => (
+                              <button
+                                key={opt.label}
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const untilMs = Date.now() + opt.ms;
+                                  // Optimistic: hide locally + drop badge
+                                  setMemoryDigest((prev) => prev ? {
+                                    ...prev,
+                                    highlights: (prev.highlights || []).map((x) => x.targetId === h.targetId ? { ...x, snoozeUntil: untilMs } : x),
+                                  } : prev);
+                                  await runRuntimeActionA('memory.summary.snooze', {
+                                    targetId: h.targetId, targetKind: h.targetKind || 'item', untilMs,
+                                  }, { silentError: true });
+                                }}
+                                style={{ padding: '2px 0', border: 'none', background: 'transparent', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+                                title={`Snooze for ${opt.label}`}
+                              >
+                                <span className="en-only">Snooze · {opt.label}</span>
+                                <span className="jp">後で · {opt.label_jp}</span>
+                              </button>
+                            ))}
                           </div>
                         </>
                       )}

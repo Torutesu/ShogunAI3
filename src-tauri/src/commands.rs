@@ -1441,6 +1441,32 @@ pub fn shogun_memory_summary_invalidate(payload: serde_json::Value) -> Result<se
   Ok(serde_json::json!({ "deleted": deleted }))
 }
 
+/// 要約をスヌーズする (`untilMs` まで Home digest から非表示)。
+/// `untilMs: null` (or omitted) でスヌーズ解除。
+///
+/// payload: { "targetId": "...", "targetKind"?: "item", "untilMs"?: i64 | null }
+#[tauri::command]
+pub fn shogun_memory_summary_snooze(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  let until_ms: Option<i64> = match payload.get("untilMs") {
+    Some(v) if v.is_null() => None,
+    Some(v) => Some(
+      v.as_i64()
+        .ok_or_else(|| "untilMs must be a number or null".to_string())?,
+    ),
+    None => None,
+  };
+  let updated = crate::summarizer_store::set_snoozed(target_kind, target_id, until_ms)?;
+  Ok(serde_json::json!({ "updated": updated, "untilMs": until_ms }))
+}
+
 /// エンティティ単位ロールアップ (Phase 3)。`entityId` (例: 連絡先 / プロジェクト) に紐づく
 /// 全アイテム要約を集約 → 1 つの "X の最近の動き" を生成。
 ///

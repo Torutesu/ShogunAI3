@@ -457,6 +457,21 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
       [],
     ).map_err(|e| format!("mem_summaries add acknowledged_at: {}", e))?;
   }
+  // Migration: snooze_until (ms) lets the user defer an item to "look at
+  // later" without acknowledging it. Hidden from highlights while
+  // snooze_until > now_ms; re-surfaces automatically when the deadline
+  // passes. Reset (= NULL) when the summary is invalidated/regenerated.
+  let has_snooze_until = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'snooze_until'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_snooze_until == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN snooze_until INTEGER",
+      [],
+    ).map_err(|e| format!("mem_summaries add snooze_until: {}", e))?;
+  }
 
 
 
