@@ -725,6 +725,8 @@ function ensureRuntimeDeps() {
         deadLetterList: (input) => client.invoke('shogun_dead_letter_list', input || {}),
         deadLetterRetry: (input) => client.invoke('shogun_dead_letter_retry', input || {}),
         deadLetterClear: (input) => client.invoke('shogun_dead_letter_clear', input || {}),
+        deadLetterRetryOne: (input) => client.invoke('shogun_dead_letter_retry_one', input || {}),
+        deadLetterDelete: (input) => client.invoke('shogun_dead_letter_delete', input || {}),
         integrationConnect: (input) => client.invoke('app_integration_connect', input),
         integrationImportCredentials: (input) =>
           client.invoke('app_integration_import_credentials', input),
@@ -813,6 +815,8 @@ function ensureRuntimeDeps() {
           'dead_letter.list': api.deadLetterList,
           'dead_letter.retry': api.deadLetterRetry,
           'dead_letter.clear': api.deadLetterClear,
+          'dead_letter.retry_one': api.deadLetterRetryOne,
+          'dead_letter.delete': api.deadLetterDelete,
           'integrations.connect': api.integrationConnect,
           'integrations.import_credentials': api.integrationImportCredentials,
           'integrations.credentials_status': api.integrationCredentialsStatus,

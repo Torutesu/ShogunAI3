@@ -199,6 +199,34 @@ pub fn retry_all(limit: i64, source_filter: Option<&str>) -> Result<Value, Strin
   }))
 }
 
+/// Retry a single failed row by id. Replays its saved payload through
+/// `memory_store::ingest`; on success the row is removed, on failure attempts
+/// is bumped and the new error is stored.
+pub fn retry_one(id: i64) -> Result<Value, String> {
+  ensure_schema()?;
+  let conn = memory_store::open_conn()?;
+  let row = conn
+    .query_row(
+      "SELECT source, payload_json FROM mem_dead_letter WHERE id = ?1",
+      params![id],
+      |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    )
+    .map_err(|e| format!("Row {} not found: {}", id, e))?;
+  let (source, payload_json) = row;
+  let payload: Value = serde_json::from_str(&payload_json)
+    .map_err(|e| format!("Stored payload was not JSON: {}", e))?;
+  match memory_store::ingest(&payload) {
+    Ok(_) => {
+      delete_by_id(id)?;
+      Ok(json!({ "succeeded": true, "id": id, "source": source }))
+    }
+    Err(e) => {
+      let _ = record(&source, &payload, &e);
+      Ok(json!({ "succeeded": false, "id": id, "source": source, "error": e }))
+    }
+  }
+}
+
 pub fn delete_by_id(id: i64) -> Result<(), String> {
   let conn = memory_store::open_conn()?;
   conn

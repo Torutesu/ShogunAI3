@@ -33,6 +33,8 @@
     register("dead_letter.list", (payload) => api.deadLetterList(payload));
     register("dead_letter.retry", (payload) => api.deadLetterRetry(payload));
     register("dead_letter.clear", (payload) => api.deadLetterClear(payload));
+    register("dead_letter.retry_one", (payload) => api.deadLetterRetryOne(payload));
+    register("dead_letter.delete", (payload) => api.deadLetterDelete(payload));
     register("integrations.connect", (payload) => api.integrationConnect(payload));
     register("integrations.import_credentials", (payload) =>
       api.integrationImportCredentials(payload),
@@ -71,6 +73,7 @@
     register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
     register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));
     register("memory.summary.acknowledge", (payload) => api.memorySummaryAcknowledge(payload));
+    register("memory.rollup.entity.get", (payload) => api.memoryEntityRollupGet(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));

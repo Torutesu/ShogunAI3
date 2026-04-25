@@ -728,6 +728,25 @@ pub fn shogun_dead_letter_clear(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub fn shogun_dead_letter_retry_one(payload: Value) -> Result<Value, String> {
+  let id = payload
+    .get("id")
+    .and_then(|x| x.as_i64())
+    .ok_or_else(|| "id is required".to_string())?;
+  dead_letter::retry_one(id)
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_delete(payload: Value) -> Result<Value, String> {
+  let id = payload
+    .get("id")
+    .and_then(|x| x.as_i64())
+    .ok_or_else(|| "id is required".to_string())?;
+  dead_letter::delete_by_id(id)?;
+  Ok(json!({ "deleted": true, "id": id }))
+}
+
+#[tauri::command]
 pub fn app_integration_toggle(payload: Value) -> Result<Value, String> {
   let raw = payload
     .get("provider")
@@ -1420,6 +1439,48 @@ pub fn shogun_memory_summary_invalidate(payload: serde_json::Value) -> Result<se
     .unwrap_or("item");
   let deleted = crate::summarizer_store::delete(target_kind, target_id)?;
   Ok(serde_json::json!({ "deleted": deleted }))
+}
+
+/// エンティティ単位ロールアップ (Phase 3)。`entityId` (例: 連絡先 / プロジェクト) に紐づく
+/// 全アイテム要約を集約 → 1 つの "X の最近の動き" を生成。
+///
+/// payload: {
+///   "entityId": "...",
+///   "entityLabel"?: "...",  // UI で表示する人/プロジェクト名 (LLM プロンプトに渡す)
+///   "lang"?: "en" | "jp" | "bi",
+///   "regenerate"?: bool
+/// }
+#[tauri::command]
+pub async fn shogun_memory_entity_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let entity_id = payload
+    .get("entityId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "entityId is required".to_string())?
+    .to_string();
+  let entity_label = payload
+    .get("entityLabel")
+    .and_then(|v| v.as_str())
+    .unwrap_or(&entity_id)
+    .to_string();
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("entity_rollup", &entity_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_entity_rollup(&entity_id, &entity_label, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
 }
 
 /// 要約を "既読" にする (または未読に戻す)。`items` の配列で複数を一括処理可能。

@@ -38,6 +38,7 @@
       memoryDayRollupGet: (input) => call("shogun_memory_day_rollup_get", input, READ),
       memorySummarySetPriority: (input) => call("shogun_memory_summary_set_priority", input, WRITE),
       memorySummaryAcknowledge: (input) => call("shogun_memory_summary_acknowledge", input, WRITE),
+      memoryEntityRollupGet: (input) => call("shogun_memory_entity_rollup_get", input, READ),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
       memoryEmbedBackfill: (input) =>
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),
@@ -66,6 +67,8 @@
       deadLetterList: (input) => call("shogun_dead_letter_list", input || {}, READ),
       deadLetterRetry: (input) => call("shogun_dead_letter_retry", input || {}, WRITE),
       deadLetterClear: (input) => call("shogun_dead_letter_clear", input || {}, WRITE),
+      deadLetterRetryOne: (input) => call("shogun_dead_letter_retry_one", input || {}, WRITE),
+      deadLetterDelete: (input) => call("shogun_dead_letter_delete", input || {}, WRITE),
       llmApiKeySet: (input) => call("app_llm_api_key_set", input, WRITE),
       llmApiKeyStatus: (input) => call("app_llm_api_key_status", input, READ),
       llmApiKeyClear: (input) => call("app_llm_api_key_clear", input, WRITE),
