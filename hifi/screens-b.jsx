@@ -696,6 +696,46 @@ function ScreenChat() {
 // ═══════════════════════════════════════════════════════════════════════════
 // Demo timestamps: anchored to a fixed reference instant so the relative
 // labels ("2h ago", "next 14:00") render consistently across reloads.
+
+// "2h ago" / "12m ago" / "Sun 10:00" — relative to AGENTS_DEMO_NOW.
+function fmtRelativeTime(ms, nowMs) {
+  if (!ms || !nowMs) return '—';
+  const diff = nowMs - ms;
+  if (diff < 60_000) return 'just now';
+  if (diff < 60 * 60_000) return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 24 * 60 * 60_000) return `${Math.round(diff / (60 * 60_000))}h ago`;
+  if (diff < 7 * 24 * 60 * 60_000) return `${Math.round(diff / (24 * 60 * 60_000))}d ago`;
+  const d = new Date(ms);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// "14:00" / "Sun 10:00" — formatted next-fire time, today vs future-day-aware.
+function fmtNextTime(ms, nowMs) {
+  if (!ms || !nowMs) return null;
+  const d = new Date(ms);
+  const sameDay = new Date(nowMs).toDateString() === d.toDateString();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (sameDay) return `${hh}:${mm}`;
+  const wd = d.toLocaleDateString('en-US', { weekday: 'short' });
+  return `${wd} ${hh}:${mm}`;
+}
+
+// "running · 2h ago · next 14:00" — derives the small mono sub-line.
+function buildAgentSubLine(agent, statusLabel, nowMs) {
+  const parts = [statusLabel];
+  if (agent.lastRunMs && statusLabel !== 'paused') {
+    parts.push(`${fmtRelativeTime(agent.lastRunMs, nowMs)}`);
+  } else if (agent.lastRunMs && statusLabel === 'paused') {
+    parts.push(`last ${fmtRelativeTime(agent.lastRunMs, nowMs)}`);
+  }
+  const next = fmtNextTime(agent.nextRunMs, nowMs);
+  if (next && (statusLabel === 'running' || statusLabel === 'scheduled')) {
+    parts.push(`next ${next}`);
+  }
+  return parts.join(' · ');
+}
+
 const AGENTS_DEMO_NOW = Date.parse('2026-04-27T14:30:00+09:00');
 const HOUR = 60 * 60 * 1000;
 const AGENTS_DEMO = [
@@ -793,10 +833,24 @@ function AgentsKpiCard({ label, value, tone }) {
   );
 }
 
-function AgentCard({ agent }) {
-  const status = AGENT_STATUS_META[agent.status] || AGENT_STATUS_META.idle;
+function AgentCard({ agent, expanded, onToggle, nowMs }) {
+  // If the most recent run failed, surface it as `error` regardless of
+  // the schema status — operationally this is what matters.
+  const lastRun = agent.recentRuns && agent.recentRuns[0];
+  const effectiveStatus = lastRun && lastRun.level === 'error' ? 'error' : agent.status;
+  const status = AGENT_STATUS_META[effectiveStatus] || AGENT_STATUS_META.idle;
+  const subLine = buildAgentSubLine(agent, status.label, nowMs);
+
   return (
-    <div className="card card-hover" style={{padding:0, overflow:'hidden'}}>
+    <div
+      className="card card-hover"
+      style={{
+        padding: 0,
+        overflow: 'hidden',
+        borderColor: expanded ? 'var(--border-hi)' : 'var(--border)',
+        transition: `border-color var(--dur-base) var(--ease-out)`,
+      }}
+    >
       <div style={{padding:'var(--space-4) var(--space-6)', display:'flex', alignItems:'flex-start', gap:'var(--space-3)'}}>
         <div style={{
           width:40, height:40, borderRadius:'var(--radius-md)',
@@ -810,21 +864,27 @@ function AgentCard({ agent }) {
           <div style={{fontSize:16, fontWeight:600, letterSpacing:'-0.01em', marginBottom:4}}>{agent.name}</div>
           <div className="t-mono" style={{display:'inline-flex', alignItems:'center', gap:'var(--space-2)'}}>
             <span style={{width:6, height:6, borderRadius:999, background:status.color, display:'inline-block'}}/>
-            {status.label} · {agent.trigger}
+            {subLine}
           </div>
         </div>
-        <button type="button" aria-label="Agent actions" style={{
-          all:'unset',
-          padding:6, borderRadius:'var(--radius-sm)', color:'var(--text-dim)', cursor:'pointer',
-        }}>
-          <Icon name="more" size={15}/>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={expanded ? 'Collapse agent' : 'Expand agent'}
+          aria-expanded={expanded}
+          style={{
+            all:'unset',
+            padding:6, borderRadius:'var(--radius-sm)', color:'var(--text-dim)', cursor:'pointer',
+          }}
+        >
+          <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={15}/>
         </button>
       </div>
       <div style={{borderTop:'1px solid var(--border)', padding:'var(--space-4) var(--space-6)', color:'var(--text-mute)'}} className="t-sm">
         {agent.description}
       </div>
+      {/* expanded section is added in Task 3 — keep this empty placeholder until then */}
       <div style={{padding:'var(--space-3) var(--space-6)', borderTop:'1px solid var(--border)', display:'flex', alignItems:'center', gap:'var(--space-2)'}}>
-        <span className="t-mono">{agent.runs} RUNS</span>
         <span style={{flex:1}}/>
         {agent.tools.map((tool) => (
           <span key={tool.name} className="label" style={{display:'inline-flex', alignItems:'center', gap:5}}>
@@ -840,6 +900,14 @@ function ScreenAgents() {
   const [runPrompt, setRunPrompt] = React.useState('');
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
   const [playgroundOpen, setPlaygroundOpen] = React.useState(false);
+  const [expandedIds, setExpandedIds] = React.useState(() => new Set());
+  const toggleExpanded = React.useCallback((id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -935,7 +1003,13 @@ function ScreenAgents() {
       <div style={{marginBottom:'var(--space-4)', color:'var(--text-mute)'}} className="t-sm">Your agents</div>
       <div style={{display:'grid', gridTemplateColumns:'repeat(2, minmax(0, 1fr))', gap:'var(--space-4)', marginBottom:'var(--space-8)'}}>
         {AGENTS_DEMO.map((a) => (
-          <AgentCard key={a.id} agent={a}/>
+          <AgentCard
+            key={a.id}
+            agent={a}
+            expanded={expandedIds.has(a.id)}
+            onToggle={() => toggleExpanded(a.id)}
+            nowMs={AGENTS_DEMO_NOW}
+          />
         ))}
       </div>
 
