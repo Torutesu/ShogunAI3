@@ -657,12 +657,16 @@ function ScreenHome() {
           onPick: () => plusFileInputRef.current && plusFileInputRef.current.click(),
         },
         {
-          icon: 'layers',
-          label: 'プロジェクトに追加',
+          icon: 'folder',
+          label: 'Workに追加',
           chev: true,
           onPick: () => {
-            window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
-            window.SHOGUN_RUNTIME?.pushToast?.('Memory を開きました — タイムラインでプロジェクトを整理できます', 'info');
+            const open = window.SHOGUN_RUNTIME?.openWorkPickerForNewChat;
+            if (typeof open === 'function') {
+              open();
+            } else {
+              window.SHOGUN_RUNTIME?.pushToast?.('Work picker not ready', 'warn');
+            }
           },
         },
         {
@@ -728,14 +732,6 @@ function ScreenHome() {
           chev: false,
           active: assembleMemoryOn,
           onPick: () => setAssembleMemoryOn((v) => !v),
-        },
-        {
-          icon: 'edit',
-          label: 'スタイルを使用',
-          chev: true,
-          onPick: () => {
-            window.SHOGUN_RUNTIME?.openSettingsPane?.('appearance');
-          },
         },
       ],
     ],
