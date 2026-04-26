@@ -2004,9 +2004,16 @@ function ScreenMemory() {
     const mainEvents = events; // already HIGH + MED, provider-filtered
     const provs = activeFilters.providers || {};
     const matchesProvider = (e) => provs[memoryProviderKey(e.sourceRaw)] !== false;
-    const lowEvents = rawEvents.filter(
-      (e) => matchesProvider(e) && getEventPriority(e) === 'low',
-    );
+    const lowEvents = rawEvents.filter((e) => {
+      // Hard exclude screen captures: they're high-volume and never intended
+      // for the cluster (clusterScreenSessions collapses them into session
+      // cards inside `events`). This makes the invariant explicit so a future
+      // path that stamps `low` priority onto a capture can't silently leak.
+      const r = String(e.sourceRaw || '').toLowerCase();
+      if (r === 'capture_ax' || r === 'capture_sampler' || r.startsWith('capture_')) return false;
+      if (e.provenance === 'screen_capture') return false;
+      return matchesProvider(e) && getEventPriority(e) === 'low';
+    });
     if (lowEvents.length === 0) return mainEvents;
     const cluster = {
       kind: 'low_cluster',
