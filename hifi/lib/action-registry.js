@@ -28,6 +28,7 @@
     register("app.create_share_link", (payload) => api.appCreateShareLink(payload));
     register("settings.save", (payload) => api.settingsSave(payload));
     register("settings.load", (payload) => api.settingsLoad(payload));
+    register("kioku.backup_db", (payload) => api.kiokuBackupDb(payload));
     register("settings.export", (payload) => api.settingsExport(payload));
     register("settings.import", (payload) => api.settingsImport(payload));
     register("dead_letter.list", (payload) => api.deadLetterList(payload));

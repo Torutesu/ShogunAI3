@@ -290,6 +290,16 @@
       };
     }
 
+    if (command === "shogun_kioku_backup_db") {
+      return {
+        source_path: "/mock/memory.db",
+        dest_path: "/mock/memory.db.backup-2026-04-27-000000",
+        bytes: 0,
+        completed_at_ms: Date.now(),
+        stub: true,
+        echo,
+      };
+    }
     if (command === "shogun_kioku_stage5_dry_run") {
       return {
         generated_at_ms: Date.now(),

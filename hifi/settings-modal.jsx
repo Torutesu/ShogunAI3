@@ -2692,54 +2692,6 @@ function PaneShortcuts() {
     }));
   }, [Kbd, merged]);
 
-  const [jsonText, setJsonText] = useStateS('{}');
-  React.useEffect(() => {
-    const raw = sections.shortcuts && sections.shortcuts.bindings;
-    setJsonText(JSON.stringify(raw && typeof raw === 'object' ? raw : {}, null, 2));
-  }, [sections.shortcuts]);
-
-  const applyFromRuntime = React.useCallback((bindings) => {
-    if (window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.applyShortcutBindings) {
-      window.SHOGUN_RUNTIME.applyShortcutBindings(bindings);
-    }
-  }, []);
-
-  const saveJson = async () => {
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonText);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        toast('JSON must be an object: action id -> { key, super, ctrl, alt, shift }', 'error');
-        return;
-      }
-    } catch (_err) {
-      toast('Invalid JSON', 'error');
-      return;
-    }
-    const res = await run(
-      'settings.save',
-      { section: 'shortcuts', bindings: parsed },
-      { silentError: true, successMessage: 'Shortcuts saved' },
-    );
-    if (res && res.ok) {
-      applyFromRuntime(parsed);
-      await refreshSections();
-    }
-  };
-
-  const resetDefaults = async () => {
-    const res = await run(
-      'settings.save',
-      { section: 'shortcuts', bindings: {} },
-      { silentError: true, successMessage: 'Shortcuts reset to defaults' },
-    );
-    if (res && res.ok) {
-      applyFromRuntime({});
-      setJsonText('{}');
-      await refreshSections();
-    }
-  };
-
   if (!Kbd || !merged) {
     return (
       <Pane title="Keyboard Shortcuts" jp="捷径">
@@ -2747,8 +2699,6 @@ function PaneShortcuts() {
       </Pane>
     );
   }
-
-  const actionIds = Object.keys(Kbd.DEFAULT_BINDINGS).join(', ');
 
   return (
     <Pane title="Keyboard Shortcuts" jp="捷径">
@@ -2769,29 +2719,6 @@ function PaneShortcuts() {
           </div>
         </div>
       ))}
-      <div style={{ marginTop: 22 }}>
-        <div className="s-field-label" style={{ marginBottom: 8 }}>Overrides (JSON)</div>
-        <div className="s-field-hint" style={{ marginBottom: 8 }}>
-          Only list keys you want to change. Booleans: super (Cmd/Ctrl chord), ctrl (Control), alt, shift. Example:
-          {' '}
-          <span className="t-mono" style={{ fontSize: 11 }}>{'{"shortcut.new_chat":{"key":"e","super":true,"ctrl":false,"alt":false,"shift":false}}'}</span>
-        </div>
-        <textarea
-          className="s-input"
-          value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
-          rows={12}
-          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.45 }}
-          spellCheck={false}
-        />
-        <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => void saveJson()}>Save</button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => void resetDefaults()}>Reset to defaults</button>
-        </div>
-        <div className="s-field-hint" style={{ marginTop: 10, fontSize: 11, lineHeight: 1.5 }}>
-          Action ids: <span className="t-mono">{actionIds}</span>
-        </div>
-      </div>
     </Pane>
   );
 }
@@ -3041,6 +2968,28 @@ function PaneKiokuGraph() {
   const [rulesText, setRulesText] = useStateS('[]');
   const [rulesError, setRulesError] = useStateS('');
 
+  // Backup section state
+  const [backupLabel, setBackupLabel] = useStateS('');
+  const [backupBusy, setBackupBusy] = useStateS(false);
+  const [backupResult, setBackupResult] = useStateS(null);
+  const [backupError, setBackupError] = useStateS(null);
+
+  const runBackup = async () => {
+    setBackupBusy(true);
+    setBackupResult(null);
+    setBackupError(null);
+    const payload = {};
+    const trimmed = backupLabel.trim();
+    if (trimmed) payload.label = trimmed;
+    const r = await run('kioku.backup_db', payload, { silentError: true });
+    setBackupBusy(false);
+    if (r.ok && r.data) {
+      setBackupResult(r.data);
+    } else {
+      setBackupError((r && (r.message || r.error)) || 'Backup failed; check logs.');
+    }
+  };
+
   React.useEffect(() => {
     const g = sections.kioku_graph || {};
     if (typeof g.read_path === 'string') setReadPath(g.read_path);
@@ -3245,8 +3194,58 @@ function PaneKiokuGraph() {
           </button>
         </div>
       </div>
+
+      <div className="s-card" style={{padding:20, marginTop:16}}>
+        <h3 style={{marginTop:0}}>Backup</h3>
+        <p style={{color:'#aaa', fontSize:12, marginTop:0}}>
+          Run <code>VACUUM INTO</code> on the live <code>memory.db</code> to produce a consistent
+          compacted copy. Recommended before flipping <code>kioku_graph.stage5_apply</code> on, or
+          anytime you want a snapshot. The Tauri app can stay running.
+        </p>
+        <Row title="Label" desc='Inserted into the default filename ("memory.db.<label>-YYYY-MM-DD-HHMMSS"). Leave blank for "backup".'>
+          <input
+            className="s-input"
+            value={backupLabel}
+            onChange={(e) => setBackupLabel(e.target.value)}
+            placeholder="pre-stage5"
+            style={{width:200}}
+          />
+        </Row>
+        <Row title="Create backup now" desc="Writes to the same directory as memory.db. Refuses to overwrite existing files." last>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => void runBackup()}
+            disabled={backupBusy}
+          >
+            {backupBusy ? 'Backing up…' : 'Create backup'}
+          </button>
+        </Row>
+        {backupError && (
+          <div style={{color:'#e57373', marginTop:8, fontSize:12}}>{backupError}</div>
+        )}
+        {backupResult && !backupError && (
+          <div style={{marginTop:12, fontSize:12, color:'#aaa', lineHeight:1.6}}>
+            <div>✓ Backup complete</div>
+            <div>dest: <code>{backupResult.dest_path}</code></div>
+            <div>size: {formatBytes(backupResult.bytes)}</div>
+            <div>at: {new Date(backupResult.completed_at_ms).toLocaleString()}</div>
+          </div>
+        )}
+      </div>
     </Pane>
   );
+}
+
+function formatBytes(n) {
+  if (!n || n < 1024) return `${n || 0} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)} ${units[i]}`;
 }
 
 const PANES = {

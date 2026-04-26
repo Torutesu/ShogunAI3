@@ -469,6 +469,18 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'shogun_kioku_backup_db':
+      return {
+        ok: true,
+        data: {
+          source_path: '/mock/memory.db',
+          dest_path: '/mock/memory.db.backup-2026-04-27-000000',
+          bytes: 0,
+          completed_at_ms: Date.now(),
+          stub: true,
+          echo,
+        },
+      };
     case 'shogun_kioku_stage5_dry_run':
       return {
         ok: true,
@@ -1599,6 +1611,9 @@ function App() {
         if (id && typeof id === 'string') setActive(id);
       },
       createNewChat: () => createNewChat(),
+      openWorkPickerForNewChat: () => {
+        setChatWorkModal({ open: true, chatId: null, query: '' });
+      },
       openHistoricalImport: (provider, defaultDays) => {
         const p = String(provider || '').trim();
         const allowed = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear', 'zoom']);
@@ -1843,11 +1858,18 @@ function App() {
     setChatWorkModal({ open:true, chatId:id, query:'' });
   }, [chats]);
   const assignChatToWork = useCallback((workId, workName) => {
-    const id = chatWorkModal.chatId;
-    if (!id) return;
-    setChats((cs) => cs.map((c) => (c.id === id ? { ...c, workProjectId:workId, workProjectName:workName } : c)));
+    let id = chatWorkModal.chatId;
+    const newChat = !id;
+    if (newChat) {
+      id = `c${Date.now()}`;
+      const item = { id, title: 'New Chat', time: '', when: 'TODAY', jp: '今日', favorite: false, workProjectId: workId, workProjectName: workName };
+      setChats((prev) => [item, ...prev]);
+      setActiveChat(id);
+    } else {
+      setChats((cs) => cs.map((c) => (c.id === id ? { ...c, workProjectId:workId, workProjectName:workName } : c)));
+    }
     setChatWorkModal({ open:false, chatId:null, query:'' });
-    setActive('work');
+    setActive(newChat ? 'chat' : 'work');
     pushToast(`Workに追加: ${workName}`, 'success');
   }, [chatWorkModal.chatId]);
   const createAndAssignWork = useCallback(() => {

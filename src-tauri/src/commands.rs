@@ -186,6 +186,62 @@ pub fn shogun_kioku_debug_stats(_payload: Value) -> Result<Value, String> {
   crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)
 }
 
+/// Run `VACUUM INTO` on the live `memory.db` to produce a consistent
+/// compacted copy. Designed to be wired to the `Settings > KIOKU Graph >
+/// Backup` button so operators can grab a snapshot before
+/// `shogun_kioku_stage5_apply` (or anytime, really).
+///
+/// Payload:
+/// ```jsonc
+/// { "dest_path": "/optional/explicit/path.db", "label": "pre-stage5" }
+/// ```
+/// `dest_path` overrides the default location entirely; `label` is splice-d
+/// into the default name (`memory.db.<label>-YYYY-MM-DD-HHMMSS`) for quick
+/// labeling without typing the whole path. `dest_path` wins when both are
+/// supplied.
+#[tauri::command]
+pub fn shogun_kioku_backup_db(payload: Value) -> Result<Value, String> {
+  use std::path::{Path, PathBuf};
+  let conn = memory_store::open_conn()?;
+  let source = memory_store::db_path()?;
+  let now_ms = ts() as i64;
+
+  let dest: PathBuf = if let Some(explicit) = payload
+    .get("dest_path")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+  {
+    PathBuf::from(explicit)
+  } else {
+    let default = crate::kioku_backup::default_backup_dest(&source, now_ms);
+    if let Some(label) = payload
+      .get("label")
+      .and_then(|v| v.as_str())
+      .map(|s| s.trim())
+      .filter(|s| !s.is_empty())
+    {
+      // Replace the ".backup-" prefix with the caller's label so e.g.
+      // `pre-stage5-2026-04-27-...` lands without manual rename.
+      if let Some(name) = default.file_name().and_then(|s| s.to_str()) {
+        let renamed = name.replace(".backup-", &format!(".{}-", label));
+        let dir = default
+          .parent()
+          .map(Path::to_path_buf)
+          .unwrap_or_else(|| PathBuf::from("."));
+        dir.join(renamed)
+      } else {
+        default
+      }
+    } else {
+      default
+    }
+  };
+
+  let result = crate::kioku_backup::backup_db(&conn, &source, &dest, now_ms)?;
+  serde_json::to_value(&result).map_err(|e| e.to_string())
+}
+
 /// Stage 5 dry-run. Read-only — counts and reports without touching any data.
 /// Output is JSON-serializable and intended to be archived under
 /// `docs/kioku-stage5-${YYYY-MM-DD}-dryrun.txt` for Select review before
