@@ -65,6 +65,9 @@ pub(crate) fn apply_user_edits(s: &mut Summary) {
       }
       "keyPoints" => {
         if let Some(arr) = to.as_array() {
+          // Only string elements survive — the writer side (edit_field) is
+          // responsible for storing strings; any non-string here would
+          // indicate corruption and is dropped rather than panicking.
           let kp: Vec<String> = arr
             .iter()
             .filter_map(|v| v.as_str().map(String::from))
@@ -136,6 +139,8 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
         acknowledged_at: r.get(13)?,
         snooze_until: r.get(14)?,
       };
+      // Apply user edits inline so callers see effective values; LLM baseline
+      // remains in s.raw_json for callers that need it (e.g. revert_field).
       apply_user_edits(&mut s);
       Ok(s)
     },
@@ -189,6 +194,8 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
       acknowledged_at: r.get(13)?,
       snooze_until: r.get(14)?,
     };
+    // Apply user edits inline so callers see effective values; LLM baseline
+    // remains in s.raw_json for callers that need it (e.g. revert_field).
     apply_user_edits(&mut s);
     Ok(s)
   }).map_err(|e| format!("query: {}", e))?;
@@ -240,6 +247,8 @@ pub fn get_summaries_in_window(
       acknowledged_at: r.get(13)?,
       snooze_until: r.get(14)?,
     };
+    // Apply user edits inline so callers see effective values; LLM baseline
+    // remains in s.raw_json for callers that need it (e.g. revert_field).
     apply_user_edits(&mut s);
     Ok(s)
   }).map_err(|e| format!("query window: {}", e))?;
@@ -321,6 +330,8 @@ pub fn get_summaries_for_entity(
       acknowledged_at: r.get(13)?,
       snooze_until: r.get(14)?,
     };
+    // Apply user edits inline so callers see effective values; LLM baseline
+    // remains in s.raw_json for callers that need it (e.g. revert_field).
     apply_user_edits(&mut s);
     Ok(s)
   }).map_err(|e| format!("query entity: {}", e))?;
@@ -473,6 +484,15 @@ mod tests {
   #[test]
   fn apply_user_edits_no_edits() {
     let mut s = sample_with_raw(r#"{"tool_use":{},"stop_reason":"tool_use"}"#);
+    apply_user_edits(&mut s);
+    assert_eq!(s.title, "AI base title");
+    assert_eq!(s.key_points, vec!["base 1".to_string(), "base 2".into()]);
+    assert_eq!(s.reason.as_deref(), Some("AI base reason"));
+  }
+
+  #[test]
+  fn apply_user_edits_empty_array() {
+    let mut s = sample_with_raw(r#"{"tool_use":{},"user_edits":[]}"#);
     apply_user_edits(&mut s);
     assert_eq!(s.title, "AI base title");
     assert_eq!(s.key_points, vec!["base 1".to_string(), "base 2".into()]);
