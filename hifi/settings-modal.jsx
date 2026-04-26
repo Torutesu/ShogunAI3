@@ -11,6 +11,7 @@ const SETTINGS_NAV = [
   {id:'meetings',     label:'Meetings',           jp:'会議', icon:'calendar'},
   {id:'chat',         label:'Chat',               jp:'対話', icon:'chat'},
   {id:'llm',          label:'Model & API',        jp:'モデル', icon:'key'},
+  {id:'kioku_graph',  label:'KIOKU Graph',        jp:'記憶グラフ', icon:'memory'},
   {id:'integrations', label:'Integrations',       jp:'連携', icon:'plug'},
   {id:'shortcuts',    label:'Keyboard Shortcuts', jp:'捷径', icon:'keyboard'},
   {id:'team',         label:'Team',               jp:'組',   icon:'users'},
@@ -3017,12 +3018,244 @@ function PaneSupport() {
   );
 }
 
+function PaneKiokuGraph() {
+  const { run } = useRuntimeActions();
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
+
+  // kioku_graph section
+  const [readPath, setReadPath] = useStateS('legacy');
+  const [workerEnabled, setWorkerEnabled] = useStateS(false);
+  const [captureFlag, setCaptureFlag] = useStateS(false);
+  const [pollSecs, setPollSecs] = useStateS('30');
+  const [maxJobs, setMaxJobs] = useStateS('5');
+
+  // kioku_cost section
+  const [monthlyCap, setMonthlyCap] = useStateS('10');
+  const [capAction, setCapAction] = useStateS('pause_extraction');
+  const [fallbackModel, setFallbackModel] = useStateS('claude-haiku-4-5');
+
+  // llm.extractionModel
+  const [extractionModel, setExtractionModel] = useStateS('claude-haiku-4-5');
+
+  // kioku_rules — text area editing of raw JSON
+  const [rulesText, setRulesText] = useStateS('[]');
+  const [rulesError, setRulesError] = useStateS('');
+
+  React.useEffect(() => {
+    const g = sections.kioku_graph || {};
+    if (typeof g.read_path === 'string') setReadPath(g.read_path);
+    if (typeof g.worker_enabled === 'boolean') setWorkerEnabled(g.worker_enabled);
+    if (typeof g.capture_to_mem_captures === 'boolean') setCaptureFlag(g.capture_to_mem_captures);
+    if (g.poll_interval_secs != null) setPollSecs(String(g.poll_interval_secs));
+    if (g.max_jobs_per_tick != null) setMaxJobs(String(g.max_jobs_per_tick));
+
+    const c = sections.kioku_cost || {};
+    if (c.monthly_cap_usd != null) setMonthlyCap(String(c.monthly_cap_usd));
+    if (typeof c.cap_action === 'string') setCapAction(c.cap_action);
+    if (typeof c.fallback_model === 'string') setFallbackModel(c.fallback_model);
+
+    const l = sections.llm || {};
+    if (typeof l.extractionModel === 'string') setExtractionModel(l.extractionModel);
+
+    const arr = Array.isArray(sections.kioku_rules) ? sections.kioku_rules : [];
+    try {
+      setRulesText(JSON.stringify(arr, null, 2));
+    } catch (_) {
+      setRulesText('[]');
+    }
+  }, [sections]);
+
+  const persistGraph = (patch) => run(
+    'settings.save',
+    {
+      section: 'kioku_graph',
+      read_path: readPath,
+      worker_enabled: workerEnabled,
+      capture_to_mem_captures: captureFlag,
+      poll_interval_secs: Number(pollSecs) || 30,
+      max_jobs_per_tick: Number(maxJobs) || 5,
+      ...patch,
+    },
+    { silentError: true },
+  ).then(() => refreshSections && refreshSections());
+
+  const persistCost = (patch) => run(
+    'settings.save',
+    {
+      section: 'kioku_cost',
+      monthly_cap_usd: Number(monthlyCap) || 10,
+      cap_action: capAction,
+      fallback_model: fallbackModel,
+      ...patch,
+    },
+    { silentError: true },
+  ).then(() => refreshSections && refreshSections());
+
+  const persistLLMModel = (val) => run(
+    'settings.save',
+    { section: 'llm', extractionModel: val },
+    { silentError: true },
+  ).then(() => refreshSections && refreshSections());
+
+  const saveRules = async () => {
+    setRulesError('');
+    let parsed;
+    try {
+      parsed = JSON.parse(rulesText);
+    } catch (e) {
+      setRulesError(`Invalid JSON: ${e.message}`);
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      setRulesError('kioku_rules must be a JSON array.');
+      return;
+    }
+    // settings.save expects an object payload under `section`. We replace
+    // the entire section with the array so editing is round-trippable.
+    await run(
+      'settings.save',
+      { section: 'kioku_rules', value: parsed },
+      { silentError: true },
+    );
+    if (refreshSections) await refreshSections();
+  };
+
+  return (
+    <Pane
+      title="KIOKU Graph"
+      jp="記憶グラフ"
+      subtitle="Phase 2 graph layer flags, BYOK extraction worker, monthly cost cap, and user-defined rules. All toggles default OFF — Phase 1 behavior is preserved until you opt in."
+    >
+      <div className="s-card" style={{padding:20, marginBottom:16}}>
+        <Row title="Retrieval read path" desc="Switch context_assembly between legacy FTS+semantic and the KIOKU graph traversal (recursive CTE + decay).">
+          <select
+            className="s-select"
+            value={readPath}
+            onChange={(e) => { const v = e.target.value; setReadPath(v); persistGraph({ read_path: v }); }}
+          >
+            <option value="legacy">legacy</option>
+            <option value="graph">graph</option>
+          </select>
+        </Row>
+        <Row title="Capture → mem_captures" desc="When ON, capture_sampler / macos_ax route raw captures into mem_captures + extraction_jobs instead of mem_items.">
+          <Toggle on={captureFlag} onClick={() => { const next = !captureFlag; setCaptureFlag(next); persistGraph({ capture_to_mem_captures: next }); }} />
+        </Row>
+        <Row title="Worker enabled" desc="Background thread polls extraction_jobs and calls the BYOK extraction model. Disabled = jobs queue but never run.">
+          <Toggle on={workerEnabled} onClick={() => { const next = !workerEnabled; setWorkerEnabled(next); persistGraph({ worker_enabled: next }); }} />
+        </Row>
+        <Row title="Worker poll interval (sec)" desc="Clamped 5–600 server-side. Lower values check the queue more often at the cost of CPU wake-ups.">
+          <input
+            className="s-input"
+            type="number"
+            min="5"
+            max="600"
+            value={pollSecs}
+            onChange={(e) => setPollSecs(e.target.value)}
+            onBlur={() => persistGraph({ poll_interval_secs: Number(pollSecs) || 30 })}
+            style={{width:90}}
+          />
+        </Row>
+        <Row title="Max jobs per tick" desc="Bounds tick latency. Clamped 1–50 server-side." last>
+          <input
+            className="s-input"
+            type="number"
+            min="1"
+            max="50"
+            value={maxJobs}
+            onChange={(e) => setMaxJobs(e.target.value)}
+            onBlur={() => persistGraph({ max_jobs_per_tick: Number(maxJobs) || 5 })}
+            style={{width:90}}
+          />
+        </Row>
+      </div>
+
+      <div className="s-card" style={{padding:20, marginBottom:16}}>
+        <h3 style={{marginTop:0}}>BYOK extraction cost</h3>
+        <Row title="Extraction model" desc="Anthropic ID used by AnthropicExtractionClient. Sonnet / Opus increase quality + cost (3x / 15x).">
+          <select
+            className="s-select"
+            value={extractionModel}
+            onChange={(e) => { const v = e.target.value; setExtractionModel(v); persistLLMModel(v); }}
+          >
+            <option value="claude-haiku-4-5">claude-haiku-4-5 (default, ~$9/mo median)</option>
+            <option value="claude-sonnet-4-6">claude-sonnet-4-6 (3x cost)</option>
+            <option value="claude-opus-4-7">claude-opus-4-7 (15x cost)</option>
+          </select>
+        </Row>
+        <Row title="Monthly cap (USD)" desc="When this month's cost_ledger total reaches the cap, cap_action below decides what happens.">
+          <input
+            className="s-input"
+            type="number"
+            step="1"
+            min="0"
+            value={monthlyCap}
+            onChange={(e) => setMonthlyCap(e.target.value)}
+            onBlur={() => persistCost({ monthly_cap_usd: Number(monthlyCap) || 10 })}
+            style={{width:90}}
+          />
+        </Row>
+        <Row title="Cap action" desc="pause_extraction = capture continues, jobs sit until next month. pause_capture = capture also stops. fallback_to_lighter = swap to fallback model.">
+          <select
+            className="s-select"
+            value={capAction}
+            onChange={(e) => { const v = e.target.value; setCapAction(v); persistCost({ cap_action: v }); }}
+          >
+            <option value="pause_extraction">pause_extraction (recommended)</option>
+            <option value="pause_capture">pause_capture (hard cap)</option>
+            <option value="fallback_to_lighter">fallback_to_lighter</option>
+          </select>
+        </Row>
+        <Row title="Fallback model" desc="Used when cap_action = fallback_to_lighter and the cap is reached." last>
+          <select
+            className="s-select"
+            value={fallbackModel}
+            onChange={(e) => { const v = e.target.value; setFallbackModel(v); persistCost({ fallback_model: v }); }}
+          >
+            <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+            <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+          </select>
+        </Row>
+      </div>
+
+      <div className="s-card" style={{padding:20}}>
+        <h3 style={{marginTop:0}}>User-defined rules (kioku_rules)</h3>
+        <p style={{color:'#aaa', fontSize:12, marginTop:0}}>
+          A JSON array of rule objects. Each object has <code>id</code>, optional <code>yaml</code> (frontmatter
+          with <code>title:</code>), and <code>body</code>. Rules are injected at the top of every chat / brief /
+          draft / pack system prompt. Saved to <code>settings.json</code>; the cache reloads on save.
+        </p>
+        <textarea
+          className="s-input"
+          value={rulesText}
+          onChange={(e) => setRulesText(e.target.value)}
+          rows={12}
+          spellCheck={false}
+          style={{fontFamily:'monospace', fontSize:12, width:'100%'}}
+        />
+        {rulesError && <div style={{color:'#e57373', marginTop:8, fontSize:12}}>{rulesError}</div>}
+        <div style={{marginTop:12, display:'flex', gap:8}}>
+          <button className="btn btn-sm btn-primary" onClick={() => void saveRules()}>
+            Save rules
+          </button>
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => setRulesText(JSON.stringify(Array.isArray(sections.kioku_rules) ? sections.kioku_rules : [], null, 2))}
+          >
+            Discard changes
+          </button>
+        </div>
+      </div>
+    </Pane>
+  );
+}
+
 const PANES = {
   general: PaneGeneral, system: PaneSystem, appearance: PaneAppearance,
   privacy: PanePrivacy, data: PaneData, hummingbird: PaneHummingbird,
   meetings: PaneMeetings, chat: PaneChat, llm: PaneLLM, integrations: PaneIntegrations,
   shortcuts: PaneShortcuts,
   team: PaneTeam, support: PaneSupport,
+  kioku_graph: PaneKiokuGraph,
 };
 
 function SettingsModal({pane, setPane, close}) {
