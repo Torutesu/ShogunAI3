@@ -635,6 +635,16 @@ fn rollup_system_prompt_for_lang(lang: &str, kind: RollupKind) -> String {
       "today",
       "surface what moved forward, what's still pending for tomorrow, and any explicit decisions made today. Tighter than a weekly roll-up — 3-4 bullets is usually enough",
     ),
+    RollupKind::Month => (
+      r#""Month of <YYYY-MM>" (e.g., "Month of 2026-04")"#,
+      "this month",
+      "synthesize activity across weeks: key projects, decisions finalized, milestones hit, and outstanding items rolling into next month",
+    ),
+    RollupKind::Year => (
+      r#""Year of <YYYY>" (e.g., "Year of 2026")"#,
+      "this year",
+      "synthesize high-level themes: major projects completed, key decisions made, and patterns in how the year unfolded",
+    ),
   };
   let target_kind = kind.target_kind();
 
@@ -658,6 +668,8 @@ Rules:
   let lang_directive = match (lang, kind) {
     ("jp", RollupKind::Week) => "\n- OUTPUT LANGUAGE: Japanese. title の形式は「今週（Mon月Dd日週）」のように日本語化する。",
     ("jp", RollupKind::Day) => "\n- OUTPUT LANGUAGE: Japanese. title の形式は「M月D日（曜日）」のように日本語化する。",
+    ("jp", RollupKind::Month) => "\n- OUTPUT LANGUAGE: Japanese. title の形式は「YYYY年M月」のように日本語化する。",
+    ("jp", RollupKind::Year) => "\n- OUTPUT LANGUAGE: Japanese. title の形式は「YYYY年」のように日本語化する。",
     ("bi", _) => "\n- OUTPUT LANGUAGE: Match the dominant language of the source items.",
     _ => "\n- OUTPUT LANGUAGE: English.",
   };
@@ -670,6 +682,70 @@ pub fn format_week_id(week_start_ms: i64) -> String {
   let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0)
     .unwrap_or_else(chrono::Utc::now);
   dt.format("%Y-%m-%d").to_string()
+}
+
+/// Format `YYYY-MM` for the calendar month containing `month_start_ms` (local).
+pub fn format_month_id(month_start_ms: i64) -> String {
+  let secs = month_start_ms / 1000;
+  let dt = chrono::DateTime::<chrono::Local>::from(
+    chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0).unwrap_or_else(chrono::Utc::now),
+  );
+  dt.format("%Y-%m").to_string()
+}
+
+/// Format `YYYY` for the calendar year containing `year_start_ms` (local).
+pub fn format_year_id(year_start_ms: i64) -> String {
+  let secs = year_start_ms / 1000;
+  let dt = chrono::DateTime::<chrono::Local>::from(
+    chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0).unwrap_or_else(chrono::Utc::now),
+  );
+  dt.format("%Y").to_string()
+}
+
+/// Returns `(start_ms, end_ms)` for the calendar month containing `month_start_ms`.
+/// `end_ms` = first ms of the following month in local time.
+fn month_window(month_start_ms: i64) -> (i64, i64) {
+  use chrono::{Datelike, TimeZone};
+  let secs = month_start_ms / 1000;
+  let local = chrono::Local
+    .timestamp_opt(secs, 0)
+    .single()
+    .unwrap_or_else(chrono::Local::now);
+  let (y, m) = (local.year(), local.month());
+  let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+  let next_start = chrono::Local
+    .with_ymd_and_hms(ny, nm, 1, 0, 0, 0)
+    .single()
+    .map(|d| d.timestamp_millis())
+    .unwrap_or(month_start_ms + 31 * 24 * 3600 * 1000);
+  (month_start_ms, next_start)
+}
+
+/// Returns `(start_ms, end_ms)` for the calendar year containing `year_start_ms`.
+/// `end_ms` = Jan 1 of the following year @ 00:00 local.
+fn year_window(year_start_ms: i64) -> (i64, i64) {
+  use chrono::{Datelike, TimeZone};
+  let secs = year_start_ms / 1000;
+  let local = chrono::Local
+    .timestamp_opt(secs, 0)
+    .single()
+    .unwrap_or_else(chrono::Local::now);
+  let next_start = chrono::Local
+    .with_ymd_and_hms(local.year() + 1, 1, 1, 0, 0, 0)
+    .single()
+    .map(|d| d.timestamp_millis())
+    .unwrap_or(year_start_ms + 366 * 24 * 3600 * 1000);
+  (year_start_ms, next_start)
+}
+
+/// True iff `s` was produced by the empty-window short-circuit in
+/// `summarize_rollup` (raw_json contains `{"rollup":"empty"}`). Reused
+/// by the Year compositor to skip months with no indexed activity.
+fn is_empty_rollup(s: &Summary) -> bool {
+  serde_json::from_str::<serde_json::Value>(&s.raw_json)
+    .ok()
+    .and_then(|v| v.get("rollup").and_then(|r| r.as_str()).map(|s| s == "empty"))
+    .unwrap_or(false)
 }
 
 /// Generate (or regenerate) a week-rollup summary for `[week_start_ms, week_start_ms + 7d)`.
@@ -701,10 +777,14 @@ async fn summarize_rollup(
     let (title_en, title_jp) = match kind {
       RollupKind::Week => ("Quiet week", "静かな週"),
       RollupKind::Day => ("Quiet day", "静かな一日"),
+      RollupKind::Month => ("Quiet month", "静かな月"),
+      RollupKind::Year => ("Quiet year", "静かな一年"),
     };
     let (no_items_en, no_items_jp) = match kind {
       RollupKind::Week => ("No activity this week.", "今週のアクティビティなし"),
       RollupKind::Day => ("No activity today.", "今日のアクティビティなし"),
+      RollupKind::Month => ("No activity this month.", "今月のアクティビティなし"),
+      RollupKind::Year => ("No activity this year.", "今年のアクティビティなし"),
     };
     return Ok(Summary {
       target_kind: kind.target_kind().into(),
@@ -726,7 +806,12 @@ async fn summarize_rollup(
   }
 
   // Keep prompt bounded: cap context window size by scope. Day needs fewer.
-  let cap = match kind { RollupKind::Week => 40, RollupKind::Day => 20 };
+  let cap = match kind {
+    RollupKind::Week => 40,
+    RollupKind::Day => 20,
+    RollupKind::Month => 60,
+    RollupKind::Year => 100,
+  };
   let context_items: Vec<&Summary> = items.iter().take(cap).collect();
   let user_content = render_rollup_context(&context_items, &id, kind);
   let tool = emit_memory_summary_tool();
@@ -751,27 +836,43 @@ async fn summarize_rollup(
 /// and fallback titling. Added in Phase 2.5 to avoid duplicating rollup
 /// plumbing between weekly and daily digests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RollupKind { Week, Day }
+pub enum RollupKind { Week, Day, Month, Year }
 
 impl RollupKind {
   pub fn target_kind(&self) -> &'static str {
-    match self { Self::Week => "week_rollup", Self::Day => "day_rollup" }
+    match self {
+      Self::Week => "week_rollup",
+      Self::Day => "day_rollup",
+      Self::Month => "month_rollup",
+      Self::Year => "year_rollup",
+    }
   }
   fn window_label(&self) -> &'static str {
-    match self { Self::Week => "Week starting", Self::Day => "Day" }
+    match self {
+      Self::Week => "Week starting",
+      Self::Day => "Day",
+      Self::Month => "Month",
+      Self::Year => "Year",
+    }
   }
   fn items_intro(&self) -> &'static str {
     match self {
       Self::Week => "Items this week (sorted by priority):",
       Self::Day => "Items today (sorted by priority):",
+      Self::Month => "Items this month (sorted by priority):",
+      Self::Year => "Monthly rollups this year (chronological):",
     }
   }
   fn fallback_title(&self, id: &str, lang: &str) -> String {
     match (self, lang) {
       (Self::Week, "jp") => format!("今週（{}週）", id),
       (Self::Day, "jp") => format!("{} の記録", id),
+      (Self::Month, "jp") => format!("今月（{}）", id),
+      (Self::Year, "jp") => format!("今年（{}年）", id),
       (Self::Week, _) => format!("Week of {}", id),
       (Self::Day, _) => format!("Day of {}", id),
+      (Self::Month, _) => format!("Month of {}", id),
+      (Self::Year, _) => format!("Year of {}", id),
     }
   }
 }
