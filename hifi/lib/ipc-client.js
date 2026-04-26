@@ -291,10 +291,13 @@
     // Mock-only: derive a stable LOW/MEDIUM/HIGH from the item id so the
     // River cluster UI has something to render. Real backend ignores this.
     const mockPriorityForId = (id) => {
-      const s = String(id || '');
-      if (!s) return 'medium';
+      if (!id) return 'medium';
+      const s = String(id);
       const last = s.charCodeAt(s.length - 1);
-      // ~25% LOW, ~25% HIGH, ~50% MEDIUM
+      // Uniform-alphabet target: ~25% LOW, ~25% HIGH, ~50% MEDIUM.
+      // Demo seed uses decimal-digit suffixes (demo-m-01..12), so the
+      // realized split is closer to 30/30/40 — enough to populate the
+      // cluster UI with all three tiers.
       const m = last % 4;
       if (m === 0) return 'low';
       if (m === 1) return 'high';
