@@ -223,6 +223,8 @@ pub fn run() {
       commands::shogun_memory_entity_rollup_get,
       commands::shogun_memory_rollup_get,
       commands::shogun_memory_day_rollup_get,
+      commands::shogun_memory_month_rollup_get,
+      commands::shogun_memory_year_rollup_get,
       commands::shogun_memory_summary_set_priority,
     ])
     .run(tauri::generate_context!())

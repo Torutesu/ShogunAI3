@@ -1634,6 +1634,74 @@ pub async fn shogun_memory_day_rollup_get(payload: serde_json::Value) -> Result<
   Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
 }
 
+/// 月次ロールアップ要約を取得 (キャッシュヒット時は即返、無ければ生成)。
+///
+/// payload: { "monthStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// monthStartMs は対象月の1日 00:00 (local) の ms。UI で計算して渡す。
+#[tauri::command]
+pub async fn shogun_memory_month_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let month_start_ms = payload
+    .get("monthStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "monthStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let month_id = crate::summarizer::format_month_id(month_start_ms);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("month_rollup", &month_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_month_rollup(month_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// 年次ロールアップ要約 — 構成元は当年内の月次ロールアップ12件。
+/// 未キャッシュの月は内部で月次生成→upsert してから合成。
+///
+/// payload: { "yearStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// yearStartMs は対象年の1月1日 00:00 (local) の ms。UI で計算して渡す。
+/// regenerate=true は YEAR キャッシュのみ無効化する。月次キャッシュは保持。
+#[tauri::command]
+pub async fn shogun_memory_year_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let year_start_ms = payload
+    .get("yearStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "yearStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let year_id = crate::summarizer::format_year_id(year_start_ms);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("year_rollup", &year_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_year_rollup(year_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
 /// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW
 /// even when the LLM classified it differently, or clear the override back to
 /// the LLM assignment. `priority: null` clears the override.
