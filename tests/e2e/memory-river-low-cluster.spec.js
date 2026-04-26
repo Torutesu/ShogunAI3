@@ -135,4 +135,83 @@ test.describe('Memory River — Low-priority cluster', () => {
     await expect(cluster).toBeVisible();
     await expect(cluster).toHaveAttribute('aria-expanded', 'true');
   });
+
+  test('zero LOW items — no cluster header rendered', async ({ page }) => {
+    // Seed where every item id ends in a char whose charCode % 4 !== 0.
+    // '1'=49→1(HIGH), '2'=50→2(MED), '3'=51→3(MED), '5'=53→1(HIGH),
+    // '6'=54→2(MED), '7'=55→3(MED), '9'=57→1(HIGH).
+    // Avoids '0'(48), '4'(52), '8'(56) which are all %4===0 (LOW).
+    const NO_LOW_SEED_SCRIPT = () => {
+      const now = Date.now();
+      const ts = (deltaMs) => now + deltaMs;
+      window.SHOGUN_DEMO_SEED = {
+        memoryHits: [
+          { id: "demo-m-01", title: "Q2 roadmap — Aurora beta", snippet: "Beta week target mid-June.", source: "chat", kinds: ["input"], created_at: ts(-45 * 60 * 1000) },
+          { id: "demo-m-02", title: "Investor update deck", snippet: "Three slides on adoption.", source: "meetings", kinds: ["audio"], created_at: ts(-3 * 60 * 60 * 1000) },
+          { id: "demo-m-03", title: "Aurora data classification labels", snippet: "PII tags required.", source: "work", kinds: ["input"], created_at: ts(-5 * 60 * 60 * 1000) },
+          { id: "demo-m-05", title: "Customer interview — Nodebank", snippet: "Pain: CSV reconciliation.", source: "note", kinds: ["input"], created_at: ts(-26 * 60 * 60 * 1000) },
+          { id: "demo-m-06", title: "LP copy ja / en", snippet: "Headline options.", source: "work", kinds: ["input"], created_at: ts(-30 * 60 * 60 * 1000) },
+          { id: "demo-m-07", title: "1:1 Mio Sato x Kenta Yamada", snippet: "Hiring pipeline.", source: "meetings", kinds: ["audio"], created_at: ts(-40 * 60 * 60 * 1000) },
+          { id: "demo-m-09", title: "Claude project: Aurora spec", snippet: "Ingest only allowed apps.", source: "chat", kinds: ["input"], created_at: ts(-60 * 60 * 60 * 1000) },
+          { id: "demo-m-11", title: "All-hands — Kitazawa Tech", snippet: "Aurora beta demo video.", source: "meetings", kinds: ["audio"], created_at: ts(-96 * 60 * 60 * 1000) },
+          { id: "demo-m-12", title: "API rate limits — backoff design", snippet: "On 429: exponential backoff.", source: "work", kinds: ["input"], created_at: ts(-120 * 60 * 60 * 1000) },
+        ],
+        entities: [],
+        stats: {},
+        chats: [],
+        chatThreads: {},
+        chatMemoryContext: {},
+      };
+    };
+    // Override the seed with the no-LOW variant before navigation.
+    await page.addInitScript(NO_LOW_SEED_SCRIPT);
+    await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
+    await page.waitForSelector(".app", { timeout: 90000 });
+    await goToMemoryRiver(page);
+    await advanceToLastEvent(page);
+    // With no LOW-priority items there should be no cluster header at all.
+    await expect(page.locator('.memory-summary-card[role="button"]')).toHaveCount(0);
+  });
+
+  // fixme: The cluster header (.memory-summary-card[role="button"]) does not
+  // render in the Playwright environment without a real summarization backend —
+  // same root cause as tests 1–5 (mock IPC never returns priority='low' for
+  // demo-m-04/08/10 so the cluster row is never synthesized). Once the mock
+  // IPC layer is extended to return low priority for those ids, un-fixme this.
+  // Spec reference: Memory Digest Phase 4, § 4 — L-filter toggle.
+  test.fixme('L filter ON interleaves LOW items (no cluster); L filter OFF restores cluster with aria-expanded preserved', async ({ page }) => {
+    await openHiFi(page);
+    await goToMemoryRiver(page);
+    await advanceToLastEvent(page);
+
+    // Cluster header must be visible before we touch the filter.
+    const cluster = page.locator('.memory-summary-card[role="button"]').first();
+    await expect(cluster).toBeVisible();
+
+    // Expand the cluster so we can verify aria-expanded is preserved on toggle-off.
+    await cluster.click();
+    await expect(cluster).toHaveAttribute('aria-expanded', 'true');
+
+    // Open the Filters menu.
+    // Selector: <button type="button" aria-expanded={filtersOpen}>Filters…</button>
+    // (screens-a.jsx ~line 2375 — button with text matching /^Filters/)
+    const filtersBtn = page.getByRole('button', { name: /^Filters/ });
+    await filtersBtn.click();
+
+    // The Priority section has three checkboxes: High, Medium, Low.
+    // Clicking the "Low" label toggles activeFilters.priority.low ON.
+    // (screens-a.jsx ~line 2405: label with span text "Low" inside role="menu")
+    const lowLabel = page.getByRole('menu').getByText('Low');
+    await lowLabel.click();
+
+    // With L filter ON, LOW items are interleaved — the cluster header disappears.
+    await expect(cluster).toHaveCount(0);
+
+    // Toggle L filter OFF by clicking "Low" again.
+    await lowLabel.click();
+
+    // Cluster header should reappear and retain its aria-expanded='true' state.
+    await expect(cluster).toBeVisible();
+    await expect(cluster).toHaveAttribute('aria-expanded', 'true');
+  });
 });
