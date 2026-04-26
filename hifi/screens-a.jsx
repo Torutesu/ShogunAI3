@@ -2032,14 +2032,32 @@ function ScreenMemory() {
 
   // Batch-summarize items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
-  // We fetch summaries for ALL items (not just connector sources) so that
-  // the LOW-priority cluster can be populated regardless of source type.
+  // Only user-content sources are summarized; high-volume screen captures
+  // (capture_ax, capture_sampler) are explicitly excluded to avoid flooding
+  // the LLM summarization pipeline in production.
   useEffect(() => {
     if (!summaryEnabled || rawEvents.length === 0) return;
     let cancelled = false;
     const connectorItems = rawEvents
       .filter((e) => {
-        return e.memoryId && !summaryByMemId[e.memoryId];
+        const r = String(e.sourceRaw || '').toLowerCase();
+        // Hard exclude: screen captures are high-volume and intentionally
+        // not summarized — they are clustered separately by clusterScreenSessions.
+        if (r === 'capture_ax' || r === 'capture_sampler' || r.startsWith('capture_')) return false;
+        if (e.provenance === 'screen_capture') return false;
+        // Allowlist of summarizable user-content sources.
+        const isSummarizable =
+          r === 'gmail' ||
+          r === 'google_calendar' ||
+          r === 'meetings' ||
+          r === 'meeting_note' ||
+          r === 'audio_meeting' ||
+          r === 'note' ||
+          r === 'chat' ||
+          r === 'work' ||
+          e.provenance === 'connector' ||
+          e.provenance === 'meeting';
+        return isSummarizable && e.memoryId && !summaryByMemId[e.memoryId];
       })
       .slice(0, 30)
       .map((e) => ({
