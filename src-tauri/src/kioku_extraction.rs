@@ -122,6 +122,31 @@ pub fn extraction_tool_input_schema() -> Value {
   })
 }
 
+// ── Embedding bridge (sync from worker) ───────────────────────────────────
+
+/// Embed a single claim. Returns `None` when no API key is configured, the
+/// claim is empty, or the embed call fails — the worker continues with
+/// text-only fact matching in those cases. Trims to a 4 kB upper bound to
+/// keep input cost bounded for unusually large claims.
+pub fn embed_claim_blocking(claim: &str) -> Option<Vec<f32>> {
+  let text = claim.trim();
+  if text.is_empty() {
+    return None;
+  }
+  let clipped: String = text.chars().take(4_000).collect();
+  let result = tauri::async_runtime::block_on(async move {
+    crate::embeddings::embed_one(&clipped).await
+  });
+  match result {
+    Ok(v) if !v.is_empty() => Some(v),
+    Ok(_) => None,
+    Err(e) => {
+      log::debug!("kioku embed_claim_blocking: {}", e);
+      None
+    }
+  }
+}
+
 // ── Worker (extraction job) ───────────────────────────────────────────────
 
 /// Capture data passed to the extraction client. Mirrors the read shape of
@@ -505,10 +530,19 @@ pub fn process_one_job<C: ExtractionClient>(
 
   match client.extract(&ctx) {
     Ok(resp) => {
-      // Apply each fact via resolve_write.
+      // Apply each fact via resolve_write. Embed each claim once so
+      // `is_same_fact` stage 2 (cosine ≥ 0.92) can bridge paraphrases /
+      // multilingual variants. Embedding failures fall back to text-only
+      // matching so the worker stays robust when the embedding endpoint
+      // is unreachable.
       let fact_count = resp.facts.len();
-      for f in &resp.facts {
-        resolve_write(f, Some(capture_id), now_ms, conn)?;
+      let claim_embeddings: Vec<Option<Vec<f32>>> = resp
+        .facts
+        .iter()
+        .map(|f| embed_claim_blocking(&f.claim))
+        .collect();
+      for (f, emb) in resp.facts.iter().zip(claim_embeddings.iter()) {
+        resolve_write(f, emb.as_deref(), Some(capture_id), now_ms, conn)?;
       }
 
       let cost = crate::cost_ledger::calc_cost(&resp.model, resp.input_tokens, resp.output_tokens)
@@ -850,6 +884,26 @@ struct CandidateRow {
   fact_type: String,      // first kinds_json element by convention; falls back to ""
   claim: String,          // mem_items.snippet
   access_count: i64,
+  embedding: Option<Vec<f32>>,  // decoded f32 LE blob; None when row has no embedding
+}
+
+/// Decode the f32 LE BLOB stored in `mem_items.embedding`. Mirrors the helper
+/// in `memory_store::decode_embedding_blob` (kept private over there) so this
+/// module is self-contained for the embedding-aware fact comparison path.
+fn decode_embedding_blob(b: &[u8]) -> Option<Vec<f32>> {
+  if b.is_empty() || b.len() % 4 != 0 {
+    return None;
+  }
+  Some(
+    b.chunks_exact(4)
+      .filter_map(|c| c.try_into().ok().map(f32::from_le_bytes))
+      .collect(),
+  )
+}
+
+/// Encode an f32 vector for storage in the BLOB column.
+fn encode_embedding_blob(v: &[f32]) -> Vec<u8> {
+  v.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
 fn fetch_candidates_for_fact(
@@ -864,7 +918,7 @@ fn fetch_candidates_for_fact(
   if let Some(eid) = &fact.entity_id {
     let mut stmt = conn
       .prepare(
-        "SELECT id, entity_id, title, kinds_json, snippet, access_count
+        "SELECT id, entity_id, title, kinds_json, snippet, access_count, embedding
          FROM mem_items
          WHERE valid_to IS NULL AND entity_id = ?1",
       )
@@ -878,11 +932,13 @@ fn fetch_candidates_for_fact(
           r.get::<_, String>(3)?,
           r.get::<_, String>(4)?,
           r.get::<_, i64>(5)?,
+          r.get::<_, Option<Vec<u8>>>(6)?,
         ))
       })
       .map_err(|e| e.to_string())?;
     for row in rows {
       let r = row.map_err(|e| e.to_string())?;
+      let embedding = r.6.as_deref().and_then(decode_embedding_blob);
       out.push(CandidateRow {
         id: r.0,
         entity_id: r.1,
@@ -890,6 +946,7 @@ fn fetch_candidates_for_fact(
         fact_type: kinds_json_first(&r.3),
         claim: r.4,
         access_count: r.5,
+        embedding,
       });
     }
   }
@@ -901,7 +958,7 @@ fn fetch_candidates_for_fact(
   if !normalized_target.is_empty() {
     let mut stmt = conn
       .prepare(
-        "SELECT id, entity_id, title, kinds_json, snippet, access_count
+        "SELECT id, entity_id, title, kinds_json, snippet, access_count, embedding
          FROM mem_items
          WHERE valid_to IS NULL",
       )
@@ -915,6 +972,7 @@ fn fetch_candidates_for_fact(
           r.get::<_, String>(3)?,
           r.get::<_, String>(4)?,
           r.get::<_, i64>(5)?,
+          r.get::<_, Option<Vec<u8>>>(6)?,
         ))
       })
       .map_err(|e| e.to_string())?;
@@ -925,6 +983,7 @@ fn fetch_candidates_for_fact(
         continue;
       }
       if normalize_name(&r.2) == normalized_target {
+        let embedding = r.6.as_deref().and_then(decode_embedding_blob);
         out.push(CandidateRow {
           id: r.0,
           entity_id: r.1,
@@ -932,6 +991,7 @@ fn fetch_candidates_for_fact(
           fact_type: kinds_json_first(&r.3),
           claim: r.4,
           access_count: r.5,
+          embedding,
         });
       }
     }
@@ -962,29 +1022,32 @@ fn candidate_as_ref<'a>(c: &'a CandidateRow) -> FactRef<'a> {
 fn insert_new_node(
   conn: &Connection,
   fact: &ExtractedFact,
+  claim_embedding: Option<&[f32]>,
   capture_id: Option<i64>,
   now_ms: i64,
 ) -> Result<String, String> {
   let id = next_node_id(now_ms);
   let kinds = json!([fact.fact_type, fact.node_kind]).to_string();
+  let embedding_blob: Option<Vec<u8>> = claim_embedding.map(encode_embedding_blob);
   conn
     .execute(
       "INSERT INTO mem_items
-         (id, title, snippet, source, kinds_json, created_at,
+         (id, title, snippet, source, kinds_json, created_at, embedding,
           provenance, entity_id, confidence, redaction,
           valid_from, recorded_at, last_accessed_at, access_count,
           node_kind, source_capture_id)
        VALUES
-         (?1, ?2, ?3, 'extraction', ?4, ?5,
-          'user', ?6, ?7, NULL,
+         (?1, ?2, ?3, 'extraction', ?4, ?5, ?6,
+          'user', ?7, ?8, NULL,
           ?5, ?5, ?5, 0,
-          ?8, ?9)",
+          ?9, ?10)",
       params![
         id,
         fact.entity_name,
         fact.claim,
         kinds,
         now_ms,
+        embedding_blob,
         fact.entity_id,
         fact.confidence,
         fact.node_kind,
@@ -1023,8 +1086,15 @@ fn add_relation_edges(
 /// Apply one `ExtractedFact` to the graph. Returns the outcome so the caller
 /// can update observability counters (`extracted_count` / `superseded_count`
 /// / `dedup_skipped_count`).
+///
+/// `claim_embedding` activates `is_same_fact` stage 2 (embedding cosine
+/// ≥ 0.92). Pass `None` and the function falls back to text-only matching;
+/// this lets unit tests exercise the merge / supersede / create branches
+/// without an embedding pipeline. Production callers (the worker) embed
+/// the claim before calling so paraphrases / multilingual matches resolve.
 pub fn resolve_write(
   fact: &ExtractedFact,
+  claim_embedding: Option<&[f32]>,
   capture_id: Option<i64>,
   now_ms: i64,
   conn: &Connection,
@@ -1035,7 +1105,8 @@ pub fn resolve_write(
   // 1. Look for a perfect-match merge candidate first.
   for c in &candidates {
     let cref = candidate_as_ref(c);
-    if is_same_fact(&cref, &fact_ref_owned, None, None) {
+    let cand_embedding = c.embedding.as_deref();
+    if is_same_fact(&cref, &fact_ref_owned, cand_embedding, claim_embedding) {
       conn
         .execute(
           "UPDATE mem_items
@@ -1071,7 +1142,7 @@ pub fn resolve_write(
           params![now_ms, c.id],
         )
         .map_err(|e| format!("resolve_write supersede valid_to: {}", e))?;
-      let new_id = insert_new_node(conn, fact, capture_id, now_ms)?;
+      let new_id = insert_new_node(conn, fact, claim_embedding, capture_id, now_ms)?;
       conn
         .execute(
           "INSERT INTO mem_edges
@@ -1089,7 +1160,7 @@ pub fn resolve_write(
   }
 
   // 3. Otherwise insert a fresh node.
-  let new_id = insert_new_node(conn, fact, capture_id, now_ms)?;
+  let new_id = insert_new_node(conn, fact, claim_embedding, capture_id, now_ms)?;
   add_relation_edges(conn, &new_id, fact, capture_id, now_ms)?;
   Ok(ResolveOutcome::Created { node_id: new_id })
 }
@@ -2275,10 +2346,86 @@ mod tests {
   }
 
   #[test]
+  fn resolve_write_stores_claim_embedding_on_new_node() {
+    // The blob written into mem_items.embedding must round-trip back to the
+    // f32 vector we passed in, so future fact comparisons can compare cosines.
+    let conn = open_test_conn();
+    let f = fact("Alex Chen", "works_at", "works at Acme");
+    let emb: Vec<f32> = vec![0.6, 0.8, 0.0];
+    let outcome = resolve_write(&f, Some(&emb), None, 1_000, &conn).expect("ok");
+    let id = match outcome {
+      ResolveOutcome::Created { node_id } => node_id,
+      _ => panic!("expected Created"),
+    };
+    let blob: Option<Vec<u8>> = conn
+      .query_row(
+        "SELECT embedding FROM mem_items WHERE id = ?1",
+        rusqlite::params![id],
+        |r| r.get(0),
+      )
+      .expect("row");
+    let decoded = decode_embedding_blob(&blob.expect("blob present")).expect("decode");
+    assert_eq!(decoded.len(), emb.len());
+    for (a, b) in decoded.iter().zip(emb.iter()) {
+      assert!((a - b).abs() < 1e-6, "{} vs {}", a, b);
+    }
+  }
+
+  #[test]
+  fn resolve_write_merges_via_embedding_cosine_when_text_diverges() {
+    // Simulate a paraphrase that's textually distant ("staging cut at 19:00 JST"
+    // vs "production cut Tokyo evening") but semantically identical: caller
+    // passes nearly-aligned embeddings, so stage 2 of is_same_fact engages.
+    let conn = open_test_conn();
+    let mut f1 = fact("deploy plan v3", "scheduled_at", "staging cut at 19:00 JST");
+    f1.entity_id = Some("ent_dpv3".into());
+    let emb_a: Vec<f32> = vec![0.6, 0.8, 0.0];
+    let first = resolve_write(&f1, Some(&emb_a), None, 1_000, &conn).expect("first");
+    let first_id = match first {
+      ResolveOutcome::Created { node_id } => node_id,
+      _ => panic!("expected Created"),
+    };
+    // Stage-3 text path would fail (low Levenshtein, low token overlap), and
+    // we omit entity_id on the new fact so stage 1 cannot help either.
+    let f2 = fact("deploy plan v3", "scheduled_at", "production cut Tokyo evening");
+    let emb_b: Vec<f32> = vec![0.62, 0.785, 0.0]; // cosine ≈ 0.997 with emb_a
+    let second = resolve_write(&f2, Some(&emb_b), None, 2_000, &conn).expect("second");
+    match second {
+      ResolveOutcome::Merged { node_id, .. } => {
+        assert_eq!(
+          node_id, first_id,
+          "embedding cosine should have merged paraphrase with first node",
+        );
+      }
+      other => panic!("expected Merged via embedding cosine, got {:?}", other),
+    }
+  }
+
+  #[test]
+  fn resolve_write_does_not_merge_when_embeddings_orthogonal() {
+    // Even with the same fact_type and same entity name, sufficiently
+    // different embeddings + sufficiently different claims must NOT merge.
+    let conn = open_test_conn();
+    let f1 = fact("Alex", "preference", "loves green tea");
+    let emb_a: Vec<f32> = vec![1.0, 0.0, 0.0];
+    let _ = resolve_write(&f1, Some(&emb_a), None, 1_000, &conn).expect("first");
+
+    let f2 = fact("Alex", "preference", "prefers black coffee");
+    let emb_b: Vec<f32> = vec![0.0, 1.0, 0.0]; // orthogonal
+    let outcome = resolve_write(&f2, Some(&emb_b), None, 2_000, &conn).expect("second");
+    match outcome {
+      ResolveOutcome::Superseded { .. } => {
+        // Same entity + same fact_type + low text similarity ⇒ valid conflict.
+      }
+      other => panic!("expected Superseded for orthogonal embeddings, got {:?}", other),
+    }
+  }
+
+  #[test]
   fn resolve_write_creates_new_node_in_empty_db() {
     let conn = open_test_conn();
     let f = fact("Alex Chen", "works_at", "works at Acme");
-    let outcome = resolve_write(&f, None, 1_000, &conn).expect("resolve");
+    let outcome = resolve_write(&f, None, None, 1_000, &conn).expect("resolve");
     let node_id = match outcome {
       ResolveOutcome::Created { node_id } => node_id,
       other => panic!("expected Created, got {:?}", other),
@@ -2297,7 +2444,7 @@ mod tests {
   fn resolve_write_merges_with_existing_same_fact() {
     let conn = open_test_conn();
     let f = fact("Alex Chen", "works_at", "works at Acme");
-    let first = resolve_write(&f, None, 1_000, &conn).expect("first");
+    let first = resolve_write(&f, None, None, 1_000, &conn).expect("first");
     let first_id = match first {
       ResolveOutcome::Created { node_id } => node_id,
       _ => panic!("first should be Created"),
@@ -2305,7 +2452,7 @@ mod tests {
     // Repeat with phrasing variant.
     let mut f2 = fact("alex chen", "works_at", "works at Acme.");
     f2.confidence = 0.92;
-    let second = resolve_write(&f2, None, 2_000, &conn).expect("second");
+    let second = resolve_write(&f2, None, None, 2_000, &conn).expect("second");
     match second {
       ResolveOutcome::Merged { node_id, access_count_after } => {
         assert_eq!(node_id, first_id);
@@ -2330,7 +2477,7 @@ mod tests {
     // Seed: Q2 launch / scheduled_at / July 1
     let mut f1 = fact("Q2 launch", "scheduled_at", "July 1");
     f1.entity_id = Some("ent_q2".into());
-    let first = resolve_write(&f1, None, 1_000, &conn).expect("first");
+    let first = resolve_write(&f1, None, None, 1_000, &conn).expect("first");
     let old_id = match first {
       ResolveOutcome::Created { node_id } => node_id,
       _ => panic!("expected Created"),
@@ -2339,7 +2486,7 @@ mod tests {
     // Conflict: same entity, different date
     let mut f2 = fact("Q2 launch", "scheduled_at", "July 8");
     f2.entity_id = Some("ent_q2".into());
-    let outcome = resolve_write(&f2, None, 2_000, &conn).expect("second");
+    let outcome = resolve_write(&f2, None, None, 2_000, &conn).expect("second");
     let new_id = match outcome {
       ResolveOutcome::Superseded { old_id: o, new_id: n } => {
         assert_eq!(o, old_id);
@@ -2374,13 +2521,13 @@ mod tests {
   fn resolve_write_adds_relation_edges_for_new_node() {
     let conn = open_test_conn();
     // Seed two existing target nodes that this fact will link to.
-    let target_a = resolve_write(&fact("Acme", "is_org", "Acme is an org"), None, 1_000, &conn)
+    let target_a = resolve_write(&fact("Acme", "is_org", "Acme is an org"), None, None, 1_000, &conn)
       .expect("a");
     let target_a_id = match target_a {
       ResolveOutcome::Created { node_id } => node_id,
       _ => panic!(),
     };
-    let target_b = resolve_write(&fact("Q2 launch", "is_event", "Q2 launch event"), None, 1_000, &conn)
+    let target_b = resolve_write(&fact("Q2 launch", "is_event", "Q2 launch event"), None, None, 1_000, &conn)
       .expect("b");
     let target_b_id = match target_b {
       ResolveOutcome::Created { node_id } => node_id,
@@ -2390,7 +2537,7 @@ mod tests {
     let mut f = fact("Alex", "works_at", "works at Acme");
     f.related_ids = vec![target_a_id.clone(), target_b_id.clone()];
     f.edge_types_for_related = vec!["mentions".into(), "attended".into()];
-    let outcome = resolve_write(&f, None, 2_000, &conn).expect("resolve");
+    let outcome = resolve_write(&f, None, None, 2_000, &conn).expect("resolve");
     let new_id = match outcome {
       ResolveOutcome::Created { node_id } => node_id,
       _ => panic!(),
@@ -2416,11 +2563,11 @@ mod tests {
     // Same-name "Alex Chen", same fact_type, same claim — but different entity_id.
     let mut a = fact("Alex Chen", "works_at", "works at Acme");
     a.entity_id = Some("person_alex_chen".into());
-    let _ = resolve_write(&a, None, 1_000, &conn).expect("first");
+    let _ = resolve_write(&a, None, None, 1_000, &conn).expect("first");
 
     let mut b = fact("Alex Chen", "works_at", "works at Acme");
     b.entity_id = Some("person_someone_else".into());
-    let outcome = resolve_write(&b, None, 2_000, &conn).expect("second");
+    let outcome = resolve_write(&b, None, None, 2_000, &conn).expect("second");
     match outcome {
       ResolveOutcome::Created { .. } => {}
       other => panic!("expected separate Created, got {:?}", other),
