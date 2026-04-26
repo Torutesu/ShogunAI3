@@ -3556,7 +3556,87 @@ function ScreenMemory() {
                   {scrubSummary && scrubSummary.reason && (
                     <>
                       <span className="t-mono" style={{color:'var(--text-dim)'}}>Reason</span>
-                      <span style={{color:'var(--text-mute)', wordBreak:'break-word', fontSize:12}}>{scrubSummary.reason}</span>
+                      {editingField === 'reason' ? (
+                        <textarea
+                          autoFocus
+                          aria-label="Edit reason"
+                          value={editingDraft}
+                          onChange={(e) => setEditingDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setEditingField(null);
+                              setEditingDraft('');
+                            }
+                          }}
+                          onBlur={async () => {
+                            const next = editingDraft;
+                            const base = scrubSummary?.reason || '';
+                            setEditingField(null);
+                            setEditingDraft('');
+                            const trimmed = next.trim();
+                            const sendValue = trimmed.length > 0 ? trimmed : null;
+                            if ((sendValue ?? '') !== (base ?? '')) {
+                              if (scrubbed?.memoryId) {
+                                markFieldEdited(scrubbed.memoryId, 'reason');
+                              }
+                              await persistSummaryEdit('reason', sendValue, base);
+                            }
+                          }}
+                          style={{
+                            width:'100%', boxSizing:'border-box',
+                            color:'var(--text)', wordBreak:'break-word',
+                            fontSize:12, fontFamily:'inherit',
+                            background:'var(--surface-mute)',
+                            border:'1px solid var(--border-hi)',
+                            borderRadius:4, padding:'2px 6px',
+                            resize:'vertical', minHeight:24,
+                          }}
+                        />
+                      ) : (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label="Edit reason"
+                          onClick={() => {
+                            setEditingDraft(scrubSummary?.reason || '');
+                            setEditingField('reason');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setEditingDraft(scrubSummary?.reason || '');
+                              setEditingField('reason');
+                            }
+                          }}
+                          style={{
+                            color:'var(--text-mute)', wordBreak:'break-word',
+                            fontSize:12, cursor:'text',
+                          }}
+                        >
+                          {scrubSummary.reason}
+                          {isFieldEdited(scrubbed?.memoryId, 'reason') && (
+                            <span
+                              title="Edited by you"
+                              style={{
+                                marginLeft: 6, fontSize: 10, color: 'var(--text-dim)',
+                                letterSpacing: '0.06em', cursor: 'pointer',
+                                textDecoration: 'underline',
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                unmarkFieldEdited(scrubbed.memoryId, 'reason');
+                                revertSummaryField('reason');
+                              }}
+                            >
+                              edited · revert
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </>
                   )}
                   {scrubbed.entityId && (
