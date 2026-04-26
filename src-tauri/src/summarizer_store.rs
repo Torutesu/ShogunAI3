@@ -439,10 +439,13 @@ pub fn edit_field(
   if !matches!(field, "title" | "keyPoints" | "reason") {
     return Err(format!("invalid edit field: {}", field));
   }
-  let conn = open_conn()?;
+  let mut conn = open_conn()?;
+  // Wrap the read-modify-write in a single transaction so concurrent
+  // edits can't lose entries via interleaved SELECT/UPDATE.
+  let tx = conn.transaction().map_err(|e| format!("edit_field tx: {}", e))?;
 
   // 1. Read current raw_json.
-  let raw_now: Option<String> = conn
+  let raw_now: Option<String> = tx
     .query_row(
       "SELECT raw_json FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
       params![target_kind, target_id],
@@ -491,7 +494,7 @@ pub fn edit_field(
   match field {
     "title" => {
       let new_title = to.as_str().unwrap_or("");
-      conn.execute(
+      tx.execute(
         "UPDATE mem_summaries SET raw_json = ?3, title = ?4
          WHERE target_kind = ?1 AND target_id = ?2",
         params![target_kind, target_id, new_raw, new_title],
@@ -500,7 +503,7 @@ pub fn edit_field(
     "keyPoints" => {
       let kp_json = serde_json::to_string(&to)
         .unwrap_or_else(|_| "[]".to_string());
-      conn.execute(
+      tx.execute(
         "UPDATE mem_summaries SET raw_json = ?3, key_points = ?4
          WHERE target_kind = ?1 AND target_id = ?2",
         params![target_kind, target_id, new_raw, kp_json],
@@ -508,7 +511,7 @@ pub fn edit_field(
     }
     "reason" => {
       let new_reason: Option<&str> = to.as_str();
-      conn.execute(
+      tx.execute(
         "UPDATE mem_summaries SET raw_json = ?3, reason = ?4
          WHERE target_kind = ?1 AND target_id = ?2",
         params![target_kind, target_id, new_raw, new_reason],
@@ -517,13 +520,18 @@ pub fn edit_field(
     _ => unreachable!(), // guarded above
   }
   .map_err(|e| format!("mem_summaries edit_field write: {}", e))?;
+  tx.commit().map_err(|e| format!("edit_field commit: {}", e))?;
   Ok(true)
 }
 
 /// Remove all `user_edits[]` entries for one field from `raw_json`. Also
 /// resets the dedicated column for that field back to whatever the LLM
-/// baseline was — recovered by replaying the remaining edits onto the
-/// `raw_json.tool_use.<field>` value.
+/// baseline was — recovered from `raw_json.tool_use.<field>`.
+///
+/// If `raw_json.tool_use.<field>` is absent or the wrong type, the
+/// dedicated column falls back to: `""` for title, `"[]"` for key_points,
+/// `None` for reason.
+///
 /// Returns `false` if no row exists for this target.
 pub fn revert_field(
   target_kind: &str,
@@ -533,9 +541,12 @@ pub fn revert_field(
   if !matches!(field, "title" | "keyPoints" | "reason") {
     return Err(format!("invalid revert field: {}", field));
   }
-  let conn = open_conn()?;
+  let mut conn = open_conn()?;
+  // Wrap the read-modify-write in a single transaction so concurrent
+  // edits can't lose entries via interleaved SELECT/UPDATE.
+  let tx = conn.transaction().map_err(|e| format!("revert_field tx: {}", e))?;
 
-  let raw_now: Option<String> = conn
+  let raw_now: Option<String> = tx
     .query_row(
       "SELECT raw_json FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
       params![target_kind, target_id],
@@ -570,15 +581,15 @@ pub fn revert_field(
     .and_then(|tu| tu.get(field))
     .cloned();
 
-  // Re-apply any remaining edits for this field (defensive — there should be
-  // none after retain). Then write back raw_json AND the column.
+  // Serialize the mutated `parsed` value (with the field's edits removed)
+  // and write back both the raw_json column and the dedicated column.
   let new_raw = serde_json::to_string(&parsed)
     .map_err(|e| format!("re-serialize raw_json: {}", e))?;
 
   match field {
     "title" => {
       let title_str = baseline.as_ref().and_then(|v| v.as_str()).unwrap_or("");
-      conn.execute(
+      tx.execute(
         "UPDATE mem_summaries SET raw_json = ?3, title = ?4
          WHERE target_kind = ?1 AND target_id = ?2",
         params![target_kind, target_id, new_raw, title_str],
@@ -589,7 +600,7 @@ pub fn revert_field(
         .as_ref()
         .and_then(|v| serde_json::to_string(v).ok())
         .unwrap_or_else(|| "[]".to_string());
-      conn.execute(
+      tx.execute(
         "UPDATE mem_summaries SET raw_json = ?3, key_points = ?4
          WHERE target_kind = ?1 AND target_id = ?2",
         params![target_kind, target_id, new_raw, kp_json],
@@ -597,7 +608,7 @@ pub fn revert_field(
     }
     "reason" => {
       let reason_str: Option<&str> = baseline.as_ref().and_then(|v| v.as_str());
-      conn.execute(
+      tx.execute(
         "UPDATE mem_summaries SET raw_json = ?3, reason = ?4
          WHERE target_kind = ?1 AND target_id = ?2",
         params![target_kind, target_id, new_raw, reason_str],
@@ -606,6 +617,7 @@ pub fn revert_field(
     _ => unreachable!(),
   }
   .map_err(|e| format!("mem_summaries revert_field write: {}", e))?;
+  tx.commit().map_err(|e| format!("revert_field commit: {}", e))?;
   Ok(true)
 }
 
