@@ -1929,6 +1929,8 @@ function ScreenMemory() {
       setScrubSummary(res.data.summary);
       setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
     } else {
+      // Restore the edit indicator: the underlying edit is still in place.
+      markFieldEdited(targetId, field);
       window.SHOGUN_RUNTIME?.pushToast?.('Failed to revert', 'warn');
     }
   };
@@ -1940,19 +1942,32 @@ function ScreenMemory() {
   // simple sentinel: if the edit was just done in this session, mark it.
   // For Phase 4 we use a session-local Set so the "edited" dot appears
   // immediately after a save.
-  const editedFieldsBySummaryRef = useRef(new Map()); // memoryId -> Set<field>
+  // memoryId → Set<field> of fields edited in this session. useState (not
+  // useRef) so the "edited · revert" affordance re-renders when marks change,
+  // including when revert IPC fails and we re-mark.
+  const [editedFieldsBySummary, setEditedFieldsBySummary] = useState(new Map());
   const markFieldEdited = (memoryId, field) => {
-    const m = editedFieldsBySummaryRef.current;
-    const set = m.get(memoryId) || new Set();
-    set.add(field);
-    m.set(memoryId, set);
+    setEditedFieldsBySummary((prev) => {
+      const next = new Map(prev);
+      const set = new Set(next.get(memoryId) || []);
+      set.add(field);
+      next.set(memoryId, set);
+      return next;
+    });
   };
   const unmarkFieldEdited = (memoryId, field) => {
-    const set = editedFieldsBySummaryRef.current.get(memoryId);
-    if (set) set.delete(field);
+    setEditedFieldsBySummary((prev) => {
+      const set = prev.get(memoryId);
+      if (!set || !set.has(field)) return prev;
+      const next = new Map(prev);
+      const ns = new Set(set);
+      ns.delete(field);
+      next.set(memoryId, ns);
+      return next;
+    });
   };
   const isFieldEdited = (memoryId, field) =>
-    editedFieldsBySummaryRef.current.get(memoryId)?.has(field) || false;
+    editedFieldsBySummary.get(memoryId)?.has(field) || false;
 
   const timelineLoading = !memorySettingsLoaded;
   const withSemantic = useCallback(
@@ -3019,8 +3034,14 @@ function ScreenMemory() {
                       setEditingField(null);
                       setEditingDraft('');
                       if (next && next !== base) {
-                        markFieldEdited(scrubbed.memoryId, 'title');
-                        await persistSummaryEdit('title', next, scrubSummary?.title);
+                        // Guard scrubbed.memoryId — if the user navigated away
+                        // mid-edit, scrubbed could be null. persistSummaryEdit
+                        // also no-ops when targetId is missing, but we shouldn't
+                        // crash on the markFieldEdited call.
+                        if (scrubbed?.memoryId) {
+                          markFieldEdited(scrubbed.memoryId, 'title');
+                        }
+                        await persistSummaryEdit('title', next, base);
                       }
                     }}
                     style={{
