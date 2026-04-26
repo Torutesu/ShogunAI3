@@ -1880,6 +1880,80 @@ function ScreenMemory() {
   const [scrubSummaryLoading, setScrubSummaryLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
   const [summaryEnabled, setSummaryEnabled] = useState(true);     // feature flag from sections.memory.enableMemorySummary
+
+  // Inline edit state for the scrub summary.
+  // editingField: 'title' | 'reason' | `kp:${index}` | null
+  const [editingField, setEditingField] = useState(null);
+  const [editingDraft, setEditingDraft] = useState('');
+
+  // Common save path. Mutates scrubSummary + summaryByMemId optimistically,
+  // dispatches memory.summary.edit, rolls back on failure.
+  const persistSummaryEdit = async (field, value, baseValue) => {
+    const targetId = scrubbed?.memoryId;
+    if (!targetId) return;
+    const prevSummary = scrubSummary;
+    const nextSummary = { ...prevSummary, [field]: value };
+    setScrubSummary(nextSummary);
+    setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+    const res = await runRuntimeActionA('memory.summary.edit', {
+      targetId,
+      targetKind: 'item',
+      field,
+      value,
+      baseValue,
+      sourceRaw: scrubbed?.sourceRaw || null,
+      entityId: scrubbed?.entityId || null,
+    }, { silentError: true });
+    if (!res?.ok) {
+      // Roll back.
+      setScrubSummary(prevSummary);
+      setSummaryByMemId((prev) => ({ ...prev, [targetId]: prevSummary }));
+      window.SHOGUN_RUNTIME?.pushToast?.('Failed to save edit', 'warn');
+    } else if (res.data?.summary) {
+      // Server-confirmed merged summary — adopt it.
+      setScrubSummary(res.data.summary);
+      setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
+    }
+  };
+
+  // Common revert path.
+  const revertSummaryField = async (field) => {
+    const targetId = scrubbed?.memoryId;
+    if (!targetId) return;
+    const res = await runRuntimeActionA('memory.summary.revert', {
+      targetId,
+      targetKind: 'item',
+      field,
+    }, { silentError: true });
+    if (res?.ok && res.data?.summary) {
+      setScrubSummary(res.data.summary);
+      setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
+    } else {
+      window.SHOGUN_RUNTIME?.pushToast?.('Failed to revert', 'warn');
+    }
+  };
+
+  // Predicate: did this field have at least one user edit applied?
+  // We can't tell from the current Summary shape alone — it's merged on
+  // the backend. Detect by comparing scrubSummary to the row's "base" via
+  // a side-channel: read raw_json from the runtime if exposed, else use a
+  // simple sentinel: if the edit was just done in this session, mark it.
+  // For Phase 4 we use a session-local Set so the "edited" dot appears
+  // immediately after a save.
+  const editedFieldsBySummaryRef = useRef(new Map()); // memoryId -> Set<field>
+  const markFieldEdited = (memoryId, field) => {
+    const m = editedFieldsBySummaryRef.current;
+    const set = m.get(memoryId) || new Set();
+    set.add(field);
+    m.set(memoryId, set);
+  };
+  const unmarkFieldEdited = (memoryId, field) => {
+    const set = editedFieldsBySummaryRef.current.get(memoryId);
+    if (set) set.delete(field);
+  };
+  const isFieldEdited = (memoryId, field) =>
+    editedFieldsBySummaryRef.current.get(memoryId)?.has(field) || false;
+
   const timelineLoading = !memorySettingsLoaded;
   const withSemantic = useCallback(
     (payload) => {
@@ -2923,7 +2997,83 @@ function ScreenMemory() {
               paddingLeft:14,
             }}>
               <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap'}}>
-                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, wordBreak:'break-word', flex:1, minWidth:0}}>{scrubSummary.title}</div>
+                {editingField === 'title' ? (
+                  <textarea
+                    autoFocus
+                    aria-label="Edit title"
+                    value={editingDraft}
+                    onChange={(e) => setEditingDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        e.currentTarget.blur(); // triggers onBlur save
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setEditingField(null);
+                        setEditingDraft('');
+                      }
+                    }}
+                    onBlur={async () => {
+                      const next = editingDraft.trim();
+                      const base = (scrubSummary?.title || '').trim();
+                      setEditingField(null);
+                      setEditingDraft('');
+                      if (next && next !== base) {
+                        markFieldEdited(scrubbed.memoryId, 'title');
+                        await persistSummaryEdit('title', next, scrubSummary?.title);
+                      }
+                    }}
+                    style={{
+                      flex: 1, minWidth: 0,
+                      fontSize: 18, fontWeight: 600, lineHeight: 1.3,
+                      fontFamily: 'inherit', color: 'var(--text)',
+                      background: 'var(--surface-mute)',
+                      border: '1px solid var(--border-hi)', borderRadius: 4,
+                      padding: '4px 6px', resize: 'vertical', minHeight: 32,
+                    }}
+                  />
+                ) : (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Edit title"
+                    onClick={() => {
+                      setEditingDraft(scrubSummary?.title || '');
+                      setEditingField('title');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setEditingDraft(scrubSummary?.title || '');
+                        setEditingField('title');
+                      }
+                    }}
+                    style={{
+                      fontSize: 18, fontWeight: 600, lineHeight: 1.3,
+                      wordBreak: 'break-word', flex: 1, minWidth: 0,
+                      cursor: 'text',
+                    }}
+                  >
+                    {scrubSummary.title}
+                    {isFieldEdited(scrubbed?.memoryId, 'title') && (
+                      <span
+                        title="Edited by you"
+                        style={{
+                          marginLeft: 6, fontSize: 10, color: 'var(--text-dim)',
+                          letterSpacing: '0.06em', cursor: 'pointer',
+                          textDecoration: 'underline',
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          unmarkFieldEdited(scrubbed.memoryId, 'title');
+                          revertSummaryField('title');
+                        }}
+                      >
+                        edited · revert
+                      </span>
+                    )}
+                  </div>
+                )}
                 {pinned && (
                   <span className="t-mono" style={{fontSize:9, color:'var(--gold)', letterSpacing:'0.12em', padding:'2px 6px', border:'1px solid var(--gold-dim)', borderRadius:4}}>
                     <span className="en-only">PINNED</span>
