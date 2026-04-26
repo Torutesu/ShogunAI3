@@ -336,9 +336,19 @@ function mockIpcInvoke(command, payload) {
     case 'shogun_memory_summary_invalidate':
       return { ok: true, data: { deleted: true } };
     case 'shogun_memory_summary_edit':
-      return { ok: true, data: { updated: true, summary: null } };
     case 'shogun_memory_summary_revert':
-      return { ok: true, data: { updated: true, summary: null } };
+      return { ok: true, data: { updated: true, summary: {
+        targetKind: 'item',
+        targetId: (input && input.targetId) || 'm_stub',
+        title: 'Stub summary',
+        keyPoints: ['This is a mocked summary'],
+        sourceType: 'mail',
+        priority: 'medium',
+        reason: 'mock',
+        model: 'mock',
+        schemaVersion: 1,
+        generatedAt: Date.now(),
+      } } };
     case 'shogun_memory_debug_gate':
       return { ok: true, data: { available: false, reason: 'mock_browser' } };
     case 'shogun_memory_debug_recent_calls':
