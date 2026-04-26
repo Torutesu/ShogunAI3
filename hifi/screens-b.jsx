@@ -1380,29 +1380,27 @@ function ScreenAgents() {
         </div>
       )}
 
-      {/* Live activity */}
-      <div style={{marginBottom:'var(--space-3)', color:'var(--text-mute)'}} className="t-sm">Live activity</div>
-      <div className="card" style={{padding:0, overflow:'hidden'}}>
-        {AGENTS_LIVE.map((row, i) => (
-          <div key={i} style={{
-            display:'grid', gridTemplateColumns:'120px 140px 1fr auto', columnGap:'var(--space-4)',
-            alignItems:'center', padding:'var(--space-3) var(--space-6)',
-            borderBottom: i < AGENTS_LIVE.length - 1 ? '1px solid var(--border)' : 'none',
-          }} className="t-sm">
-            <span className="t-mono">{row.t}</span>
-            <span className="t-mono" style={{color:'var(--text-mute)'}}>{row.agent}</span>
-            <span style={{color:'var(--text)', lineHeight:1.5}}>{row.msg}</span>
-            <span
-              className="label"
-              style={{
-                borderColor: row.level === 'success' ? 'color-mix(in srgb, var(--success) 60%, var(--border))' : 'var(--border)',
-                color: row.level === 'success' ? 'var(--success)' : 'var(--text-mute)',
-              }}
-            >
-              {row.level.toUpperCase()}
-            </span>
-          </div>
-        ))}
+      {/* Live activity (compressed footer per spec § 1) */}
+      <div className="t-mono" style={{color:'var(--text-dim)', marginTop:'var(--space-8)', marginBottom:'var(--space-2)'}}>
+        LIVE ACTIVITY
+      </div>
+      <div style={{display:'flex', flexDirection:'column', gap:'var(--space-1)', borderTop:'1px solid var(--border)', paddingTop:'var(--space-3)'}}>
+        {AGENTS_LIVE.slice(0, 5).map((row, i) => {
+          const levelColor = row.level === 'success' ? 'var(--success)'
+                           : row.level === 'error'   ? 'var(--danger)'
+                           : 'var(--text-mute)';
+          return (
+            <div key={i} style={{
+              display:'grid', gridTemplateColumns:'80px 120px 1fr auto', columnGap:'var(--space-3)',
+              alignItems:'baseline', fontSize:11,
+            }} className="t-mono">
+              <span style={{color:'var(--text-dim)'}}>{row.t}</span>
+              <span style={{color:'var(--text-mute)'}}>{row.agent}</span>
+              <span style={{color:'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontFamily:'inherit'}}>{row.msg}</span>
+              <span style={{color:levelColor, textTransform:'uppercase', fontSize:10}}>{row.level}</span>
+            </div>
+          );
+        })}
       </div>
 
       <NewAgentModal
