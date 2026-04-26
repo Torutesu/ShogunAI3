@@ -288,6 +288,24 @@
       echo: echo,
     });
 
+    // Mock-only state for memory.summary edit/revert.
+    // Map<targetId, Array<edit-entry>> mirroring the shape used in
+    // raw_json.user_edits[]. Mock get/batch handlers merge the latest
+    // entry per field on top of the LLM-baseline ('Stub: ...' values).
+    window.__SHOGUN_MOCK_SUMMARY_EDITS__ ||= new Map();
+    const mockEdits = window.__SHOGUN_MOCK_SUMMARY_EDITS__;
+    const applyMockEdits = (base, targetId) => {
+      const arr = mockEdits.get(String(targetId)) || [];
+      const out = { ...base };
+      for (const e of arr) {
+        if (!e || e.schema !== 1) continue;
+        if (e.field === 'title' && typeof e.to === 'string') out.title = e.to;
+        else if (e.field === 'keyPoints' && Array.isArray(e.to)) out.keyPoints = e.to;
+        else if (e.field === 'reason') out.reason = e.to == null ? null : String(e.to);
+      }
+      return out;
+    };
+
     switch (command) {
       case "app_integration_connect":
       case "app_integration_toggle":
@@ -491,41 +509,100 @@
           google_calendar: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
           gmail: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
         };
-      case "shogun_memory_summary_get":
+      case "shogun_memory_summary_get": {
+        const baseId = String((echo && echo.targetId) || "m_stub");
+        const base = {
+          targetKind: "item",
+          targetId: baseId,
+          title: "Stub summary",
+          keyPoints: ["This is a mocked summary"],
+          sourceType: "mail",
+          priority: "medium",
+          reason: "mock",
+          model: "mock",
+          schemaVersion: 1,
+          generatedAt: Date.now(),
+        };
         return {
-          summary: {
-            targetKind: "item",
-            targetId: String((echo && echo.targetId) || "m_stub"),
-            title: "Stub summary",
-            keyPoints: ["This is a mocked summary"],
-            sourceType: "mail",
-            priority: "medium",
-            reason: "mock",
-            model: "mock",
-            schemaVersion: 1,
-            generatedAt: Date.now(),
-          },
+          summary: applyMockEdits(base, baseId),
           cached: false,
         };
+      }
       case "shogun_memory_summary_batch":
         return {
-          ok: ((echo && echo.items) || []).map((it) => ({
-            targetKind: "item",
-            targetId: String((it && it.id) || "m_stub"),
-            title: `Stub: ${(it && it.title) || "untitled"}`,
-            keyPoints: ["mock point"],
-            sourceType: "mail",
-            priority: "medium",
-            reason: "mock",
-            model: "mock",
-            schemaVersion: 1,
-            generatedAt: Date.now(),
-          })),
+          ok: ((echo && echo.items) || []).map((it) => {
+            const id = String((it && it.id) || "m_stub");
+            const base = {
+              targetKind: "item",
+              targetId: id,
+              title: `Stub: ${(it && it.title) || "untitled"}`,
+              keyPoints: ["mock point"],
+              sourceType: "mail",
+              priority: "medium",
+              reason: "mock",
+              model: "mock",
+              schemaVersion: 1,
+              generatedAt: Date.now(),
+            };
+            return applyMockEdits(base, id);
+          }),
           failed: [],
           heuristicUsed: 0,
         };
       case "shogun_memory_summary_invalidate":
         return { deleted: true };
+      case "shogun_memory_summary_edit": {
+        const id = String((echo && echo.targetId) || "");
+        const field = String((echo && echo.field) || "");
+        const to = echo && echo.to !== undefined ? echo.to
+                   : echo && echo.value !== undefined ? echo.value : null;
+        if (!id || !field) return { updated: false, summary: null };
+        const list = mockEdits.get(id) || [];
+        list.push({
+          field,
+          from: echo && echo.baseValue,
+          to,
+          at: Date.now(),
+          source_raw: echo && echo.sourceRaw,
+          entity_id: echo && echo.entityId,
+          schema: 1,
+        });
+        mockEdits.set(id, list);
+        // Reuse the merged-summary builder from the get case for consistency.
+        const base = {
+          targetKind: "item",
+          targetId: id,
+          title: "Stub summary",
+          keyPoints: ["This is a mocked summary"],
+          sourceType: "mail",
+          priority: "medium",
+          reason: "mock",
+          model: "mock",
+          schemaVersion: 1,
+          generatedAt: Date.now(),
+        };
+        return { updated: true, summary: applyMockEdits(base, id) };
+      }
+      case "shogun_memory_summary_revert": {
+        const id = String((echo && echo.targetId) || "");
+        const field = String((echo && echo.field) || "");
+        if (!id || !field) return { updated: false, summary: null };
+        const list = (mockEdits.get(id) || []).filter((e) => e.field !== field);
+        mockEdits.set(id, list);
+        const base = {
+          targetKind: "item",
+          targetId: id,
+          title: "Stub summary",
+          keyPoints: ["This is a mocked summary"],
+          sourceType: "mail",
+          priority: "medium",
+          reason: "mock",
+          model: "mock",
+          schemaVersion: 1,
+          generatedAt: Date.now(),
+        };
+        return { updated: true, summary: applyMockEdits(base, id) };
+      }
       case "shogun_entity_query":
         return {
           entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],
