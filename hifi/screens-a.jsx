@@ -2665,6 +2665,134 @@ function ScreenMemory() {
         </div>
       )}
 
+      {/* Month rollup banner — synthesized digest for the selected calendar month. */}
+      {timelineSpan === 'month' && summaryEnabled && (monthRollup || monthRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">MONTH ROLLUP</span>
+                <span className="jp">今月のまとめ</span>
+              </span>
+              {monthRollupLoading && !monthRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {monthRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const cursor = new Date(timelineCursor);
+                    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 0, 0, 0, 0);
+                    setMonthRollupLoading(true);
+                    setMonthRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.month.get', {
+                      monthStartMs: monthStart.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setMonthRollup(res.data.rollup);
+                    setMonthRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate this month's rollup"
+                >Regenerate</button>
+              )}
+            </div>
+            {monthRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {monthRollup.title}
+                </div>
+                {Array.isArray(monthRollup.keyPoints) && monthRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {monthRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Year rollup banner — composed from the year's 12 monthly rollups. */}
+      {timelineSpan === 'year' && summaryEnabled && (yearRollup || yearRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">YEAR ROLLUP</span>
+                <span className="jp">今年のまとめ</span>
+              </span>
+              {yearRollupLoading && !yearRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {yearRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const cursor = new Date(timelineCursor);
+                    const yearStart = new Date(cursor.getFullYear(), 0, 1, 0, 0, 0, 0);
+                    setYearRollupLoading(true);
+                    setYearRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.year.get', {
+                      yearStartMs: yearStart.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setYearRollup(res.data.rollup);
+                    setYearRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate this year's rollup (cached monthly rollups are reused)"
+                >Regenerate</button>
+              )}
+            </div>
+            {yearRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {yearRollup.title}
+                </div>
+                {Array.isArray(yearRollup.keyPoints) && yearRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {yearRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* River view: two-card split + hourly timeline scrubber */}
       {view === 'river' && (
       <>
