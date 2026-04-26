@@ -823,15 +823,6 @@ const AGENT_STATUS_META = {
   error: { color: 'var(--danger)', label: 'error' },
 };
 
-function AgentsKpiCard({ label, value, tone }) {
-  const toneColor = tone === 'success' ? 'var(--success)' : tone === 'gold' ? 'var(--gold)' : tone === 'dim' ? 'var(--text-mute)' : 'var(--text)';
-  return (
-    <div className="card" style={{display:'flex', flexDirection:'column', gap:'var(--space-3)'}}>
-      <div className="t-mono">{label}</div>
-      <div className="t-h2" style={{color:toneColor, margin:0}}>{value}</div>
-    </div>
-  );
-}
 
 const ATTENTION_REASONS = {
   error: (a) => `${a.name} failed last run ${'lastRunRel' in a ? a.lastRunRel : 'recently'}.`,
@@ -1146,9 +1137,13 @@ function ScreenAgents() {
     window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
   }, [runPrompt, allowServerMemoryAssembly]);
 
-  const runningCount = AGENTS_DEMO.filter((a) => a.status === 'running').length;
-  const scheduledCount = AGENTS_DEMO.filter((a) => a.status === 'scheduled').length;
-  const pausedCount = AGENTS_DEMO.filter((a) => a.status === 'paused').length;
+  const attentionCount = AGENTS_DEMO.filter((a) => {
+    const last = a.recentRuns && a.recentRuns[0];
+    const stale = (a.status === 'scheduled' || a.trigger?.startsWith('every ')) &&
+                  a.lastRunMs && (AGENTS_DEMO_NOW - a.lastRunMs) > 24 * 60 * 60 * 1000;
+    return a.attention === 'error' || a.attention === 'auth_expired' ||
+           (last && last.level === 'error') || a.attention === 'stale' || stale;
+  }).length;
 
   return (
     <div className="content-inner" style={{padding:'var(--space-8) var(--space-12) var(--space-12)', maxWidth:1280, margin:'0 auto'}}>
@@ -1157,7 +1152,15 @@ function ScreenAgents() {
         <div>
           <div className="t-mono" style={{marginBottom:'var(--space-2)'}}>EXECUTION LAYER</div>
           <h1>Agents</h1>
-          <div className="sub">Agents that read your memory and act. {runningCount + scheduledCount + pausedCount + 8} MCP tools available.</div>
+          <div className="sub">
+            <span style={{color:'var(--text-mute)'}}>{AGENTS_DEMO.length} agents · 11 MCP tools</span>
+            {attentionCount > 0 && (
+              <>
+                <span style={{color:'var(--text-mute)'}}> · </span>
+                <span style={{color:'var(--danger)'}}>{attentionCount} needs attention</span>
+              </>
+            )}
+          </div>
         </div>
         <div className="row" style={{gap:'var(--space-2)', flexWrap:'wrap'}}>
           <button type="button" className="btn btn-secondary" onClick={() => setPlaygroundOpen((v) => !v)}>
@@ -1183,13 +1186,6 @@ function ScreenAgents() {
         }}
       />
 
-      {/* KPI row */}
-      <div style={{display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:'var(--space-4)', marginBottom:'var(--space-8)'}}>
-        <AgentsKpiCard label="RUNNING" value={runningCount} tone="success"/>
-        <AgentsKpiCard label="SCHEDULED" value={scheduledCount} tone="gold"/>
-        <AgentsKpiCard label="PAUSED" value={pausedCount} tone="dim"/>
-        <AgentsKpiCard label="TOOLS CONNECTED" value={20} tone="gold"/>
-      </div>
 
       {/* Agents section */}
       <div style={{marginBottom:'var(--space-4)', color:'var(--text-mute)'}} className="t-sm">Your agents</div>
