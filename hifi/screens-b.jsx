@@ -694,6 +694,10 @@ function ScreenChat() {
 
 // L4 · AGENTS — execution layer
 // ═══════════════════════════════════════════════════════════════════════════
+// Demo timestamps: anchored to a fixed reference instant so the relative
+// labels ("2h ago", "next 14:00") render consistently across reloads.
+const AGENTS_DEMO_NOW = Date.parse('2026-04-27T14:30:00+09:00');
+const HOUR = 60 * 60 * 1000;
 const AGENTS_DEMO = [
   {
     id: 'inbox-triage',
@@ -701,19 +705,34 @@ const AGENTS_DEMO = [
     icon: 'mail',
     status: 'running',
     trigger: 'every 2 hours',
+    triggerSince: '2026-04-12',
     description: 'Sorts Gmail by memory-derived priority. Drafts replies for you to approve.',
-    runs: 142,
     tools: [{ name: 'mail', icon: 'mail' }, { name: 'memory', icon: 'memory' }],
+    lastRunMs: AGENTS_DEMO_NOW - 2 * HOUR,
+    nextRunMs: AGENTS_DEMO_NOW + 0.5 * HOUR,
+    recentRuns: [
+      { t: '14:31', msg: 'Read 3 emails · drafted 1 reply', level: 'success' },
+      { t: '12:31', msg: 'Polled inbox · no new priority', level: 'info' },
+      { t: '10:31', msg: 'Read 5 emails · drafted 2 replies', level: 'success' },
+      { t: '08:31', msg: 'Auth refresh · token rotated', level: 'info' },
+      { t: '06:31', msg: 'Read 1 email · no draft needed', level: 'success' },
+    ],
   },
   {
     id: 'meeting-notes',
     name: 'Meeting notes',
     icon: 'calendar',
     status: 'idle',
-    trigger: 'trigger: cal event',
+    trigger: 'on calendar event',
+    triggerSince: '2026-03-22',
     description: 'Captures calendar events, extracts decisions into memory, links to entities.',
-    runs: 87,
     tools: [{ name: 'calendar', icon: 'calendar' }, { name: 'memory', icon: 'memory' }],
+    lastRunMs: AGENTS_DEMO_NOW - 12 * HOUR,
+    nextRunMs: null,
+    recentRuns: [
+      { t: '02:30', msg: 'Processed "All PJ" meeting · 6 decisions extracted', level: 'success' },
+      { t: '01:00', msg: 'Calendar event captured · linked to "Yuito" entity', level: 'info' },
+    ],
   },
   {
     id: 'daily-digest',
@@ -721,19 +740,30 @@ const AGENTS_DEMO = [
     icon: 'note',
     status: 'scheduled',
     trigger: '21:00 daily',
+    triggerSince: '2026-04-01',
     description: 'Synthesizes the day at 21:00. Writes a morning brief for tomorrow at 07:00.',
-    runs: 38,
     tools: [{ name: 'memory', icon: 'memory' }, { name: 'note', icon: 'note' }],
+    lastRunMs: AGENTS_DEMO_NOW - 17 * HOUR,
+    nextRunMs: AGENTS_DEMO_NOW + 6.5 * HOUR,
+    recentRuns: [
+      { t: '21:00', msg: 'Wrote daily digest · 14 highlights', level: 'success' },
+      { t: '07:00', msg: 'Morning brief · 4 priorities surfaced', level: 'success' },
+    ],
   },
   {
     id: 'weekly-review',
     name: 'Weekly review',
     icon: 'clock',
     status: 'scheduled',
-    trigger: 'Sun 10:00',
+    trigger: 'weekly',
+    triggerSince: '2026-03-08',
     description: 'Sunday morning. What moved this week? What needs decisions. Drafts a retro.',
-    runs: 5,
     tools: [{ name: 'memory', icon: 'memory' }, { name: 'note', icon: 'note' }, { name: 'calendar', icon: 'calendar' }],
+    lastRunMs: AGENTS_DEMO_NOW - 4 * 24 * HOUR,
+    nextRunMs: AGENTS_DEMO_NOW + 3 * 24 * HOUR,
+    recentRuns: [
+      { t: 'Sun 10:00', msg: 'Drafted retro · 3 decisions, 2 risks flagged', level: 'success' },
+    ],
   },
 ];
 
@@ -750,6 +780,7 @@ const AGENT_STATUS_META = {
   scheduled: { color: 'var(--gold)', label: 'scheduled' },
   idle: { color: 'var(--text-mute)', label: 'idle' },
   paused: { color: 'var(--text-dim)', label: 'paused' },
+  error: { color: 'var(--danger)', label: 'error' },
 };
 
 function AgentsKpiCard({ label, value, tone }) {
