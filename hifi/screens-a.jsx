@@ -1987,6 +1987,41 @@ function ScreenMemory() {
         return (b.ts || 0) - (a.ts || 0);
       });
   }, [rawEvents, getEventPriority, activeFilters.priority.low, activeFilters.providers]);
+
+  // Memory Digest Phase 4 — Low-priority cluster.
+  // Only the River scrubber consumes this. Other view modes keep using
+  // `events` directly so the synthetic cluster entry never leaks into
+  // Kakejiku, Heatmap, Digest, or Search.
+  // - L filter ON  → passthrough (mixed mode).
+  // - L filter OFF → partition LOW out, append a synthetic cluster entry,
+  //   and (when expanded) splice the LOW items back in after the cluster.
+  const riverEvents = useMemo(() => {
+    if (activeFilters.priority.low) return events;
+    const mainEvents = events.filter((e) => getEventPriority(e) !== 'low');
+    const lowEvents  = events.filter((e) => getEventPriority(e) === 'low');
+    if (lowEvents.length === 0) return mainEvents;
+    const cluster = {
+      kind: 'low_cluster',
+      count: lowEvents.length,
+      items: lowEvents,
+      // sentinel fields so any code that defensively reads .h / .ts / .src
+      // on a generic event doesn't NaN. Cluster is excluded from `bins`
+      // and `hourIndexFromEvents` because those use `events`, not riverEvents.
+      h: 23.99,
+      ts: 0,
+      src: 'note',
+      title: '',
+      snippet: '',
+      memoryId: null,
+      provenance: null,
+      sourceRaw: '',
+      entityId: null,
+    };
+    return lowClusterExpanded
+      ? [...mainEvents, cluster, ...lowEvents]
+      : [...mainEvents, cluster];
+  }, [events, activeFilters.priority.low, lowClusterExpanded, getEventPriority]);
+
   // Batch-summarize connector items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
   useEffect(() => {
