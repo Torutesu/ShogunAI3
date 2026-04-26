@@ -833,6 +833,87 @@ function AgentsKpiCard({ label, value, tone }) {
   );
 }
 
+const ATTENTION_REASONS = {
+  error: (a) => `${a.name} failed last run ${'lastRunRel' in a ? a.lastRunRel : 'recently'}.`,
+  stale: (a) => `${a.name} hasn't run in over 24 hours.`,
+  auth_expired: (a) => `${a.name} needs re-authorization.`,
+};
+
+function AttentionStrip({ agents, nowMs, onView }) {
+  // Derive issues: explicit `attention` flag, OR last run was error,
+  // OR scheduled/cron and lastRunMs is older than 24h.
+  const issues = [];
+  for (const a of agents) {
+    const last = a.recentRuns && a.recentRuns[0];
+    const tooStale =
+      (a.status === 'scheduled' || a.trigger?.startsWith('every ')) &&
+      a.lastRunMs && (nowMs - a.lastRunMs) > 24 * 60 * 60 * 1000;
+    let reason = null;
+    if (a.attention === 'error' || (last && last.level === 'error')) reason = 'error';
+    else if (a.attention === 'auth_expired') reason = 'auth_expired';
+    else if (a.attention === 'stale' || tooStale) reason = 'stale';
+    if (reason) {
+      issues.push({
+        agent: a,
+        reason,
+        lastRunRel: a.lastRunMs ? fmtRelativeTime(a.lastRunMs, nowMs) : 'recently',
+      });
+    }
+  }
+  if (issues.length === 0) return null;
+  const visible = issues.slice(0, 3);
+  const overflow = issues.length - visible.length;
+
+  return (
+    <div style={{marginBottom:'var(--space-6)', display:'flex', flexDirection:'column', gap:'var(--space-2)'}}>
+      {visible.map(({ agent, reason, lastRunRel }) => (
+        <div
+          key={agent.id}
+          style={{
+            display:'flex', alignItems:'center', gap:'var(--space-3)',
+            padding:'var(--space-3) var(--space-4)',
+            background:'var(--surface-2)',
+            borderLeft:'3px solid var(--danger)',
+            borderRadius:'var(--radius-md)',
+          }}
+        >
+          <Icon name="alert" size={14} style={{color:'var(--danger)', flexShrink:0}}/>
+          <span className="t-sm" style={{flex:1, color:'var(--text)'}}>
+            {ATTENTION_REASONS[reason]({ ...agent, lastRunRel })}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={() => window.SHOGUN_RUNTIME?.pushToast?.(`Run now: ${agent.name} (stub)`, 'info')}
+          >
+            Run now
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => onView(agent.id)}
+          >
+            View
+          </button>
+        </div>
+      ))}
+      {overflow > 0 && (
+        <button
+          type="button"
+          className="t-sm"
+          onClick={() => window.SHOGUN_RUNTIME?.pushToast?.(`Attention list page coming soon`, 'info')}
+          style={{
+            all:'unset', cursor:'pointer', color:'var(--text-dim)', alignSelf:'flex-start',
+            padding:'var(--space-1) var(--space-2)',
+          }}
+        >
+          +{overflow} more
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RecentRunsList({ runs, onSeeAll }) {
   if (!runs || runs.length === 0) {
     return (
@@ -892,6 +973,7 @@ function AgentCard({ agent, expanded, onToggle, nowMs }) {
 
   return (
     <div
+      id={`agent-card-${agent.id}`}
       className="card card-hover"
       style={{
         padding: 0,
@@ -1086,6 +1168,20 @@ function ScreenAgents() {
           </button>
         </div>
       </div>
+
+      <AttentionStrip
+        agents={AGENTS_DEMO}
+        nowMs={AGENTS_DEMO_NOW}
+        onView={(id) => {
+          setExpandedIds((prev) => new Set([...prev, id]));
+          requestAnimationFrame(() => {
+            const el = document.getElementById(`agent-card-${id}`);
+            if (el && typeof el.scrollIntoView === 'function') {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+          });
+        }}
+      />
 
       {/* KPI row */}
       <div style={{display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:'var(--space-4)', marginBottom:'var(--space-8)'}}>
