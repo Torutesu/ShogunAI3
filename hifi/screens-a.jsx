@@ -85,6 +85,26 @@ function memoryHitToRiverEvent(hit) {
 
 /** Parse a window/app identifier out of the AX snippet dump.
  *  Falls back to the first 40 chars of the snippet when nothing matches. */
+/** Compute smart snooze deadlines from "now":
+ *   - tomorrowMorning: tomorrow 9:00 local
+ *   - nextMondayMorning: next Monday 9:00 local (weekend snoozes skip past it)
+ *  If today is already past 9am, tomorrow's 9am is still tomorrow (not today).
+ *  Returned values are ms epoch so the IPC can pass them straight through. */
+function smartSnoozePresets(now = new Date()) {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(9, 0, 0, 0);
+  // ISO weekday: Mon=1..Sun=7. JS: Sun=0..Sat=6.
+  const jsDow = now.getDay();
+  const daysToMonday = jsDow === 1
+    ? 7                 // already Monday — next Monday is 7 days out
+    : (8 - jsDow) % 7;  // Tue→6, Wed→5, ..., Sun→1
+  const nextMonday = new Date(now);
+  nextMonday.setDate(nextMonday.getDate() + (daysToMonday || 7));
+  nextMonday.setHours(9, 0, 0, 0);
+  return { tomorrowMorning: tomorrow.getTime(), nextMondayMorning: nextMonday.getTime() };
+}
+
 function extractWindowLabel(snippet) {
   const s = String(snippet || '');
   const winMatch = s.match(/^window=([^\n]{1,80})/m);
@@ -1450,16 +1470,16 @@ function ScreenHome() {
                                 from highlights + sidebar badge until the
                                 snooze deadline passes. */}
                             {[
-                              { label: '1h', label_jp: '1時間', ms: 60 * 60 * 1000 },
-                              { label: 'Tomorrow', label_jp: '明日', ms: 24 * 60 * 60 * 1000 },
-                              { label: 'Next week', label_jp: '来週', ms: 7 * 24 * 60 * 60 * 1000 },
+                              { label: '1h', label_jp: '1時間', compute: (now) => now + 60 * 60 * 1000 },
+                              { label: 'Tomorrow 9am', label_jp: '明日9時', compute: (now) => smartSnoozePresets(new Date(now)).tomorrowMorning },
+                              { label: 'Next Monday', label_jp: '来週月曜', compute: (now) => smartSnoozePresets(new Date(now)).nextMondayMorning },
                             ].map((opt) => (
                               <button
                                 key={opt.label}
                                 type="button"
                                 onClick={async (e) => {
                                   e.stopPropagation();
-                                  const untilMs = Date.now() + opt.ms;
+                                  const untilMs = opt.compute(Date.now());
                                   // Optimistic: hide locally + drop badge
                                   setMemoryDigest((prev) => prev ? {
                                     ...prev,
