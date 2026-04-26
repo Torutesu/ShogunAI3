@@ -5,6 +5,7 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+.worktrees/
 
 # Secrets / env
 .env
