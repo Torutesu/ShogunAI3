@@ -85,6 +85,11 @@ function memoryHitToRiverEvent(hit) {
 
 /** Parse a window/app identifier out of the AX snippet dump.
  *  Falls back to the first 40 chars of the snippet when nothing matches. */
+// Memory River — Low-priority cluster expand state. Module-scope so the
+// value survives React unmounts (Home tab roundtrip) but resets on app
+// reload. Read on River mount; written on every toggle.
+let lowClusterExpandedSession = false;
+
 /** Compute smart snooze deadlines from "now":
  *   - tomorrowMorning: tomorrow 9:00 local
  *   - nextMondayMorning: next Monday 9:00 local (weekend snoozes skip past it)
@@ -1716,6 +1721,14 @@ function ScreenMemory() {
       manual: true,
     },
   }));
+  const [lowClusterExpanded, setLowClusterExpandedRaw] = useState(lowClusterExpandedSession);
+  const setLowClusterExpanded = (next) => {
+    setLowClusterExpandedRaw((prev) => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      lowClusterExpandedSession = v;
+      return v;
+    });
+  };
   const timelineScrollRef = useRef(null);
   const scrollTimeline = useCallback((dir) => {
     const el = timelineScrollRef.current;
