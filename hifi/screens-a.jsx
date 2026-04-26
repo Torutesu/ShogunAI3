@@ -1695,6 +1695,10 @@ function ScreenMemory() {
   const [weekRollupLoading, setWeekRollupLoading] = useState(false);
   const [dayRollup, setDayRollup] = useState(null); // { title, keyPoints, reason, generatedAt } or null
   const [dayRollupLoading, setDayRollupLoading] = useState(false);
+  const [monthRollup, setMonthRollup] = useState(null);
+  const [monthRollupLoading, setMonthRollupLoading] = useState(false);
+  const [yearRollup, setYearRollup] = useState(null);
+  const [yearRollupLoading, setYearRollupLoading] = useState(false);
   const [scrubIdx, setScrubIdx] = useState(0);
   const [timelineSpan, setTimelineSpan] = useState('week');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
@@ -2079,6 +2083,60 @@ function ScreenMemory() {
         }
       } finally {
         if (!cancelled) setDayRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
+  // Month rollup — same shape as day/week, calendar-month window.
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'month') {
+      setMonthRollup(null);
+      return;
+    }
+    const cursor = new Date(timelineCursor);
+    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 0, 0, 0, 0);
+    const monthStartMs = monthStart.getTime();
+    let cancelled = false;
+    setMonthRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.month.get', { monthStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setMonthRollup(res.data.rollup);
+        } else {
+          setMonthRollup(null);
+        }
+      } finally {
+        if (!cancelled) setMonthRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
+  // Year rollup — composed from monthly rollups (cascading on miss).
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'year') {
+      setYearRollup(null);
+      return;
+    }
+    const cursor = new Date(timelineCursor);
+    const yearStart = new Date(cursor.getFullYear(), 0, 1, 0, 0, 0, 0);
+    const yearStartMs = yearStart.getTime();
+    let cancelled = false;
+    setYearRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.year.get', { yearStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setYearRollup(res.data.rollup);
+        } else {
+          setYearRollup(null);
+        }
+      } finally {
+        if (!cancelled) setYearRollupLoading(false);
       }
     })();
     return () => { cancelled = true; };
