@@ -905,6 +905,58 @@ function AttentionStrip({ agents, nowMs, onView }) {
   );
 }
 
+const FILTER_OPTIONS = [
+  { id: 'all', label: 'all' },
+  { id: 'running', label: 'running' },
+  { id: 'scheduled', label: 'scheduled' },
+  { id: 'paused', label: 'paused' },
+  { id: 'error', label: 'error' },
+];
+
+function FilterBar({ active, onChange, counts }) {
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:'var(--space-2)',
+      marginBottom:'var(--space-4)', flexWrap:'wrap',
+    }}>
+      {FILTER_OPTIONS.map((opt) => {
+        const isActive = active === opt.id;
+        const count = counts[opt.id] ?? 0;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            style={{
+              all:'unset', cursor:'pointer',
+              padding:'var(--space-1) var(--space-3)',
+              border:`1px solid ${isActive ? 'var(--border-hi)' : 'var(--border)'}`,
+              borderRadius: 999,
+              color: isActive ? 'var(--text)' : 'var(--text-mute)',
+              fontSize: 12,
+              transition: `all var(--dur-fast) var(--ease-out)`,
+            }}
+          >
+            {opt.label} ({count})
+          </button>
+        );
+      })}
+      <span style={{flex:1}}/>
+      <input
+        type="text"
+        placeholder="search ⌘F"
+        disabled
+        style={{
+          background:'transparent', border:`1px solid var(--border)`,
+          borderRadius:'var(--radius-sm)', padding:'var(--space-1) var(--space-3)',
+          color:'var(--text-dim)', fontSize:12, fontFamily:'inherit',
+          width:160, opacity:0.6, cursor:'not-allowed',
+        }}
+      />
+    </div>
+  );
+}
+
 function RecentRunsList({ runs, onSeeAll }) {
   if (!runs || runs.length === 0) {
     return (
@@ -1078,6 +1130,27 @@ function ScreenAgents() {
     });
   }, []);
 
+  const [filterStatus, setFilterStatus] = React.useState('all');
+
+  const filterCounts = React.useMemo(() => {
+    const c = { all: AGENTS_DEMO.length, running: 0, scheduled: 0, paused: 0, error: 0 };
+    for (const a of AGENTS_DEMO) {
+      const last = a.recentRuns && a.recentRuns[0];
+      const eff = last && last.level === 'error' ? 'error' : a.status;
+      if (c[eff] !== undefined) c[eff] += 1;
+    }
+    return c;
+  }, []);
+
+  const visibleAgents = React.useMemo(() => {
+    if (filterStatus === 'all') return AGENTS_DEMO;
+    return AGENTS_DEMO.filter((a) => {
+      const last = a.recentRuns && a.recentRuns[0];
+      const eff = last && last.level === 'error' ? 'error' : a.status;
+      return eff === filterStatus;
+    });
+  }, [filterStatus]);
+
   React.useEffect(() => {
     let cancelled = false;
     void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
@@ -1188,9 +1261,14 @@ function ScreenAgents() {
 
 
       {/* Agents section */}
-      <div style={{marginBottom:'var(--space-4)', color:'var(--text-mute)'}} className="t-sm">Your agents</div>
+      <div style={{marginBottom:'var(--space-3)', color:'var(--text-mute)'}} className="t-sm">Your agents</div>
+      <FilterBar
+        active={filterStatus}
+        onChange={setFilterStatus}
+        counts={filterCounts}
+      />
       <div style={{display:'grid', gridTemplateColumns:'repeat(2, minmax(0, 1fr))', gap:'var(--space-4)', marginBottom:'var(--space-8)'}}>
-        {AGENTS_DEMO.map((a) => (
+        {visibleAgents.map((a) => (
           <AgentCard
             key={a.id}
             agent={a}
