@@ -96,6 +96,264 @@ function TabQueryTester() {
   );
 }
 
+function TabKiokuStats() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      if (!invoke) {
+        throw new Error("Tauri IPC unavailable");
+      }
+      const r = await invoke("shogun_kioku_debug_stats", { payload: {} });
+      setData(r);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const h = setInterval(refresh, 30_000);
+    return () => clearInterval(h);
+  }, [refresh]);
+
+  if (err) {
+    return (
+      <div className="mdbg-pane">
+        <div className="mdbg-error">{err}</div>
+        <button onClick={refresh}>Retry</button>
+      </div>
+    );
+  }
+  if (!data) {
+    return <div className="mdbg-pane">Loading…</div>;
+  }
+
+  const flags = data.flags || {};
+  const queue = data.queue || {};
+  const cost = data.cost || {};
+  const graph = data.graph || {};
+  const rules = data.rules || {};
+
+  const oldestPendingLabel = queue.oldest_pending_capture_ms
+    ? msToLocal(queue.oldest_pending_capture_ms)
+    : "—";
+
+  const capPct =
+    cost.monthly_cap_usd > 0
+      ? Math.min(100, Math.round((cost.spent_usd / cost.monthly_cap_usd) * 100))
+      : 0;
+  const capColor = capPct >= 100 ? "red" : capPct >= 80 ? "orange" : "green";
+
+  const statusBadge = (label, on) => (
+    <span className={`mdbg-badge mdbg-badge-${on ? "on" : "off"}`}>{label}</span>
+  );
+
+  return (
+    <div className="mdbg-pane">
+      <div className="mdbg-header-row">
+        <button onClick={refresh} disabled={busy}>
+          {busy ? "Refreshing…" : "Refresh now"}
+        </button>
+        <span className="mdbg-timestamp">snapshot: {msToLocal(data.now_ms)}</span>
+      </div>
+
+      <h3>Flags</h3>
+      <div className="mdbg-flag-row">
+        {statusBadge(`read_path: ${flags.read_path || "legacy"}`, flags.read_path === "graph")}
+        {statusBadge("worker_enabled", !!flags.worker_enabled)}
+        {statusBadge("capture_to_mem_captures", !!flags.capture_to_mem_captures)}
+      </div>
+
+      <h3>Queue</h3>
+      <div className="mdbg-grid-3">
+        <div>
+          <strong>mem_captures</strong>
+          <table className="mdbg-table">
+            <tbody>
+              <tr>
+                <td>queued</td>
+                <td>{queue.captures_pending || 0}</td>
+              </tr>
+              <tr>
+                <td>running</td>
+                <td>{queue.captures_running || 0}</td>
+              </tr>
+              <tr>
+                <td>done</td>
+                <td>{queue.captures_done || 0}</td>
+              </tr>
+              <tr>
+                <td>failed</td>
+                <td>{queue.captures_failed || 0}</td>
+              </tr>
+              <tr>
+                <td>expired</td>
+                <td>{queue.captures_expired || 0}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <strong>extraction_jobs</strong>
+          <table className="mdbg-table">
+            <tbody>
+              <tr>
+                <td>queued</td>
+                <td>{queue.jobs_queued || 0}</td>
+              </tr>
+              <tr>
+                <td>running</td>
+                <td>{queue.jobs_running || 0}</td>
+              </tr>
+              <tr>
+                <td>done</td>
+                <td>{queue.jobs_done || 0}</td>
+              </tr>
+              <tr>
+                <td>failed</td>
+                <td>{queue.jobs_failed || 0}</td>
+              </tr>
+              <tr>
+                <td>expired</td>
+                <td>{queue.jobs_expired || 0}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <strong>oldest pending capture</strong>
+          <div className="mdbg-big">{oldestPendingLabel}</div>
+        </div>
+      </div>
+
+      <h3>Cost (this month)</h3>
+      <div className="mdbg-cost-row">
+        <div className="mdbg-bar-track">
+          <div
+            className={`mdbg-bar-fill mdbg-bar-${capColor}`}
+            style={{ width: `${capPct}%` }}
+          />
+        </div>
+        <div className="mdbg-cost-label">
+          ${(cost.spent_usd || 0).toFixed(4)} / ${(cost.monthly_cap_usd || 0).toFixed(2)} (
+          {capPct}%)
+        </div>
+      </div>
+      <div className="mdbg-cost-meta">
+        <span>status: <strong>{cost.status || "—"}</strong></span>
+        <span>cap_action: {cost.cap_action || "—"}</span>
+        <span>model: {cost.extraction_model || "—"}</span>
+        <span>fallback: {cost.fallback_model || "—"}</span>
+      </div>
+
+      <h3>Graph</h3>
+      <div className="mdbg-grid-2">
+        <div>
+          <strong>mem_items</strong>
+          <table className="mdbg-table">
+            <tbody>
+              <tr>
+                <td>active (valid_to NULL)</td>
+                <td>{graph.mem_items_active || 0}</td>
+              </tr>
+              <tr>
+                <td>retired</td>
+                <td>{graph.mem_items_retired || 0}</td>
+              </tr>
+              <tr>
+                <td>total</td>
+                <td>{graph.mem_items_total || 0}</td>
+              </tr>
+              <tr>
+                <td>captures (raw)</td>
+                <td>{graph.captures_total || 0}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <strong>mem_edges</strong>
+          <table className="mdbg-table">
+            <tbody>
+              <tr>
+                <td>active</td>
+                <td>{graph.edges_active || 0}</td>
+              </tr>
+              <tr>
+                <td>total</td>
+                <td>{graph.edges_total || 0}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {graph.by_node_kind && graph.by_node_kind.length > 0 && (
+        <>
+          <h4>by node_kind (active)</h4>
+          <table className="mdbg-table">
+            <thead>
+              <tr>
+                <th>kind</th>
+                <th>count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {graph.by_node_kind.map((row, i) => (
+                <tr key={i}>
+                  <td>{row.kind}</td>
+                  <td>{row.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {graph.by_edge_type && graph.by_edge_type.length > 0 && (
+        <>
+          <h4>by edge_type (active)</h4>
+          <table className="mdbg-table">
+            <thead>
+              <tr>
+                <th>edge_type</th>
+                <th>count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {graph.by_edge_type.map((row, i) => (
+                <tr key={i}>
+                  <td>{row.edge_type}</td>
+                  <td>{row.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <h3>Rules ({rules.count || 0})</h3>
+      {(rules.titles || []).length === 0 ? (
+        <div className="mdbg-empty">No kioku_rules configured.</div>
+      ) : (
+        <ul className="mdbg-rules">
+          {(rules.titles || []).map((t, i) => (
+            <li key={i}>{t || "(untitled)"}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function TabRecentCalls() {
   const [items, setItems] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -281,14 +539,24 @@ function TabDbStats() {
 
 function ScreenMemoryDebug() {
   const [tab, setTab] = useState("query");
+  const tabLabel = (t) => {
+    switch (t) {
+      case "query": return "Query Tester";
+      case "recent": return "Recent Calls";
+      case "sync": return "Sync Health";
+      case "stats": return "DB Stats";
+      case "kioku": return "KIOKU Graph";
+      default: return t;
+    }
+  };
   return (
     <div className="content-memory-debug">
       <div className="mdbg-header">
         <h1>Memory Debugger (dev)</h1>
         <div className="mdbg-tabs">
-          {["query", "recent", "sync", "stats"].map((t) => (
+          {["query", "recent", "sync", "stats", "kioku"].map((t) => (
             <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
-              {t === "query" ? "Query Tester" : t === "recent" ? "Recent Calls" : t === "sync" ? "Sync Health" : "DB Stats"}
+              {tabLabel(t)}
             </button>
           ))}
         </div>
@@ -297,6 +565,7 @@ function ScreenMemoryDebug() {
       {tab === "recent" && <TabRecentCalls />}
       {tab === "sync" && <TabSyncHealth />}
       {tab === "stats" && <TabDbStats />}
+      {tab === "kioku" && <TabKiokuStats />}
     </div>
   );
 }

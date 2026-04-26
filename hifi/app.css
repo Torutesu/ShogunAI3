@@ -1365,3 +1365,25 @@
 .mdbg-pre { background: #0e0e0e; padding: 8px; font-size: 11px; white-space: pre-wrap; max-height: 240px; overflow: auto; }
 .mdbg-snip { color: #aaa; font-size: 11px; margin-top: 2px; }
 .mdbg-detail { margin-top: 16px; padding-top: 12px; border-top: 1px solid #222; }
+
+/* KIOKU Graph debug tab */
+.mdbg-header-row { display: flex; justify-content: space-between; align-items: center; margin: 8px 0; }
+.mdbg-timestamp { color: #888; font-size: 11px; }
+.mdbg-flag-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.mdbg-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 11px; }
+.mdbg-badge-on { background: #1f3a1f; color: #8fdc8f; border: 1px solid #2f5a2f; }
+.mdbg-badge-off { background: #2a2a2a; color: #888; border: 1px solid #333; }
+.mdbg-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.mdbg-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.mdbg-big { font-size: 16px; padding-top: 6px; }
+.mdbg-cost-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+.mdbg-bar-track { flex: 1; height: 14px; background: #1a1a1a; border-radius: 7px; overflow: hidden; }
+.mdbg-bar-fill { height: 100%; transition: width 200ms ease; }
+.mdbg-bar-green { background: #2f7a2f; }
+.mdbg-bar-orange { background: #b88a2c; }
+.mdbg-bar-red { background: #b83a3a; }
+.mdbg-cost-label { font-variant-numeric: tabular-nums; min-width: 200px; text-align: right; }
+.mdbg-cost-meta { display: flex; gap: 16px; flex-wrap: wrap; color: #aaa; font-size: 11px; margin-bottom: 12px; }
+.mdbg-rules { margin: 8px 0; padding-left: 18px; }
+.mdbg-rules li { margin: 2px 0; }
+.mdbg-empty { color: #888; font-style: italic; padding: 8px 0; }

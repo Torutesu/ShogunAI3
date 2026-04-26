@@ -140,6 +140,52 @@ pub fn shogun_schedule_action(payload: Value) -> Result<Value, String> {
   schedule_queue::append(&payload)
 }
 
+/// KIOKU graph signals consumed by the AMC pipeline. Returns the same shape
+/// as `MorningBriefCandidate.{related_kioku_hits, decision_graph_hits}` so
+/// the Node orchestrator can splice the response into a candidate without a
+/// translation layer.
+///
+/// Payload (all optional):
+/// ```json
+/// { "limit_decisions": 5, "limit_kioku": 12 }
+/// ```
+#[tauri::command]
+pub fn shogun_kioku_brief_signals(payload: Value) -> Result<Value, String> {
+  use crate::kioku_decision_graph::{fetch_decision_graph_hits, fetch_recent_kioku_hits};
+
+  let limit_decisions = payload
+    .get("limit_decisions")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(5)
+    .clamp(1, 50) as usize;
+  let limit_kioku = payload
+    .get("limit_kioku")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(12)
+    .clamp(1, 100) as usize;
+
+  let conn = memory_store::open_conn()?;
+  let decisions = fetch_decision_graph_hits(&conn, limit_decisions)?;
+  let kioku = fetch_recent_kioku_hits(&conn, limit_kioku)?;
+
+  Ok(json!({
+    "decision_graph_hits": decisions,
+    "related_kioku_hits": kioku,
+  }))
+}
+
+/// Debug-only consolidated KIOKU observability snapshot (Phase 2 §8 follow-up).
+/// Returns queue depth, monthly cost, graph counts, active flags, and rules
+/// summary in one payload so the dev `Memory Debugger` UI can render them
+/// without N round-trips.
+#[tauri::command]
+pub fn shogun_kioku_debug_stats(_payload: Value) -> Result<Value, String> {
+  let conn = memory_store::open_conn()?;
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  let now_ms = ts() as i64;
+  crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)
+}
+
 fn fmt_decimal_commas(mut n: u64) -> String {
   if n == 0 {
     return "0".to_string();

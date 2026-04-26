@@ -45,6 +45,7 @@ mod kioku_extraction;
 mod kioku_decision_graph;
 mod kioku_rules;
 mod kioku_graph_traversal;
+mod kioku_debug_stats;
 mod rollup_sync;
 mod summarizer_store;
 mod summarizer;
@@ -153,6 +154,8 @@ pub fn run() {
       commands::shogun_chat_complete,
       commands::shogun_draft,
       commands::shogun_schedule_action,
+      commands::shogun_kioku_brief_signals,
+      commands::shogun_kioku_debug_stats,
       commands::shogun_stats,
       commands::app_open_hummingbird,
       commands::app_create_share_link,
