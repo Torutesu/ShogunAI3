@@ -82,6 +82,9 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
         query: &q,
         limit: 8,
         semantic: false,
+        // Recipes (FollowUpEmail / FeatureDigest / PrdDraft) keep meeting +
+        // user context but drop raw screen captures.
+        excluded_provenances: Some(vec!["screen".to_string()]),
       })
       .await
       .unwrap_or_default()

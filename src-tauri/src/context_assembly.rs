@@ -35,6 +35,41 @@ pub struct AssembleParams<'a> {
   pub query: &'a str,
   pub limit: u64,
   pub semantic: bool,
+  /// Optional post-retrieval filter. Hits whose `provenance` matches any of
+  /// the listed values are dropped before formatting. Empty / `None` means
+  /// "no filter". Used by `brief_generate` / `draft_reply_for_brief` /
+  /// `open_pack` to keep raw screen captures out of LLM context regardless
+  /// of which retrieval path produced the hits.
+  pub excluded_provenances: Option<Vec<String>>,
+}
+
+impl<'a> AssembleParams<'a> {
+  /// Convenience: caller-side default with no filter.
+  pub fn new(query: &'a str, limit: u64, semantic: bool) -> Self {
+    Self {
+      query,
+      limit,
+      semantic,
+      excluded_provenances: None,
+    }
+  }
+}
+
+/// Drop hits whose `provenance` appears in `excluded`. `None` / empty list
+/// returns the input unchanged. Pure helper; lives at module scope so callers
+/// other than `assemble_memory_hits` (e.g. tests, future ad-hoc filters) can
+/// reuse it.
+pub fn apply_provenance_filter(hits: Vec<Hit>, excluded: Option<&[String]>) -> Vec<Hit> {
+  let Some(list) = excluded else {
+    return hits;
+  };
+  if list.is_empty() {
+    return hits;
+  }
+  hits
+    .into_iter()
+    .filter(|h| !list.iter().any(|x| x == &h.provenance))
+    .collect()
 }
 
 /// Flat memory item view used by the formatters. `provenance` is read from the
@@ -134,7 +169,7 @@ pub async fn assemble_memory_hits(
     ],
   );
 
-  let hits = if mode == "graph" {
+  let raw = if mode == "graph" {
     match assemble_via_graph(&params).await {
       Ok(h) => h,
       Err(e) => {
@@ -150,6 +185,20 @@ pub async fn assemble_memory_hits(
   } else {
     assemble_via_legacy(&params).await?
   };
+
+  // Apply caller-supplied provenance filter to both paths so screen-only
+  // exclusion (brief / reply / pack) takes effect regardless of read_path.
+  let raw_count = raw.len();
+  let hits = apply_provenance_filter(raw, params.excluded_provenances.as_deref());
+  if hits.len() != raw_count {
+    crate::memory_obs::emit(
+      "assemble_hits_filtered",
+      &[
+        ("dropped", (raw_count - hits.len()).to_string()),
+        ("kept", hits.len().to_string()),
+      ],
+    );
+  }
 
   let elapsed_ms = start.elapsed().as_millis() as u64;
   let (screen, connector, meeting, user) = provenance_counts(&hits);
@@ -456,6 +505,73 @@ pub fn clip_snippet_with_marker(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  // ── apply_provenance_filter ────────────────────────────────────────────
+  fn hits_with_provenances(items: &[(&str, &str)]) -> Vec<Hit> {
+    items
+      .iter()
+      .map(|(id, prov)| Hit {
+        id: id.to_string(),
+        title: "T".into(),
+        snippet: "S".into(),
+        source: "x".into(),
+        provenance: prov.to_string(),
+        created_at: 0,
+      })
+      .collect()
+  }
+
+  #[test]
+  fn provenance_filter_none_returns_input_unchanged() {
+    let hits = hits_with_provenances(&[("a", "screen"), ("b", "user")]);
+    let out = apply_provenance_filter(hits.clone(), None);
+    assert_eq!(out, hits);
+  }
+
+  #[test]
+  fn provenance_filter_empty_list_returns_input_unchanged() {
+    let hits = hits_with_provenances(&[("a", "screen"), ("b", "user")]);
+    let exclude: Vec<String> = Vec::new();
+    let out = apply_provenance_filter(hits.clone(), Some(&exclude));
+    assert_eq!(out, hits);
+  }
+
+  #[test]
+  fn provenance_filter_drops_screen_when_listed() {
+    let hits = hits_with_provenances(&[
+      ("a", "screen"),
+      ("b", "user"),
+      ("c", "connector"),
+      ("d", "screen"),
+    ]);
+    let exclude = vec!["screen".to_string()];
+    let out = apply_provenance_filter(hits, Some(&exclude));
+    let ids: Vec<&str> = out.iter().map(|h| h.id.as_str()).collect();
+    assert_eq!(ids, vec!["b", "c"]);
+  }
+
+  #[test]
+  fn provenance_filter_supports_multiple_excluded_values() {
+    let hits = hits_with_provenances(&[
+      ("a", "screen"),
+      ("b", "user"),
+      ("c", "connector"),
+      ("d", "meeting"),
+    ]);
+    let exclude = vec!["screen".to_string(), "connector".to_string()];
+    let out = apply_provenance_filter(hits, Some(&exclude));
+    let ids: Vec<&str> = out.iter().map(|h| h.id.as_str()).collect();
+    assert_eq!(ids, vec!["b", "d"]);
+  }
+
+  #[test]
+  fn assemble_params_new_defaults_no_filter() {
+    let p = AssembleParams::new("q", 10, false);
+    assert_eq!(p.query, "q");
+    assert_eq!(p.limit, 10);
+    assert!(!p.semantic);
+    assert!(p.excluded_provenances.is_none());
+  }
 
   // ── read_path_mode ─────────────────────────────────────────────────────
   #[test]

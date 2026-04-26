@@ -1170,6 +1170,8 @@ pub async fn shogun_memory_debug_query(
     query: &query,
     limit,
     semantic,
+    // Debug command — keep raw signal so the dev tool surfaces every hit.
+    excluded_provenances: None,
   })
   .await?;
 

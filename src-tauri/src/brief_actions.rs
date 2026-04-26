@@ -59,6 +59,8 @@ pub async fn open_pack(payload: &Value) -> Result<Value, String> {
     query: &q,
     limit: 16,
     semantic: false,
+    // T7 polish: pack markdown never includes raw screen captures.
+    excluded_provenances: Some(vec!["screen".to_string()]),
   })
   .await
   .unwrap_or_default();

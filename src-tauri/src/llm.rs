@@ -148,6 +148,7 @@ pub async fn chat_complete(
         query: q,
         limit,
         semantic,
+        excluded_provenances: None,
       })
       .await?;
       let block = context_assembly::format_hits_draft_context(
@@ -286,6 +287,7 @@ pub async fn draft_from_payload(
         query: q,
         limit,
         semantic,
+        excluded_provenances: None,
       })
       .await
       .unwrap_or_else(|_| Vec::new());
@@ -378,6 +380,9 @@ pub async fn brief_generate(
     query: "",
     limit: 15,
     semantic: false,
+    // T7 polish: brief never contains raw screen captures, regardless of
+    // which retrieval path produced the hits.
+    excluded_provenances: Some(vec!["screen".to_string()]),
   })
   .await?;
   let hits_count = hits.len();
@@ -473,6 +478,8 @@ pub async fn draft_reply_for_brief(
     query: &q,
     limit: 12,
     semantic: true,
+    // T7 polish: reply drafts must never quote raw screen captures.
+    excluded_provenances: Some(vec!["screen".to_string()]),
   })
   .await
   .unwrap_or_else(|_| Vec::new());
