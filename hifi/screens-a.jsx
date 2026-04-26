@@ -1935,10 +1935,10 @@ function ScreenMemory() {
   // Resolves an event's effective priority via the summary cache.
   // userPriority (manual pin) wins over priority (LLM). Returns null when
   // unsummarized or when the summary lacks a priority field.
-  const getEventPriority = (e) => {
+  const getEventPriority = useCallback((e) => {
     const s = e && e.memoryId ? summaryByMemId[e.memoryId] : null;
     return (s && (s.userPriority || s.priority)) || null;
-  };
+  }, [summaryByMemId]);
   // River = rawEvents filtered by priority, then screen-captures clustered
   // into sessions. Low-priority (自動通知など) items stay in Memory but are
   // hidden from the surface unless the user toggles the Low filter on.
@@ -1973,7 +1973,7 @@ function ScreenMemory() {
         if (rA !== rB) return rA - rB;
         return (b.ts || 0) - (a.ts || 0);
       });
-  }, [rawEvents, summaryByMemId, activeFilters.priority.low, activeFilters.providers]);
+  }, [rawEvents, getEventPriority, activeFilters.priority.low, activeFilters.providers]);
   // Batch-summarize connector items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
   useEffect(() => {
@@ -2236,8 +2236,7 @@ function ScreenMemory() {
       const h = Math.max(0, Math.min(23, Number.isFinite(hh) ? hh : 12));
       if (firstIdx[h] < 0) firstIdx[h] = i;
       counts[h] += 1;
-      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      const p = s && (s.userPriority || s.priority);
+      const p = getEventPriority(e);
       if (p === 'high' || p === 'medium') {
         if (priorityRank(p) > priorityRank(topPriority[h])) {
           topPriority[h] = p;
@@ -2246,7 +2245,7 @@ function ScreenMemory() {
     });
     const maxC = Math.max(1, ...counts);
     return { counts, firstIdx, maxC, topPriority };
-  }, [events, summaryByMemId]);
+  }, [events, getEventPriority]);
 
   const timeSpanLabel = useMemo(() => {
     if (!events.length) return '—';
