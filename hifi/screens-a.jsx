@@ -2296,6 +2296,22 @@ function ScreenMemory() {
     return { counts, firstIdx, maxC, topPriority };
   }, [events, getEventPriority]);
 
+  // Click-target index for the 24-hour bar. Counts/colors stay on
+  // hourIndexFromEvents (so the bar shape doesn't shift when the cluster
+  // expands), but bar clicks need an index into riverEvents (where the
+  // scrubber actually navigates). Bars whose only matching events are
+  // collapsed-LOW resolve to firstIdx = -1 (non-clickable).
+  const hourClickIndex = useMemo(() => {
+    const firstIdx = new Array(24).fill(-1);
+    riverEvents.forEach((e, i) => {
+      if (e && e.kind === 'low_cluster') return; // never click-land on the cluster header
+      const hh = Math.floor(Number(e?.h));
+      const h = Math.max(0, Math.min(23, Number.isFinite(hh) ? hh : 12));
+      if (firstIdx[h] < 0) firstIdx[h] = i;
+    });
+    return { firstIdx };
+  }, [riverEvents]);
+
   const timeSpanLabel = useMemo(() => {
     if (!events.length) return '—';
     const hs = events.map((e) => Number(e.h)).filter((n) => Number.isFinite(n));
@@ -3252,10 +3268,10 @@ function ScreenMemory() {
             <div style={{position:'absolute', inset:'0 0 26px 0', display:'grid', gridTemplateColumns:'repeat(24, minmax(0, 1fr))', alignItems:'end', gap:3}}>
               {[...Array(24)].map((_,h)=>{
                 const count = hourIndexFromEvents.counts[h] || 0;
-                const firstIdx = hourIndexFromEvents.firstIdx[h];
+                const firstIdxView = hourClickIndex.firstIdx[h];
                 const height = count > 0 ? Math.round((count / hourIndexFromEvents.maxC) * 42) + 6 : 4;
-                const active = firstIdx >= 0 && scrubIdx >= firstIdx && scrubIdx < firstIdx + count;
-                const clickable = firstIdx >= 0;
+                const active = firstIdxView >= 0 && scrubIdx === firstIdxView;
+                const clickable = firstIdxView >= 0;
                 const topTier = hourIndexFromEvents.topPriority[h];
                 // Color the bar by the BEST-tier event in the hour so the eye
                 // tracks "when did important stuff happen today".
@@ -3274,7 +3290,7 @@ function ScreenMemory() {
                     key={h}
                     type="button"
                     disabled={!clickable}
-                    onClick={() => { if (clickable) setScrubIdx(firstIdx); }}
+                    onClick={() => { if (clickable) setScrubIdx(firstIdxView); }}
                     aria-label={`${count} memories at ${String(h).padStart(2,'0')}:00${topTier ? ` (top priority: ${topTier})` : ''}`}
                     style={{
                       height,
