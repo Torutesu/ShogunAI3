@@ -636,12 +636,12 @@ fn rollup_system_prompt_for_lang(lang: &str, kind: RollupKind) -> String {
       "surface what moved forward, what's still pending for tomorrow, and any explicit decisions made today. Tighter than a weekly roll-up — 3-4 bullets is usually enough",
     ),
     RollupKind::Month => (
-      r#""Month of <YYYY-MM>" (e.g., "Month of 2026-04")"#,
+      r#""<MonthName> <Year>" (e.g., "April 2026")"#,
       "this month",
       "synthesize activity across weeks: key projects, decisions finalized, milestones hit, and outstanding items rolling into next month",
     ),
     RollupKind::Year => (
-      r#""Year of <YYYY>" (e.g., "Year of 2026")"#,
+      r#""<Year>" (e.g., "2026")"#,
       "this year",
       "synthesize high-level themes: major projects completed, key decisions made, and patterns in how the year unfolded",
     ),
@@ -865,13 +865,26 @@ async fn collect_monthly_rollups_for_year(
 }
 
 /// Render the LLM context for a year rollup: each monthly rollup labeled
-/// with its short month name + year, followed by the month's title and
-/// key points.
+/// with its full month name + year, followed by the month's title and
+/// key points. Empty months (no indexed activity) are dropped from the
+/// LLM context entirely so the model isn't fed "Quiet month" filler —
+/// the surrounding non-empty months tell a tighter story.
 fn render_year_context(monthly: &[Summary], year_id: &str) -> String {
-  let mut buf = format!("Year: {}\n\nMonthly rollups (chronological):\n", year_id);
-  for s in monthly {
-    // s.target_id is "YYYY-MM"; produce "Apr 2026" style label.
-    let label = month_label_for_id(&s.target_id);
+  let active: Vec<&Summary> = monthly.iter().filter(|s| !is_empty_rollup(s)).collect();
+  let total = monthly.len();
+  let skipped = total - active.len();
+
+  let mut buf = format!("Year: {}\n\n", year_id);
+  if skipped > 0 {
+    buf.push_str(&format!(
+      "(showing {} active months out of {}; the remaining months had no indexed activity)\n\n",
+      active.len(),
+      total,
+    ));
+  }
+  buf.push_str("Monthly rollups (chronological):\n");
+  for s in active {
+    let label = month_label_full(&s.target_id);
     buf.push_str(&format!(
       "\n[{}] {}\n  · {}\n",
       label,
@@ -882,21 +895,36 @@ fn render_year_context(monthly: &[Summary], year_id: &str) -> String {
   buf
 }
 
-fn month_label_for_id(month_id: &str) -> String {
-  // month_id format "YYYY-MM"; degrade gracefully if malformed.
+/// "YYYY-MM" → "April 2026" (full month name). Used for human-readable
+/// labels in rollup titles, year context, and fallback summaries.
+fn month_label_full(month_id: &str) -> String {
   let parts: Vec<&str> = month_id.split('-').collect();
   if parts.len() != 2 {
     return month_id.to_string();
   }
   let year = parts[0];
   let mo: u32 = parts[1].parse().unwrap_or(0);
-  let name = match mo {
-    1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-    5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-    9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
-    _ => "?",
-  };
+  let name = month_name_full(mo);
   format!("{} {}", name, year)
+}
+
+fn month_name_full(mo: u32) -> &'static str {
+  match mo {
+    1 => "January", 2 => "February", 3 => "March", 4 => "April",
+    5 => "May", 6 => "June", 7 => "July", 8 => "August",
+    9 => "September", 10 => "October", 11 => "November", 12 => "December",
+    _ => "?",
+  }
+}
+
+/// "YYYY-MM" → "2026年4月". JP-localized month label, drops leading zero.
+fn format_month_jp(month_id: &str) -> String {
+  let parts: Vec<&str> = month_id.split('-').collect();
+  if parts.len() != 2 {
+    return month_id.to_string();
+  }
+  let mo = parts[1].trim_start_matches('0');
+  format!("{}年{}月", parts[0], mo)
 }
 
 /// Heuristic fallback for year rollups when the LLM fails or returns
@@ -913,7 +941,7 @@ fn year_heuristic_fallback(id: &str, monthly: &[Summary], lang: &str) -> Summary
   if !active_months.is_empty() {
     key_points.push(loc(lang, "Notable months:", "主要な月:"));
     for s in active_months.iter().take(4) {
-      let label = month_label_for_id(&s.target_id);
+      let label = month_label_full(&s.target_id);
       key_points.push(format!("· {} — {}", label, s.title));
     }
   }
@@ -1048,12 +1076,12 @@ impl RollupKind {
     match (self, lang) {
       (Self::Week, "jp") => format!("今週（{}週）", id),
       (Self::Day, "jp") => format!("{} の記録", id),
-      (Self::Month, "jp") => format!("今月（{}）", id),
-      (Self::Year, "jp") => format!("今年（{}年）", id),
+      (Self::Month, "jp") => format_month_jp(id),
+      (Self::Year, "jp") => format!("{}年", id),
       (Self::Week, _) => format!("Week of {}", id),
       (Self::Day, _) => format!("Day of {}", id),
-      (Self::Month, _) => format!("Month of {}", id),
-      (Self::Year, _) => format!("Year of {}", id),
+      (Self::Month, _) => month_label_full(id),
+      (Self::Year, _) => id.to_string(),
     }
   }
 }

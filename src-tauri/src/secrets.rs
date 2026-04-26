@@ -28,6 +28,19 @@ pub fn get_llm_api_key() -> Result<Option<String>, String> {
       return Ok(cached.clone());
     }
   }
+  // Dev convenience: ANTHROPIC_API_KEY env var (loaded from .env at startup)
+  // bypasses the macOS Keychain prompt that fires on every fresh process
+  // when the binary signature changes (i.e. every dev rebuild).
+  if let Ok(env_key) = std::env::var("ANTHROPIC_API_KEY") {
+    let trimmed = env_key.trim().to_string();
+    if !trimmed.is_empty() {
+      let result = Some(trimmed);
+      if let Ok(mut cache) = LLM_KEY_CACHE.lock() {
+        *cache = Some(result.clone());
+      }
+      return Ok(result);
+    }
+  }
   let entry = Entry::new(SERVICE, USER).map_err(|e| e.to_string())?;
   let result = match entry.get_password() {
     Ok(p) => Some(p),

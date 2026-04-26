@@ -1779,13 +1779,23 @@ function ScreenMemory() {
     const idx = Math.min(last, Math.max(0, last - selectedDayOffset));
     return weekDays[idx] || timelineCursor;
   }, [weekDays, selectedDayOffset, timelineCursor]);
+  // Page-title date formatter — granularity follows the timeline span so
+  // a Month view doesn't read "Sunday, February 1" for a card that
+  // represents the whole month. Day/Week stay full-date; Month collapses
+  // to "<Month> <Year>"; Year collapses to "<Year>".
   const fmtFullDate = (d) => {
-    try { return d.toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }); }
-    catch (_e) { return d.toDateString(); }
+    try {
+      if (timelineSpan === 'year')  return d.toLocaleString('en-US', { year: 'numeric' });
+      if (timelineSpan === 'month') return d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      return d.toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    } catch (_e) { return d.toDateString(); }
   };
   const fmtFullDateJp = (d) => {
-    try { return d.toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' }); }
-    catch (_e) { return ''; }
+    try {
+      if (timelineSpan === 'year')  return d.toLocaleString('ja-JP', { year: 'numeric' });
+      if (timelineSpan === 'month') return d.toLocaleString('ja-JP', { year: 'numeric', month: 'long' });
+      return d.toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+    } catch (_e) { return ''; }
   };
   const rangeLabel = useMemo(() => {
     if (timelineSpan === 'day') return fmtMonthDay(weekDays[0]);
@@ -2087,14 +2097,15 @@ function ScreenMemory() {
     })();
     return () => { cancelled = true; };
   }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
-  // Month rollup — same shape as day/week, calendar-month window.
+  // Month rollup — calendar month of the SELECTED card (not the timeline
+  // cursor): clicking a different month card switches the rollup.
   useEffect(() => {
     if (!summaryEnabled || timelineSpan !== 'month') {
       setMonthRollup(null);
       return;
     }
-    const cursor = new Date(timelineCursor);
-    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 0, 0, 0, 0);
+    const sel = selectedDate || timelineCursor;
+    const monthStart = new Date(sel.getFullYear(), sel.getMonth(), 1, 0, 0, 0, 0);
     const monthStartMs = monthStart.getTime();
     let cancelled = false;
     setMonthRollupLoading(true);
@@ -2113,15 +2124,16 @@ function ScreenMemory() {
       }
     })();
     return () => { cancelled = true; };
-  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
-  // Year rollup — composed from monthly rollups (cascading on miss).
+  }, [timelineSpan, selectedDate, summaryEnabled, batchSummarizing]);
+  // Year rollup — calendar year of the SELECTED card. Composed from the
+  // 12 monthly rollups within that year (cascading generation on miss).
   useEffect(() => {
     if (!summaryEnabled || timelineSpan !== 'year') {
       setYearRollup(null);
       return;
     }
-    const cursor = new Date(timelineCursor);
-    const yearStart = new Date(cursor.getFullYear(), 0, 1, 0, 0, 0, 0);
+    const sel = selectedDate || timelineCursor;
+    const yearStart = new Date(sel.getFullYear(), 0, 1, 0, 0, 0, 0);
     const yearStartMs = yearStart.getTime();
     let cancelled = false;
     setYearRollupLoading(true);
@@ -2140,7 +2152,7 @@ function ScreenMemory() {
       }
     })();
     return () => { cancelled = true; };
-  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
+  }, [timelineSpan, selectedDate, summaryEnabled, batchSummarizing]);
   useEffect(() => {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
@@ -2690,8 +2702,8 @@ function ScreenMemory() {
                 <button
                   type="button"
                   onClick={async () => {
-                    const cursor = new Date(timelineCursor);
-                    const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1, 0, 0, 0, 0);
+                    const sel = selectedDate || timelineCursor;
+                    const monthStart = new Date(sel.getFullYear(), sel.getMonth(), 1, 0, 0, 0, 0);
                     setMonthRollupLoading(true);
                     setMonthRollup(null);
                     const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
@@ -2754,8 +2766,8 @@ function ScreenMemory() {
                 <button
                   type="button"
                   onClick={async () => {
-                    const cursor = new Date(timelineCursor);
-                    const yearStart = new Date(cursor.getFullYear(), 0, 1, 0, 0, 0, 0);
+                    const sel = selectedDate || timelineCursor;
+                    const yearStart = new Date(sel.getFullYear(), 0, 1, 0, 0, 0, 0);
                     setYearRollupLoading(true);
                     setYearRollup(null);
                     const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
