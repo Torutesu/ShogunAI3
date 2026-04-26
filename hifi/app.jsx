@@ -459,6 +459,60 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'shogun_kioku_brief_signals':
+      return {
+        ok: true,
+        data: {
+          decision_graph_hits: [],
+          related_kioku_hits: [],
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_debug_stats':
+      return {
+        ok: true,
+        data: {
+          queue: {
+            captures_pending: 0,
+            captures_running: 0,
+            captures_done: 0,
+            captures_failed: 0,
+            captures_expired: 0,
+            captures_skipped: 0,
+            jobs_queued: 0,
+            jobs_running: 0,
+            jobs_done: 0,
+            jobs_failed: 0,
+            jobs_expired: 0,
+            oldest_pending_capture_ms: null,
+          },
+          cost: {
+            month_start_ms: 0,
+            spent_usd: 0,
+            monthly_cap_usd: 10,
+            cap_action: 'pause_extraction',
+            fallback_model: 'claude-haiku-4-5',
+            extraction_model: 'claude-haiku-4-5',
+            status: 'Proceed',
+          },
+          graph: {
+            mem_items_total: 0,
+            mem_items_active: 0,
+            mem_items_retired: 0,
+            edges_total: 0,
+            edges_active: 0,
+            captures_total: 0,
+            by_node_kind: [],
+            by_edge_type: [],
+          },
+          rules: { count: 0, titles: [] },
+          flags: { read_path: 'legacy', capture_to_mem_captures: false, worker_enabled: false },
+          now_ms: Date.now(),
+          stub: false,
+          echo,
+        },
+      };
     case 'app_open_hummingbird':
       return { ok: true, data: { opened: true, stub: false, echo } };
     case 'app_create_share_link': {
