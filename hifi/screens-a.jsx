@@ -2737,18 +2737,19 @@ function ScreenMemory() {
               </p>
             </>
           )}
-          {!timelineLoading && scrubbed && scrubbed.kind === 'low_cluster' && (
+          {!timelineLoading && scrubbed && scrubbed.kind === 'low_cluster' && (() => {
+            const toggleCluster = () => setLowClusterExpanded((v) => !v);
+            return (
             <div
               className="memory-summary-card"
               role="button"
               tabIndex={0}
               aria-expanded={lowClusterExpanded}
-              aria-controls="low-cluster-items"
-              onClick={() => setLowClusterExpanded((v) => !v)}
+              onClick={toggleCluster}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  setLowClusterExpanded((v) => !v);
+                  toggleCluster();
                 }
               }}
               style={{
@@ -2791,7 +2792,7 @@ function ScreenMemory() {
                 )}
               </div>
             </div>
-          )}
+          );})()}
           {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && (
             <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
               {scrubbed.memoryId && (
