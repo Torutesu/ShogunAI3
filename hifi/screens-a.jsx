@@ -2277,13 +2277,11 @@ function ScreenMemory() {
 
   const hourIndexFromEvents = useMemo(() => {
     const counts = new Array(24).fill(0);
-    const firstIdx = new Array(24).fill(-1);
     const topPriority = new Array(24).fill(null); // best-tier priority found in the hour (or null)
     const priorityRank = (p) => (p === 'high' ? 2 : p === 'medium' ? 1 : 0);
-    events.forEach((e, i) => {
+    events.forEach((e) => {
       const hh = Math.floor(Number(e.h));
       const h = Math.max(0, Math.min(23, Number.isFinite(hh) ? hh : 12));
-      if (firstIdx[h] < 0) firstIdx[h] = i;
       counts[h] += 1;
       const p = getEventPriority(e);
       if (p === 'high' || p === 'medium') {
@@ -2293,7 +2291,7 @@ function ScreenMemory() {
       }
     });
     const maxC = Math.max(1, ...counts);
-    return { counts, firstIdx, maxC, topPriority };
+    return { counts, maxC, topPriority };
   }, [events, getEventPriority]);
 
   // Click-target index for the 24-hour bar. Counts/colors stay on
