@@ -36,6 +36,8 @@
       memorySummaryInvalidate: (input) => call("shogun_memory_summary_invalidate", input, WRITE),
       memoryRollupGet: (input) => call("shogun_memory_rollup_get", input, READ),
       memoryDayRollupGet: (input) => call("shogun_memory_day_rollup_get", input, READ),
+      memoryMonthRollupGet: (input) => call("shogun_memory_month_rollup_get", input, READ),
+      memoryYearRollupGet: (input) => call("shogun_memory_year_rollup_get", input, READ),
       memorySummarySetPriority: (input) => call("shogun_memory_summary_set_priority", input, WRITE),
       memorySummaryAcknowledge: (input) => call("shogun_memory_summary_acknowledge", input, WRITE),
       memoryEntityRollupGet: (input) => call("shogun_memory_entity_rollup_get", input, READ),

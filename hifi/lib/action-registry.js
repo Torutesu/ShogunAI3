@@ -72,6 +72,8 @@
     register("memory.summary.invalidate", (payload) => api.memorySummaryInvalidate(payload));
     register("memory.rollup.get", (payload) => api.memoryRollupGet(payload));
     register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
+    register("memory.rollup.month.get", (payload) => api.memoryMonthRollupGet(payload));
+    register("memory.rollup.year.get", (payload) => api.memoryYearRollupGet(payload));
     register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));
     register("memory.summary.acknowledge", (payload) => api.memorySummaryAcknowledge(payload));
     register("memory.rollup.entity.get", (payload) => api.memoryEntityRollupGet(payload));

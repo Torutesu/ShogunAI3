@@ -134,6 +134,8 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.delete`
 - `memory.embed_backfill`
 - `memory.embed_backfill_cancel`
+- `memory.rollup.month.get`
+- `memory.rollup.year.get`
 - `entity.query`
 - `brief.get`
 - `chat.complete`
