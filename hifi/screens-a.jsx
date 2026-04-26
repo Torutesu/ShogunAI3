@@ -2011,6 +2011,8 @@ function ScreenMemory() {
       // path that stamps `low` priority onto a capture can't silently leak.
       const r = String(e.sourceRaw || '').toLowerCase();
       if (r === 'capture_ax' || r === 'capture_sampler' || r.startsWith('capture_')) return false;
+      // Defensive: handles server-emitted events whose provenance string
+      // differs from deriveLocalProvenance's 'screen' mapping.
       if (e.provenance === 'screen_capture') return false;
       return matchesProvider(e) && getEventPriority(e) === 'low';
     });
@@ -2051,6 +2053,8 @@ function ScreenMemory() {
         // Hard exclude: screen captures are high-volume and intentionally
         // not summarized — they are clustered separately by clusterScreenSessions.
         if (r === 'capture_ax' || r === 'capture_sampler' || r.startsWith('capture_')) return false;
+        // Defensive: handles server-emitted events whose provenance string
+        // differs from deriveLocalProvenance's 'screen' mapping.
         if (e.provenance === 'screen_capture') return false;
         // Allowlist of summarizable user-content sources.
         const isSummarizable =
@@ -3270,6 +3274,8 @@ function ScreenMemory() {
           <span style={{flex:1}}/>
           <button type="button" onClick={()=>scrollTimeline(-1)} aria-label="Scroll timeline left" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={12}/></button>
           <button type="button" onClick={()=>scrollTimeline(1)} aria-label="Scroll timeline right" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
+          {/* Count uses `events` (not riverEvents) so the displayed total
+              is the real event count, excluding the synthetic cluster row. */}
           <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>{events.length} events · {timeSpanLabel}</span>
         </div>
         <div
