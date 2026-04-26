@@ -3553,7 +3553,7 @@ function ScreenMemory() {
                       <span style={{color:'var(--text)'}}>{String(scrubSummary.priority).toUpperCase()}</span>
                     </>
                   )}
-                  {scrubSummary && scrubSummary.reason && (
+                  {scrubSummary && (
                     <>
                       <span className="t-mono" style={{color:'var(--text-dim)'}}>Reason</span>
                       {editingField === 'reason' ? (
@@ -3578,6 +3578,11 @@ function ScreenMemory() {
                             setEditingField(null);
                             setEditingDraft('');
                             const trimmed = next.trim();
+                            // Empty/whitespace-only saves as null (clears the
+                            // reason). The (sendValue ?? '') !== (base ?? '')
+                            // guard below treats null and '' as equivalent for
+                            // change detection — an empty-string `reason` is
+                            // never written; null is the canonical "no value".
                             const sendValue = trimmed.length > 0 ? trimmed : null;
                             if ((sendValue ?? '') !== (base ?? '')) {
                               if (scrubbed?.memoryId) {
@@ -3617,7 +3622,11 @@ function ScreenMemory() {
                             fontSize:12, cursor:'text',
                           }}
                         >
-                          {scrubSummary.reason}
+                          {scrubSummary.reason || (
+                            <span style={{ fontStyle: 'italic', color: 'var(--text-dim)', opacity: 0.7 }}>
+                              (no reason — click to add)
+                            </span>
+                          )}
                           {isFieldEdited(scrubbed?.memoryId, 'reason') && (
                             <span
                               title="Edited by you"
