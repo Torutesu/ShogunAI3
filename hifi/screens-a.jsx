@@ -3102,11 +3102,135 @@ function ScreenMemory() {
                   </span>
                 )}
               </div>
-              {Array.isArray(scrubSummary.keyPoints) && scrubSummary.keyPoints.length > 0 && (
+              {Array.isArray(scrubSummary.keyPoints) && (
                 <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
-                  {scrubSummary.keyPoints.slice(0, 4).map((k, i) => (
-                    <li key={i} style={{fontSize:13, color: i === 0 ? 'var(--text)' : 'var(--text-mute)', lineHeight:1.5}}>{k}</li>
-                  ))}
+                  {scrubSummary.keyPoints.map((k, i) => {
+                    const editKey = `kp:${i}`;
+                    if (editingField === editKey) {
+                      return (
+                        <li key={`edit-${i}`} style={{listStyle:'none', marginLeft:-16}}>
+                          <input
+                            autoFocus
+                            type="text"
+                            aria-label={`Edit key point ${i + 1}`}
+                            value={editingDraft}
+                            onChange={(e) => setEditingDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setEditingField(null);
+                                setEditingDraft('');
+                              }
+                            }}
+                            onBlur={async () => {
+                              const next = editingDraft;
+                              const baseArr = Array.isArray(scrubSummary?.keyPoints) ? scrubSummary.keyPoints : [];
+                              const baseValue = baseArr[i] || '';
+                              setEditingField(null);
+                              setEditingDraft('');
+                              const trimmed = next.trim();
+                              if (!trimmed) {
+                                // Empty save = remove this entry.
+                                if (baseValue) {
+                                  const newArr = baseArr.filter((_, idx) => idx !== i);
+                                  if (scrubbed?.memoryId) {
+                                    markFieldEdited(scrubbed.memoryId, 'keyPoints');
+                                  }
+                                  await persistSummaryEdit('keyPoints', newArr, baseArr);
+                                }
+                                return;
+                              }
+                              if (trimmed !== baseValue) {
+                                const newArr = baseArr.map((v, idx) => (idx === i ? trimmed : v));
+                                if (scrubbed?.memoryId) {
+                                  markFieldEdited(scrubbed.memoryId, 'keyPoints');
+                                }
+                                await persistSummaryEdit('keyPoints', newArr, baseArr);
+                              }
+                            }}
+                            style={{
+                              width: '100%', boxSizing: 'border-box',
+                              fontSize: 13, color: 'var(--text)',
+                              fontFamily: 'inherit',
+                              background: 'var(--surface-mute)',
+                              border: '1px solid var(--border-hi)', borderRadius: 4,
+                              padding: '2px 6px',
+                            }}
+                          />
+                        </li>
+                      );
+                    }
+                    return (
+                      <li
+                        key={i}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Edit key point ${i + 1}`}
+                        onClick={() => {
+                          setEditingDraft(k);
+                          setEditingField(editKey);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setEditingDraft(k);
+                            setEditingField(editKey);
+                          }
+                        }}
+                        style={{
+                          fontSize:13,
+                          color: i === 0 ? 'var(--text)' : 'var(--text-mute)',
+                          lineHeight:1.5, cursor:'text',
+                        }}
+                      >
+                        {k}
+                      </li>
+                    );
+                  })}
+                  <li style={{listStyle:'none', marginLeft:-16}}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const baseArr = Array.isArray(scrubSummary?.keyPoints) ? scrubSummary.keyPoints : [];
+                        const newArr = [...baseArr, ''];
+                        // Optimistically extend, then enter edit mode for the new index.
+                        const targetId = scrubbed?.memoryId;
+                        const nextSummary = { ...scrubSummary, keyPoints: newArr };
+                        setScrubSummary(nextSummary);
+                        setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+                        setEditingDraft('');
+                        setEditingField(`kp:${newArr.length - 1}`);
+                      }}
+                      style={{
+                        padding: '2px 0', border: 'none', background: 'transparent',
+                        color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      + Add point
+                    </button>
+                  </li>
+                  {isFieldEdited(scrubbed?.memoryId, 'keyPoints') && (
+                    <li style={{listStyle:'none', marginLeft:-16}}>
+                      <span
+                        title="Edited by you"
+                        style={{
+                          fontSize: 10, color: 'var(--text-dim)',
+                          letterSpacing: '0.06em', cursor: 'pointer',
+                          textDecoration: 'underline',
+                        }}
+                        onClick={() => {
+                          unmarkFieldEdited(scrubbed.memoryId, 'keyPoints');
+                          revertSummaryField('keyPoints');
+                        }}
+                      >
+                        edited · revert
+                      </span>
+                    </li>
+                  )}
                 </ul>
               )}
               <div style={{display:'flex', gap:14, marginTop:2, alignItems:'center', flexWrap:'wrap'}}>
