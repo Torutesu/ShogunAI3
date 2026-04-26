@@ -27,6 +27,63 @@ pub struct Summary {
   pub snooze_until: Option<i64>,     // Hidden from highlights while > now_ms.
 }
 
+/// Apply `raw_json.user_edits[]` overrides to the in-struct LLM-baseline
+/// fields. Mutates `s` in place. Each entry has shape:
+///   { "field": "title" | "keyPoints" | "reason",
+///     "from": <prev value>, "to": <new value>,
+///     "at": ms_epoch, "source_raw": str, "entity_id": str|null,
+///     "schema": 1 }
+/// Entries with `schema != 1` are ignored (forward-compat). Within the
+/// supported schema, the latest entry per field wins.
+pub(crate) fn apply_user_edits(s: &mut Summary) {
+  let parsed: serde_json::Value = match serde_json::from_str(&s.raw_json) {
+    Ok(v) => v,
+    Err(_) => return, // malformed raw_json → leave struct as-is
+  };
+  let edits = match parsed.get("user_edits").and_then(|v| v.as_array()) {
+    Some(arr) => arr,
+    None => return,
+  };
+  for entry in edits {
+    let schema = entry.get("schema").and_then(|v| v.as_i64()).unwrap_or(0);
+    if schema != 1 {
+      continue;
+    }
+    let field = match entry.get("field").and_then(|v| v.as_str()) {
+      Some(f) => f,
+      None => continue,
+    };
+    let to = match entry.get("to") {
+      Some(v) => v,
+      None => continue,
+    };
+    match field {
+      "title" => {
+        if let Some(t) = to.as_str() {
+          s.title = t.to_string();
+        }
+      }
+      "keyPoints" => {
+        if let Some(arr) = to.as_array() {
+          let kp: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+          s.key_points = kp;
+        }
+      }
+      "reason" => {
+        s.reason = match to {
+          serde_json::Value::Null => None,
+          serde_json::Value::String(t) => Some(t.clone()),
+          _ => continue,
+        };
+      }
+      _ => {} // unknown field → ignore (forward-compat for new editable fields)
+    }
+  }
+}
+
 impl Summary {
   /// UI / IPC で返すための JSON 表現。
   pub fn to_json(&self) -> Value {
@@ -62,7 +119,7 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
     |r| {
       let kp_json: String = r.get(3)?;
       let key_points: Vec<String> = serde_json::from_str(&kp_json).unwrap_or_default();
-      Ok(Summary {
+      let mut s = Summary {
         target_kind: r.get(0)?,
         target_id: r.get(1)?,
         title: r.get(2)?,
@@ -78,7 +135,9 @@ pub fn get_cached(target_kind: &str, target_id: &str, want_lang: &str) -> Result
         user_priority: r.get(12)?,
         acknowledged_at: r.get(13)?,
         snooze_until: r.get(14)?,
-      })
+      };
+      apply_user_edits(&mut s);
+      Ok(s)
     },
   );
   match row {
@@ -113,7 +172,7 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
   let rows = stmt.query_map(bound.as_slice(), |r| {
     let kp_json: String = r.get(3)?;
     let key_points: Vec<String> = serde_json::from_str(&kp_json).unwrap_or_default();
-    Ok(Summary {
+    let mut s = Summary {
       target_kind: r.get(0)?,
       target_id: r.get(1)?,
       title: r.get(2)?,
@@ -129,7 +188,9 @@ pub fn get_cached_many(target_kind: &str, ids: &[String], want_lang: &str) -> Re
       user_priority: r.get(12)?,
       acknowledged_at: r.get(13)?,
       snooze_until: r.get(14)?,
-    })
+    };
+    apply_user_edits(&mut s);
+    Ok(s)
   }).map_err(|e| format!("query: {}", e))?;
 
   let mut out = Vec::new();
@@ -162,7 +223,7 @@ pub fn get_summaries_in_window(
   let rows = stmt.query_map(params![want_lang, start_ms, end_ms], |r| {
     let kp_json: String = r.get(3)?;
     let key_points: Vec<String> = serde_json::from_str(&kp_json).unwrap_or_default();
-    Ok(Summary {
+    let mut s = Summary {
       target_kind: r.get(0)?,
       target_id: r.get(1)?,
       title: r.get(2)?,
@@ -178,7 +239,9 @@ pub fn get_summaries_in_window(
       user_priority: r.get(12)?,
       acknowledged_at: r.get(13)?,
       snooze_until: r.get(14)?,
-    })
+    };
+    apply_user_edits(&mut s);
+    Ok(s)
   }).map_err(|e| format!("query window: {}", e))?;
   let mut out = Vec::new();
   for row in rows {
@@ -241,7 +304,7 @@ pub fn get_summaries_for_entity(
   let rows = stmt.query_map(params![want_lang, entity_id, limit as i64], |r| {
     let kp_json: String = r.get(3)?;
     let key_points: Vec<String> = serde_json::from_str(&kp_json).unwrap_or_default();
-    Ok(Summary {
+    let mut s = Summary {
       target_kind: r.get(0)?,
       target_id: r.get(1)?,
       title: r.get(2)?,
@@ -257,7 +320,9 @@ pub fn get_summaries_for_entity(
       user_priority: r.get(12)?,
       acknowledged_at: r.get(13)?,
       snooze_until: r.get(14)?,
-    })
+    };
+    apply_user_edits(&mut s);
+    Ok(s)
   }).map_err(|e| format!("query entity: {}", e))?;
   let mut out = Vec::new();
   for row in rows {
@@ -383,5 +448,119 @@ mod tests {
     assert_eq!(v["priority"], "high");
     assert_eq!(v["keyPoints"][0], "point 1");
     assert_eq!(v["schemaVersion"], 1);
+  }
+
+  fn sample_with_raw(raw: &str) -> Summary {
+    Summary {
+      target_kind: "item".into(),
+      target_id: "m_e".into(),
+      title: "AI base title".into(),
+      key_points: vec!["base 1".into(), "base 2".into()],
+      source_type: "mail".into(),
+      priority: "medium".into(),
+      reason: Some("AI base reason".into()),
+      model: "test".into(),
+      schema_version: 1,
+      generated_at: 1700000000,
+      raw_json: raw.to_string(),
+      lang: "en".into(),
+      user_priority: None,
+      acknowledged_at: None,
+      snooze_until: None,
+    }
+  }
+
+  #[test]
+  fn apply_user_edits_no_edits() {
+    let mut s = sample_with_raw(r#"{"tool_use":{},"stop_reason":"tool_use"}"#);
+    apply_user_edits(&mut s);
+    assert_eq!(s.title, "AI base title");
+    assert_eq!(s.key_points, vec!["base 1".to_string(), "base 2".into()]);
+    assert_eq!(s.reason.as_deref(), Some("AI base reason"));
+  }
+
+  #[test]
+  fn apply_user_edits_title_override() {
+    let raw = r#"{
+      "tool_use": {},
+      "user_edits": [
+        {"field":"title","from":"AI base title","to":"User title v1","at":1,"source_raw":"chat","entity_id":null,"schema":1}
+      ]
+    }"#;
+    let mut s = sample_with_raw(raw);
+    apply_user_edits(&mut s);
+    assert_eq!(s.title, "User title v1");
+    assert_eq!(s.key_points, vec!["base 1".to_string(), "base 2".into()]);
+    assert_eq!(s.reason.as_deref(), Some("AI base reason"));
+  }
+
+  #[test]
+  fn apply_user_edits_latest_wins_per_field() {
+    let raw = r#"{
+      "user_edits": [
+        {"field":"title","to":"first","at":1,"schema":1},
+        {"field":"title","to":"second","at":2,"schema":1},
+        {"field":"reason","to":"new reason","at":3,"schema":1}
+      ]
+    }"#;
+    let mut s = sample_with_raw(raw);
+    apply_user_edits(&mut s);
+    assert_eq!(s.title, "second");
+    assert_eq!(s.reason.as_deref(), Some("new reason"));
+  }
+
+  #[test]
+  fn apply_user_edits_keypoints_replaces_array() {
+    let raw = r#"{
+      "user_edits": [
+        {"field":"keyPoints","to":["x","y","z"],"at":1,"schema":1}
+      ]
+    }"#;
+    let mut s = sample_with_raw(raw);
+    apply_user_edits(&mut s);
+    assert_eq!(s.key_points, vec!["x".to_string(), "y".into(), "z".into()]);
+  }
+
+  #[test]
+  fn apply_user_edits_reason_to_null_clears() {
+    let raw = r#"{
+      "user_edits": [
+        {"field":"reason","to":null,"at":1,"schema":1}
+      ]
+    }"#;
+    let mut s = sample_with_raw(raw);
+    apply_user_edits(&mut s);
+    assert!(s.reason.is_none());
+  }
+
+  #[test]
+  fn apply_user_edits_unknown_schema_ignored() {
+    let raw = r#"{
+      "user_edits": [
+        {"field":"title","to":"future","at":1,"schema":99}
+      ]
+    }"#;
+    let mut s = sample_with_raw(raw);
+    apply_user_edits(&mut s);
+    assert_eq!(s.title, "AI base title"); // schema mismatch → ignored
+  }
+
+  #[test]
+  fn apply_user_edits_malformed_raw_json_safe() {
+    let mut s = sample_with_raw("not json at all");
+    apply_user_edits(&mut s);
+    assert_eq!(s.title, "AI base title"); // graceful no-op
+  }
+
+  #[test]
+  fn apply_user_edits_unknown_field_ignored() {
+    let raw = r#"{
+      "user_edits": [
+        {"field":"sourceType","to":"override","at":1,"schema":1}
+      ]
+    }"#;
+    let mut s = sample_with_raw(raw);
+    apply_user_edits(&mut s);
+    assert_eq!(s.source_type, "mail"); // not editable; ignored
   }
 }
