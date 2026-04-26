@@ -763,6 +763,13 @@ pub async fn summarize_day_rollup(day_start_ms: i64, lang: &str) -> Result<Summa
   summarize_rollup(day_start_ms, end_ms, RollupKind::Day, lang).await
 }
 
+/// Monthly rollup over a calendar month `[month_start_ms, month_window.end)`.
+/// `target_id` is `YYYY-MM`. Same items→LLM pipeline as week, wider cap.
+pub async fn summarize_month_rollup(month_start_ms: i64, lang: &str) -> Result<Summary, String> {
+  let (start, end) = month_window(month_start_ms);
+  summarize_rollup(start, end, RollupKind::Month, lang).await
+}
+
 /// Shared rollup pipeline: lookup → empty-case → LLM call → fallback.
 async fn summarize_rollup(
   start_ms: i64,
@@ -771,7 +778,11 @@ async fn summarize_rollup(
   lang: &str,
 ) -> Result<Summary, String> {
   let items = crate::summarizer_store::get_summaries_in_window(start_ms, end_ms, lang)?;
-  let id = format_week_id(start_ms); // YYYY-MM-DD works for both scopes
+  let id = match kind {
+    RollupKind::Week | RollupKind::Day => format_week_id(start_ms),
+    RollupKind::Month => format_month_id(start_ms),
+    RollupKind::Year => format_year_id(start_ms),
+  };
 
   if items.is_empty() {
     let (title_en, title_jp) = match kind {
