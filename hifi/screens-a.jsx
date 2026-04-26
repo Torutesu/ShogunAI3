@@ -3123,12 +3123,26 @@ function ScreenMemory() {
                                 e.preventDefault();
                                 setEditingField(null);
                                 setEditingDraft('');
+                                // If this was a freshly-added placeholder (the
+                                // baseline value at this index is empty), splice
+                                // it back out so we don't leave a blank <li>.
+                                const baseArr = Array.isArray(scrubSummary?.keyPoints)
+                                  ? scrubSummary.keyPoints : [];
+                                if (baseArr[i] === '') {
+                                  const targetId = scrubbed?.memoryId;
+                                  const newArr = baseArr.filter((_, idx) => idx !== i);
+                                  const nextSummary = { ...scrubSummary, keyPoints: newArr };
+                                  setScrubSummary(nextSummary);
+                                  if (targetId) {
+                                    setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+                                  }
+                                }
                               }
                             }}
                             onBlur={async () => {
                               const next = editingDraft;
                               const baseArr = Array.isArray(scrubSummary?.keyPoints) ? scrubSummary.keyPoints : [];
-                              const baseValue = baseArr[i] || '';
+                              const baseValue = (baseArr[i] || '').trim();
                               setEditingField(null);
                               setEditingDraft('');
                               const trimmed = next.trim();
@@ -3194,10 +3208,11 @@ function ScreenMemory() {
                     <button
                       type="button"
                       onClick={() => {
+                        const targetId = scrubbed?.memoryId;
+                        if (!targetId) return; // no scrubbed item — nothing to extend
                         const baseArr = Array.isArray(scrubSummary?.keyPoints) ? scrubSummary.keyPoints : [];
                         const newArr = [...baseArr, ''];
                         // Optimistically extend, then enter edit mode for the new index.
-                        const targetId = scrubbed?.memoryId;
                         const nextSummary = { ...scrubSummary, keyPoints: newArr };
                         setScrubSummary(nextSummary);
                         setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
