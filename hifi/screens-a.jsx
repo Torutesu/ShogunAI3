@@ -1928,9 +1928,10 @@ function ScreenMemory() {
     if (res?.ok && res.data?.summary) {
       setScrubSummary(res.data.summary);
       setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
+      // Now unmark — only after confirmed revert.
+      unmarkFieldEdited(targetId, field);
     } else {
-      // Restore the edit indicator: the underlying edit is still in place.
-      markFieldEdited(targetId, field);
+      // Failure: leave the indicator alone (no need to re-mark since we never unmarked).
       window.SHOGUN_RUNTIME?.pushToast?.('Failed to revert', 'warn');
     }
   };
@@ -3011,11 +3012,21 @@ function ScreenMemory() {
                 : '2px solid var(--border)',
               paddingLeft:14,
             }}>
+                <span
+                  id="memory-summary-edit-hint"
+                  style={{
+                    position: 'absolute', width: 1, height: 1,
+                    overflow: 'hidden', clip: 'rect(0 0 0 0)',
+                  }}
+                >
+                  Enter to save, Escape to discard
+                </span>
               <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap'}}>
                 {editingField === 'title' ? (
                   <textarea
                     autoFocus
                     aria-label="Edit title"
+                    aria-describedby="memory-summary-edit-hint"
                     value={editingDraft}
                     onChange={(e) => setEditingDraft(e.target.value)}
                     onKeyDown={(e) => {
@@ -3086,7 +3097,6 @@ function ScreenMemory() {
                         }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          unmarkFieldEdited(scrubbed.memoryId, 'title');
                           revertSummaryField('title');
                         }}
                       >
@@ -3113,6 +3123,7 @@ function ScreenMemory() {
                             autoFocus
                             type="text"
                             aria-label={`Edit key point ${i + 1}`}
+                            aria-describedby="memory-summary-edit-hint"
                             value={editingDraft}
                             onChange={(e) => setEditingDraft(e.target.value)}
                             onKeyDown={(e) => {
@@ -3238,7 +3249,6 @@ function ScreenMemory() {
                           textDecoration: 'underline',
                         }}
                         onClick={() => {
-                          unmarkFieldEdited(scrubbed.memoryId, 'keyPoints');
                           revertSummaryField('keyPoints');
                         }}
                       >
@@ -3560,6 +3570,7 @@ function ScreenMemory() {
                         <textarea
                           autoFocus
                           aria-label="Edit reason"
+                          aria-describedby="memory-summary-edit-hint"
                           value={editingDraft}
                           onChange={(e) => setEditingDraft(e.target.value)}
                           onKeyDown={(e) => {
@@ -3637,7 +3648,6 @@ function ScreenMemory() {
                               }}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                unmarkFieldEdited(scrubbed.memoryId, 'reason');
                                 revertSummaryField('reason');
                               }}
                             >

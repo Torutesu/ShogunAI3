@@ -263,6 +263,33 @@ pub fn upsert(s: &Summary) -> Result<(), String> {
   let conn = open_conn()?;
   let kp_json = serde_json::to_string(&s.key_points)
     .map_err(|e| format!("key_points serialize: {}", e))?;
+
+  // Preserve existing user_edits[] across re-summarization. The freshly-
+  // generated Summary's raw_json contains only the new LLM tool_use; we
+  // need to splice the prior user_edits back in so reads continue to
+  // reflect the user's manual overrides.
+  let preserved_user_edits: Option<serde_json::Value> = conn
+    .query_row(
+      "SELECT raw_json FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
+      params![&s.target_kind, &s.target_id],
+      |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    .and_then(|v| v.get("user_edits").cloned());
+
+  let raw_json_to_write = if let Some(edits) = preserved_user_edits {
+    // Merge edits into the new raw_json.
+    let mut parsed: serde_json::Value =
+      serde_json::from_str(&s.raw_json).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = parsed.as_object_mut() {
+      obj.insert("user_edits".to_string(), edits);
+    }
+    serde_json::to_string(&parsed).unwrap_or_else(|_| s.raw_json.clone())
+  } else {
+    s.raw_json.clone()
+  };
+
   conn.execute(
     "INSERT INTO mem_summaries
        (target_kind, target_id, title, key_points, source_type, priority,
@@ -281,7 +308,7 @@ pub fn upsert(s: &Summary) -> Result<(), String> {
        lang = excluded.lang",
     params![
       s.target_kind, s.target_id, s.title, kp_json, s.source_type,
-      s.priority, s.reason, s.model, s.schema_version, s.generated_at, s.raw_json, s.lang
+      s.priority, s.reason, s.model, s.schema_version, s.generated_at, raw_json_to_write, s.lang
     ],
   ).map_err(|e| format!("mem_summaries upsert: {}", e))?;
   Ok(())
@@ -793,7 +820,11 @@ mod tests {
 
   // Helper to set up an in-memory test DB with one upserted summary.
   // Uses crate::memory_store::open_conn() which the existing tests rely on.
+  // Always deletes any pre-existing row first so the upsert starts from a
+  // clean slate — this prevents stale user_edits[] from prior test runs
+  // from leaking through the upsert's user_edits-preservation logic.
   fn fresh_db_with_summary(target_id: &str) -> Summary {
+    let _ = delete("item", target_id); // ignore "not found"
     let s = sample(target_id, "medium");
     upsert(&s).expect("upsert");
     get_cached("item", target_id, "en").expect("read").expect("present")
@@ -883,5 +914,37 @@ mod tests {
       EditMetadata { source_raw: None, entity_id: None },
     );
     assert!(r.is_err(), "non-allowlisted field must error");
+  }
+
+  #[test]
+  #[ignore]
+  fn upsert_preserves_user_edits_across_resummarize() {
+    let target_id = "m_resum";
+    // 1. Initial upsert.
+    let s1 = sample(target_id, "medium");
+    upsert(&s1).expect("first upsert");
+    // 2. User edits the title.
+    edit_field(
+      "item", target_id, "title",
+      json!("Test"), json!("User-edited title"),
+      1700000001,
+      EditMetadata { source_raw: None, entity_id: None },
+    ).expect("edit_field");
+    let after_edit = get_cached("item", target_id, "en").unwrap().unwrap();
+    assert_eq!(after_edit.title, "User-edited title");
+
+    // 3. Re-summarize: simulate the invalidate flow by upserting a new Summary
+    //    whose raw_json has no user_edits (the LLM doesn't know about them).
+    let mut s2 = sample(target_id, "high"); // changed priority too
+    s2.title = "AI Re-Summarized Title".to_string();
+    s2.raw_json = r#"{"tool_use":{"title":"AI Re-Summarized Title"},"model":"newer","schemaVersion":1}"#.to_string();
+    upsert(&s2).expect("second upsert");
+
+    // 4. Effective title should still be the user's edit, not the new LLM one.
+    let after_resum = get_cached("item", target_id, "en").unwrap().unwrap();
+    assert_eq!(
+      after_resum.title, "User-edited title",
+      "user_edits must survive re-summarization"
+    );
   }
 }
