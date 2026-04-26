@@ -1932,6 +1932,13 @@ function ScreenMemory() {
     () => Object.entries(activeFilters.sources).filter(([, on]) => on).map(([k]) => k),
     [activeFilters.sources],
   );
+  // Resolves an event's effective priority via the summary cache.
+  // userPriority (manual pin) wins over priority (LLM). Returns null when
+  // unsummarized or when the summary lacks a priority field.
+  const getEventPriority = (e) => {
+    const s = e && e.memoryId ? summaryByMemId[e.memoryId] : null;
+    return (s && (s.userPriority || s.priority)) || null;
+  };
   // River = rawEvents filtered by priority, then screen-captures clustered
   // into sessions. Low-priority (自動通知など) items stay in Memory but are
   // hidden from the surface unless the user toggles the Low filter on.
@@ -1939,14 +1946,10 @@ function ScreenMemory() {
     const showLow = !!activeFilters.priority.low;
     const provs = activeFilters.providers || {};
     const matchesProvider = (e) => provs[memoryProviderKey(e.sourceRaw)] !== false;
-    // effective = user's manual override takes precedence over LLM priority.
-    const effectivePriority = (s) => (s && (s.userPriority || s.priority)) || null;
     const filtered = rawEvents.filter((e) => {
       if (!matchesProvider(e)) return false;
       if (showLow) return true;
-      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      if (!s) return true;
-      return effectivePriority(s) !== 'low';
+      return getEventPriority(e) !== 'low';
     });
     // Collapse consecutive capture_ax/capture_sampler items into session cards
     // so that enabling the Screen filter doesn't flood the River.
@@ -1955,8 +1958,7 @@ function ScreenMemory() {
     // same tier, newer events come first. This makes the top of the River
     // read as a "what needs attention" feed.
     const rank = (e) => {
-      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      const p = effectivePriority(s);
+      const p = getEventPriority(e);
       if (!p) return 2; // unclassified sits between MED and LOW
       if (p === 'high') return 0;
       if (p === 'medium') return 1;
