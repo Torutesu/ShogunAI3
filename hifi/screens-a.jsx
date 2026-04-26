@@ -1998,8 +1998,15 @@ function ScreenMemory() {
   //   and (when expanded) splice the LOW items back in after the cluster.
   const riverEvents = useMemo(() => {
     if (activeFilters.priority.low) return events;
-    const mainEvents = events.filter((e) => getEventPriority(e) !== 'low');
-    const lowEvents  = events.filter((e) => getEventPriority(e) === 'low');
+    // `events` already excludes LOW items (the LOW filter is OFF), so we
+    // derive lowEvents from rawEvents directly, applying the same provider
+    // filter so the cluster count stays consistent with provider toggles.
+    const mainEvents = events; // already HIGH + MED, provider-filtered
+    const provs = activeFilters.providers || {};
+    const matchesProvider = (e) => provs[memoryProviderKey(e.sourceRaw)] !== false;
+    const lowEvents = rawEvents.filter(
+      (e) => matchesProvider(e) && getEventPriority(e) === 'low',
+    );
     if (lowEvents.length === 0) return mainEvents;
     const cluster = {
       kind: 'low_cluster',
@@ -2021,25 +2028,18 @@ function ScreenMemory() {
     return lowClusterExpanded
       ? [...mainEvents, cluster, ...lowEvents]
       : [...mainEvents, cluster];
-  }, [events, activeFilters.priority.low, lowClusterExpanded, getEventPriority]);
+  }, [events, rawEvents, activeFilters.priority.low, activeFilters.providers, lowClusterExpanded, getEventPriority]);
 
-  // Batch-summarize connector items on River load so priority data is ready
+  // Batch-summarize items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
+  // We fetch summaries for ALL items (not just connector sources) so that
+  // the LOW-priority cluster can be populated regardless of source type.
   useEffect(() => {
     if (!summaryEnabled || rawEvents.length === 0) return;
     let cancelled = false;
     const connectorItems = rawEvents
       .filter((e) => {
-        const r = String(e.sourceRaw || '').toLowerCase();
-        const isSummarizable =
-          r === 'gmail' ||
-          r === 'google_calendar' ||
-          r === 'meetings' ||
-          r === 'meeting_note' ||
-          r === 'audio_meeting' ||
-          e.provenance === 'connector' ||
-          e.provenance === 'meeting';
-        return isSummarizable && e.memoryId && !summaryByMemId[e.memoryId];
+        return e.memoryId && !summaryByMemId[e.memoryId];
       })
       .slice(0, 30)
       .map((e) => ({
