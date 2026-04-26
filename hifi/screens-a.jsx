@@ -1729,6 +1729,7 @@ function ScreenMemory() {
       return v;
     });
   };
+  const toggleCluster = () => setLowClusterExpanded((v) => !v);
   const timelineScrollRef = useRef(null);
   const scrollTimeline = useCallback((dir) => {
     const el = timelineScrollRef.current;
@@ -2737,9 +2738,7 @@ function ScreenMemory() {
               </p>
             </>
           )}
-          {!timelineLoading && scrubbed && scrubbed.kind === 'low_cluster' && (() => {
-            const toggleCluster = () => setLowClusterExpanded((v) => !v);
-            return (
+          {!timelineLoading && scrubbed && scrubbed.kind === 'low_cluster' && (
             <div
               className="memory-summary-card"
               role="button"
@@ -2792,7 +2791,7 @@ function ScreenMemory() {
                 )}
               </div>
             </div>
-          );})()}
+          )}
           {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && (
             <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
               {scrubbed.memoryId && (
