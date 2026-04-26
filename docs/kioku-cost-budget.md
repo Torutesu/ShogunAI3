@@ -180,18 +180,135 @@ UI で「上書き時の試算月額」を出すことを推奨 (Settings > Memo
 
 ## §6 Stage 2 着手前のチェック手順
 
-1. **dev / 内部ユーザー (3〜5 名想定) で 7 日観測** — 各人の `mem_items` 直近 7 日の `capture_sampler` / `capture_ax` 行数 / 日を実測
-2. 観測値を §3.1 の中央値 550 と比較。±50% 以内なら本試算で妥当
-3. dedup 率 §3.2 と集約率 §3.3 を fixture eval / 実測で確認
-4. Haiku 4.5 単価を Anthropic 公式で再確認 (`docs/anthropic-models-pricing.md` を参照する場合は別途維持)
-5. 試算結果と観測値を **本ドキュメントの §7 実測ログ**に追記
-6. PR レビューで Select 承認 → Stage 2 着手可
+### §6.1 観測スクリプト
+
+`scripts/kioku-observation.mjs` が dev / 内部ユーザーの `memory.db` を読み、
+本ドキュメントの §7 にそのまま貼れる Markdown レポートを生成する。
+
+```bash
+# macOS の典型ユーザー (Tauri アプリを終了してから実行 — SQLite は単一ライター)
+node scripts/kioku-observation.mjs --user alex-mac --days 7
+
+# パスを明示する場合
+node scripts/kioku-observation.mjs \
+  --db "$HOME/Library/Application Support/ai.Shogun.ShogunAI3/memory.db" \
+  --days 7 \
+  --user beta-tester-3
+```
+
+要件: `sqlite3` CLI (macOS は標準搭載 / Linux は `apt install sqlite3`)。
+スクリプトは read-only モードで開く + ネイティブ依存ゼロなので
+`npm install` 不要。
+
+### §6.2 観測項目
+
+スクリプトが計算し §7 にレポートする項目:
+
+| ブロック | 計算内容 | §3 の参照 |
+|---------|---------|-----------|
+| 1. Capture rate | `mem_items` (legacy) と `mem_captures` (Stage 2) を `source` / `type` 別に過去 N 日カウント、行/日換算 | §3.1 中央値 550 と比較 |
+| 2. Dedup health | `mem_captures.extraction_status` 分布 + skipped 比率 | §3.2 期待 ~65% |
+| 3. BYOK cost ledger | `cost_ledger` 過去 N 日 sum + 月次累計 + 月額線形外挿 | §2.3 / §4.1 |
+| 4. Queue depth | `extraction_jobs.status` 分布 + 最古 pending capture | (運用) |
+| 5. Graph composition | active `mem_items.node_kind` + active `mem_edges.edge_type` | (出荷判定の signal) |
+
+### §6.3 ゲート判定
+
+1. **3〜5 名で 7 日観測** — 各レポートを §7 に追記
+2. 観測値の中央値が `§3.1 中央値 550` と ±50% 以内
+3. dedup skip 率が **40〜80%** に収まる (期待 65% ± 15)
+4. 月額線形外挿 (Block 3 の "Linear monthly projection") が **既定 cap $10/月以内**
+5. queue 滞留: 最古 pending capture が観測時点で **48 時間以内**
+6. Haiku 4.5 単価を Anthropic 公式で再確認 (本ドキュメント §1.2 を更新)
+7. PR レビューで Select 承認 → Stage 2 着手可
+
+`scripts/kioku-observation.mjs` の出力を
+`docs/kioku-observation-${YYYY-MM-DD}-${user}.md` として個別 commit し、
+本ドキュメント §7 には総括のみ追記する運用も可。
 
 ---
 
-## §7 実測ログ (Stage 1 末に追記)
+## §7 実測ログ
 
-(空欄 — Stage 1 末に dev/内部ユーザー実測値を記録)
+各観測実行のレポートを下に貼り付ける。`scripts/kioku-observation.mjs`
+の `--user` 引数は §7 のセクションヘッダにそのまま反映される。
+
+### サンプル (テンプレート — 実観測時に上書き)
+
+```markdown
+## KIOKU observation — alex-mac (7-day window)
+
+Generated: 2026-04-29T22:00:00.000Z
+Source DB: `~/Library/Application Support/ai.Shogun.ShogunAI3/memory.db` (found)
+Phase 2 schema present: yes
+
+### 1. Capture rate (last 7 days)
+
+**`mem_captures` rows by type (Stage 2 path):**
+
+| type | rows | rows/day |
+| --- | --- | --- |
+| screen_app | 380 | 54.3 |
+| screen_ax | 156 | 22.3 |
+
+### 2. Dedup health (Stage 2 only)
+
+| extraction_status | rows |
+| --- | --- |
+| done | 145 |
+| queued | 12 |
+| skipped | 379 |
+
+- Significance-filter skip rate: **70.6%** (target ~65%, see cost-budget §3.2).
+
+### 3. BYOK cost ledger
+
+**Last 7 days:**
+
+| model | purpose | input_tok | output_tok | cost_usd | calls |
+| --- | --- | --- | --- | --- | --- |
+| claude-haiku-4-5 | extraction | 290,000 | 58,000 | $0.5800 | 145 |
+
+- 7-day total: **$0.5800** across **145** calls.
+- Avg cost/call: $0.0040 (cost-budget §2.3 expects ~$0.004 for Haiku).
+- Linear monthly projection: **$2.4857** (cap default $10).
+- Month-to-date (UTC) total: **$0.5800**.
+
+### 4. Queue depth (right now)
+
+| status | jobs |
+| --- | --- |
+| done | 145 |
+| queued | 12 |
+
+- Oldest pending capture: `2026-04-29T13:42:00.000Z`
+
+### 5. Graph composition
+
+**Active mem_items by node_kind:**
+
+| node_kind | count |
+| --- | --- |
+| entity | 320 |
+| event | 84 |
+| decision | 12 |
+| task | 38 |
+| note | 91 |
+
+**Active mem_edges by edge_type:**
+
+| edge_type | count |
+| --- | --- |
+| mentions | 412 |
+| follows_up | 47 |
+| decided_in | 23 |
+```
+
+### 集計 (実観測後に追記)
+
+| user | rows/day (capture) | dedup skip | 7-day cost | monthly proj | 判定 |
+|------|---------------------|------------|------------|--------------|-----|
+| (待機中) | | | | | |
 
 ---
 
