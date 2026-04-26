@@ -1794,6 +1794,14 @@ pub fn shogun_memory_summary_edit(payload: serde_json::Value) -> Result<serde_js
   }
 
   // Return the merged effective summary.
+  // TODO(phase-4-i18n): get_cached is strict on language match — a row
+  // generated with lang='zh' or another non-en/non-jp lang will not be
+  // found by either probe and we'll return "summary missing after edit"
+  // even though the write succeeded. Either make get_cached optionally
+  // lang-agnostic, or rebuild the merged summary directly from the row.
+  // Use .ok().flatten() on the JP fallback so a transient SQLite error
+  // on the fallback probe doesn't mask the fact that the primary write
+  // already succeeded.
   let s = crate::summarizer_store::get_cached(target_kind, target_id, "en")?
     .or_else(|| crate::summarizer_store::get_cached(target_kind, target_id, "jp").ok().flatten())
     .ok_or_else(|| "summary missing after edit".to_string())?;
@@ -1823,6 +1831,8 @@ pub fn shogun_memory_summary_revert(payload: serde_json::Value) -> Result<serde_
   if !updated {
     return Ok(serde_json::json!({ "updated": false, "summary": serde_json::Value::Null }));
   }
+  // See TODO(phase-4-i18n) on shogun_memory_summary_edit for the language
+  // fallback constraint and the rationale for .ok().flatten() on the JP probe.
   let s = crate::summarizer_store::get_cached(target_kind, target_id, "en")?
     .or_else(|| crate::summarizer_store::get_cached(target_kind, target_id, "jp").ok().flatten())
     .ok_or_else(|| "summary missing after revert".to_string())?;
