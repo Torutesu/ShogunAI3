@@ -186,6 +186,102 @@ pub fn shogun_kioku_debug_stats(_payload: Value) -> Result<Value, String> {
   crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)
 }
 
+/// Stage 5 dry-run. Read-only — counts and reports without touching any data.
+/// Output is JSON-serializable and intended to be archived under
+/// `docs/kioku-stage5-${YYYY-MM-DD}-dryrun.txt` for Select review before
+/// the matching apply command is run.
+#[tauri::command]
+pub fn shogun_kioku_stage5_dry_run(_payload: Value) -> Result<Value, String> {
+  let conn = memory_store::open_conn()?;
+  let now_ms = ts() as i64;
+  let report = crate::kioku_stage5::run_dry_run(&conn, now_ms)?;
+  serde_json::to_value(&report).map_err(|e| e.to_string())
+}
+
+/// Stage 5 destructive apply. **Gated** behind both:
+///   - `settings.kioku_graph.stage5_apply == true` (persisted opt-in)
+///   - `payload.confirm_token == "APPLY"` (per-call confirmation)
+///
+/// Sub-actions follow the migration plan §Stage 5.2–5.5 ordering. Each is
+/// individually opt-in via the payload booleans so reviewers can run them in
+/// sequence on different days. Default `false` ⇒ no-op.
+///
+/// Payload:
+/// ```jsonc
+/// {
+///   "confirm_token": "APPLY",
+///   "soft_retire": true,
+///   "cleanup_ttl": true,
+///   "physical_delete": false,
+///   "vacuum": false
+/// }
+/// ```
+#[tauri::command]
+pub fn shogun_kioku_stage5_apply(payload: Value) -> Result<Value, String> {
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  let flag = settings
+    .pointer("/sections/kioku_graph/stage5_apply")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  if !flag {
+    return Err(
+      "Stage 5 apply gate is OFF. Set `settings.sections.kioku_graph.stage5_apply = true` and \
+       re-run with `confirm_token = APPLY` after reviewing the dry-run output."
+        .into(),
+    );
+  }
+  let confirm = payload
+    .get("confirm_token")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  if confirm != "APPLY" {
+    return Err(
+      "Stage 5 apply requires `confirm_token = \"APPLY\"` in the payload (per-call \
+       confirmation, not just the persisted flag)."
+        .into(),
+    );
+  }
+
+  let conn = memory_store::open_conn()?;
+  let now_ms = ts() as i64;
+  let mut summary = json!({
+    "soft_retire": null,
+    "cleanup_ttl": null,
+    "physical_delete": null,
+    "vacuum": null,
+  });
+
+  let do_soft = payload.get("soft_retire").and_then(|v| v.as_bool()).unwrap_or(false);
+  let do_ttl = payload.get("cleanup_ttl").and_then(|v| v.as_bool()).unwrap_or(false);
+  let do_delete = payload.get("physical_delete").and_then(|v| v.as_bool()).unwrap_or(false);
+  let do_vacuum = payload.get("vacuum").and_then(|v| v.as_bool()).unwrap_or(false);
+
+  if do_soft {
+    let n = crate::kioku_stage5::soft_retire_capture_rows(&conn, now_ms)?;
+    summary["soft_retire"] = json!({ "rows_retired": n });
+  }
+  if do_ttl {
+    let r = crate::kioku_stage5::cleanup_ttl_expired_captures(&conn, now_ms)?;
+    summary["cleanup_ttl"] = json!({
+      "rows_marked_expired": r.rows_marked_expired,
+      "raw_paths_unlinked": r.raw_paths_unlinked,
+      "raw_text_nulled": r.raw_text_nulled,
+    });
+  }
+  if do_delete {
+    let n = crate::kioku_stage5::physical_delete_old_capture_rows(&conn, now_ms)?;
+    summary["physical_delete"] = json!({ "rows_deleted": n });
+  }
+  if do_vacuum {
+    crate::kioku_stage5::vacuum_db(&conn)?;
+    summary["vacuum"] = json!({ "ok": true });
+  }
+  Ok(json!({
+    "applied_at_ms": now_ms,
+    "actions": summary,
+  }))
+}
+
 fn fmt_decimal_commas(mut n: u64) -> String {
   if n == 0 {
     return "0".to_string();

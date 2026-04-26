@@ -47,6 +47,7 @@ mod kioku_rules;
 mod kioku_graph_traversal;
 mod kioku_debug_stats;
 mod kioku_edge_types;
+mod kioku_stage5;
 mod rollup_sync;
 mod summarizer_store;
 mod summarizer;
@@ -157,6 +158,8 @@ pub fn run() {
       commands::shogun_schedule_action,
       commands::shogun_kioku_brief_signals,
       commands::shogun_kioku_debug_stats,
+      commands::shogun_kioku_stage5_dry_run,
+      commands::shogun_kioku_stage5_apply,
       commands::shogun_stats,
       commands::app_open_hummingbird,
       commands::app_create_share_link,

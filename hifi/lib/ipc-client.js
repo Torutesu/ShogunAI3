@@ -290,6 +290,37 @@
       };
     }
 
+    if (command === "shogun_kioku_stage5_dry_run") {
+      return {
+        generated_at_ms: Date.now(),
+        soft_retire: {
+          matching_rows: 0,
+          already_retired: 0,
+          oldest_created_at_ms: null,
+          newest_created_at_ms: null,
+          embedding_blob_count: 0,
+        },
+        ttl_expired: {
+          rows_with_raw_to_clean: 0,
+          raw_path_files_to_unlink: 0,
+          raw_text_rows_to_null: 0,
+        },
+        physical_delete: { eligible_rows: 0, cascade_edges: 0, orphaned_summaries: 0 },
+        storage: { db_size_before_bytes: 0, raw_path_bytes: 0 },
+        legacy_sources: ["capture_sampler", "capture_ax"],
+        grace_days: 30,
+        stub: false,
+        echo,
+      };
+    }
+    if (command === "shogun_kioku_stage5_apply") {
+      return {
+        applied_at_ms: Date.now(),
+        actions: { soft_retire: null, cleanup_ttl: null, physical_delete: null, vacuum: null },
+        stub: false,
+        echo,
+      };
+    }
     if (command === "shogun_kioku_debug_stats") {
       return {
         queue: {
