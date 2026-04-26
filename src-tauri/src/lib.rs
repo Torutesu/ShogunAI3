@@ -46,6 +46,7 @@ mod kioku_decision_graph;
 mod kioku_rules;
 mod kioku_graph_traversal;
 mod kioku_debug_stats;
+mod kioku_edge_types;
 mod rollup_sync;
 mod summarizer_store;
 mod summarizer;

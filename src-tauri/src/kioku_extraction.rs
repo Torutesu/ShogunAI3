@@ -1079,6 +1079,12 @@ fn add_relation_edges(
         params![from_node, rel, edge_type, fact.confidence, now_ms, capture_id],
       )
       .map_err(|e| format!("resolve_write add edge: {}", e))?;
+    // Track the edge_type so the Stage 4 review queue eventually sees it.
+    // Failures to record a proposal must not abort the extraction worker —
+    // the audit table is best-effort.
+    if let Err(e) = crate::kioku_edge_types::record_proposal(conn, edge_type, now_ms) {
+      log::debug!("kioku edge_type proposal record skipped: {}", e);
+    }
   }
   Ok(())
 }
@@ -1151,6 +1157,10 @@ pub fn resolve_write(
           params![new_id, c.id, now_ms, capture_id],
         )
         .map_err(|e| format!("resolve_write supersede edge: {}", e))?;
+      // Audit the canonical 'supersedes' edge alongside fact-derived edges.
+      if let Err(e) = crate::kioku_edge_types::record_proposal(conn, "supersedes", now_ms) {
+        log::debug!("kioku edge_type proposal record skipped: {}", e);
+      }
       add_relation_edges(conn, &new_id, fact, capture_id, now_ms)?;
       return Ok(ResolveOutcome::Superseded {
         old_id: c.id.clone(),
