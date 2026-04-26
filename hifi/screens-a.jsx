@@ -2751,39 +2751,35 @@ function ScreenMemory() {
               && getEventPriority(scrubbed) === 'low';
             const clusterCount = clusterIdx >= 0 ? (riverEvents[clusterIdx].count || 0) : 0;
             const positionInCluster = inCluster ? (scrubIdx - clusterIdx) : 0; // 1-indexed
-            return (
-              <>
-                {inCluster && (
-                  <div style={{
-                    display:'flex', alignItems:'center', gap:8,
-                    fontSize:11, color:'var(--text-dim)',
-                    marginBottom:10, paddingLeft:14,
-                    borderLeft:'2px solid var(--border)',
-                  }}>
-                    <Icon name="arrowUp" size={11}/>
-                    <span className="en-only">Inside Other cluster · {positionInCluster}/{clusterCount}</span>
-                    <span className="jp">その他クラスタ内 · {positionInCluster}/{clusterCount}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLowClusterExpanded(false);
-                        setScrubIdx(clusterIdx);
-                      }}
-                      style={{
-                        marginLeft:'auto',
-                        padding:'2px 8px', border:'none', background:'transparent',
-                        color:'var(--text-dim)', fontSize:11, cursor:'pointer',
-                        fontFamily:'inherit', textDecoration:'underline',
-                      }}
-                      title="Collapse the Other cluster and return to the cluster header"
-                    >
-                      <span className="en-only">Collapse</span>
-                      <span className="jp">畳む</span>
-                    </button>
-                  </div>
-                )}
-              </>
-            );
+            return inCluster ? (
+              <div style={{
+                display:'flex', alignItems:'center', gap:8,
+                fontSize:11, color:'var(--text-dim)',
+                marginBottom:10, paddingLeft:14,
+                borderLeft:'2px solid var(--border)',
+              }}>
+                <Icon name="arrowUp" size={11}/>
+                <span className="en-only">Inside Other cluster · {positionInCluster}/{clusterCount}</span>
+                <span className="jp">その他クラスタ内 · {positionInCluster}/{clusterCount}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLowClusterExpanded(false);
+                    setScrubIdx(clusterIdx);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 8px', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:11, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Collapse the Other cluster and return to the cluster header"
+                >
+                  <span className="en-only">Collapse</span>
+                  <span className="jp">畳む</span>
+                </button>
+              </div>
+            ) : null;
           })()}
           {!timelineLoading && scrubbed && scrubbed.kind === 'low_cluster' && (
             <div
