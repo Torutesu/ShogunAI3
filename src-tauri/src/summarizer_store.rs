@@ -416,6 +416,199 @@ pub fn set_user_priority(
   Ok(n > 0)
 }
 
+/// Metadata for a single user-edit entry written to `raw_json.user_edits[]`.
+#[derive(Debug, Clone)]
+pub struct EditMetadata<'a> {
+  pub source_raw: Option<&'a str>,
+  pub entity_id: Option<&'a str>,
+}
+
+/// Append a single user-edit entry to `raw_json.user_edits[]` for one field.
+/// `field` must be one of "title" | "keyPoints" | "reason". `from` and `to`
+/// are stored verbatim as JSON values (use `Value::Null` for None reason etc).
+/// Returns `false` if no row exists for this target.
+pub fn edit_field(
+  target_kind: &str,
+  target_id: &str,
+  field: &str,
+  from: serde_json::Value,
+  to: serde_json::Value,
+  at_ms: i64,
+  meta: EditMetadata<'_>,
+) -> Result<bool, String> {
+  if !matches!(field, "title" | "keyPoints" | "reason") {
+    return Err(format!("invalid edit field: {}", field));
+  }
+  let conn = open_conn()?;
+
+  // 1. Read current raw_json.
+  let raw_now: Option<String> = conn
+    .query_row(
+      "SELECT raw_json FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
+      params![target_kind, target_id],
+      |r| r.get::<_, String>(0),
+    )
+    .ok();
+  let raw_now = match raw_now {
+    Some(s) => s,
+    None => return Ok(false),
+  };
+
+  // 2. Parse → object (reset to empty {} if malformed).
+  let mut parsed: serde_json::Value =
+    serde_json::from_str(&raw_now).unwrap_or_else(|_| serde_json::json!({}));
+  if !parsed.is_object() {
+    parsed = serde_json::json!({});
+  }
+
+  // 3. Append entry to user_edits[].
+  let new_entry = serde_json::json!({
+    "field": field,
+    "from": from,
+    "to": to,
+    "at": at_ms,
+    "source_raw": meta.source_raw,
+    "entity_id": meta.entity_id,
+    "schema": 1
+  });
+  let edits = parsed
+    .as_object_mut()
+    .unwrap()
+    .entry("user_edits".to_string())
+    .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+  if !edits.is_array() {
+    *edits = serde_json::Value::Array(Vec::new());
+  }
+  edits.as_array_mut().unwrap().push(new_entry);
+
+  // 4. Re-serialize and write back. Also update the dedicated columns so
+  //    downstream callers that read columns directly (rather than via the
+  //    Summary loader) see the new effective value.
+  let new_raw = serde_json::to_string(&parsed)
+    .map_err(|e| format!("re-serialize raw_json: {}", e))?;
+
+  // Build the column update for the edited field.
+  match field {
+    "title" => {
+      let new_title = to.as_str().unwrap_or("");
+      conn.execute(
+        "UPDATE mem_summaries SET raw_json = ?3, title = ?4
+         WHERE target_kind = ?1 AND target_id = ?2",
+        params![target_kind, target_id, new_raw, new_title],
+      )
+    }
+    "keyPoints" => {
+      let kp_json = serde_json::to_string(&to)
+        .unwrap_or_else(|_| "[]".to_string());
+      conn.execute(
+        "UPDATE mem_summaries SET raw_json = ?3, key_points = ?4
+         WHERE target_kind = ?1 AND target_id = ?2",
+        params![target_kind, target_id, new_raw, kp_json],
+      )
+    }
+    "reason" => {
+      let new_reason: Option<&str> = to.as_str();
+      conn.execute(
+        "UPDATE mem_summaries SET raw_json = ?3, reason = ?4
+         WHERE target_kind = ?1 AND target_id = ?2",
+        params![target_kind, target_id, new_raw, new_reason],
+      )
+    }
+    _ => unreachable!(), // guarded above
+  }
+  .map_err(|e| format!("mem_summaries edit_field write: {}", e))?;
+  Ok(true)
+}
+
+/// Remove all `user_edits[]` entries for one field from `raw_json`. Also
+/// resets the dedicated column for that field back to whatever the LLM
+/// baseline was — recovered by replaying the remaining edits onto the
+/// `raw_json.tool_use.<field>` value.
+/// Returns `false` if no row exists for this target.
+pub fn revert_field(
+  target_kind: &str,
+  target_id: &str,
+  field: &str,
+) -> Result<bool, String> {
+  if !matches!(field, "title" | "keyPoints" | "reason") {
+    return Err(format!("invalid revert field: {}", field));
+  }
+  let conn = open_conn()?;
+
+  let raw_now: Option<String> = conn
+    .query_row(
+      "SELECT raw_json FROM mem_summaries WHERE target_kind = ?1 AND target_id = ?2",
+      params![target_kind, target_id],
+      |r| r.get::<_, String>(0),
+    )
+    .ok();
+  let raw_now = match raw_now {
+    Some(s) => s,
+    None => return Ok(false),
+  };
+
+  let mut parsed: serde_json::Value =
+    serde_json::from_str(&raw_now).unwrap_or_else(|_| serde_json::json!({}));
+  if !parsed.is_object() {
+    parsed = serde_json::json!({});
+  }
+
+  // Drop matching entries from user_edits[].
+  if let Some(edits) = parsed
+    .as_object_mut()
+    .unwrap()
+    .get_mut("user_edits")
+    .and_then(|v| v.as_array_mut())
+  {
+    edits.retain(|e| e.get("field").and_then(|v| v.as_str()) != Some(field));
+  }
+
+  // Compute the baseline value for the dedicated column.
+  // Baseline = raw_json.tool_use.<field> if present, else fallback string.
+  let baseline = parsed
+    .get("tool_use")
+    .and_then(|tu| tu.get(field))
+    .cloned();
+
+  // Re-apply any remaining edits for this field (defensive — there should be
+  // none after retain). Then write back raw_json AND the column.
+  let new_raw = serde_json::to_string(&parsed)
+    .map_err(|e| format!("re-serialize raw_json: {}", e))?;
+
+  match field {
+    "title" => {
+      let title_str = baseline.as_ref().and_then(|v| v.as_str()).unwrap_or("");
+      conn.execute(
+        "UPDATE mem_summaries SET raw_json = ?3, title = ?4
+         WHERE target_kind = ?1 AND target_id = ?2",
+        params![target_kind, target_id, new_raw, title_str],
+      )
+    }
+    "keyPoints" => {
+      let kp_json = baseline
+        .as_ref()
+        .and_then(|v| serde_json::to_string(v).ok())
+        .unwrap_or_else(|| "[]".to_string());
+      conn.execute(
+        "UPDATE mem_summaries SET raw_json = ?3, key_points = ?4
+         WHERE target_kind = ?1 AND target_id = ?2",
+        params![target_kind, target_id, new_raw, kp_json],
+      )
+    }
+    "reason" => {
+      let reason_str: Option<&str> = baseline.as_ref().and_then(|v| v.as_str());
+      conn.execute(
+        "UPDATE mem_summaries SET raw_json = ?3, reason = ?4
+         WHERE target_kind = ?1 AND target_id = ?2",
+        params![target_kind, target_id, new_raw, reason_str],
+      )
+    }
+    _ => unreachable!(),
+  }
+  .map_err(|e| format!("mem_summaries revert_field write: {}", e))?;
+  Ok(true)
+}
+
 pub fn delete(target_kind: &str, target_id: &str) -> Result<bool, String> {
   let conn = open_conn()?;
   let n = conn.execute(
@@ -582,5 +775,101 @@ mod tests {
     let mut s = sample_with_raw(raw);
     apply_user_edits(&mut s);
     assert_eq!(s.source_type, "mail"); // not editable; ignored
+  }
+
+  use serde_json::json;
+
+  // Helper to set up an in-memory test DB with one upserted summary.
+  // Uses crate::memory_store::open_conn() which the existing tests rely on.
+  fn fresh_db_with_summary(target_id: &str) -> Summary {
+    let s = sample(target_id, "medium");
+    upsert(&s).expect("upsert");
+    get_cached("item", target_id, "en").expect("read").expect("present")
+  }
+
+  #[test]
+  #[ignore] // requires DB harness — run via `cargo test -- --ignored`
+  fn edit_field_title_writes_history_and_column() {
+    let _ = fresh_db_with_summary("m_edit_t");
+    let ok = edit_field(
+      "item",
+      "m_edit_t",
+      "title",
+      json!("Test"),
+      json!("Edited title"),
+      1700000001,
+      EditMetadata { source_raw: Some("chat"), entity_id: None },
+    )
+    .expect("edit_field");
+    assert!(ok);
+
+    let s = get_cached("item", "m_edit_t", "en").expect("read").expect("present");
+    assert_eq!(s.title, "Edited title", "merged on load via apply_user_edits");
+
+    let parsed: serde_json::Value =
+      serde_json::from_str(&s.raw_json).expect("parse");
+    let edits = parsed.get("user_edits").and_then(|v| v.as_array()).unwrap();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].get("field").and_then(|v| v.as_str()), Some("title"));
+    assert_eq!(edits[0].get("schema").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(edits[0].get("source_raw").and_then(|v| v.as_str()), Some("chat"));
+  }
+
+  #[test]
+  #[ignore]
+  fn edit_field_keypoints_replaces_array() {
+    let _ = fresh_db_with_summary("m_edit_kp");
+    edit_field(
+      "item",
+      "m_edit_kp",
+      "keyPoints",
+      json!(["point 1", "point 2"]),
+      json!(["new 1", "new 2", "new 3"]),
+      1700000002,
+      EditMetadata { source_raw: None, entity_id: None },
+    )
+    .expect("edit_field");
+
+    let s = get_cached("item", "m_edit_kp", "en").expect("read").expect("present");
+    assert_eq!(s.key_points, vec!["new 1".to_string(), "new 2".into(), "new 3".into()]);
+  }
+
+  #[test]
+  #[ignore]
+  fn revert_field_clears_edits_and_restores_baseline() {
+    let _ = fresh_db_with_summary("m_revert");
+    edit_field("item", "m_revert", "title", json!("Test"), json!("Edited"), 1, EditMetadata { source_raw: None, entity_id: None }).unwrap();
+    edit_field("item", "m_revert", "title", json!("Edited"), json!("Edited 2"), 2, EditMetadata { source_raw: None, entity_id: None }).unwrap();
+
+    // Confirm edited.
+    let edited = get_cached("item", "m_revert", "en").unwrap().unwrap();
+    assert_eq!(edited.title, "Edited 2");
+
+    // Revert.
+    revert_field("item", "m_revert", "title").unwrap();
+    let after = get_cached("item", "m_revert", "en").unwrap().unwrap();
+    // Baseline title comes from `raw_json.tool_use.title`. The sample row's
+    // initial raw_json is `{"x":1}`, so tool_use.title is missing → empty.
+    // The point of this test is "edits cleared", not "baseline arbitrary".
+    assert_eq!(after.title, "");
+
+    let parsed: serde_json::Value = serde_json::from_str(&after.raw_json).unwrap();
+    let edits = parsed.get("user_edits").and_then(|v| v.as_array()).unwrap();
+    assert!(edits.iter().all(|e| e.get("field").and_then(|v| v.as_str()) != Some("title")));
+  }
+
+  #[test]
+  #[ignore]
+  fn edit_field_invalid_field_errors() {
+    let r = edit_field(
+      "item",
+      "m_x",
+      "sourceType",
+      json!(null),
+      json!("hack"),
+      1,
+      EditMetadata { source_raw: None, entity_id: None },
+    );
+    assert!(r.is_err(), "non-allowlisted field must error");
   }
 }
