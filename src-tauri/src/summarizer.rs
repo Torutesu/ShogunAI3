@@ -770,6 +770,176 @@ pub async fn summarize_month_rollup(month_start_ms: i64, lang: &str) -> Result<S
   summarize_rollup(start, end, RollupKind::Month, lang).await
 }
 
+/// Year rollup is composed from the 12 monthly rollups within the year, NOT
+/// from raw items. On miss, the corresponding `summarize_month_rollup` is
+/// invoked (and cached) before composition. Future months are skipped.
+pub async fn summarize_year_rollup(year_start_ms: i64, lang: &str) -> Result<Summary, String> {
+  let (year_start, year_end) = year_window(year_start_ms);
+  let id = format_year_id(year_start);
+
+  let monthly = collect_monthly_rollups_for_year(year_start, year_end, lang).await?;
+
+  // All months either missing-and-future, or empty: short-circuit.
+  if monthly.is_empty() || monthly.iter().all(is_empty_rollup) {
+    return Ok(Summary {
+      target_kind: RollupKind::Year.target_kind().into(),
+      target_id: id,
+      title: loc(lang, "Quiet year", "静かな年"),
+      key_points: vec![loc(lang, "No activity this year.", "今年のアクティビティなし")],
+      source_type: RollupKind::Year.target_kind().into(),
+      priority: "low".into(),
+      reason: Some(loc(lang, "No indexed activity in this window", "インデックス済みの活動なし")),
+      model: "heuristic".into(),
+      schema_version: SCHEMA_VERSION,
+      generated_at: crate::memory_store::now_ms() as i64,
+      raw_json: json!({"rollup": "empty", "kind": RollupKind::Year.target_kind()}).to_string(),
+      lang: lang.to_string(),
+      user_priority: None,
+      acknowledged_at: None,
+      snooze_until: None,
+    });
+  }
+
+  let user_content = render_year_context(&monthly, &id);
+  let tool = emit_memory_summary_tool();
+  let system = rollup_system_prompt_for_lang(lang, RollupKind::Year);
+
+  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
+    Ok(tool_input) => match build_rollup_from_tool_input(&id, RollupKind::Year, &tool_input, lang) {
+      Ok(s) => Ok(s),
+      Err(e) => {
+        log::warn!("year rollup tool_input parse error for {}: {}", id, e);
+        Ok(year_heuristic_fallback(&id, &monthly, lang))
+      }
+    },
+    Err(e) => {
+      log::warn!("year rollup LLM error for {}: {}", id, e);
+      Ok(year_heuristic_fallback(&id, &monthly, lang))
+    }
+  }
+}
+
+/// Walk each calendar month in `[year_start, year_end)`, return the cached
+/// month rollup or generate-then-upsert if missing. Future months
+/// (month_start > now) are skipped and not included in the result.
+async fn collect_monthly_rollups_for_year(
+  year_start: i64,
+  year_end: i64,
+  lang: &str,
+) -> Result<Vec<Summary>, String> {
+  use chrono::{Datelike, TimeZone};
+  let mut out: Vec<Summary> = Vec::with_capacity(12);
+  let now_ms = crate::memory_store::now_ms() as i64;
+
+  let mut cursor_ms = year_start;
+  while cursor_ms < year_end {
+    if cursor_ms > now_ms {
+      break; // future months — nothing to roll up yet
+    }
+    let month_id = format_month_id(cursor_ms);
+    let cached = crate::summarizer_store::get_cached("month_rollup", &month_id, lang)?;
+    let rollup = if let Some(c) = cached {
+      c
+    } else {
+      let s = summarize_month_rollup(cursor_ms, lang).await?;
+      crate::summarizer_store::upsert(&s)?;
+      s
+    };
+    out.push(rollup);
+
+    // Advance to the first ms of the next month.
+    let secs = cursor_ms / 1000;
+    let local = chrono::Local
+      .timestamp_opt(secs, 0)
+      .single()
+      .ok_or_else(|| "invalid timestamp".to_string())?;
+    let (y, m) = (local.year(), local.month());
+    let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+    cursor_ms = chrono::Local
+      .with_ymd_and_hms(ny, nm, 1, 0, 0, 0)
+      .single()
+      .map(|d| d.timestamp_millis())
+      .ok_or_else(|| "invalid next month".to_string())?;
+  }
+  Ok(out)
+}
+
+/// Render the LLM context for a year rollup: each monthly rollup labeled
+/// with its short month name + year, followed by the month's title and
+/// key points.
+fn render_year_context(monthly: &[Summary], year_id: &str) -> String {
+  let mut buf = format!("Year: {}\n\nMonthly rollups (chronological):\n", year_id);
+  for s in monthly {
+    // s.target_id is "YYYY-MM"; produce "Apr 2026" style label.
+    let label = month_label_for_id(&s.target_id);
+    buf.push_str(&format!(
+      "\n[{}] {}\n  · {}\n",
+      label,
+      s.title,
+      s.key_points.join("; "),
+    ));
+  }
+  buf
+}
+
+fn month_label_for_id(month_id: &str) -> String {
+  // month_id format "YYYY-MM"; degrade gracefully if malformed.
+  let parts: Vec<&str> = month_id.split('-').collect();
+  if parts.len() != 2 {
+    return month_id.to_string();
+  }
+  let year = parts[0];
+  let mo: u32 = parts[1].parse().unwrap_or(0);
+  let name = match mo {
+    1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
+    5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
+    9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+    _ => "?",
+  };
+  format!("{} {}", name, year)
+}
+
+/// Heuristic fallback for year rollups when the LLM fails or returns
+/// unparseable output. Lists month count and the first few non-empty
+/// monthly titles.
+fn year_heuristic_fallback(id: &str, monthly: &[Summary], lang: &str) -> Summary {
+  let active_months: Vec<&Summary> = monthly.iter().filter(|m| !is_empty_rollup(m)).collect();
+  let title = RollupKind::Year.fallback_title(id, lang);
+  let summary_line = match lang {
+    "jp" => format!("{} ヶ月分の記録（活動あり {} ヶ月）", monthly.len(), active_months.len()),
+    _ => format!("{} months indexed ({} active)", monthly.len(), active_months.len()),
+  };
+  let mut key_points = vec![summary_line];
+  if !active_months.is_empty() {
+    key_points.push(loc(lang, "Notable months:", "主要な月:"));
+    for s in active_months.iter().take(4) {
+      let label = month_label_for_id(&s.target_id);
+      key_points.push(format!("· {} — {}", label, s.title));
+    }
+  }
+  Summary {
+    target_kind: RollupKind::Year.target_kind().into(),
+    target_id: id.to_string(),
+    title,
+    key_points,
+    source_type: RollupKind::Year.target_kind().into(),
+    priority: "medium".into(),
+    reason: Some(loc(
+      lang,
+      "Heuristic year summary (LLM unavailable)",
+      "ヒューリスティック年次サマリ（LLM未到達）",
+    )),
+    model: "heuristic".into(),
+    schema_version: SCHEMA_VERSION,
+    generated_at: crate::memory_store::now_ms() as i64,
+    raw_json: json!({"rollup": "fallback", "kind": "year_rollup"}).to_string(),
+    lang: lang.to_string(),
+    user_priority: None,
+    acknowledged_at: None,
+    snooze_until: None,
+  }
+}
+
 /// Shared rollup pipeline: lookup → empty-case → LLM call → fallback.
 async fn summarize_rollup(
   start_ms: i64,
