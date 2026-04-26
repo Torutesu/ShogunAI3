@@ -281,6 +281,12 @@ pub fn app_settings_load(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn app_settings_save(payload: Value) -> Result<Value, String> {
   let doc = settings_store::save_patch(&payload)?;
+  // Phase 2 Stage 3 (T8.3): keep the kioku_rules cache aligned with disk.
+  // We refresh on every save (cheap: in-memory parse) so the next LLM call
+  // sees the update without an app restart, regardless of which section the
+  // user touched (kioku_rules edits also occasionally arrive as part of a
+  // bulk import).
+  crate::kioku_rules::reload_from_settings_now();
   Ok(json!({
     "saved": true,
     "settings": doc,

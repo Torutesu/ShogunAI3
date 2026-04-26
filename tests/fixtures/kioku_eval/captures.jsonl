@@ -1,0 +1,25 @@
+# KIOKU eval — capture fixtures (20+ rows). Schema: kioku_eval::CaptureFixture.
+# Mix of screen_app (Phase-2 capture_sampler equivalent) and screen_ax.
+
+{"id":"cap_001","type":"screen_app","raw_text":"app=Slack channel=#shogun-eng","app_bundle_id":"com.tinyspeck.slackmacgap","window_title":"Slack | #shogun-eng","captured_at":1714029000000}
+{"id":"cap_002","type":"screen_app","raw_text":"app=Code workspace=ShogunAI3","app_bundle_id":"com.microsoft.VSCode","window_title":"memory_store.rs — ShogunAI3","captured_at":1714032600000}
+{"id":"cap_003","type":"screen_app","raw_text":"app=Chrome url=docs.anthropic.com","app_bundle_id":"com.google.Chrome","window_title":"Tool use — Anthropic Docs","url":"https://docs.anthropic.com/messages","captured_at":1714036200000}
+{"id":"cap_004","type":"screen_ax","raw_text":"role=AXTextField title=Search value=KIOKU","app_bundle_id":"com.tinyspeck.slackmacgap","window_title":"Slack | #shogun-eng","captured_at":1714030800000}
+{"id":"cap_005","type":"screen_ax","raw_text":"role=AXButton title=Send","app_bundle_id":"com.tinyspeck.slackmacgap","window_title":"Slack | #shogun-eng","captured_at":1714034400000}
+{"id":"cap_006","type":"screen_app","raw_text":"app=Slack channel=#shogun-design","app_bundle_id":"com.tinyspeck.slackmacgap","window_title":"Slack | #shogun-design","captured_at":1714115400000}
+{"id":"cap_007","type":"screen_app","raw_text":"app=Code workspace=ShogunAI3 file=memory_store.rs","app_bundle_id":"com.microsoft.VSCode","window_title":"memory_store.rs — ShogunAI3","captured_at":1714119000000}
+{"id":"cap_008","type":"screen_ax","raw_text":"role=AXTextArea title=Compose value=Re: deploy plan","app_bundle_id":"com.apple.mail","window_title":"New Message","captured_at":1714117200000}
+{"id":"cap_009","type":"screen_app","raw_text":"app=Notion page=KIOKU spec","app_bundle_id":"notion.id","window_title":"KIOKU spec — Notion","url":"https://notion.so/kioku-spec","captured_at":1714201400000}
+{"id":"cap_010","type":"screen_ax","raw_text":"role=AXLink title=docs.anthropic.com/messages","app_bundle_id":"com.google.Chrome","window_title":"Anthropic API Docs","captured_at":1714203200000}
+{"id":"cap_011","type":"screen_app","raw_text":"app=Mail thread=Tanaka follow-up","app_bundle_id":"com.apple.mail","window_title":"Tanaka follow-up","captured_at":1714287800000}
+{"id":"cap_012","type":"screen_ax","raw_text":"role=AXStaticText title=Pencil migration value=Keep legacy through Q2","app_bundle_id":"com.apple.mail","window_title":"Re: pencil migration","captured_at":1714289600000}
+{"id":"cap_013","type":"screen_app","raw_text":"app=Cursor file=context_assembly.rs","app_bundle_id":"com.todesktop.230313mzl4w4u92","window_title":"context_assembly.rs — ShogunAI3","captured_at":1714374200000}
+{"id":"cap_014","type":"screen_ax","raw_text":"role=AXTextField title=Subject value=Vendor onboarding checklist","app_bundle_id":"com.apple.mail","window_title":"New Message","captured_at":1714376000000}
+{"id":"cap_015","type":"screen_app","raw_text":"app=Figma file=hifi-prototypes","app_bundle_id":"com.figma.Desktop","window_title":"hifi-prototypes — Figma","captured_at":1714125200000}
+{"id":"cap_016","type":"screen_ax","raw_text":"role=AXTextField title=Comment value=Looks good — please ship","app_bundle_id":"com.figma.Desktop","window_title":"hifi-prototypes — Figma","captured_at":1714128800000}
+{"id":"cap_017","type":"screen_app","raw_text":"app=Linear project=KIOKU","app_bundle_id":"com.linear","window_title":"Linear | KIOKU project","captured_at":1714211600000}
+{"id":"cap_018","type":"screen_ax","raw_text":"role=AXButton title=Create issue","app_bundle_id":"com.linear","window_title":"Linear | KIOKU project","captured_at":1714215200000}
+{"id":"cap_019","type":"screen_app","raw_text":"app=Terminal command=cargo test","app_bundle_id":"com.apple.Terminal","window_title":"cargo test — Terminal","captured_at":1714298000000}
+{"id":"cap_020","type":"screen_ax","raw_text":"role=AXStaticText title=Output value=141 passed","app_bundle_id":"com.apple.Terminal","window_title":"cargo test — Terminal","captured_at":1714301600000}
+{"id":"cap_021","type":"screen_app","raw_text":"app=Slack channel=#shogun-eng","app_bundle_id":"com.tinyspeck.slackmacgap","window_title":"Slack | #shogun-eng","captured_at":1714384400000}
+{"id":"cap_022","type":"screen_ax","raw_text":"role=AXTextField title=Message value=Stage 1 schema landed","app_bundle_id":"com.tinyspeck.slackmacgap","window_title":"Slack | #shogun-eng","captured_at":1714388000000}

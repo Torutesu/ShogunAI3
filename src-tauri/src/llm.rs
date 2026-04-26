@@ -112,6 +112,12 @@ pub async fn chat_complete(
     return Err("messages must not be empty".to_string());
   }
   let mut messages: Vec<Value> = Vec::new();
+  // Phase 2 Stage 3 (T8.3): user-defined KIOKU rules ride at the very top of
+  // every system prompt so the model can't override them via later context.
+  // Returns None when no rules are configured — quiet no-op for fresh installs.
+  if let Some(rules_msg) = crate::kioku_rules::leading_system_message() {
+    messages.push(rules_msg);
+  }
   if let Some(ctx) = payload.get("memoryContext").and_then(|v| v.as_str()) {
     let ctx = ctx.trim();
     if !ctx.is_empty() {
@@ -550,6 +556,122 @@ Reply with **Markdown only**: tight bullets or one short paragraph they can past
 /// 複数 tool_use が返った場合は最初に一致したものを採用。tool_choice 強制モードでは通常 1 件のみ。
 ///
 /// 戻り値: LLM が emit したツールの input JSON (= summary の構造化データ)。
+/// Output of `anthropic_tool_complete_with_usage`. Mirrors what KIOKU's cost
+/// ledger needs without leaking the raw Anthropic envelope.
+#[derive(Debug, Clone)]
+pub struct AnthropicToolResult {
+  pub input: serde_json::Value,
+  pub input_tokens: i64,
+  pub output_tokens: i64,
+  /// Resolved model id from the API response (Anthropic may serve a snapshot
+  /// alias under a more specific id; we record what actually billed).
+  pub resolved_model: String,
+}
+
+/// Like `anthropic_tool_complete` but also returns `usage` token counts so the
+/// caller can write a faithful `cost_ledger` row. Behaviorally identical to
+/// the legacy function for the success path; the legacy function stays in
+/// place to avoid touching every existing call site.
+pub async fn anthropic_tool_complete_with_usage(
+  system: &str,
+  user: &str,
+  tool: &serde_json::Value,
+  model: &str,
+) -> Result<AnthropicToolResult, String> {
+  let key = crate::secrets::get_llm_api_key()?
+    .ok_or_else(|| "LLM API key not configured".to_string())?;
+
+  let tool_name = tool
+    .get("name")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "tool.name required".to_string())?
+    .to_string();
+
+  let body = serde_json::json!({
+    "model": model,
+    "max_tokens": 1024,
+    "system": system,
+    "messages": [{ "role": "user", "content": user }],
+    "tools": [tool],
+    "tool_choice": { "type": "tool", "name": tool_name },
+  });
+
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(60))
+    .build()
+    .map_err(|e| format!("reqwest build: {}", e))?;
+
+  let resp = client
+    .post("https://api.anthropic.com/v1/messages")
+    .header("x-api-key", key.trim())
+    .header("anthropic-version", "2023-06-01")
+    .header("content-type", "application/json")
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| format!("Anthropic tool_use network error: {}", e))?;
+
+  let status = resp.status();
+  let text = resp
+    .text()
+    .await
+    .map_err(|e| format!("Anthropic tool_use body: {}", e))?;
+
+  if !status.is_success() {
+    return Err(format!(
+      "Anthropic tool_use {}: {}",
+      status,
+      text.chars().take(300).collect::<String>(),
+    ));
+  }
+
+  let parsed: serde_json::Value = serde_json::from_str(&text)
+    .map_err(|e| format!("Anthropic tool_use JSON parse: {}", e))?;
+
+  let usage = parsed.get("usage");
+  let input_tokens = usage
+    .and_then(|u| u.get("input_tokens"))
+    .and_then(|v| v.as_i64())
+    .unwrap_or(0);
+  let output_tokens = usage
+    .and_then(|u| u.get("output_tokens"))
+    .and_then(|v| v.as_i64())
+    .unwrap_or(0);
+  let resolved_model = parsed
+    .get("model")
+    .and_then(|v| v.as_str())
+    .unwrap_or(model)
+    .to_string();
+
+  let content = parsed
+    .get("content")
+    .and_then(|v| v.as_array())
+    .ok_or_else(|| "Anthropic response missing content array".to_string())?;
+
+  for item in content {
+    if item.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+      && item.get("name").and_then(|n| n.as_str()) == Some(tool_name.as_str())
+    {
+      let input = item
+        .get("input")
+        .cloned()
+        .ok_or_else(|| "tool_use missing input".to_string())?;
+      return Ok(AnthropicToolResult {
+        input,
+        input_tokens,
+        output_tokens,
+        resolved_model,
+      });
+    }
+  }
+
+  Err(format!(
+    "Anthropic response has no tool_use for {}: {}",
+    tool_name,
+    text.chars().take(300).collect::<String>(),
+  ))
+}
+
 pub async fn anthropic_tool_complete(
   system: &str,
   user: &str,

@@ -49,6 +49,10 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
   ensure_context_layer_columns(&conn)?;
   ensure_redaction_nullable(&conn)?;
   migrate_json_if_needed(&conn)?;
+  // Phase 2 Stage 1: KIOKU graph layer columns + new tables + backfill.
+  // Must run after the Phase 1 ensures so the redaction-nullable table
+  // rebuild does not strip Phase 2 columns out from under us.
+  crate::kioku_graph_schema::ensure_kioku_graph_schema(&conn)?;
   Ok(conn)
 }
 

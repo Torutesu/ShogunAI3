@@ -1,0 +1,41 @@
+# KIOKU eval — same_entity_different_fact cases (15).
+# Schema: kioku_eval::SameEntityDifferentFactCase.
+# `expected: true` ⇒ same entity, conflicting / replacing fact ⇒ Phase 2 must
+# bi-temporal record (old.valid_to=now, insert new). `expected: false` ⇒ NOT a
+# conflict (different entity, or compatible additive fact).
+# Categories: date_change / value_change / status_change / role_change /
+# different_entity_red_herring / additive_fact / cross_lingual.
+
+# ── date_change (expected: true) ────────────────────────────────────────
+{"id":"sed_01","left":{"entity_name":"Q2 launch","fact_type":"scheduled_at","claim":"July 1"},"right":{"entity_name":"Q2 launch","fact_type":"scheduled_at","claim":"July 8"},"expected":true,"category":"date_change"}
+{"id":"sed_02","left":{"entity_id":"cal_evt_003","entity_name":"Investor sync","fact_type":"scheduled_at","claim":"2026-04-25 11:00 JST"},"right":{"entity_id":"cal_evt_003","entity_name":"Investor sync","fact_type":"scheduled_at","claim":"2026-04-26 14:00 JST"},"expected":true,"category":"date_change"}
+
+# ── value_change (expected: true) ───────────────────────────────────────
+{"id":"sed_03","left":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"$10"},"right":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"$25"},"expected":true,"category":"value_change"}
+{"id":"sed_04","left":{"entity_name":"graph traversal latency budget","fact_type":"target","claim":"≤ 200 ms at 10K edges"},"right":{"entity_name":"graph traversal latency budget","fact_type":"target","claim":"≤ 250 ms at 10K edges"},"expected":true,"category":"value_change"}
+
+# ── status_change (expected: true) ──────────────────────────────────────
+{"id":"sed_05","left":{"entity_name":"Acme","fact_type":"customer_status","claim":"in evaluation"},"right":{"entity_name":"Acme","fact_type":"customer_status","claim":"signed contract"},"expected":true,"category":"status_change"}
+{"id":"sed_06","left":{"entity_name":"Stage 1","fact_type":"status","claim":"in progress"},"right":{"entity_name":"Stage 1","fact_type":"status","claim":"shipped"},"expected":true,"category":"status_change"}
+
+# ── role_change (expected: true) ────────────────────────────────────────
+{"id":"sed_07","left":{"entity_id":"person_alex_chen","entity_name":"Alex Chen","fact_type":"role","claim":"engineer"},"right":{"entity_id":"person_alex_chen","entity_name":"Alex Chen","fact_type":"role","claim":"tech lead"},"expected":true,"category":"role_change"}
+{"id":"sed_08","left":{"entity_name":"Tanaka VC","fact_type":"role","claim":"Series A lead"},"right":{"entity_name":"Tanaka VC","fact_type":"role","claim":"Series A co-lead"},"expected":true,"category":"role_change"}
+
+# ── cross-lingual conflict (expected: true) ────────────────────────────
+{"id":"sed_09","left":{"entity_name":"Q2 launch","fact_type":"scheduled_at","claim":"July 1"},"right":{"entity_name":"Q2 launch","fact_type":"scheduled_at","claim":"7月8日"},"expected":true,"category":"cross_lingual"}
+
+# ── different entity red herring (expected: false — NOT a conflict) ────
+{"id":"sed_10","left":{"entity_name":"deploy plan v3","fact_type":"scheduled_at","claim":"19:00 JST"},"right":{"entity_name":"deploy plan v4","fact_type":"scheduled_at","claim":"21:00 JST"},"expected":false,"category":"different_entity_red_herring"}
+{"id":"sed_11","left":{"entity_id":"person_alex_chen","entity_name":"Alex Chen","fact_type":"role","claim":"engineer"},"right":{"entity_id":"person_sam_park","entity_name":"Alex Chen","fact_type":"role","claim":"tech lead"},"expected":false,"category":"different_entity_red_herring"}
+
+# ── additive fact, NOT a conflict (expected: false) ────────────────────
+# These are facts that COULD coexist (e.g. multiple emails on same thread).
+{"id":"sed_12","left":{"entity_name":"deploy plan v3","fact_type":"approved_by","claim":"SRE on call"},"right":{"entity_name":"deploy plan v3","fact_type":"approved_by","claim":"engineering manager"},"expected":false,"category":"additive_fact"}
+{"id":"sed_13","left":{"entity_name":"Acme","fact_type":"contact","claim":"jane@acme.example"},"right":{"entity_name":"Acme","fact_type":"contact","claim":"john@acme.example"},"expected":false,"category":"additive_fact"}
+
+# ── same fact, no conflict (expected: false; this is is_same_fact territory) ──
+{"id":"sed_14","left":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"$10"},"right":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"USD 10 per month"},"expected":false,"category":"same_value_phrasing"}
+
+# ── different fact_type, same entity (expected: false; not the supersede case) ─
+{"id":"sed_15","left":{"entity_name":"Tanaka VC","fact_type":"deliverable_due","claim":"revenue_model_v2 by Friday"},"right":{"entity_name":"Tanaka VC","fact_type":"role","claim":"Series A lead"},"expected":false,"category":"different_fact_type"}

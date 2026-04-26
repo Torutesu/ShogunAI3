@@ -1,0 +1,14 @@
+# KIOKU eval — retrieval queries (10). Schema: kioku_eval::RetrievalQuery.
+# IDs in relevant_ids / irrelevant_ids reference nodes.jsonl.
+# `note` is human-readable rationale for the curator.
+
+{"query":"deploy plan","relevant_ids":["m_gm_01","m_meet_01"],"irrelevant_ids":["m_scr_01","m_ax_01"],"note":"deploy plan v3 thread + standup chunk; screen capture about Slack focus is noise."}
+{"query":"revenue model v2","relevant_ids":["m_user_attach_01","m_gm_04","m_meet_03","m_cal_03"],"irrelevant_ids":["m_scr_06","m_ax_03"],"note":"file + email + meeting + investor calendar event."}
+{"query":"BYOK monthly cap","relevant_ids":["m_user_05","m_dec_03","m_meet_06"],"irrelevant_ids":["m_scr_03","m_ax_04"],"note":"user note + decision + all-hands recap mention."}
+{"query":"snippet clipping in pack","relevant_ids":["m_user_01","m_meet_05"],"irrelevant_ids":["m_scr_04"],"note":"user idea + customer pain in interview."}
+{"query":"edge_type stage 4","relevant_ids":["m_dec_02","m_meet_04"],"irrelevant_ids":["m_scr_02","m_ax_02"],"note":"decision + arch review excerpt."}
+{"query":"Tanaka VC follow up","relevant_ids":["m_gm_04","m_cal_03","m_meet_03","m_ent_02"],"irrelevant_ids":["m_user_focus_01","m_scr_07"],"note":"email + calendar + meeting notes + entity node."}
+{"query":"capture pipeline outage","relevant_ids":["m_gm_03"],"irrelevant_ids":["m_scr_05","m_ax_05"],"note":"single email; screen captures about VSCode are unrelated."}
+{"query":"is_same_fact threshold","relevant_ids":["m_user_04"],"irrelevant_ids":["m_scr_08","m_ax_06"],"note":"only one user note about thresholds."}
+{"query":"decay weights initial values","relevant_ids":["m_user_03"],"irrelevant_ids":["m_scr_01","m_ax_01"],"note":"single capture note with the formula."}
+{"query":"Acme customer interview","relevant_ids":["m_cal_04","m_meet_05","m_ent_03"],"irrelevant_ids":["m_scr_02","m_telem_01"],"note":"calendar + meeting + entity."}

@@ -34,6 +34,17 @@ mod meeting_stt;
 mod memory_debug;
 mod memory_obs;
 mod memory_store;
+mod kioku_graph_schema;
+mod kioku_eval;
+mod decay;
+mod kioku_capture;
+mod mem_captures;
+mod extraction_jobs;
+mod cost_ledger;
+mod kioku_extraction;
+mod kioku_decision_graph;
+mod kioku_rules;
+mod kioku_graph_traversal;
 mod rollup_sync;
 mod summarizer_store;
 mod summarizer;
@@ -117,6 +128,13 @@ pub fn run() {
       calendar_sync::spawn_background_calendar_sync();
       connector_sync::spawn_background_connector_sync();
       rollup_sync::spawn_background_rollup_sync();
+      // KIOKU extraction worker (Phase 2 Stage 2). The thread runs from
+      // boot but each tick checks `kioku_graph.worker_enabled` so it stays
+      // idle until the user (or settings migration) flips the flag.
+      kioku_extraction::start_extraction_worker(app.handle().clone());
+      // Phase 2 Stage 3 (T8.2): warm the kioku_rules cache so the first
+      // chat / brief call doesn't pay a settings round-trip.
+      kioku_rules::reload_from_settings_now();
       progress_emitter::set_app_handle(app.handle().clone());
       Ok(())
     })
