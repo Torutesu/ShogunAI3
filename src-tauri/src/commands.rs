@@ -338,6 +338,69 @@ pub fn shogun_kioku_stage5_apply(payload: Value) -> Result<Value, String> {
   }))
 }
 
+/// List `edge_type_proposals` for the Stage 4 review UI.
+///
+/// Payload (all optional):
+/// ```jsonc
+/// { "only_unreviewed": true, "limit": 30 }
+/// ```
+/// `only_unreviewed = true` is the default — operators usually only want
+/// to act on rows the worker has freshly proposed. `limit = 0` returns
+/// every row.
+#[tauri::command]
+pub fn shogun_kioku_edge_type_proposals(payload: Value) -> Result<Value, String> {
+  let only_unreviewed = payload
+    .get("only_unreviewed")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(50)
+    .min(500) as usize;
+  let conn = memory_store::open_conn()?;
+  let rows = crate::kioku_edge_types::list_proposals(&conn, only_unreviewed, limit)?;
+  serde_json::to_value(&rows)
+    .map(|arr| json!({ "proposals": arr }))
+    .map_err(|e| e.to_string())
+}
+
+/// Stamp a review decision on an `edge_type_proposals` row.
+///
+/// Payload:
+/// ```jsonc
+/// {
+///   "edge_type": "discusses",
+///   "status": 1,                    // 0 unreview / 1 accept / 2 reject
+///   "note": "matches AMC schema"    // optional
+/// }
+/// ```
+#[tauri::command]
+pub fn shogun_kioku_edge_type_review(payload: Value) -> Result<Value, String> {
+  let edge_type = payload
+    .get("edge_type")
+    .and_then(|v| v.as_str())
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "edge_type is required".to_string())?;
+  let status = payload
+    .get("status")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "status is required (0=unreview, 1=accept, 2=reject)".to_string())?;
+  let note = payload
+    .get("note")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty());
+  let conn = memory_store::open_conn()?;
+  let n = crate::kioku_edge_types::set_review_status(&conn, edge_type, status, note)?;
+  Ok(json!({
+    "updated": n,
+    "edge_type": edge_type,
+    "status": status,
+  }))
+}
+
 fn fmt_decimal_commas(mut n: u64) -> String {
   if n == 0 {
     return "0".to_string();

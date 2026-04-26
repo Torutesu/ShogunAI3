@@ -469,6 +469,26 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'shogun_kioku_edge_type_proposals':
+      return {
+        ok: true,
+        data: {
+          proposals: [],
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_edge_type_review':
+      return {
+        ok: true,
+        data: {
+          updated: 0,
+          edge_type: (echo && echo.edge_type) || '',
+          status: (echo && echo.status) || 0,
+          stub: false,
+          echo,
+        },
+      };
     case 'shogun_kioku_backup_db':
       return {
         ok: true,

@@ -162,6 +162,8 @@ pub fn run() {
       commands::shogun_kioku_stage5_dry_run,
       commands::shogun_kioku_stage5_apply,
       commands::shogun_kioku_backup_db,
+      commands::shogun_kioku_edge_type_proposals,
+      commands::shogun_kioku_edge_type_review,
       commands::shogun_stats,
       commands::app_open_hummingbird,
       commands::app_create_share_link,

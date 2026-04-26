@@ -290,6 +290,22 @@
       };
     }
 
+    if (command === "shogun_kioku_edge_type_proposals") {
+      return {
+        proposals: [],
+        stub: false,
+        echo,
+      };
+    }
+    if (command === "shogun_kioku_edge_type_review") {
+      return {
+        updated: 0,
+        edge_type: (echo && echo.edge_type) || "",
+        status: (echo && echo.status) || 0,
+        stub: false,
+        echo,
+      };
+    }
     if (command === "shogun_kioku_backup_db") {
       return {
         source_path: "/mock/memory.db",

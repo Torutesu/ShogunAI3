@@ -59,6 +59,10 @@
       kiokuDebugStats: () => call("shogun_kioku_debug_stats", {}, READ),
       kiokuBackupDb: (input) =>
         call("shogun_kioku_backup_db", input || {}, WRITE),
+      kiokuEdgeTypeProposals: (input) =>
+        call("shogun_kioku_edge_type_proposals", input || {}, READ),
+      kiokuEdgeTypeReview: (input) =>
+        call("shogun_kioku_edge_type_review", input, WRITE),
       openPack: (input) => call("shogun_open_pack", input, WRITE),
       draftReply: (input) => call("shogun_draft_reply", input, WRITE),
       startFocusSession: (input) => call("shogun_start_focus_session", input, WRITE),
