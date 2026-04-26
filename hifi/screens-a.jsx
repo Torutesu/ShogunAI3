@@ -2154,10 +2154,10 @@ function ScreenMemory() {
   }, [withSemantic, activeKinds]);
   useEffect(() => {
     setScrubIdx((i) => {
-      if (events.length === 0) return 0;
-      return Math.min(i, events.length - 1);
+      if (riverEvents.length === 0) return 0;
+      return Math.min(i, riverEvents.length - 1);
     });
-  }, [events.length]);
+  }, [riverEvents.length]);
   // Reset day selection when the timeline span changes so the active card
   // always points to the last slot (most-recent day/month) in the new range.
   useEffect(() => {
@@ -2187,8 +2187,8 @@ function ScreenMemory() {
   }, [events]);
   const scrubbed = timelineLoading
     ? { t: '--', h: 12, src: 'note', title: '', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null }
-    : events.length
-      ? events[Math.min(scrubIdx, events.length - 1)]
+    : riverEvents.length
+      ? riverEvents[Math.min(scrubIdx, riverEvents.length - 1)]
       : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null };
   const srcIcon = s => s==='chat'?'chat':s==='meet'?'calendar':s==='note'?'note':s==='mail'?'mail':s==='agent'?'bot':s==='code'?'terminal':'file';
   const srcLabel = s => ({chat:'Conversation',meet:'Meeting',note:'Note',mail:'Email',agent:'Agent run',code:'Code'})[s]||'Event';
@@ -2694,7 +2694,7 @@ function ScreenMemory() {
                 </span>
               );
             })()}
-            {events.length > 0 && !timelineLoading && (
+            {riverEvents.length > 0 && !timelineLoading && (
               <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:4}}>
                 <button
                   type="button"
@@ -2704,12 +2704,7 @@ function ScreenMemory() {
                   style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx === 0 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx === 0 ? 0.35 : 1}}
                 ><Icon name="chevronLeft" size={11}/></button>
                 <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'0 2px'}}>
-                  {Math.min(scrubIdx + 1, events.length)} / {events.length}
-                  {rawEvents.length > events.length && (
-                    <span style={{marginLeft:6, color:'var(--text-mute)'}} title="Low-priority items hidden. Toggle in Filters to show.">
-                      (+{rawEvents.length - events.length})
-                    </span>
-                  )}
+                  {Math.min(scrubIdx + 1, riverEvents.length)} / {riverEvents.length}
                   {batchSummarizing > 0 && (
                     <span style={{marginLeft:8, color:'var(--gold)'}} title={`Summarizing ${batchSummarizing} item(s)…`}>
                       · summarizing {batchSummarizing}
@@ -2719,9 +2714,9 @@ function ScreenMemory() {
                 <button
                   type="button"
                   aria-label="Next memory"
-                  onClick={() => setScrubIdx((i) => Math.min(events.length - 1, i + 1))}
-                  disabled={scrubIdx >= events.length - 1}
-                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx >= events.length - 1 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx >= events.length - 1 ? 0.35 : 1}}
+                  onClick={() => setScrubIdx((i) => Math.min(riverEvents.length - 1, i + 1))}
+                  disabled={scrubIdx >= riverEvents.length - 1}
+                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx >= riverEvents.length - 1 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx >= riverEvents.length - 1 ? 0.35 : 1}}
                 ><Icon name="chevronRight" size={11}/></button>
               </div>
             )}
@@ -2742,7 +2737,62 @@ function ScreenMemory() {
               </p>
             </>
           )}
-          {!timelineLoading && (
+          {!timelineLoading && scrubbed && scrubbed.kind === 'low_cluster' && (
+            <div
+              className="memory-summary-card"
+              role="button"
+              tabIndex={0}
+              aria-expanded={lowClusterExpanded}
+              aria-controls="low-cluster-items"
+              onClick={() => setLowClusterExpanded((v) => !v)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setLowClusterExpanded((v) => !v);
+                }
+              }}
+              style={{
+                display:'flex', flexDirection:'column', gap:10,
+                marginBottom:14,
+                borderLeft:'2px solid var(--border)',
+                paddingLeft:14,
+                cursor:'pointer',
+                userSelect:'none',
+              }}
+            >
+              <div style={{display:'flex', alignItems:'center', gap:10}}>
+                <span style={{
+                  display:'inline-flex',
+                  transform: lowClusterExpanded ? 'rotate(90deg)' : 'none',
+                  transition: 'transform 120ms',
+                }}>
+                  <Icon name="chevronRight" size={14}/>
+                </span>
+                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3}}>
+                  <span className="en-only">Other · {scrubbed.count} items</span>
+                  <span className="jp">その他 · {scrubbed.count}件</span>
+                </div>
+                <span className="t-mono" style={{marginLeft:'auto', fontSize:9, color:'var(--text-dim)', letterSpacing:'0.12em', padding:'2px 6px', border:'1px solid var(--border)', borderRadius:4}}>
+                  <span className="en-only">LOW</span>
+                  <span className="jp">低優先</span>
+                </span>
+              </div>
+              <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.5}}>
+                {lowClusterExpanded ? (
+                  <>
+                    <span className="en-only">Use → to step through items, or click to collapse.</span>
+                    <span className="jp">→ で順送り、もう一度クリックで畳めます。</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="en-only">Click to expand and step through {scrubbed.count} low-priority items.</span>
+                    <span className="jp">クリックで展開し、{scrubbed.count}件の低優先メモリを順に見ます。</span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && (
             <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
               {scrubbed.memoryId && (
                 <span className="label">index</span>
@@ -2760,7 +2810,7 @@ function ScreenMemory() {
               )}
             </div>
           )}
-          {!timelineLoading && scrubSummary && !showRaw && (() => {
+          {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && scrubSummary && !showRaw && (() => {
             const effPriority = scrubSummary.userPriority || scrubSummary.priority;
             const pinned = !!scrubSummary.userPriority;
             const setPinPriority = async (tier) => {
@@ -2885,7 +2935,7 @@ function ScreenMemory() {
               <span className="jp">要約を生成中…</span>
             </div>
           )}
-          {!timelineLoading && (showRaw || (!scrubSummary && !scrubSummaryLoading)) && (
+          {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && (showRaw || (!scrubSummary && !scrubSummaryLoading)) && (
             <>
               <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
                 {renderHighlighted(scrubbed.titleHighlight || scrubbed.title)}
@@ -2900,7 +2950,7 @@ function ScreenMemory() {
               <div style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap', maxHeight:320, overflowY:'auto', wordBreak:'break-word'}}>
                 {scrubbed.snippetHighlight
                   ? renderHighlighted(scrubbed.snippetHighlight)
-                  : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')}
+                  : scrubbed.snippet || (riverEvents.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')}
               </div>
               {scrubSummary && (
                 <div style={{marginBottom:16}}>
@@ -3093,7 +3143,7 @@ function ScreenMemory() {
             </span>
           </div>
           <div style={{flex:1, padding:'18px 22px', display:'flex', flexDirection:'column', gap:14, minHeight:280, overflowY:'auto'}}>
-            {scrubbed.memoryId ? (
+            {scrubbed.memoryId && scrubbed.kind !== 'low_cluster' ? (
               <>
                 <div style={{display:'grid', gridTemplateColumns:'110px 1fr', rowGap:10, columnGap:12, fontSize:12}}>
                   <span className="t-mono" style={{color:'var(--text-dim)'}}>Source</span>
