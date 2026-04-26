@@ -288,6 +288,19 @@
       echo: echo,
     });
 
+    // Mock-only: derive a stable LOW/MEDIUM/HIGH from the item id so the
+    // River cluster UI has something to render. Real backend ignores this.
+    const mockPriorityForId = (id) => {
+      const s = String(id || '');
+      if (!s) return 'medium';
+      const last = s.charCodeAt(s.length - 1);
+      // ~25% LOW, ~25% HIGH, ~50% MEDIUM
+      const m = last % 4;
+      if (m === 0) return 'low';
+      if (m === 1) return 'high';
+      return 'medium';
+    };
+
     switch (command) {
       case "app_integration_connect":
       case "app_integration_toggle":
@@ -499,7 +512,7 @@
             title: "Stub summary",
             keyPoints: ["This is a mocked summary"],
             sourceType: "mail",
-            priority: "medium",
+            priority: mockPriorityForId((echo && echo.targetId) || "m_stub"),
             reason: "mock",
             model: "mock",
             schemaVersion: 1,
@@ -515,7 +528,7 @@
             title: `Stub: ${(it && it.title) || "untitled"}`,
             keyPoints: ["mock point"],
             sourceType: "mail",
-            priority: "medium",
+            priority: mockPriorityForId((it && it.id) || "m_stub"),
             reason: "mock",
             model: "mock",
             schemaVersion: 1,
