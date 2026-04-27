@@ -34,8 +34,17 @@ jobs:
       - name: IPC mock sync check
         run: npm run check:ipc-mock
 
+      - name: OAuth helper syntax check
+        run: node --check scripts/oauth-google.mjs
+
+      - name: OAuth helper help smoke
+        run: node scripts/oauth-google.mjs --help
+
       - name: Cargo check (Tauri / Rust)
         run: npm run check:rust
+
+      - name: Cargo test (Tauri / Rust)
+        run: npm run test:rust
 
       - name: Sync web-dist bundle
         run: npm run build:web-dist
