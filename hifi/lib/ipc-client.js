@@ -288,6 +288,22 @@
       echo: echo,
     });
 
+    // Mock-only: derive a stable LOW/MEDIUM/HIGH from the item id so the
+    // River cluster UI has something to render. Real backend ignores this.
+    const mockPriorityForId = (id) => {
+      if (!id) return 'medium';
+      const s = String(id);
+      const last = s.charCodeAt(s.length - 1);
+      // Uniform-alphabet target: ~25% LOW, ~25% HIGH, ~50% MEDIUM.
+      // Demo seed uses decimal-digit suffixes (demo-m-01..12), so the
+      // realized split is closer to 30/30/40 — enough to populate the
+      // cluster UI with all three tiers.
+      const m = last % 4;
+      if (m === 0) return 'low';
+      if (m === 1) return 'high';
+      return 'medium';
+    };
+
     switch (command) {
       case "app_integration_connect":
       case "app_integration_toggle":
@@ -499,7 +515,7 @@
             title: "Stub summary",
             keyPoints: ["This is a mocked summary"],
             sourceType: "mail",
-            priority: "medium",
+            priority: mockPriorityForId((echo && echo.targetId) || "m_stub"),
             reason: "mock",
             model: "mock",
             schemaVersion: 1,
@@ -515,7 +531,7 @@
             title: `Stub: ${(it && it.title) || "untitled"}`,
             keyPoints: ["mock point"],
             sourceType: "mail",
-            priority: "medium",
+            priority: mockPriorityForId((it && it.id) || "m_stub"),
             reason: "mock",
             model: "mock",
             schemaVersion: 1,
