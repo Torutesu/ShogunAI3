@@ -1291,13 +1291,34 @@ function ScreenAgents() {
   const [editModalAgentId, setEditModalAgentId] = React.useState(null);
   const [sourceAgents] = React.useState(() => AGENTS_DEMO);
   const [agentOverrides, setAgentOverrides] = React.useState({});
+  // Settings cache for the paused-overlay. Re-fetched whenever
+  // settingsTick increments (e.g., after Pause/Resume save).
+  const [settings, setSettings] = React.useState(null);
+  const [settingsTick, setSettingsTick] = React.useState(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
+      if (cancelled) return;
+      if (r?.ok && r.data?.settings?.sections) setSettings(r.data.settings.sections);
+    });
+    return () => { cancelled = true; };
+  }, [settingsTick]);
 
   const effectiveAgents = React.useMemo(() => {
     return sourceAgents.map((a) => {
       const o = agentOverrides[a.id];
-      return o ? { ...a, ...o } : a;
+      let merged = o ? { ...a, ...o } : a;
+      const def = AGENT_RUNTIME[a.id];
+      if (def && settings) {
+        const [section, key] = def.pausedSettingPath;
+        const enabled = settings[section]?.[key];
+        if (enabled === false) {
+          merged = { ...merged, status: 'paused', paused: true };
+        }
+      }
+      return merged;
     });
-  }, [agentOverrides, sourceAgents]);
+  }, [agentOverrides, sourceAgents, settings]);
 
   const [expandedIds, setExpandedIds] = React.useState(() => new Set());
   const toggleExpanded = React.useCallback((id) => {
