@@ -751,11 +751,54 @@ const AGENTS_DEMO = [
     lastRunMs: AGENTS_DEMO_NOW - 2 * HOUR,
     nextRunMs: AGENTS_DEMO_NOW + 0.5 * HOUR,
     recentRuns: [
-      { t: '14:31', msg: 'Read 3 emails · drafted 1 reply', level: 'success' },
-      { t: '12:31', msg: 'Polled inbox · no new priority', level: 'info' },
-      { t: '10:31', msg: 'Read 5 emails · drafted 2 replies', level: 'success' },
-      { t: '08:31', msg: 'Auth refresh · token rotated', level: 'info' },
-      { t: '06:31', msg: 'Read 1 email · no draft needed', level: 'success' },
+      {
+        id: 'inbox-triage-r-1', atMs: AGENTS_DEMO_NOW - 2 * HOUR,
+        t: '14:31', msg: 'Read 3 emails · drafted 1 reply', level: 'success',
+        durationMs: 1200, tools: ['gmail', 'memory'],
+        input: 'Sweep Gmail inbox since 12:31',
+        output: 'Found 3 unread, 1 priority (Yuito).\nDrafted reply to Yuito\'s "Re: All-Strategy".\nSkipped 2 newsletters.',
+        memoryTouched: [
+          { id: 'm_1779381', title: 'Yuito · Re: All-Strategy' },
+          { id: 'm_1779380', title: 'MarkeZine News', note: 'skipped' },
+        ],
+      },
+      {
+        id: 'inbox-triage-r-2', atMs: AGENTS_DEMO_NOW - 4 * HOUR,
+        t: '12:31', msg: 'Polled inbox · no new priority', level: 'info',
+        durationMs: 800, tools: ['gmail'],
+        input: 'Sweep Gmail inbox since 10:31',
+        output: 'Inbox empty since last sweep.',
+        memoryTouched: [],
+      },
+      {
+        id: 'inbox-triage-r-3', atMs: AGENTS_DEMO_NOW - 6 * HOUR,
+        t: '10:31', msg: 'Read 5 emails · drafted 2 replies', level: 'success',
+        durationMs: 1500, tools: ['gmail', 'memory'],
+        input: 'Sweep Gmail inbox since 08:31',
+        output: 'Found 5 unread, 2 priorities.\nDrafted reply to Akiko ("RE: PR review").\nDrafted reply to Mei ("Schedule check").',
+        memoryTouched: [
+          { id: 'm_1779370', title: 'Akiko · RE: PR review' },
+          { id: 'm_1779369', title: 'Mei · Schedule check' },
+        ],
+      },
+      {
+        id: 'inbox-triage-r-4', atMs: AGENTS_DEMO_NOW - 8 * HOUR,
+        t: '08:31', msg: 'Auth refresh · token rotated', level: 'info',
+        durationMs: 400, tools: ['gmail'],
+        input: 'Token expiring in 5min — refresh',
+        output: 'OAuth refresh succeeded.\nNew token expires 2026-04-27T20:31Z.',
+        memoryTouched: [],
+      },
+      {
+        id: 'inbox-triage-r-5', atMs: AGENTS_DEMO_NOW - 10 * HOUR,
+        t: '06:31', msg: 'Read 1 email · no draft needed', level: 'success',
+        durationMs: 700, tools: ['gmail', 'memory'],
+        input: 'Sweep Gmail inbox since 04:31',
+        output: 'Found 1 unread (newsletter).\nMatched memory: similar low-priority pattern.\nNo draft generated.',
+        memoryTouched: [
+          { id: 'm_1779360', title: 'Daily newsletter', note: 'low-priority' },
+        ],
+      },
     ],
   },
   {
@@ -770,8 +813,27 @@ const AGENTS_DEMO = [
     lastRunMs: AGENTS_DEMO_NOW - 12 * HOUR,
     nextRunMs: null,
     recentRuns: [
-      { t: '02:30', msg: 'Processed "All PJ" meeting · 6 decisions extracted', level: 'success' },
-      { t: '01:00', msg: 'Calendar event captured · linked to "Yuito" entity', level: 'info' },
+      {
+        id: 'meeting-notes-r-1', atMs: AGENTS_DEMO_NOW - 12 * HOUR,
+        t: '02:30', msg: 'Processed "All PJ" meeting · 6 decisions extracted', level: 'success',
+        durationMs: 4200, tools: ['calendar', 'memory'],
+        input: 'Calendar event end-trigger: "All PJ" 02:00-02:30',
+        output: '6 decisions extracted.\nLinked to entities: Yuito, Mei, Akiko.\nFollow-ups due: 2 (assigned to Yuito by Friday).',
+        memoryTouched: [
+          { id: 'm_1779350', title: 'All PJ · 6 decisions' },
+          { id: 'm_1779351', title: 'Follow-up · Yuito · Friday' },
+        ],
+      },
+      {
+        id: 'meeting-notes-r-2', atMs: AGENTS_DEMO_NOW - 13.5 * HOUR,
+        t: '01:00', msg: 'Calendar event captured · linked to "Yuito" entity', level: 'info',
+        durationMs: 1800, tools: ['calendar', 'memory'],
+        input: 'Calendar event start: "1:1 Yuito" 01:00-01:30',
+        output: 'Pre-meeting brief generated.\nLinked to "Yuito" entity (3 prior touches).',
+        memoryTouched: [
+          { id: 'm_1779340', title: '1:1 Yuito · pre-brief' },
+        ],
+      },
     ],
   },
   {
@@ -786,8 +848,26 @@ const AGENTS_DEMO = [
     lastRunMs: AGENTS_DEMO_NOW - 17 * HOUR,
     nextRunMs: AGENTS_DEMO_NOW + 6.5 * HOUR,
     recentRuns: [
-      { t: '21:00', msg: 'Wrote daily digest · 14 highlights', level: 'success' },
-      { t: '07:00', msg: 'Morning brief · 4 priorities surfaced', level: 'success' },
+      {
+        id: 'daily-digest-r-1', atMs: AGENTS_DEMO_NOW - 17 * HOUR,
+        t: '21:00', msg: 'Wrote daily digest · 14 highlights', level: 'success',
+        durationMs: 8500, tools: ['memory', 'note'],
+        input: 'Synthesize 2026-04-26 (memory window: 00:00-21:00)',
+        output: '14 highlights extracted.\nThemes: Inbox triage tuning, KIOKU phase 2 review.\nWritten to note: "Daily 2026-04-26".',
+        memoryTouched: [
+          { id: 'm_1779300', title: 'Daily 2026-04-26' },
+        ],
+      },
+      {
+        id: 'daily-digest-r-2', atMs: AGENTS_DEMO_NOW - 31 * HOUR,
+        t: '07:00', msg: 'Morning brief · 4 priorities surfaced', level: 'success',
+        durationMs: 6100, tools: ['memory', 'note'],
+        input: 'Generate morning brief for 2026-04-26',
+        output: '4 priorities for today.\nP1: Yuito sync · 14:00\nP2: Memory rollup polish\nP3: Agents UI review\nP4: Inbox catch-up',
+        memoryTouched: [
+          { id: 'm_1779290', title: 'Morning brief 2026-04-26' },
+        ],
+      },
     ],
   },
   {
@@ -802,7 +882,16 @@ const AGENTS_DEMO = [
     lastRunMs: AGENTS_DEMO_NOW - 4 * 24 * HOUR,
     nextRunMs: AGENTS_DEMO_NOW + 3 * 24 * HOUR,
     recentRuns: [
-      { t: 'Sun 10:00', msg: 'Drafted retro · 3 decisions, 2 risks flagged', level: 'success' },
+      {
+        id: 'weekly-review-r-1', atMs: AGENTS_DEMO_NOW - 4 * 24 * HOUR,
+        t: 'Sun 10:00', msg: 'Drafted retro · 3 decisions, 2 risks flagged', level: 'success',
+        durationMs: 12300, tools: ['memory', 'note', 'calendar'],
+        input: 'Synthesize week of 2026-04-13 to 2026-04-19',
+        output: '3 decisions:\n- Adopt KIOKU phase 2 schema\n- Defer multi-provider LLM to v0.5\n- Promote Memory digest to default-on\n\n2 risks flagged:\n- LLM cost trending +20% W/W\n- Inbox triage success rate dropped 8%\n\nDrafted retro: "Week 2026-04-13"',
+        memoryTouched: [
+          { id: 'm_1779100', title: 'Week 2026-04-13 retro' },
+        ],
+      },
     ],
   },
 ];
