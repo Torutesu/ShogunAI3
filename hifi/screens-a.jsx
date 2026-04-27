@@ -375,6 +375,10 @@ function ScreenHome() {
   const [entityRollupCache, setEntityRollupCache] = useState({}); // { [entityId]: { rollup, loading } }
   const [memoryTotal, setMemoryTotal] = useState(null);
   const [sliSnapshot, setSliSnapshot] = useState(null);
+  const [sliThresholds, setSliThresholds] = useState({
+    bad: { successLt: 95, p95Gt: 3000, backlogGt: 40 },
+    warn: { successLt: 99, p95Gt: 1500, backlogGt: 15 },
+  });
   const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
   const [homeInput, setHomeInput] = useState('');
@@ -424,14 +428,24 @@ function ScreenHome() {
     const success = Number(sliSnapshot.successRate || 0);
     const p95 = Number(sliSnapshot.p95LatencyMs || 0);
     const backlog = Number(sliSnapshot.backlog || 0);
-    if (success < 95 || p95 > 3000 || backlog > 40) {
+    const bad = sliThresholds.bad || {};
+    const warn = sliThresholds.warn || {};
+    if (
+      success < Number(bad.successLt || 95) ||
+      p95 > Number(bad.p95Gt || 3000) ||
+      backlog > Number(bad.backlogGt || 40)
+    ) {
       return {
         fg: 'var(--danger)',
         border: 'color-mix(in srgb, var(--danger) 55%, var(--border) 45%)',
         bg: 'color-mix(in srgb, var(--danger) 9%, var(--surface) 91%)',
       };
     }
-    if (success < 99 || p95 > 1500 || backlog > 15) {
+    if (
+      success < Number(warn.successLt || 99) ||
+      p95 > Number(warn.p95Gt || 1500) ||
+      backlog > Number(warn.backlogGt || 15)
+    ) {
       return {
         fg: 'var(--warn)',
         border: 'color-mix(in srgb, var(--warn) 55%, var(--border) 45%)',
@@ -443,7 +457,7 @@ function ScreenHome() {
       border: 'color-mix(in srgb, var(--success) 55%, var(--border) 45%)',
       bg: 'color-mix(in srgb, var(--success) 10%, var(--surface) 90%)',
     };
-  }, [sliSnapshot]);
+  }, [sliSnapshot, sliThresholds]);
 
   /* Local clock only — no API/LLM cost. Hourly + tab refocus keeps greeting/date in sync without waking every minute. */
   useEffect(() => {
@@ -525,6 +539,22 @@ function ScreenHome() {
       }
       const llm = r.data.settings.sections.llm;
       if (llm && llm.model != null) setModelHint(String(llm.model));
+      const obs = r.data.settings.sections.observability;
+      const t = obs && obs.sliThresholds;
+      if (t && typeof t === 'object') {
+        setSliThresholds({
+          bad: {
+            successLt: Number(t.bad?.successLt ?? 95),
+            p95Gt: Number(t.bad?.p95Gt ?? 3000),
+            backlogGt: Number(t.bad?.backlogGt ?? 40),
+          },
+          warn: {
+            successLt: Number(t.warn?.successLt ?? 99),
+            p95Gt: Number(t.warn?.p95Gt ?? 1500),
+            backlogGt: Number(t.warn?.backlogGt ?? 15),
+          },
+        });
+      }
     });
     return () => { cancelled = true; };
   }, []);

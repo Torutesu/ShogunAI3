@@ -99,6 +99,10 @@ function TabQueryTester() {
 function TabKiokuStats() {
   const [data, setData] = useState(null);
   const [sli, setSli] = useState(null);
+  const [sliThresholds, setSliThresholds] = useState({
+    bad: { successLt: 95, p95Gt: 3000, backlogGt: 40 },
+    warn: { successLt: 99, p95Gt: 1500, backlogGt: 15 },
+  });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -114,6 +118,22 @@ function TabKiokuStats() {
       setData(r);
       const s = await invoke("shogun_stats", { payload: { stage: "sli" } });
       setSli((s && s.sli) || null);
+      const settings = await invoke("app_settings_load", { payload: {} });
+      const t = settings?.settings?.sections?.observability?.sliThresholds;
+      if (t && typeof t === "object") {
+        setSliThresholds({
+          bad: {
+            successLt: Number(t.bad?.successLt ?? 95),
+            p95Gt: Number(t.bad?.p95Gt ?? 3000),
+            backlogGt: Number(t.bad?.backlogGt ?? 40),
+          },
+          warn: {
+            successLt: Number(t.warn?.successLt ?? 99),
+            p95Gt: Number(t.warn?.p95Gt ?? 1500),
+            backlogGt: Number(t.warn?.backlogGt ?? 15),
+          },
+        });
+      }
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -157,9 +177,11 @@ function TabKiokuStats() {
   const sliSuccess = Number(sli && sli.successRate ? sli.successRate : 0);
   const sliP95 = Number(sli && sli.p95LatencyMs ? sli.p95LatencyMs : 0);
   const sliBacklog = Number(sli && sli.backlog ? sli.backlog : 0);
-  const sliTone = sliSuccess < 95 || sliP95 > 3000 || sliBacklog > 40
+  const bad = sliThresholds.bad || {};
+  const warn = sliThresholds.warn || {};
+  const sliTone = sliSuccess < Number(bad.successLt || 95) || sliP95 > Number(bad.p95Gt || 3000) || sliBacklog > Number(bad.backlogGt || 40)
     ? "bad"
-    : (sliSuccess < 99 || sliP95 > 1500 || sliBacklog > 15 ? "warn" : "good");
+    : (sliSuccess < Number(warn.successLt || 99) || sliP95 > Number(warn.p95Gt || 1500) || sliBacklog > Number(warn.backlogGt || 15) ? "warn" : "good");
 
   const statusBadge = (label, on) => (
     <span className={`mdbg-badge mdbg-badge-${on ? "on" : "off"}`}>{label}</span>
