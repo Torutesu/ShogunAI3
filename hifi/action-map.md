@@ -151,6 +151,11 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `lesson.capture.rejection`
 - `lesson.capture.tool_failure`
 - `patterns.run_now`
+- `patterns.list`
+- `patterns.invalidate`
+- `lessons.list`
+- `lessons.archive`
+- `lessons.stats`
 - `kioku.backup_db`
 - `kioku.edge_type_proposals`
 - `kioku.edge_type_review`
