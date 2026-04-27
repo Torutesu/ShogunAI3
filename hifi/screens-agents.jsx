@@ -1377,6 +1377,29 @@ function ScreenAgents() {
     }
   }, [effectiveAgents]);
 
+  const togglePauseAgent = React.useCallback(async (agentId) => {
+    const agent = effectiveAgents.find((a) => a.id === agentId);
+    const def = AGENT_RUNTIME[agentId];
+    if (!agent || !def) return;
+    const [section, key] = def.pausedSettingPath;
+    const currentEnabled = settings?.[section]?.[key];
+    const nextEnabled = currentEnabled === false ? true : false;
+
+    const patch = { section, [key]: nextEnabled };
+    const res = await runRuntimeActionA('settings.save', patch, { silentError: true });
+    if (res?.ok) {
+      setSettingsTick((n) => n + 1);
+      window.SHOGUN_RUNTIME?.pushToast?.(
+        nextEnabled
+          ? `${agent.name} resumed`
+          : `${agent.name} paused — background work halted`,
+        'info',
+      );
+    } else {
+      window.SHOGUN_RUNTIME?.pushToast?.(`Failed to update ${agent.name}`, 'warn');
+    }
+  }, [effectiveAgents, settings]);
+
   React.useEffect(() => {
     let cancelled = false;
     void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
