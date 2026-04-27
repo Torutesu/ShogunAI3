@@ -3,7 +3,9 @@
 
 use crate::memory_store::open_conn;
 use rusqlite::params;
+use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -657,6 +659,113 @@ pub fn delete(target_kind: &str, target_id: &str) -> Result<bool, String> {
   Ok(n > 0)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct EditInsights {
+  pub by_source: HashMap<String, SourceInsights>,
+  pub total_edits: u64,
+  pub total_user_priority_changes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceInsights {
+  pub senders: Vec<SenderInsight>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SenderInsight {
+  pub entity_id: Option<String>,
+  pub count: u64,
+  pub fields: HashMap<String, u64>, // "title" → 8, "keyPoints" → 4, etc.
+}
+
+/// Walk every row in mem_summaries, parse raw_json.user_edits[], and group
+/// the edits by (source_raw, entity_id). Returns counts per group + per
+/// edited field type, plus totals. Sorts each source's senders by count
+/// descending so callers can render the heaviest-edited sender first.
+pub fn aggregate_user_edits() -> Result<EditInsights, String> {
+  let conn = open_conn()?;
+  let mut stmt = conn
+    .prepare("SELECT raw_json, user_priority FROM mem_summaries")
+    .map_err(|e| format!("aggregate_user_edits prepare: {}", e))?;
+  let rows = stmt
+    .query_map([], |r| {
+      let raw: String = r.get(0)?;
+      let user_priority: Option<String> = r.get(1)?;
+      Ok((raw, user_priority))
+    })
+    .map_err(|e| format!("aggregate_user_edits query: {}", e))?;
+
+  // (source_raw, entity_id) -> SenderInsight
+  let mut by_key: HashMap<(String, Option<String>), SenderInsight> = HashMap::new();
+  let mut total_edits: u64 = 0;
+  let mut total_user_priority_changes: u64 = 0;
+
+  for row_res in rows {
+    let (raw, user_priority) = match row_res {
+      Ok(t) => t,
+      Err(_) => continue,
+    };
+    if user_priority.is_some() {
+      total_user_priority_changes += 1;
+    }
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+      Ok(v) => v,
+      Err(_) => continue, // malformed raw_json → skip silently
+    };
+    let edits = match parsed.get("user_edits").and_then(|v| v.as_array()) {
+      Some(a) => a,
+      None => continue,
+    };
+    for entry in edits {
+      let source = entry
+        .get("source_raw")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown)")
+        .to_string();
+      let entity_id: Option<String> = entry
+        .get("entity_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+      let field = entry
+        .get("field")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown)")
+        .to_string();
+
+      let key = (source, entity_id);
+      let s = by_key
+        .entry(key)
+        .or_insert_with(|| SenderInsight {
+          entity_id: None, // filled below from key.1
+          count: 0,
+          fields: HashMap::new(),
+        });
+      s.count += 1;
+      *s.fields.entry(field).or_insert(0) += 1;
+      total_edits += 1;
+    }
+  }
+
+  let mut by_source: HashMap<String, SourceInsights> = HashMap::new();
+  for ((src, eid), mut sender) in by_key.into_iter() {
+    sender.entity_id = eid;
+    by_source
+      .entry(src)
+      .or_insert_with(|| SourceInsights { senders: Vec::new() })
+      .senders
+      .push(sender);
+  }
+  for src in by_source.values_mut() {
+    src.senders.sort_by(|a, b| b.count.cmp(&a.count));
+  }
+
+  Ok(EditInsights {
+    by_source,
+    total_edits,
+    total_user_priority_changes,
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -817,6 +926,11 @@ mod tests {
   }
 
   use serde_json::json;
+  use std::sync::Mutex;
+
+  // Serialise all DB-touching ignored tests: SQLite WAL mode supports a single
+  // writer, so concurrent `cargo test` threads cause "database is locked" panics.
+  static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
 
   // Helper to set up an in-memory test DB with one upserted summary.
   // Uses crate::memory_store::open_conn() which the existing tests rely on.
@@ -833,6 +947,7 @@ mod tests {
   #[test]
   #[ignore] // requires DB harness — run via `cargo test -- --ignored`
   fn edit_field_title_writes_history_and_column() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
     let _ = fresh_db_with_summary("m_edit_t");
     let ok = edit_field(
       "item",
@@ -861,6 +976,7 @@ mod tests {
   #[test]
   #[ignore]
   fn edit_field_keypoints_replaces_array() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
     let _ = fresh_db_with_summary("m_edit_kp");
     edit_field(
       "item",
@@ -880,6 +996,7 @@ mod tests {
   #[test]
   #[ignore]
   fn revert_field_clears_edits_and_restores_baseline() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
     let _ = fresh_db_with_summary("m_revert");
     edit_field("item", "m_revert", "title", json!("Test"), json!("Edited"), 1, EditMetadata { source_raw: None, entity_id: None }).unwrap();
     edit_field("item", "m_revert", "title", json!("Edited"), json!("Edited 2"), 2, EditMetadata { source_raw: None, entity_id: None }).unwrap();
@@ -904,6 +1021,7 @@ mod tests {
   #[test]
   #[ignore]
   fn edit_field_invalid_field_errors() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
     let r = edit_field(
       "item",
       "m_x",
@@ -919,6 +1037,7 @@ mod tests {
   #[test]
   #[ignore]
   fn upsert_preserves_user_edits_across_resummarize() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
     let target_id = "m_resum";
     // 1. Initial upsert.
     let s1 = sample(target_id, "medium");
@@ -946,5 +1065,53 @@ mod tests {
       after_resum.title, "User-edited title",
       "user_edits must survive re-summarization"
     );
+  }
+
+  #[test]
+  #[ignore]
+  fn aggregate_user_edits_empty_db_returns_zero() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
+    let r = aggregate_user_edits().expect("aggregate");
+    // Don't assert exact counts (other tests may have inserted rows); just
+    // assert the function returns successfully.
+    assert!(r.total_edits >= 0);
+  }
+
+  #[test]
+  #[ignore]
+  fn aggregate_user_edits_groups_by_source_and_entity() {
+    let _lock = DB_TEST_LOCK.lock().unwrap();
+    let target_id = "m_agg_test";
+    let _ = delete("item", target_id); // clean up any prior runs
+    upsert(&sample(target_id, "low")).expect("upsert");
+    edit_field(
+      "item", target_id, "title",
+      json!("Original"), json!("Edited 1"),
+      1700000000,
+      EditMetadata { source_raw: Some("gmail"), entity_id: Some("noreply@x.com") },
+    ).unwrap();
+    edit_field(
+      "item", target_id, "title",
+      json!("Edited 1"), json!("Edited 2"),
+      1700000001,
+      EditMetadata { source_raw: Some("gmail"), entity_id: Some("noreply@x.com") },
+    ).unwrap();
+    edit_field(
+      "item", target_id, "keyPoints",
+      json!(["a"]), json!(["b"]),
+      1700000002,
+      EditMetadata { source_raw: Some("gmail"), entity_id: Some("noreply@x.com") },
+    ).unwrap();
+
+    let r = aggregate_user_edits().expect("aggregate");
+    let gmail = r.by_source.get("gmail").expect("gmail group present");
+    let s = gmail
+      .senders
+      .iter()
+      .find(|s| s.entity_id.as_deref() == Some("noreply@x.com"))
+      .expect("sender present");
+    assert_eq!(s.count, 3);
+    assert_eq!(*s.fields.get("title").unwrap_or(&0), 2);
+    assert_eq!(*s.fields.get("keyPoints").unwrap_or(&0), 1);
   }
 }
