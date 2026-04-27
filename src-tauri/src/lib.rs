@@ -119,6 +119,9 @@ pub fn run() {
       connector_sync::spawn_background_connector_sync();
       rollup_sync::spawn_background_rollup_sync();
       progress_emitter::set_app_handle(app.handle().clone());
+      if let Err(e) = crate::heuristics_config::init(&app.handle()) {
+        log::warn!("heuristics config init failed: {}", e);
+      }
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
