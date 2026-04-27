@@ -52,6 +52,19 @@ function ScreenChat() {
   const dragDepthRef = useRefB(0);
   const fileInputRef = useRefB(null);
 
+  function formatFreshness(createdAt) {
+    const t = Number(createdAt);
+    if (!Number.isFinite(t) || t <= 0) return null;
+    const ageMs = Date.now() - t;
+    if (ageMs < 0) return 'future';
+    const mins = Math.floor(ageMs / (60 * 1000));
+    if (mins < 60) return `${mins}m`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(hours / 24);
+    return `${days}d`;
+  }
+
   useEffectB(() => {
     let cancelled = false;
     (async () => {
@@ -511,6 +524,19 @@ function ScreenChat() {
                 <div key={(h && h.id) || ('mch-' + i)} className="memory-context-hit">
                   <div className="memory-context-hit-head">
                     <span className="memory-context-hit-tag">{prov}</span>
+                    {h && h.source && (
+                      <span className="memory-context-hit-tag" style={{ opacity: 0.8 }}>
+                        src:{String(h.source)}
+                      </span>
+                    )}
+                    {(() => {
+                      const fresh = h ? formatFreshness(h.created_at) : null;
+                      return fresh ? (
+                        <span className="memory-context-hit-tag" style={{ opacity: 0.8 }}>
+                          {fresh}
+                        </span>
+                      ) : null;
+                    })()}
                     <span className="memory-context-hit-title">
                       {window.ShogunHighlight ? window.ShogunHighlight.renderHighlighted(titleSrc) : titleSrc}
                     </span>
