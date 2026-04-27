@@ -98,6 +98,7 @@ function TabQueryTester() {
 
 function TabKiokuStats() {
   const [data, setData] = useState(null);
+  const [sli, setSli] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -111,6 +112,8 @@ function TabKiokuStats() {
       }
       const r = await invoke("shogun_kioku_debug_stats", { payload: {} });
       setData(r);
+      const s = await invoke("shogun_stats", { payload: { stage: "sli" } });
+      setSli((s && s.sli) || null);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -151,6 +154,12 @@ function TabKiokuStats() {
       ? Math.min(100, Math.round((cost.spent_usd / cost.monthly_cap_usd) * 100))
       : 0;
   const capColor = capPct >= 100 ? "red" : capPct >= 80 ? "orange" : "green";
+  const sliSuccess = Number(sli && sli.successRate ? sli.successRate : 0);
+  const sliP95 = Number(sli && sli.p95LatencyMs ? sli.p95LatencyMs : 0);
+  const sliBacklog = Number(sli && sli.backlog ? sli.backlog : 0);
+  const sliTone = sliSuccess < 95 || sliP95 > 3000 || sliBacklog > 40
+    ? "bad"
+    : (sliSuccess < 99 || sliP95 > 1500 || sliBacklog > 15 ? "warn" : "good");
 
   const statusBadge = (label, on) => (
     <span className={`mdbg-badge mdbg-badge-${on ? "on" : "off"}`}>{label}</span>
@@ -173,6 +182,32 @@ function TabKiokuStats() {
       </div>
 
       <h3>Queue</h3>
+      {sli && (
+        <div
+          className="mdbg-flag-row"
+          style={{
+            marginBottom: 10,
+            padding: "8px 10px",
+            borderRadius: 8,
+            border: sliTone === "bad"
+              ? "1px solid color-mix(in srgb, var(--danger) 55%, var(--border) 45%)"
+              : (sliTone === "warn"
+                ? "1px solid color-mix(in srgb, var(--warn) 55%, var(--border) 45%)"
+                : "1px solid color-mix(in srgb, var(--success) 55%, var(--border) 45%)"),
+            background: sliTone === "bad"
+              ? "color-mix(in srgb, var(--danger) 10%, var(--bg) 90%)"
+              : (sliTone === "warn"
+                ? "color-mix(in srgb, var(--warn) 10%, var(--bg) 90%)"
+                : "color-mix(in srgb, var(--success) 10%, var(--bg) 90%)"),
+          }}
+        >
+          <span><strong>24h SLI</strong></span>
+          <span>success: <strong>{sliSuccess.toFixed(1)}%</strong></span>
+          <span>p95: <strong>{sli.p95LatencyMs ?? "—"} ms</strong></span>
+          <span>backlog: <strong>{sli.backlog ?? 0}</strong></span>
+          <span>done/failed: <strong>{sli.done ?? 0}/{sli.failed ?? 0}</strong></span>
+        </div>
+      )}
       <div className="mdbg-grid-3">
         <div>
           <strong>mem_captures</strong>

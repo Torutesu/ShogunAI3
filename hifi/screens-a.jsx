@@ -419,6 +419,32 @@ function ScreenHome() {
     return typeof iso === 'string' && iso.length >= 16 ? iso.slice(11, 16) : '';
   }, [morningBrief]);
 
+  const sliTone = useMemo(() => {
+    if (!sliSnapshot) return null;
+    const success = Number(sliSnapshot.successRate || 0);
+    const p95 = Number(sliSnapshot.p95LatencyMs || 0);
+    const backlog = Number(sliSnapshot.backlog || 0);
+    if (success < 95 || p95 > 3000 || backlog > 40) {
+      return {
+        fg: 'var(--danger)',
+        border: 'color-mix(in srgb, var(--danger) 55%, var(--border) 45%)',
+        bg: 'color-mix(in srgb, var(--danger) 9%, var(--surface) 91%)',
+      };
+    }
+    if (success < 99 || p95 > 1500 || backlog > 15) {
+      return {
+        fg: 'var(--warn)',
+        border: 'color-mix(in srgb, var(--warn) 55%, var(--border) 45%)',
+        bg: 'color-mix(in srgb, var(--warn) 10%, var(--surface) 90%)',
+      };
+    }
+    return {
+      fg: 'var(--success)',
+      border: 'color-mix(in srgb, var(--success) 55%, var(--border) 45%)',
+      bg: 'color-mix(in srgb, var(--success) 10%, var(--surface) 90%)',
+    };
+  }, [sliSnapshot]);
+
   /* Local clock only — no API/LLM cost. Hourly + tab refocus keeps greeting/date in sync without waking every minute. */
   useEffect(() => {
     const bump = () => setClockTick((x) => x + 1);
@@ -1222,7 +1248,16 @@ function ScreenHome() {
             <div className="t-mono gold" style={{textTransform:'none', letterSpacing:'0.02em'}}>Morning brief · AMC</div>
             <span className="pill" style={{ fontSize: 10 }}>{morningBrief.posture}</span>
             {sliSnapshot && (
-              <span className="pill" style={{ fontSize: 10 }} title="Last 24h SLI snapshot">
+              <span
+                className="pill"
+                style={{
+                  fontSize: 10,
+                  color: sliTone?.fg || 'var(--text-mute)',
+                  borderColor: sliTone?.border || 'var(--border)',
+                  background: sliTone?.bg || 'var(--surface)',
+                }}
+                title="Last 24h SLI snapshot"
+              >
                 SLI {Number(sliSnapshot.successRate || 0).toFixed(1)}% · p95 {sliSnapshot.p95LatencyMs ?? '—'}ms · backlog {sliSnapshot.backlog ?? 0}
               </span>
             )}
