@@ -148,6 +148,38 @@ fn ensure_phase2_tables(conn: &Connection) -> Result<(), String> {
         job_id        INTEGER,
         meta_json     TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS lessons (
+        id              TEXT PRIMARY KEY,
+        category        TEXT NOT NULL,
+        trigger_context TEXT NOT NULL,
+        attempted       TEXT NOT NULL,
+        outcome         TEXT NOT NULL,
+        rule            TEXT NOT NULL,
+        scope           TEXT NOT NULL DEFAULT 'user',
+        source          TEXT NOT NULL,
+        embedding       BLOB,
+        embedding_dim   INTEGER,
+        created_at      INTEGER NOT NULL,
+        applies_n       INTEGER NOT NULL DEFAULT 0,
+        prevented_n     INTEGER NOT NULL DEFAULT 0,
+        status          TEXT NOT NULL DEFAULT 'active'
+      );
+
+      CREATE TABLE IF NOT EXISTS patterns (
+        id              TEXT PRIMARY KEY,
+        kind            TEXT NOT NULL,
+        trigger_json    TEXT NOT NULL,
+        action_json     TEXT NOT NULL,
+        outcome_json    TEXT,
+        confidence      REAL NOT NULL,
+        observed_n      INTEGER NOT NULL,
+        first_seen_at   INTEGER NOT NULL,
+        last_seen_at    INTEGER NOT NULL,
+        embedding       BLOB,
+        embedding_dim   INTEGER,
+        status          TEXT NOT NULL DEFAULT 'active'
+      );
       "#,
     )
     .map_err(|e| format!("ensure_phase2_tables: {}", e))
@@ -203,6 +235,16 @@ fn ensure_phase2_indexes(conn: &Connection) -> Result<(), String> {
         ON cost_ledger(recorded_at);
       CREATE INDEX IF NOT EXISTS idx_cost_ledger_purpose
         ON cost_ledger(purpose, recorded_at);
+
+      -- lessons
+      CREATE INDEX IF NOT EXISTS idx_lessons_category ON lessons(category);
+      CREATE INDEX IF NOT EXISTS idx_lessons_active   ON lessons(status);
+      CREATE INDEX IF NOT EXISTS idx_lessons_created  ON lessons(created_at);
+
+      -- patterns
+      CREATE INDEX IF NOT EXISTS idx_patterns_kind      ON patterns(kind);
+      CREATE INDEX IF NOT EXISTS idx_patterns_active    ON patterns(status);
+      CREATE INDEX IF NOT EXISTS idx_patterns_last_seen ON patterns(last_seen_at);
       "#,
     )
     .map_err(|e| format!("ensure_phase2_indexes: {}", e))
