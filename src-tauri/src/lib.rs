@@ -39,6 +39,7 @@ mod kioku_eval;
 mod decay;
 mod kioku_capture;
 mod lessons;
+mod patterns;
 mod mem_captures;
 mod extraction_jobs;
 mod cost_ledger;
