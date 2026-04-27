@@ -42,7 +42,7 @@ static CONFIG: OnceCell<HeuristicConfig> = OnceCell::new();
 // even though OnceCell itself is set-once. set_for_test bypasses CONFIG and
 // uses a separate test-only override map (see TEST_OVERRIDE).
 #[cfg(test)]
-static TEST_OVERRIDE: Mutex<Option<HeuristicConfig>> = Mutex::new(None);
+static TEST_OVERRIDE: Mutex<Option<&'static HeuristicConfig>> = Mutex::new(None);
 
 fn empty_config() -> HeuristicConfig {
   HeuristicConfig {
@@ -135,11 +135,10 @@ pub fn get() -> &'static HeuristicConfig {
   #[cfg(test)]
   {
     if let Ok(g) = TEST_OVERRIDE.lock() {
-      if let Some(c) = g.as_ref() {
-        // Return a 'static reference by leaking once per test set. Tests
-        // accept the small leak.
-        let leaked: &'static HeuristicConfig = Box::leak(Box::new(c.clone()));
-        return leaked;
+      if let Some(c) = *g {
+        // Pointer is already 'static — set_for_test leaked the box once
+        // when the override was installed.
+        return c;
       }
     }
   }
@@ -151,8 +150,11 @@ pub fn get() -> &'static HeuristicConfig {
 
 #[cfg(test)]
 pub fn set_for_test(c: HeuristicConfig) {
+  // Leak the box once when the override is installed; subsequent get()
+  // calls just dereference the static pointer (no per-call allocation).
+  let leaked: &'static HeuristicConfig = Box::leak(Box::new(c));
   let mut g = TEST_OVERRIDE.lock().unwrap();
-  *g = Some(c);
+  *g = Some(leaked);
 }
 
 #[cfg(test)]
