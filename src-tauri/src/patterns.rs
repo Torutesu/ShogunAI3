@@ -299,17 +299,17 @@ pub fn list_for_brief(top_n: usize) -> Result<Vec<Value>, String> {
   let conn = crate::memory_store::open_conn()?;
   let mut stmt = conn
     .prepare(
-      "SELECT kind, trigger_json, action_json, confidence, observed_n FROM patterns WHERE status = 'active' ORDER BY confidence DESC, observed_n DESC LIMIT ?1",
+      "SELECT id, kind, trigger_json, action_json, confidence, observed_n FROM patterns WHERE status = 'active' ORDER BY confidence DESC, observed_n DESC LIMIT ?1",
     )
     .map_err(|e| format!("patterns::list_for_brief prepare: {}", e))?;
   let rows = stmt
     .query_map(params![top_n as i64], |row| {
-      Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, f32>(3)?, row.get::<_, i64>(4)?))
+      Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, f32>(4)?, row.get::<_, i64>(5)?))
     })
     .map_err(|e| format!("patterns::list_for_brief query: {}", e))?;
   let mut out = Vec::new();
   for r in rows {
-    let (kind, trigger_str, action_str, confidence, observed_n) = r.map_err(|e| format!("patterns::list_for_brief row: {}", e))?;
+    let (id, kind, trigger_str, action_str, confidence, observed_n) = r.map_err(|e| format!("patterns::list_for_brief row: {}", e))?;
     let trigger: Value = serde_json::from_str(&trigger_str).unwrap_or(Value::Null);
     let action: Value = serde_json::from_str(&action_str).unwrap_or(Value::Null);
     let label = match kind.as_str() {
@@ -327,7 +327,7 @@ pub fn list_for_brief(top_n: usize) -> Result<Vec<Value>, String> {
       _ => "Unknown pattern.".to_string(),
     };
     out.push(json!({
-      "kind": kind, "label": label, "trigger": trigger, "action": action,
+      "id": id, "kind": kind, "label": label, "trigger": trigger, "action": action,
       "confidence": confidence, "observed_n": observed_n,
     }));
   }
