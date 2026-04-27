@@ -1185,6 +1185,86 @@ function RecentRunsList({ runs, onSeeAll }) {
   );
 }
 
+// Pure: deterministically pads agent.recentRuns out to 50 entries by
+// stepping backwards from the oldest curated run, using a per-trigger
+// stride. Synthetic content is intentionally repetitive so it reads as
+// background noise next to the curated entries on top.
+function generateAgentRunHistory(agent) {
+  const out = [...(agent.recentRuns || [])];
+  if (out.length === 0) return out;
+  const last = out[out.length - 1];
+  // Stride per agent kind, in ms. Cron-ish agents step by 2h, daily by
+  // 24h, weekly by 7d. Default falls back to 2h.
+  let strideMs;
+  if (agent.trigger === 'weekly') strideMs = 7 * 24 * 60 * 60 * 1000;
+  else if ((agent.trigger || '').endsWith('daily')) strideMs = 24 * 60 * 60 * 1000;
+  else strideMs = 2 * 60 * 60 * 1000;
+
+  const templates = SYNTHETIC_RUN_TEMPLATES[agent.id] || SYNTHETIC_RUN_TEMPLATES.default;
+  let cursor = last.atMs - strideMs;
+  let i = 0;
+  while (out.length < 50) {
+    const tpl = templates[i % templates.length];
+    // every ~12th synthetic run is an error so the drawer can demo failures.
+    const isError = (i + 1) % 12 === 0;
+    const atMs = cursor;
+    const d = new Date(atMs);
+    const t = formatRunStamp(d, agent.trigger === 'weekly');
+    out.push({
+      id: `${agent.id}-r-syn-${i + 1}`,
+      atMs, t,
+      msg: isError ? 'Run failed · see details' : tpl.msg,
+      level: isError ? 'error' : 'info',
+      durationMs: tpl.durationMs,
+      tools: tpl.tools,
+      input: tpl.input,
+      output: isError ? '' : tpl.output,
+      error: isError ? 'TypeError: Cannot read property \'subject\' of undefined\n    at processInbox (gmail.js:42)\n    at runAgent (runner.js:88)' : undefined,
+      memoryTouched: [],
+    });
+    cursor -= strideMs;
+    i += 1;
+  }
+  return out;
+}
+
+function formatRunStamp(d, weekly) {
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (weekly) {
+    const wd = d.toLocaleDateString('en-US', { weekday: 'short' });
+    return `${wd} ${hh}:${mm}`;
+  }
+  return `${hh}:${mm}`;
+}
+
+// Per-agent synthetic run templates. Each agent has a small list that
+// cycles to keep the synthetic history readable.
+const SYNTHETIC_RUN_TEMPLATES = {
+  'inbox-triage': [
+    { msg: 'Polled inbox · 0 new', durationMs: 600, tools: ['gmail'], input: 'Sweep inbox', output: 'No new mail since last sweep.' },
+    { msg: 'Read 2 emails · 0 priority', durationMs: 900, tools: ['gmail', 'memory'], input: 'Sweep inbox', output: '2 newsletters, both auto-archived.' },
+    { msg: 'Auth refresh · token rotated', durationMs: 400, tools: ['gmail'], input: 'Token expiring · refresh', output: 'OAuth refresh succeeded.' },
+  ],
+  'meeting-notes': [
+    { msg: 'No calendar events in window', durationMs: 200, tools: ['calendar'], input: 'Window check', output: 'Calendar empty.' },
+    { msg: 'Processed 1 meeting · 2 decisions', durationMs: 3100, tools: ['calendar', 'memory'], input: 'Meeting end trigger', output: '2 decisions extracted, linked to 1 entity.' },
+    { msg: 'Linked event to entity', durationMs: 1200, tools: ['calendar', 'memory'], input: 'Event start', output: 'Linked to existing entity in memory.' },
+  ],
+  'daily-digest': [
+    { msg: 'Wrote daily digest · 9 highlights', durationMs: 7200, tools: ['memory', 'note'], input: 'Synthesize the day', output: '9 highlights, 1 theme. Note written.' },
+    { msg: 'Morning brief · 3 priorities', durationMs: 5800, tools: ['memory', 'note'], input: 'Generate morning brief', output: '3 priorities surfaced.' },
+    { msg: 'Wrote daily digest · 12 highlights', durationMs: 8100, tools: ['memory', 'note'], input: 'Synthesize the day', output: '12 highlights across 3 themes.' },
+  ],
+  'weekly-review': [
+    { msg: 'Drafted retro · 2 decisions, 1 risk', durationMs: 11200, tools: ['memory', 'note', 'calendar'], input: 'Synthesize the week', output: '2 decisions, 1 risk flagged.' },
+    { msg: 'Drafted retro · 4 decisions', durationMs: 13400, tools: ['memory', 'note', 'calendar'], input: 'Synthesize the week', output: '4 decisions, no risks flagged.' },
+  ],
+  default: [
+    { msg: 'Background tick', durationMs: 300, tools: [], input: 'Tick', output: 'No-op.' },
+  ],
+};
+
 function AgentCard({ agent, expanded, onToggle, nowMs }) {
   // If the most recent run failed, surface it as `error` regardless of
   // the schema status — operationally this is what matters.
