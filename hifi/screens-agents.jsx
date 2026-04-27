@@ -1232,6 +1232,16 @@ function ScreenAgents() {
   const [playgroundOpen, setPlaygroundOpen] = React.useState(false);
   const [newAgentModalOpen, setNewAgentModalOpen] = React.useState(false);
   const [historyDrawerAgentId, setHistoryDrawerAgentId] = React.useState(null);
+  const [editModalAgentId, setEditModalAgentId] = React.useState(null);
+  const [agentOverrides, setAgentOverrides] = React.useState({});
+
+  const effectiveAgents = React.useMemo(() => {
+    return AGENTS_DEMO.map((a) => {
+      const o = agentOverrides[a.id];
+      return o ? { ...a, ...o } : a;
+    });
+  }, [agentOverrides]);
+
   const [expandedIds, setExpandedIds] = React.useState(() => new Set());
   const toggleExpanded = React.useCallback((id) => {
     setExpandedIds((prev) => {
@@ -1244,23 +1254,23 @@ function ScreenAgents() {
   const [filterStatus, setFilterStatus] = React.useState('all');
 
   const filterCounts = React.useMemo(() => {
-    const c = { all: AGENTS_DEMO.length, running: 0, scheduled: 0, paused: 0, error: 0 };
-    for (const a of AGENTS_DEMO) {
+    const c = { all: effectiveAgents.length, running: 0, scheduled: 0, paused: 0, error: 0 };
+    for (const a of effectiveAgents) {
       const last = a.recentRuns && a.recentRuns[0];
       const eff = last && last.level === 'error' ? 'error' : a.status;
       if (c[eff] !== undefined) c[eff] += 1;
     }
     return c;
-  }, []);
+  }, [effectiveAgents]);
 
   const visibleAgents = React.useMemo(() => {
-    if (filterStatus === 'all') return AGENTS_DEMO;
-    return AGENTS_DEMO.filter((a) => {
+    if (filterStatus === 'all') return effectiveAgents;
+    return effectiveAgents.filter((a) => {
       const last = a.recentRuns && a.recentRuns[0];
       const eff = last && last.level === 'error' ? 'error' : a.status;
       return eff === filterStatus;
     });
-  }, [filterStatus]);
+  }, [filterStatus, effectiveAgents]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1321,7 +1331,7 @@ function ScreenAgents() {
     window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
   }, [runPrompt, allowServerMemoryAssembly]);
 
-  const attentionCount = AGENTS_DEMO.filter((a) => {
+  const attentionCount = effectiveAgents.filter((a) => {
     const last = a.recentRuns && a.recentRuns[0];
     const stale = (a.status === 'scheduled' || a.trigger?.startsWith('every ')) &&
                   a.lastRunMs && (AGENTS_DEMO_NOW - a.lastRunMs) > 24 * 60 * 60 * 1000;
@@ -1337,7 +1347,7 @@ function ScreenAgents() {
           <div className="t-mono" style={{marginBottom:'var(--space-2)'}}>EXECUTION LAYER</div>
           <h1>Agents</h1>
           <div className="sub">
-            <span style={{color:'var(--text-mute)'}}>{AGENTS_DEMO.length} agents · 11 MCP tools</span>
+            <span style={{color:'var(--text-mute)'}}>{effectiveAgents.length} agents · 11 MCP tools</span>
             {attentionCount > 0 && (
               <>
                 <span style={{color:'var(--text-mute)'}}> · </span>
@@ -1357,7 +1367,7 @@ function ScreenAgents() {
       </div>
 
       <AttentionStrip
-        agents={AGENTS_DEMO}
+        agents={effectiveAgents}
         nowMs={AGENTS_DEMO_NOW}
         onView={(id) => {
           setExpandedIds((prev) => new Set([...prev, id]));
@@ -1382,7 +1392,7 @@ function ScreenAgents() {
         <div style={{marginBottom:'var(--space-8)'}}>
           <AgentsEmptyState
             filterStatus={filterStatus}
-            totalCount={AGENTS_DEMO.length}
+            totalCount={effectiveAgents.length}
             onCreate={() => setNewAgentModalOpen(true)}
           />
         </div>
@@ -1435,7 +1445,7 @@ function ScreenAgents() {
 
       {historyDrawerAgentId && (
         <AgentRunHistoryDrawer
-          agent={AGENTS_DEMO.find((a) => a.id === historyDrawerAgentId)}
+          agent={effectiveAgents.find((a) => a.id === historyDrawerAgentId)}
           nowMs={AGENTS_DEMO_NOW}
           onClose={() => setHistoryDrawerAgentId(null)}
         />
