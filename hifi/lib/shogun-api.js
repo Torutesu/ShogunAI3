@@ -141,6 +141,8 @@
       meetingMicStop: (input) => call("shogun_meeting_mic_stop", input, WRITE),
       meetingTranscribePcm: (input) => call("shogun_meeting_transcribe_pcm", input, WRITE),
       meetingMcpTools: (input) => call("shogun_meeting_mcp_tools", input, READ),
+      meetingImportPick: (input) => call("shogun_meeting_import_pick", input || {}, WRITE),
+      meetingImportFile: (input) => call("shogun_meeting_import_file", input, WRITE),
     };
   }
 

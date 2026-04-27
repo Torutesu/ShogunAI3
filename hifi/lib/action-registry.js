@@ -137,6 +137,8 @@
     register("meetings.mic.stop", (payload) => api.meetingMicStop(payload));
     register("meetings.transcribe.pcm", (payload) => api.meetingTranscribePcm(payload));
     register("meetings.mcp.tools", (payload) => api.meetingMcpTools(payload));
+    register("meetings.import.pick", (payload) => api.meetingImportPick(payload));
+    register("meetings.import.file", (payload) => api.meetingImportFile(payload));
 
     return {
       run: run,
