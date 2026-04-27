@@ -2245,6 +2245,16 @@ pub async fn shogun_lesson_capture_tool_failure(payload: serde_json::Value) -> R
   Ok(serde_json::json!({ "id": id, "deduped": false, "rule": rule }))
 }
 
+
+/// Manually trigger Patterns detection (KIOKU Sub-spec B). Useful for
+/// the Settings UI / Memory DBG hooks. Daily background sync covers
+/// the production cadence.
+#[tauri::command]
+pub async fn shogun_patterns_run_now(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let emitted = crate::patterns::run_detection().await?;
+  Ok(serde_json::json!({ "emitted": emitted }))
+}
+
 /// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW
 /// even when the LLM classified it differently, or clear the override back to
 /// the LLM assignment. `priority: null` clears the override.

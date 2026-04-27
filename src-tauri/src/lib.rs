@@ -260,6 +260,7 @@ pub fn run() {
       commands::shogun_memory_year_rollup_get,
       commands::shogun_lesson_capture_rejection,
       commands::shogun_lesson_capture_tool_failure,
+      commands::shogun_patterns_run_now,
       commands::shogun_memory_summary_set_priority,
     ])
     .run(tauri::generate_context!())
