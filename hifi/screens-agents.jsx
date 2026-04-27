@@ -317,6 +317,7 @@ function AttentionStrip({ agents, nowMs, onView }) {
   // OR scheduled/cron and lastRunMs is older than 24h.
   const issues = [];
   for (const a of agents) {
+    if (a.paused) continue;
     const last = a.recentRuns && a.recentRuns[0];
     const tooStale =
       (a.status === 'scheduled' || a.trigger?.startsWith('every ')) &&
