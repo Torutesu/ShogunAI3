@@ -3065,7 +3065,41 @@ function App() {
               <button type="button" className="hummingbird-icon-btn" title="Good response" aria-label="Good response">
                 <Icon name="thumbsUp" size={15} />
               </button>
-              <button type="button" className="hummingbird-icon-btn" title="Bad response" aria-label="Bad response">
+              <button
+                type="button"
+                className="hummingbird-icon-btn"
+                title="Bad response"
+                aria-label="Bad response"
+                onClick={() => {
+                  const ja = tweaks.language === 'jp';
+                  const assistantText = ja
+                    ? [
+                        'データバックアップの期限やプラン確認が近づいています。カレンダーに時間を確保して取りこぼしを防ぎましょう。',
+                        '',
+                        '求人・案件情報: LinkedIn や YOUTRUST で AI リードエンジニアや役員クラスの求人が目立ちます。ざっと確認する価値ありです。',
+                        '',
+                        'Hummingbirdからの提案: カレンダーでは 15時 前後が空いています。SHOGUN 向けに Lovable や Railway の技術調査を軽く挟むのはどうでしょう。',
+                        '',
+                        'まず手を付けたいタスクはありますか？',
+                      ].join('\n')
+                    : [
+                        'Data backup deadlines and plan reviews are coming up.',
+                        '',
+                        'Job leads: AI lead engineer and executive roles on LinkedIn and YOUTRUST.',
+                        '',
+                        'Hummingbird proposal: the 15:00 slot fits—consider research into Lovable or Railway for SHOGUN.',
+                        '',
+                        'Any specific tasks you want to proceed with first?',
+                      ].join('\n');
+                  const userText = ja ? '今日の優先事項を教えて' : "What are today's priorities?";
+                  if (!assistantText || !userText) return;
+                  executeAction('lesson.capture.rejection', {
+                    userMsg: userText,
+                    assistantMsg: assistantText,
+                    chatId: activeChat || undefined,
+                  }, { silentError: true, successMessage: "Got it — won't do that again." });
+                }}
+              >
                 <Icon name="thumbsDown" size={15} />
               </button>
             </div>
