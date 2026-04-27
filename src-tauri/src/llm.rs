@@ -206,6 +206,24 @@ pub async fn chat_complete(
       "content": "The user enabled web-research mode. This runtime does not perform live HTTP browsing: answer from training knowledge, pasted URLs, and memory context above. If freshness matters, state that you cannot verify live web results and suggest the user paste a link or check a source.",
     }));
   }
+  // Lessons retrieval (KIOKU Sub-spec A): top-K rules embedded against
+  // the user's latest message, appended as a leading system message so
+  // the model honors past corrections. Silent fallback throughout.
+  let latest_user_text = messages_in
+    .iter()
+    .rev()
+    .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+    .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+    .unwrap_or("")
+    .to_string();
+  let (lessons_addendum, applied_lesson_ids) =
+    crate::lessons::retrieve_for_chat(&latest_user_text).await;
+  if !lessons_addendum.is_empty() {
+    messages.push(serde_json::json!({
+      "role": "system",
+      "content": lessons_addendum,
+    }));
+  }
   for m in messages_in {
     let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
     let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
@@ -239,6 +257,13 @@ pub async fn chat_complete(
     )
   })?;
   let content = crate::llm_providers::extract_chat_text(provider, &v)?;
+  if !applied_lesson_ids.is_empty() {
+    if let Ok(conn) = crate::memory_store::open_conn() {
+      if let Err(e) = crate::lessons::increment_applies(&conn, &applied_lesson_ids) {
+        log::warn!("lessons::increment_applies failed: {}", e);
+      }
+    }
+  }
   Ok(json!({
     "message": content,
     "echo": payload,
