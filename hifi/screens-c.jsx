@@ -234,6 +234,7 @@ function ScreenWork() {
         />
         <button
           type="button"
+          data-testid="work-create-workspace"
           className="btn btn-primary btn-sm"
           onClick={createProject}
           disabled={!newName.trim()}

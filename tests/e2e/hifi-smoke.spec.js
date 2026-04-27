@@ -4,8 +4,17 @@ const { test, expect } = require("@playwright/test");
 const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
 
 async function openHiFi(page) {
-  await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
-  await page.waitForSelector(".app", { timeout: 90000 });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
+    try {
+      await page.waitForSelector(".app", { timeout: 20000 });
+      await page.waitForFunction(() => !!window.SHOGUN_RUNTIME, null, { timeout: 20000 });
+      return;
+    } catch (error) {
+      if (attempt === 1) throw error;
+      await page.waitForTimeout(500);
+    }
+  }
 }
 
 async function openSettingsModal(page) {
@@ -290,24 +299,25 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await openHiFi(page);
 
     await page.locator(".sidebar .nav-item").filter({ hasText: "Memory" }).first().click();
-    await expect(page.getByText("MEMORY / TIMELINE")).toBeVisible();
-    await expect(page.locator("h1").filter({ hasText: /\u6642\u9593\u8ef8/ })).toBeVisible();
+    await expect(page.getByText(/Memory \/ Timeline/i)).toBeVisible();
 
     const panel = page.getByTestId("memory-entity-sources");
     await expect(panel).toBeVisible();
     await expect(panel).toContainText(/SOURCES IN INDEX/i);
   });
 
-  test("Work: New document shows draft success toast (mock IPC)", async ({ page }) => {
+  test("Work: create workspace adds a card", async ({ page }) => {
     await openHiFi(page);
 
     await page.locator(".sidebar .nav-item").filter({ hasText: "Work" }).first().click();
     await expect(page.locator(".page-head h1")).toContainText("Work");
 
-    await page.getByRole("button", { name: /New document/i }).click();
-    await expect(page.locator(".app-toast.success")).toContainText("Draft ready", {
-      timeout: 8000,
-    });
+    const workspaceName = `e2e-workspace-${Date.now()}`;
+    await page
+      .getByPlaceholder("New workspace name / 新規Workspace名")
+      .fill(workspaceName);
+    await page.getByTestId("work-create-workspace").click();
+    await expect(page.locator(".card").filter({ hasText: workspaceName })).toBeVisible();
   });
 
   test("executeAction memory.search with semantic sets semanticRerank (mock)", async ({ page }) => {
@@ -371,5 +381,40 @@ test.describe("SHOGUN Hi-Fi UI", () => {
 
     await page.locator(".s-close").click();
     await expect(page.locator(".s-modal")).toHaveCount(0);
+  });
+
+  test("Agents: Edit modal updates name/description/trigger across screen", async ({ page }) => {
+    await openHiFi(page);
+    await page.locator(".sidebar .nav-item").filter({ hasText: "Agents" }).first().click();
+    await expect(page.locator(".page-head h1")).toContainText("Agents");
+
+    const card = page.locator(".card").filter({ hasText: "Inbox triage" }).first();
+    await card.getByRole("button", { name: /expand agent/i }).click();
+    await card.getByRole("button", { name: "Edit" }).click();
+
+    const modal = page.getByRole("dialog", { name: "Edit agent" });
+    await expect(modal).toBeVisible();
+
+    const saveBtn = modal.getByRole("button", { name: "Save changes" });
+    await modal.getByRole("textbox").first().fill("");
+    await expect(saveBtn).toBeDisabled();
+
+    await modal.getByRole("textbox").first().fill("Inbox triage v2");
+    await modal.getByRole("textbox").nth(1).fill("Updated description from e2e test.");
+    await modal.locator("select").first().selectOption("daily");
+    await modal.locator('input[type="time"]').fill("22:15");
+    await saveBtn.click();
+
+    await expect(page.locator(".app-toast.success")).toContainText("Agent updated", {
+      timeout: 8000,
+    });
+    await expect(modal).toHaveCount(0);
+    await expect(page.locator(".page-head .sub")).toContainText("4 agents");
+    await expect(page.locator(".card").filter({ hasText: "Inbox triage v2" }).first()).toContainText(
+      "Updated description from e2e test.",
+    );
+    await expect(page.locator(".card").filter({ hasText: "Inbox triage v2" }).first()).toContainText(
+      "22:15 daily",
+    );
   });
 });

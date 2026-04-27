@@ -2448,6 +2448,31 @@ function ScreenMemory() {
           <span className="en-only">Today</span>
           <span className="jp" style={{marginLeft:4, fontSize:11}}>· 今日</span>
         </button>
+        <label
+          style={{display:'inline-flex', alignItems:'center', gap:8, fontSize:12, color:'var(--text-mute)', cursor:'pointer', userSelect:'none'}}
+          title="Use semantic re-rank for non-empty memory searches"
+        >
+          <input
+            data-testid="memory-semantic-rerank"
+            type="checkbox"
+            checked={semanticMemorySearch}
+            onChange={async (e) => {
+              const prev = semanticMemorySearch;
+              const next = e.target.checked;
+              setSemanticMemorySearch(next);
+              const r = await runRuntimeActionA(
+                'settings.save',
+                { section: 'memory', semanticRerank: next },
+                { silentError: true },
+              );
+              if (!r?.ok) {
+                setSemanticMemorySearch(prev);
+                window.SHOGUN_RUNTIME?.pushToast?.('Failed to save Semantic re-rank setting', 'warn');
+              }
+            }}
+          />
+          <span>Semantic re-rank</span>
+        </label>
         <span style={{flex:1}}/>
         <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>{memoryTotals.total} MEMORIES · {Math.round(memoryTotals.total * 0.25)}H</span>
       </div>
@@ -2800,6 +2825,20 @@ function ScreenMemory() {
           </div>
         </div>
       )}
+
+      <div style={{padding:'12px 40px 0'}}>
+        <div
+          data-testid="memory-entity-sources"
+          className="card"
+          style={{padding:'12px 14px', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}
+        >
+          <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.1em'}}>SOURCES IN INDEX</span>
+          <span className="label">{sourceEntities.length}</span>
+          <span style={{fontSize:12, color:'var(--text-mute)'}}>
+            {sourceEntities.length > 0 ? 'entity sources discovered' : 'no entity sources yet'}
+          </span>
+        </div>
+      </div>
 
       {/* River view: two-card split + hourly timeline scrubber */}
       {view === 'river' && (
