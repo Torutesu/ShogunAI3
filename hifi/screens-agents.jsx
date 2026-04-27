@@ -1171,7 +1171,7 @@ function AgentRunHistoryDrawer({ agent, nowMs, onClose }) {
   );
 }
 
-function AgentCard({ agent, expanded, onToggle, nowMs, onOpenHistory, onEdit }) {
+function AgentCard({ agent, expanded, onToggle, nowMs, onOpenHistory, onEdit, running, onRunNow, onTogglePause }) {
   // If the most recent run failed, surface it as `error` regardless of
   // the schema status — operationally this is what matters.
   const lastRun = agent.recentRuns && agent.recentRuns[0];
@@ -1238,17 +1238,20 @@ function AgentCard({ agent, expanded, onToggle, nowMs, onOpenHistory, onEdit }) 
             <button
               type="button"
               className="btn btn-sm btn-primary"
-              onClick={() => window.SHOGUN_RUNTIME?.pushToast?.(`Run now: ${agent.name} (stub)`, 'info')}
+              disabled={running}
+              onClick={onRunNow}
+              style={{opacity: running ? 0.6 : 1, cursor: running ? 'wait' : 'pointer'}}
             >
-              <Icon name="play" size={12}/> Run now
+              <Icon name={running ? 'loader' : 'play'} size={12}/>
+              {running ? ' Running…' : ' Run now'}
             </button>
             <button
               type="button"
               className="btn btn-sm btn-secondary"
-              onClick={() => window.SHOGUN_RUNTIME?.pushToast?.(`${agent.status === 'paused' ? 'Resume' : 'Pause'}: ${agent.name} (stub)`, 'info')}
+              onClick={onTogglePause}
             >
-              <Icon name={agent.status === 'paused' ? 'play' : 'pause'} size={12}/>
-              {agent.status === 'paused' ? ' Resume' : ' Pause'}
+              <Icon name={agent.paused ? 'play' : 'pause'} size={12}/>
+              {agent.paused ? ' Resume' : ' Pause'}
             </button>
             <button
               type="button"
@@ -1535,6 +1538,9 @@ function ScreenAgents() {
               nowMs={AGENTS_DEMO_NOW}
               onOpenHistory={setHistoryDrawerAgentId}
               onEdit={setEditModalAgentId}
+              running={runningIds.has(a.id)}
+              onRunNow={() => runAgentNow(a.id)}
+              onTogglePause={() => togglePauseAgent(a.id)}
             />
           ))}
         </div>
