@@ -151,6 +151,14 @@ function mockIpcInvoke(command, payload) {
       }
       return notImpl('Integration mock unavailable.');
     }
+    case 'shogun_oauth_google_start':
+      return { ok: true, data: {
+        ok: true,
+        provider: input?.provider || 'gmail',
+        scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/calendar.readonly'],
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        refreshTokenPresent: true,
+      } };
     case 'shogun_draft': {
       const mas = echo && echo.memoryAssembly;
       let memNote = '';
@@ -849,6 +857,7 @@ function ensureRuntimeDeps() {
         deadLetterRetryOne: (input) => client.invoke('shogun_dead_letter_retry_one', input || {}),
         deadLetterDelete: (input) => client.invoke('shogun_dead_letter_delete', input || {}),
         integrationConnect: (input) => client.invoke('app_integration_connect', input),
+        oauthGoogleStart: (input) => client.invoke('shogun_oauth_google_start', input),
         integrationImportCredentials: (input) =>
           client.invoke('app_integration_import_credentials', input),
         integrationCredentialsStatus: (input) =>
@@ -940,6 +949,7 @@ function ensureRuntimeDeps() {
           'dead_letter.retry_one': api.deadLetterRetryOne,
           'dead_letter.delete': api.deadLetterDelete,
           'integrations.connect': api.integrationConnect,
+          'oauth.google.start': api.oauthGoogleStart,
           'integrations.import_credentials': api.integrationImportCredentials,
           'integrations.credentials_status': api.integrationCredentialsStatus,
           'integrations.toggle': api.integrationToggle,
