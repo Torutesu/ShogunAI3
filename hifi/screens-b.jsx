@@ -1380,6 +1380,160 @@ function RunRow({ run, expanded, onToggle, onOpenMemory }) {
   );
 }
 
+// Bucket runs into 4 chronological groups based on `atMs` and the
+// caller's `nowMs`. Returns an ordered array of { label, runs }.
+function bucketRunsByDate(runs, nowMs) {
+  const now = new Date(nowMs);
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+  const startOfWeek = new Date(startOfToday);
+  const dow = startOfWeek.getDay();
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+  startOfWeek.setDate(startOfWeek.getDate() + mondayOffset);
+
+  const buckets = {
+    TODAY: [],
+    YESTERDAY: [],
+    'THIS WEEK': [],
+    EARLIER: [],
+  };
+  for (const r of runs) {
+    if (r.atMs >= startOfToday.getTime()) buckets.TODAY.push(r);
+    else if (r.atMs >= startOfYesterday.getTime()) buckets.YESTERDAY.push(r);
+    else if (r.atMs >= startOfWeek.getTime()) buckets['THIS WEEK'].push(r);
+    else buckets.EARLIER.push(r);
+  }
+  return ['TODAY', 'YESTERDAY', 'THIS WEEK', 'EARLIER']
+    .map((label) => ({ label, runs: buckets[label] }))
+    .filter((b) => b.runs.length > 0);
+}
+
+function AgentRunHistoryDrawer({ agent, nowMs, onClose }) {
+  const [expandedRunIds, setExpandedRunIds] = React.useState(() => new Set());
+  const toggleExpanded = React.useCallback((id) => {
+    setExpandedRunIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const runs = React.useMemo(() => generateAgentRunHistory(agent), [agent]);
+  const buckets = React.useMemo(() => bucketRunsByDate(runs, nowMs), [runs, nowMs]);
+
+  const lastRun = agent.recentRuns && agent.recentRuns[0];
+  const effectiveStatus = lastRun && lastRun.level === 'error' ? 'error' : agent.status;
+  const status = AGENT_STATUS_META[effectiveStatus] || AGENT_STATUS_META.idle;
+  const subLine = buildAgentSubLine(agent, status.label, nowMs);
+
+  const onOpenMemory = (id) => {
+    window.SHOGUN_RUNTIME?.pushToast?.(`Memory item view coming soon (${id})`, 'info');
+  };
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position:'fixed', inset:0, zIndex:999,
+          background:'rgba(0,0,0,0.4)',
+        }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${agent.name} run history`}
+        style={{
+          position:'fixed', right:0, top:0, bottom:0,
+          width:480, maxWidth:'95vw', zIndex:1000,
+          background:'var(--surface)',
+          borderLeft:'1px solid var(--border-hi)',
+          boxShadow:'var(--shadow-lg)',
+          display:'flex', flexDirection:'column',
+        }}
+      >
+        <div style={{
+          padding:'var(--space-5) var(--space-6)',
+          borderBottom:'1px solid var(--border)',
+          display:'flex', alignItems:'flex-start', gap:'var(--space-3)',
+        }}>
+          <div style={{
+            width:40, height:40, borderRadius:'var(--radius-md)',
+            background:'var(--surface-2)', border:'1px solid var(--border)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            color:'var(--gold)', flexShrink:0,
+          }}>
+            <Icon name={agent.icon} size={18}/>
+          </div>
+          <div style={{flex:1, minWidth:0}}>
+            <div style={{fontSize:16, fontWeight:600, letterSpacing:'-0.01em', marginBottom:4}}>{agent.name}</div>
+            <div className="t-mono" style={{display:'inline-flex', alignItems:'center', gap:'var(--space-2)'}}>
+              <span style={{width:6, height:6, borderRadius:999, background:status.color, display:'inline-block'}}/>
+              {subLine}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close run history"
+            style={{
+              all:'unset',
+              padding:6, borderRadius:'var(--radius-sm)', color:'var(--text-dim)', cursor:'pointer',
+            }}
+          >
+            <Icon name="x" size={15}/>
+          </button>
+        </div>
+        <div style={{flex:1, overflowY:'auto', padding:'var(--space-5) var(--space-6)'}}>
+          {buckets.length === 0 ? (
+            <div style={{
+              padding:'var(--space-8) var(--space-4)',
+              border:`1px dashed var(--border)`,
+              borderRadius:'var(--radius-md)',
+              textAlign:'center',
+              color:'var(--text-mute)',
+            }} className="t-sm">
+              No runs yet for this agent.
+            </div>
+          ) : (
+            buckets.map(({ label, runs: bucketRuns }, gi) => (
+              <div key={label} style={{marginTop: gi === 0 ? 0 : 'var(--space-4)'}}>
+                <div className="t-mono" style={{
+                  color:'var(--text-mute)', fontSize:10,
+                  marginBottom:'var(--space-2)',
+                }}>
+                  {label}
+                </div>
+                <div style={{display:'flex', flexDirection:'column', gap:'var(--space-1)'}}>
+                  {bucketRuns.map((r) => (
+                    <RunRow
+                      key={r.id}
+                      run={r}
+                      expanded={expandedRunIds.has(r.id)}
+                      onToggle={() => toggleExpanded(r.id)}
+                      onOpenMemory={onOpenMemory}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function AgentCard({ agent, expanded, onToggle, nowMs }) {
   // If the most recent run failed, surface it as `error` regardless of
   // the schema status — operationally this is what matters.
