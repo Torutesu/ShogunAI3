@@ -77,6 +77,7 @@
     register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));
     register("memory.summary.edit", (payload) => api.memorySummaryEdit(payload));
     register("memory.summary.revert", (payload) => api.memorySummaryRevert(payload));
+    register("memory.summary.edit_insights", (payload) => api.memorySummaryEditInsights(payload));
     register("memory.summary.acknowledge", (payload) => api.memorySummaryAcknowledge(payload));
     register("memory.rollup.entity.get", (payload) => api.memoryEntityRollupGet(payload));
     register("memory.summary.snooze", (payload) => api.memorySummarySnooze(payload));

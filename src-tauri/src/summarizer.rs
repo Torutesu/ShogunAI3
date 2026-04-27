@@ -117,28 +117,44 @@ pub fn heuristic_priority_guess(item: &Value, lang: &str) -> Option<PriorityGues
 
 fn gmail_heuristic(title: &str, snippet: &str, lang: &str) -> Option<PriorityGuess> {
   let lower_body = snippet.to_lowercase();
-  let has_unsubscribe = lower_body.contains("unsubscribe") || lower_body.contains("配信停止");
 
-  let from_line_lower = snippet
-    .lines()
-    .find(|l| l.starts_with("From:"))
-    .map(|l| l.to_lowercase())
-    .unwrap_or_default();
-  let is_no_reply = from_line_lower.contains("no-reply@")
-    || from_line_lower.contains("noreply@")
-    || from_line_lower.contains("donotreply@");
-  let is_github_noreply = from_line_lower.contains("noreply@github.com")
-    || from_line_lower.contains("notifications@github.com");
-  let is_ci_sender = from_line_lower.contains("builds@")
-    || from_line_lower.contains("ci@")
-    || from_line_lower.contains("actions@github.com");
-
-  if has_unsubscribe || is_no_reply || is_github_noreply || is_ci_sender {
+  // Built-in: body match (not representable in TOML by design choice; see
+  // Phase 4-b spec § Non-Goals).
+  if lower_body.contains("unsubscribe") || lower_body.contains("配信停止") {
     return Some(PriorityGuess {
       priority: "low".to_string(),
       reason: loc(lang, "Automated notification", "自動通知"),
       title_hint: title_first_line(title, 60),
     });
+  }
+
+  // Config-driven: sender substring rules from heuristic_patterns.toml.
+  let from_line_lower = snippet
+    .lines()
+    .find(|l| l.starts_with("From:"))
+    .map(|l| l.to_lowercase())
+    .unwrap_or_default();
+
+  if from_line_lower.is_empty() {
+    return None;
+  }
+
+  let cfg = crate::heuristics_config::get();
+  for rule in &cfg.gmail.sender_contains {
+    if rule.pattern.trim().is_empty() { continue; }
+    if !matches!(rule.priority.as_str(), "high" | "medium" | "low") { continue; }
+    if from_line_lower.contains(&rule.pattern.to_lowercase()) {
+      let reason = if lang == "jp" {
+        rule.reason_jp.clone().unwrap_or_else(|| rule.reason.clone())
+      } else {
+        rule.reason.clone()
+      };
+      return Some(PriorityGuess {
+        priority: rule.priority.clone(),
+        reason,
+        title_hint: title_first_line(title, 60),
+      });
+    }
   }
   None
 }
@@ -1174,6 +1190,19 @@ mod tests {
 
   #[test]
   fn gmail_github_noreply_is_low() {
+    use crate::heuristics_config::{set_for_test, clear_for_test, HeuristicConfig, GmailRules, SenderRule};
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    set_for_test(HeuristicConfig {
+      schema_version: 1,
+      gmail: GmailRules {
+        sender_contains: vec![SenderRule {
+          pattern: "noreply@github.com".into(),
+          priority: "low".into(),
+          reason: "GitHub notification".into(),
+          reason_jp: None,
+        }],
+      },
+    });
     let item = json!({
       "id": "m_2",
       "source": "gmail",
@@ -1182,6 +1211,7 @@ mod tests {
     });
     let guess = heuristic_priority_guess(&item, "en").expect("should match");
     assert_eq!(guess.priority, "low");
+    clear_for_test();
   }
 
   #[test]
@@ -1266,6 +1296,7 @@ mod tests {
 
   #[test]
   fn gmail_body_mention_of_noreply_is_not_low() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
     // Personal email that mentions a noreply address in the body should NOT be low.
     let item = json!({
       "id": "m_body_mention",
@@ -1328,5 +1359,121 @@ mod tests {
       "priority": "medium"
     });
     assert!(build_summary_from_tool_input(&item, "mail", &input, "en").is_err());
+  }
+
+  use crate::heuristics_config::{set_for_test, clear_for_test, HeuristicConfig, GmailRules, SenderRule};
+
+  // Serialise all tests that touch the process-global TEST_OVERRIDE so they
+  // don't race each other when cargo runs tests in parallel threads.
+  static HEURISTIC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+  fn cfg_with_rule(pattern: &str, priority: &str, reason: &str) -> HeuristicConfig {
+    HeuristicConfig {
+      schema_version: 1,
+      gmail: GmailRules {
+        sender_contains: vec![SenderRule {
+          pattern: pattern.into(),
+          priority: priority.into(),
+          reason: reason.into(),
+          reason_jp: None,
+        }],
+      },
+    }
+  }
+
+  fn snippet_with_from(from: &str) -> String {
+    format!("From: {}\nSubject: Test\n\nbody text", from)
+  }
+
+  #[test]
+  fn gmail_heuristic_unsubscribe_body_match_built_in() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    set_for_test(HeuristicConfig::default()); // empty rules; built-in still fires
+    let snippet = "blah blah\nclick unsubscribe to stop";
+    let g = gmail_heuristic("Promotional", snippet, "en");
+    assert!(g.is_some());
+    let g = g.unwrap();
+    assert_eq!(g.priority, "low");
+    clear_for_test();
+  }
+
+  #[test]
+  fn gmail_heuristic_sender_rule_matches() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    set_for_test(cfg_with_rule("noreply@", "low", "Auto"));
+    let snippet = snippet_with_from("noreply@example.com");
+    let g = gmail_heuristic("subj", &snippet, "en");
+    assert!(g.is_some());
+    let g = g.unwrap();
+    assert_eq!(g.priority, "low");
+    assert_eq!(g.reason, "Auto");
+    clear_for_test();
+  }
+
+  #[test]
+  fn gmail_heuristic_case_insensitive() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    set_for_test(cfg_with_rule("noreply@", "low", "Auto"));
+    let snippet = snippet_with_from("NoReply@Example.Com");
+    assert!(gmail_heuristic("subj", &snippet, "en").is_some());
+    clear_for_test();
+  }
+
+  #[test]
+  fn gmail_heuristic_first_match_wins() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    let mut c = cfg_with_rule("noreply@", "low", "First");
+    c.gmail.sender_contains.push(SenderRule {
+      pattern: "@example.com".into(),
+      priority: "low".into(),
+      reason: "Second".into(),
+      reason_jp: None,
+    });
+    set_for_test(c);
+    let snippet = snippet_with_from("noreply@example.com");
+    let g = gmail_heuristic("subj", &snippet, "en").unwrap();
+    assert_eq!(g.reason, "First");
+    clear_for_test();
+  }
+
+  #[test]
+  fn gmail_heuristic_no_from_line_returns_none() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    set_for_test(cfg_with_rule("noreply@", "low", "Auto"));
+    // No "From:" prefix.
+    let snippet = "Body only, no From header.";
+    assert!(gmail_heuristic("subj", snippet, "en").is_none());
+    clear_for_test();
+  }
+
+  #[test]
+  fn gmail_heuristic_empty_config_no_match() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    set_for_test(HeuristicConfig::default());
+    let snippet = snippet_with_from("noreply@example.com");
+    assert!(gmail_heuristic("subj", &snippet, "en").is_none());
+    clear_for_test();
+  }
+
+  #[test]
+  fn gmail_heuristic_jp_reason_used_when_lang_jp() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    let mut c = cfg_with_rule("noreply@", "low", "Auto EN");
+    c.gmail.sender_contains[0].reason_jp = Some("Auto JP".into());
+    set_for_test(c);
+    let snippet = snippet_with_from("noreply@example.com");
+    let g = gmail_heuristic("subj", &snippet, "jp").unwrap();
+    assert_eq!(g.reason, "Auto JP");
+    clear_for_test();
+  }
+
+  #[test]
+  fn gmail_heuristic_jp_reason_falls_back_when_absent() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
+    set_for_test(cfg_with_rule("noreply@", "low", "Auto EN")); // reason_jp = None
+    let snippet = snippet_with_from("noreply@example.com");
+    let g = gmail_heuristic("subj", &snippet, "jp").unwrap();
+    assert_eq!(g.reason, "Auto EN"); // fallback to English
+    clear_for_test();
   }
 }

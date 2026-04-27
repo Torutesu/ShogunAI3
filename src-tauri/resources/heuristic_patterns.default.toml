@@ -1,0 +1,61 @@
+# Memory Digest heuristic pre-filter rules.
+# Edited copy lives at <app data>/heuristic_patterns.toml.
+# Restart the app to apply changes.
+#
+# Each rule matches an item BEFORE LLM summarization. A hit sets the item's
+# priority and skips the LLM call (cost saving). Sender substring matches
+# are case-insensitive against the "From:" line in the message snippet.
+#
+# Built-in rules NOT representable here (still hardcoded in summarizer.rs):
+#   - body contains "unsubscribe" / "配信停止" → low (gmail)
+#   - calendar event whose start is >24h in the past → low
+
+schema_version = 1
+
+[[gmail.sender_contains]]
+pattern = "no-reply@"
+priority = "low"
+reason = "Automated notification"
+reason_jp = "自動通知"
+
+[[gmail.sender_contains]]
+pattern = "noreply@"
+priority = "low"
+reason = "Automated notification"
+reason_jp = "自動通知"
+
+[[gmail.sender_contains]]
+pattern = "donotreply@"
+priority = "low"
+reason = "Automated notification"
+reason_jp = "自動通知"
+
+[[gmail.sender_contains]]
+pattern = "noreply@github.com"
+priority = "low"
+reason = "GitHub notification"
+reason_jp = "GitHub 通知"
+
+[[gmail.sender_contains]]
+pattern = "notifications@github.com"
+priority = "low"
+reason = "GitHub notification"
+reason_jp = "GitHub 通知"
+
+[[gmail.sender_contains]]
+pattern = "builds@"
+priority = "low"
+reason = "CI build"
+reason_jp = "CI ビルド"
+
+[[gmail.sender_contains]]
+pattern = "ci@"
+priority = "low"
+reason = "CI build"
+reason_jp = "CI ビルド"
+
+[[gmail.sender_contains]]
+pattern = "actions@github.com"
+priority = "low"
+reason = "GitHub Actions"
+reason_jp = "GitHub Actions"

@@ -15,6 +15,7 @@ mod gmail;
 mod google_calendar;
 mod google_drive;
 mod google_oauth;
+mod heuristics_config;
 mod http_retry;
 mod integration_secrets;
 mod integrations;
@@ -118,6 +119,9 @@ pub fn run() {
       connector_sync::spawn_background_connector_sync();
       rollup_sync::spawn_background_rollup_sync();
       progress_emitter::set_app_handle(app.handle().clone());
+      if let Err(e) = crate::heuristics_config::init(&app.handle()) {
+        log::warn!("heuristics config init failed: {}", e);
+      }
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -228,6 +232,7 @@ pub fn run() {
       commands::shogun_memory_summary_set_priority,
       commands::shogun_memory_summary_edit,
       commands::shogun_memory_summary_revert,
+      commands::shogun_memory_summary_edit_insights,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

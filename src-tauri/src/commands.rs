@@ -1838,3 +1838,13 @@ pub fn shogun_memory_summary_revert(payload: serde_json::Value) -> Result<serde_
     .ok_or_else(|| "summary missing after revert".to_string())?;
   Ok(serde_json::json!({ "updated": true, "summary": s.to_json() }))
 }
+
+/// Aggregate user_edits[] across all mem_summaries rows for the dev-only
+/// Edit Insights screen. Returns per-source sender counts plus totals.
+#[tauri::command]
+pub fn shogun_memory_summary_edit_insights(
+  _payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+  let insights = crate::summarizer_store::aggregate_user_edits()?;
+  serde_json::to_value(&insights).map_err(|e| e.to_string())
+}

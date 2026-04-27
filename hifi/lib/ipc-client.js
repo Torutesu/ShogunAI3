@@ -597,6 +597,27 @@
         const base = makeSummaryBase(id, { priority: mockPriorityForId(id) });
         return { updated: true, summary: applyMockEdits(base, id) };
       }
+      case "shogun_memory_summary_edit_insights": {
+        // Mock: return a small fixed-shape aggregation. Real backend reads
+        // from mem_summaries.raw_json.user_edits[].
+        return {
+          by_source: {
+            gmail: {
+              senders: [
+                { entity_id: "noreply@example.com", count: 3, fields: { title: 3 } },
+                { entity_id: "ci@example.com",       count: 1, fields: { reason: 1 } },
+              ],
+            },
+            meetings: {
+              senders: [
+                { entity_id: "meeting:abc123", count: 2, fields: { title: 2 } },
+              ],
+            },
+          },
+          total_edits: 6,
+          total_user_priority_changes: 2,
+        };
+      }
       case "shogun_entity_query":
         return {
           entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],

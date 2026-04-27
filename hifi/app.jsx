@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
+/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenEditInsights, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
 const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -335,6 +335,16 @@ function mockIpcInvoke(command, payload) {
       };
     case 'shogun_memory_summary_invalidate':
       return { ok: true, data: { deleted: true } };
+    case 'shogun_memory_summary_edit_insights':
+      return { ok: true, data: {
+        by_source: {
+          gmail: { senders: [
+            { entity_id: 'noreply@example.com', count: 3, fields: { title: 3 } },
+          ]},
+        },
+        total_edits: 3,
+        total_user_priority_changes: 1,
+      } };
     case 'shogun_memory_summary_edit':
     case 'shogun_memory_summary_revert':
       return { ok: true, data: { updated: true, summary: {
@@ -775,6 +785,7 @@ function ensureRuntimeDeps() {
         memorySummaryInvalidate: (input) => client.invoke('shogun_memory_summary_invalidate', input),
         memorySummaryEdit: (input) => client.invoke('shogun_memory_summary_edit', input),
         memorySummaryRevert: (input) => client.invoke('shogun_memory_summary_revert', input),
+        memorySummaryEditInsights: (input) => client.invoke('shogun_memory_summary_edit_insights', input),
         memoryEmbedBackfill: (input) =>
           client.invoke('shogun_memory_embed_backfill', input, { timeoutMs: 600000 }),
         memoryEmbedBackfillCancel: (input) =>
@@ -867,6 +878,7 @@ function ensureRuntimeDeps() {
           'memory.summary.invalidate': api.memorySummaryInvalidate,
           'memory.summary.edit': api.memorySummaryEdit,
           'memory.summary.revert': api.memorySummaryRevert,
+          'memory.summary.edit_insights': api.memorySummaryEditInsights,
           'entity.query': api.entityQuery,
           'brief.get': api.briefGet,
           'chat.complete': api.chatComplete,
@@ -2205,6 +2217,7 @@ function App() {
     agents: ScreenAgents,
     work: ScreenWork,
     meetings: ScreenMeetings,
+      'edit-insights': ScreenEditInsights,
     memory_debug: ScreenMemoryDebug,
   }[active] || ScreenHome;
 
