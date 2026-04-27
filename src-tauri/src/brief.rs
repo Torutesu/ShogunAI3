@@ -217,6 +217,11 @@ pub fn morning_brief_v2_stub(_generated_ms: u64, user_tz: &str, payload: &Value)
     .unwrap_or("en");
   out["memory_digest"] = build_memory_digest(lang);
 
+  let patterns_for_brief = crate::patterns::list_for_brief(4).unwrap_or_default();
+  if !patterns_for_brief.is_empty() {
+    out["patterns"] = Value::Array(patterns_for_brief);
+  }
+
   out
 }
 
