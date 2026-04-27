@@ -46,6 +46,45 @@ function buildAgentSubLine(agent, statusLabel, nowMs) {
   return parts.join(' · ');
 }
 
+// Pure: decode a free-form `agent.trigger` string into a structured form
+// the EditAgentModal can edit. Falls back to interval/1/hour when no
+// pattern matches and warns to the console (the demo data should never
+// hit the fallback in practice).
+function parseTrigger(triggerStr) {
+  const s = String(triggerStr || '').trim();
+  let m;
+  m = s.match(/^every (\d+) (minute|hour|day)s?$/);
+  if (m) return { type: 'interval', value: Number(m[1]), unit: m[2] };
+  m = s.match(/^on (\w+) event$/);
+  if (m) return { type: 'event', source: m[1] };
+  m = s.match(/^(\d{2}):(\d{2}) daily$/);
+  if (m) return { type: 'daily', time: `${m[1]}:${m[2]}` };
+  if (s === 'weekly') return { type: 'weekly' };
+  console.warn('parseTrigger: unrecognized trigger string:', triggerStr);
+  return { type: 'interval', value: 1, unit: 'hour' };
+}
+
+// Pure: round-trip a structured form back to the same string format
+// AGENTS_DEMO uses today.
+function serializeTrigger(form) {
+  if (!form || !form.type) return '';
+  if (form.type === 'interval') {
+    const n = Number(form.value) || 1;
+    const u = form.unit || 'hour';
+    return `every ${n} ${u}${n === 1 ? '' : 's'}`;
+  }
+  if (form.type === 'event') {
+    return `on ${form.source || 'calendar'} event`;
+  }
+  if (form.type === 'daily') {
+    return `${form.time || '12:00'} daily`;
+  }
+  if (form.type === 'weekly') {
+    return 'weekly';
+  }
+  return '';
+}
+
 const AGENTS_DEMO_NOW = Date.parse('2026-04-27T14:30:00+09:00');
 const HOUR = 60 * 60 * 1000;
 const AGENTS_DEMO = [
