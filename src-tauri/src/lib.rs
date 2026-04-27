@@ -15,6 +15,7 @@ mod gmail;
 mod google_calendar;
 mod google_drive;
 mod google_oauth;
+mod heuristics_config;
 mod http_retry;
 mod integration_secrets;
 mod integrations;
