@@ -173,6 +173,79 @@ pub fn parse_callback_query(qs: &str) -> CallbackOutcome {
   }
 }
 
+/// POST to Google's token endpoint and parse the response into OauthTokens.
+/// `endpoint_override` is for testing only; production callers pass `None`.
+pub async fn exchange_code(
+  code: &str,
+  client_id: &str,
+  client_secret: &str,
+  endpoint_override: Option<&str>,
+) -> Result<OauthTokens, OauthError> {
+  let endpoint = endpoint_override.unwrap_or("https://oauth2.googleapis.com/token");
+  let body = [
+    ("code", code),
+    ("client_id", client_id),
+    ("client_secret", client_secret),
+    ("redirect_uri", REDIRECT_URI),
+    ("grant_type", "authorization_code"),
+  ];
+  let client = reqwest::Client::builder()
+    .timeout(Duration::from_secs(60))
+    .build()
+    .map_err(|e| OauthError::Internal(format!("build client: {}", e)))?;
+  let resp = client
+    .post(endpoint)
+    .form(&body)
+    .send()
+    .await
+    .map_err(|_| OauthError::NetworkError)?;
+  let status = resp.status().as_u16();
+  let text = resp.text().await.map_err(|_| OauthError::NetworkError)?;
+  if status != 200 {
+    // Extract Google's error code from the response body if present.
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let google_error = parsed
+      .get("error")
+      .and_then(|v| v.as_str())
+      .unwrap_or("unknown")
+      .to_string();
+    log::warn!(
+      "token exchange failed: status={} error={} (response body redacted)",
+      status,
+      google_error,
+    );
+    return Err(OauthError::TokenExchangeFailed { status, code: google_error });
+  }
+  let parsed: serde_json::Value =
+    serde_json::from_str(&text).map_err(|e| OauthError::Internal(format!("parse token JSON: {}", e)))?;
+  let access_token = parsed
+    .get("access_token")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| OauthError::Internal("missing access_token".into()))?
+    .to_string();
+  let refresh_token = parsed
+    .get("refresh_token")
+    .and_then(|v| v.as_str())
+    .map(String::from);
+  let expires_at = parsed
+    .get("expires_in")
+    .and_then(|v| v.as_i64())
+    .map(|sec| (chrono::Utc::now().timestamp() + sec));
+  let scopes = parsed
+    .get("scope")
+    .and_then(|v| v.as_str())
+    .map(|s| s.split_whitespace().map(String::from).collect::<Vec<_>>())
+    .unwrap_or_default();
+  Ok(OauthTokens {
+    access_token,
+    refresh_token,
+    expires_at,
+    scopes,
+    client_id: client_id.to_string(),
+    client_secret: client_secret.to_string(),
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -295,5 +368,67 @@ OTHER=ignored
   fn parse_callback_query_empty() {
     let r = parse_callback_query("");
     assert!(matches!(r, CallbackOutcome::Malformed));
+  }
+
+  #[tokio::test]
+  async fn exchange_code_ok() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+      .mock("POST", "/token")
+      .with_status(200)
+      .with_header("content-type", "application/json")
+      .with_body(
+        r#"{"access_token":"AT","refresh_token":"RT","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly","token_type":"Bearer"}"#,
+      )
+      .create_async()
+      .await;
+    let endpoint = format!("{}/token", server.url());
+    let r = exchange_code("CODE", "CID", "CSEC", Some(&endpoint))
+      .await
+      .expect("exchange_code");
+    assert_eq!(r.access_token, "AT");
+    assert_eq!(r.refresh_token.as_deref(), Some("RT"));
+    assert!(r.expires_at.is_some());
+    assert_eq!(r.scopes.len(), 2);
+    assert!(r.scopes.iter().any(|s| s.contains("gmail.readonly")));
+    mock.assert_async().await;
+  }
+
+  #[tokio::test]
+  async fn exchange_code_4xx_invalid_grant() {
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+      .mock("POST", "/token")
+      .with_status(400)
+      .with_header("content-type", "application/json")
+      .with_body(r#"{"error":"invalid_grant","error_description":"Bad Request"}"#)
+      .create_async()
+      .await;
+    let endpoint = format!("{}/token", server.url());
+    let r = exchange_code("CODE", "CID", "CSEC", Some(&endpoint)).await;
+    match r {
+      Err(OauthError::TokenExchangeFailed { status, code }) => {
+        assert_eq!(status, 400);
+        assert_eq!(code, "invalid_grant");
+      }
+      other => panic!("expected TokenExchangeFailed, got {:?}", other),
+    }
+  }
+
+  #[tokio::test]
+  async fn exchange_code_no_refresh_token() {
+    let mut server = mockito::Server::new_async().await;
+    let _mock = server
+      .mock("POST", "/token")
+      .with_status(200)
+      .with_body(r#"{"access_token":"AT","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#)
+      .create_async()
+      .await;
+    let endpoint = format!("{}/token", server.url());
+    let r = exchange_code("CODE", "CID", "CSEC", Some(&endpoint))
+      .await
+      .expect("exchange_code");
+    assert_eq!(r.access_token, "AT");
+    assert!(r.refresh_token.is_none());
   }
 }
