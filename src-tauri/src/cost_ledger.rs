@@ -20,6 +20,13 @@ pub const PRICE_SONNET_4_6_OUTPUT_PER_M: f64 = 15.00;
 pub const PRICE_OPUS_4_7_INPUT_PER_M: f64 = 15.00;
 pub const PRICE_OPUS_4_7_OUTPUT_PER_M: f64 = 75.00;
 
+/// Anthropic prompt-cache multipliers applied to the per-model base input
+/// price. Values per Anthropic public pricing (2026-04-26): cache writes cost
+/// 1.25× the base input price; cache reads cost 0.10×. KIOKU benefits from
+/// reads since the worker hits the same system + tool definition every 30–60s.
+pub const CACHE_WRITE_MULTIPLIER: f64 = 1.25;
+pub const CACHE_READ_MULTIPLIER: f64 = 0.10;
+
 /// `cost_ledger.purpose` taxonomy.
 pub const PURPOSE_EXTRACTION: &str = "extraction";
 pub const PURPOSE_SUMMARIZE: &str = "summarize";
@@ -105,6 +112,20 @@ pub fn month_start_ms_utc(now_ms: i64) -> i64 {
 /// Returns `None` for unknown models so callers can log/alarm rather than
 /// silently undercount.
 pub fn calc_cost(model: &str, input_tokens: i64, output_tokens: i64) -> Option<f64> {
+  calc_cost_with_cache(model, input_tokens, 0, 0, output_tokens)
+}
+
+/// Same as `calc_cost` but accounts for Anthropic prompt-cache token classes.
+/// `input_tokens` is the *uncached* portion as reported by `usage.input_tokens`;
+/// `cache_creation_tokens` and `cache_read_tokens` come from the matching
+/// `usage.cache_*_input_tokens` fields. The three counts do not overlap.
+pub fn calc_cost_with_cache(
+  model: &str,
+  input_tokens: i64,
+  cache_creation_tokens: i64,
+  cache_read_tokens: i64,
+  output_tokens: i64,
+) -> Option<f64> {
   let (inp_per_m, out_per_m) = match model {
     "claude-haiku-4-5" => (PRICE_HAIKU_4_5_INPUT_PER_M, PRICE_HAIKU_4_5_OUTPUT_PER_M),
     "claude-sonnet-4-6" => (PRICE_SONNET_4_6_INPUT_PER_M, PRICE_SONNET_4_6_OUTPUT_PER_M),
@@ -112,8 +133,15 @@ pub fn calc_cost(model: &str, input_tokens: i64, output_tokens: i64) -> Option<f
     _ => return None,
   };
   let inp = input_tokens.max(0) as f64;
+  let cw = cache_creation_tokens.max(0) as f64;
+  let cr = cache_read_tokens.max(0) as f64;
   let out = output_tokens.max(0) as f64;
-  Some(inp / 1_000_000.0 * inp_per_m + out / 1_000_000.0 * out_per_m)
+  Some(
+    inp / 1_000_000.0 * inp_per_m
+      + cw / 1_000_000.0 * inp_per_m * CACHE_WRITE_MULTIPLIER
+      + cr / 1_000_000.0 * inp_per_m * CACHE_READ_MULTIPLIER
+      + out / 1_000_000.0 * out_per_m,
+  )
 }
 
 /// One row recorded in `cost_ledger`. Mirrors the table 1:1 minus auto id.
@@ -241,6 +269,47 @@ mod tests {
   fn calc_cost_negative_tokens_treated_as_zero() {
     let cost = calc_cost("claude-haiku-4-5", -10, -20).expect("known");
     assert_eq!(cost, 0.0);
+  }
+
+  // ── calc_cost_with_cache ──────────────────────────────────────────────
+  #[test]
+  fn calc_cost_with_cache_zero_cache_matches_calc_cost() {
+    let plain = calc_cost("claude-haiku-4-5", 2_000, 400).unwrap();
+    let cached = calc_cost_with_cache("claude-haiku-4-5", 2_000, 0, 0, 400).unwrap();
+    assert!((plain - cached).abs() < 1e-12);
+  }
+
+  #[test]
+  fn calc_cost_with_cache_charges_cache_creation_at_125x() {
+    // 1,000,000 cache_creation tokens at Haiku 4.5 = $1.25 (1.25× $1.00 base).
+    let cost = calc_cost_with_cache("claude-haiku-4-5", 0, 1_000_000, 0, 0).unwrap();
+    assert!((cost - 1.25).abs() < 1e-9);
+  }
+
+  #[test]
+  fn calc_cost_with_cache_charges_cache_read_at_10pct() {
+    // 1,000,000 cache_read tokens at Haiku 4.5 = $0.10 (0.10× $1.00 base).
+    let cost = calc_cost_with_cache("claude-haiku-4-5", 0, 0, 1_000_000, 0).unwrap();
+    assert!((cost - 0.10).abs() < 1e-9);
+  }
+
+  #[test]
+  fn calc_cost_with_cache_realistic_kioku_extraction_breakdown() {
+    // Per docs/kioku-cost-budget.md projected breakdown after caching:
+    //   - 500 fresh input tokens (variable user content)  → $0.0005
+    //   - 0   cache_creation (already cached)             → $0
+    //   - 3,500 cache_read (system + tool)                → $0.00035
+    //   - 800 output                                      → $0.004
+    //   = $0.00485 / job
+    let cost = calc_cost_with_cache("claude-haiku-4-5", 500, 0, 3_500, 800).unwrap();
+    let expected = 500.0 / 1e6 * 1.00 + 3_500.0 / 1e6 * 0.10 + 800.0 / 1e6 * 5.00;
+    assert!((cost - expected).abs() < 1e-12, "got {} expected {}", cost, expected);
+    assert!(cost < 0.005, "per-job under cached path should drop below $0.005");
+  }
+
+  #[test]
+  fn calc_cost_with_cache_unknown_model_returns_none() {
+    assert!(calc_cost_with_cache("gpt-9000", 100, 0, 0, 100).is_none());
   }
 
   // ── record ────────────────────────────────────────────────────────────

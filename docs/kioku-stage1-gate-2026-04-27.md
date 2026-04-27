@@ -132,28 +132,46 @@ cost-budget.md §3.1 の重負荷上限 (800 行/日) を **約 4% 超過**。de
 
 §3.2 / §3.3 の dedup 係数を当てはめ:
 
+#### Legacy 経路 (cache OFF / window 30s)
+
 ```
 extraction_jobs/day = 829.5 × 0.348 × 0.4 = 115.4 jobs/day
 monthly_cost = 115.4 × $0.004 × 30 = $13.85 / month
 ```
 
-→ §4.2 の **重負荷レンジ ($13.32/月)** とほぼ一致。試算モデルは現実的に有効。
+cap $10 を 38.5% 超過。
+
+#### A+B 適用後 (cache ON / window 60s) — **本ゲートの確定経路**
+
+```
+extraction_jobs/day = 829.5 × 0.348 × 0.3 = 86.6 jobs/day
+monthly_cost = 86.6 × $0.0027 × 30 = $7.01 / month
+```
+
+→ §4.2 の重負荷レンジ ($6.80) とほぼ一致。**cap $10 内に余裕 30%**。
+
+実装:
+- `kioku_capture::DEFAULT_BATCHED_DEDUP_WINDOW_MS = 60_000` (B)
+- `llm::AnthropicToolRequestOptions::enable_prompt_cache=true` を
+  `AnthropicExtractionClient` に配線 (A)
+- `cost_ledger::calc_cost_with_cache` が cached input を 0.10× / cache_creation
+  を 1.25× で課金
 
 ### C.3 cap 既定 / cap_action 確認
 
 | 項目 | 値 |
 |------|----|
 | 既定 `monthly_cap_usd` | $10 |
-| dev-localhost 重負荷投影 | $13.85 |
+| dev-localhost 投影 (A+B 適用後) | $7.01 |
 | 既定 `cap_action` | `pause_extraction` |
 
-dev-localhost は cap を超える可能性が高いユーザー。**`pause_extraction` で月後半に
-queued が積まれ、月明けに自動再開される設計が刺さるユース**。Stage 2 で worker を
-ON にしたとき UI 側で cost ledger / queue depth が可視化される (Settings → KIOKU
+A+B 適用後は **重負荷 dev-localhost でも余裕 30%**。`pause_extraction` は超重負荷
+ユーザー (raw 1500/日) のためのフェイルセーフとして残る。Stage 2 で worker を ON
+にしたとき UI 側で cost ledger / queue depth が可視化される (Settings → KIOKU
 Graph pane / Memory Debug → KIOKU stats tab — commit `b898c96` / `8578971`)。
 
-決定: **既定 $10 + `pause_extraction` を据え置き**。dev-localhost のような重負荷
-ユーザーは UI から cap を引き上げる選択肢を持つ。
+決定: **既定 $10 + `pause_extraction` を据え置き**。Stage 2 観測で実 cache hit 率
+が想定通り (>95%) なら、将来 $5 まで下げる選択肢も検討。
 
 ### C.4 dedup 係数の実測 (Stage 2 観測タスク)
 
@@ -235,7 +253,7 @@ pub const DECAY_RECENCY_TAU_MS: i64 = 7 * 24 * 60 * 60 * 1000; // 7 days
 | B.3 13/15 (production gate) | ⏳ 同上 (text-only 10/15 達成) |
 | B.4 閾値の const 確定 | ✅ |
 | C.1 1 日 capture 量観測 | ✅ 829.5 rows/day (重負荷プロファイル) |
-| C.2 月額試算が cap 内 | ⚠️ $13.85 投影 — cap $10 を 4% 超過するが `pause_extraction` で吸収可 |
+| C.2 月額試算が cap 内 | ✅ $7.01 投影 (A+B 適用後 / cap $10 内・余裕 30%) — legacy 経路は $13.85 で cap 超過していたが prompt cache + window 60s で解消 |
 | C.3 cap_action 既定 | ✅ `pause_extraction` 据え置き |
 | C.4 試算結果を docs に保存 | ✅ (本ドキュメント + §7) |
 | D.1 cargo / npm check | ✅ (E2E は Select 手動) |
@@ -251,9 +269,10 @@ pub const DECAY_RECENCY_TAU_MS: i64 = 7 * 24 * 60 * 60 * 1000; // 7 days
   OFF) で Stage 2 観測ループに移譲する性質のもの。
 - B.2 / B.3 の text-only baseline は満たしており、embedding 経路は unit test で
   動作確認済 — Stage 2 で flag を立てた瞬間から production gate を再計測できる。
-- C.2 の cap 超過は **dev-localhost が重負荷プロファイル**で起きているもので、
-  設計通り `pause_extraction` が安全弁として機能する想定。実ユーザーの平均は
-  中央値 $9 想定で cap 内に収まる見込み。
+- C.2 はゲート報告の初版で cap 超過 ($13.85 vs $10) を残課題としたが、後続コミット
+  で **A. prompt caching + B. window 30s → 60s** を実装し、dev-localhost 投影が
+  $7.01/月 (-49%) に下がった。**重負荷 dev-localhost を含めて cap $10 内**で
+  Stage 2 着手可能。中央値ユーザーの実観測は依然 Stage 2 着手前の Select 確認事項。
 
 ### Select が Stage 2 着手前に追加で確認すべきこと
 

@@ -32,7 +32,7 @@
 
 ## §2 1 抽出ジョブあたりのトークン消費
 
-### 2.1 入力 (per job、batched 30 秒窓内に集約された capture)
+### 2.1 入力 (per job、batched 60 秒窓内に集約された capture)
 
 | 構成要素 | 平均 chars | tokens (英語 ≈ 3.5 chars/tok) |
 |----------|------------|-------------------------------|
@@ -56,6 +56,8 @@
 
 ### 2.3 1 ジョブあたり cost (Haiku 4.5)
 
+#### 2.3.1 prompt cache OFF (legacy path)
+
 ```
 cost_per_job = 2000 / 1_000_000 * $1.00 + 400 / 1_000_000 * $5.00
              = $0.002 + $0.002
@@ -67,6 +69,36 @@ cost_per_job = 2000 / 1_000_000 * $1.00 + 400 / 1_000_000 * $5.00
 参考:
 - Sonnet 4.6 想定: $0.012 / job (約 1.8 円) — 3x
 - Opus 4.7 想定: $0.06 / job (約 9 円) — 15x
+
+#### 2.3.2 prompt cache ON (KIOKU 既定経路、`AnthropicToolRequestOptions::enable_prompt_cache=true`)
+
+§2.1 入力 2,000 tok のうち、**system prompt + tool schema = 約 1,500 tok は完全固定**で
+キャッシュ対象。残り 500 tok (capture 集約サマリ + AX 抜粋) のみが variable。
+
+Anthropic prompt cache の単価:
+- cache write (初回): 通常 input 価格 × 1.25
+- cache read (再利用): 通常 input 価格 × 0.10
+
+KIOKU worker は 60 秒間隔で連続走行する (Anthropic ephemeral cache TTL は 5 分)
+ため、**初回 1 回だけ cache write、以降ほぼ常に cache read**。
+
+```
+cost_per_job (steady state, cache hit)
+  = 500 / 1_000_000 * $1.00              # variable input
+    + 1500 / 1_000_000 * $0.10           # cached read
+    + 400 / 1_000_000 * $5.00            # output
+  = $0.0005 + $0.00015 + $0.002
+  ≈ $0.0027 / job  (legacy 比 -32%)
+```
+
+cache write 1 回あたり: $0.0005 + (1500 × 1.25 / 1M) + $0.002 = $0.00438/job (legacy +9%)。
+TTL 5 分 / poll 30〜60 秒なので 1 時間あたり cache write 1 回 + cache read ~60 回想定 →
+cache miss は無視できる程度 (overhead < 2%)。
+
+実装: `src-tauri/src/llm.rs::build_anthropic_tool_request_body` が
+`cache_control: { type: "ephemeral" }` を system block + tool 定義に付与し、
+`AnthropicToolResult.cache_creation_input_tokens` / `cache_read_input_tokens` を
+返す。`cost_ledger::calc_cost_with_cache` が 3 種の input token を分けて課金する。
 
 ---
 
@@ -106,60 +138,85 @@ cost_per_job = 2000 / 1_000_000 * $1.00 + 400 / 1_000_000 * $5.00
 直列適用後の保留率は **(1 - 0.10) × (1 - 0.30) × (1 - 0.35) × (1 - 0.15) ≈ 0.348**。
 抽出に流れる行数 = 550 × 0.348 ≈ **191 行/日**。
 
-### 3.3 batched dedup window (30 秒) の集約率
+### 3.3 batched dedup window (60 秒) の集約率
 
-window 内の `(app_bundle_id, window_title or url)` 同値を 1 ジョブに畳む。観測前の構造的見積もりでは **集約率 0.4** (= 平均して 1 ジョブに 2.5 件の capture が集約される)。
+window 内の `(app_bundle_id, window_title or url)` 同値を 1 ジョブに畳む。
+`kioku_capture::DEFAULT_BATCHED_DEDUP_WINDOW_MS = 60_000` (Stage 1 観測後に 30 秒
+から倍化 — 中央値ユーザーで 1 ジョブあたり集約数を約 1.33x に)。
 
-抽出ジョブ件数 = 191 × 0.4 ≈ **76 ジョブ/日**。
+構造的見積もり: **集約率 0.3** (= 平均して 1 ジョブに 3.3 件の capture が集約される)。
+30 秒だと 0.4 だったが、window 倍化で同 (app, title) のヒット率が ~25% 改善する想定。
+
+抽出ジョブ件数 = 191 × 0.3 ≈ **57 ジョブ/日**。
 
 中央値レンジ:
-- 軽負荷ユーザー (300 raw/日): 300 × 0.348 × 0.4 ≈ **42 ジョブ/日**
-- 重負荷ユーザー (800 raw/日): 800 × 0.348 × 0.4 ≈ **111 ジョブ/日**
+- 軽負荷ユーザー (300 raw/日): 300 × 0.348 × 0.3 ≈ **31 ジョブ/日**
+- 重負荷ユーザー (800 raw/日): 800 × 0.348 × 0.3 ≈ **84 ジョブ/日**
 
 ---
 
 ## §4 月額試算
 
-### 4.1 中央値ユーザー (76 ジョブ/日)
+### 4.1 中央値ユーザー (57 ジョブ/日、cache ON)
+
+prompt cache + 60 秒 window 反映後:
 
 ```
-monthly_cost
-  = 76 jobs/day × $0.004/job × 30 days
-  = $9.12 / month
+monthly_cost (steady state, cache hit dominant)
+  = 57 jobs/day × $0.0027/job × 30 days
+  = $4.62 / month
 ```
 
-中央値 **約 $9 / 月 (約 1,350 円)**。
+中央値 **約 $4.6 / 月 (約 700 円)** — legacy 計算 ($9.12) から **-49%**。
 
-### 4.2 レンジ
+### 4.2 レンジ (cache ON / window 60s)
 
-| プロファイル | ジョブ/日 | 月額 (Haiku 4.5) |
-|--------------|-----------|------------------|
-| 軽負荷ユーザー | 42 | **$5.04 / 月** |
-| 中央値 | 76 | **$9.12 / 月** |
-| 重負荷ユーザー | 111 | **$13.32 / 月** |
-| 超重負荷 (raw 1500/日想定) | 209 | **$25.08 / 月** |
+| プロファイル | ジョブ/日 | 月額 (Haiku 4.5) | legacy (cache OFF / window 30s) | 削減率 |
+|--------------|-----------|------------------|----------------------------------|--------|
+| 軽負荷ユーザー | 31 | **$2.51 / 月** | $5.04 | -50% |
+| 中央値 | 57 | **$4.62 / 月** | $9.12 | -49% |
+| 重負荷ユーザー | 84 | **$6.80 / 月** | $13.32 | -49% |
+| 超重負荷 (raw 1500/日想定) | 156 | **$12.64 / 月** | $25.08 | -50% |
+
+dev-localhost 実観測 (raw 829.5/日 = ほぼ重負荷上限) を当てはめると:
+
+```
+829.5 × 0.348 × 0.3 = 86.6 jobs/day
+86.6 × $0.0027 × 30 = $7.01 / month
+```
+
+**dev-localhost 投影: 約 $7.0 / 月** (legacy 試算 $13.85 から **-49%**)。
+cap $10 内に十分収まる。
 
 ### 4.3 cap 既定値の妥当性
 
-`settings.sections.kioku_cost.monthly_cap_usd` 既定 **$10 / 月** は中央値ユーザーをほぼカバーする水準。
+`settings.sections.kioku_cost.monthly_cap_usd` 既定 **$10 / 月** は重負荷ユーザー
++ dev-localhost 観測クラスを丸ごと吸収できる。超重負荷 (raw 1500/日) でも残り
+20% 余裕。
 
-- 軽〜中央値ユーザー: 余裕で収まる。
-- 重負荷ユーザー: 月後半に cap 抵触の可能性 → `cap_action='pause_extraction'` で月明けまで queued 保留 → ユーザーは UI で気付ける。
-- 超重負荷ユーザー: 早い段階で cap 抵触 → ユーザーが cap 引き上げを判断。
+- 軽〜中央値ユーザー: 大幅な余裕。
+- 重負荷ユーザー: 余裕あり。月跨ぎ pause_extraction はほぼ起きない想定。
+- 超重負荷ユーザー: 月後半に cap 抵触の可能性 → `cap_action='pause_extraction'`
+  で月明けまで queued 保留 → ユーザーは UI で気付ける。
 
-**提案: 既定 $10、推奨 cap_action = `pause_extraction`** (capture は続行するため、復旧時に過去分が抽出される)。
+**提案: 既定 $10、推奨 cap_action = `pause_extraction`** (capture は続行するため、
+復旧時に過去分が抽出される)。$10 は cache OFF 時の中央値想定 ($9.12) を保守的に
+吸収する水準として据え置く — Stage 2 観測で実 cache hit 率が想定通りなら、将来
+$5 まで下げる選択肢も検討。
 
 ### 4.4 Sonnet / Opus 上書きシナリオ (参考)
 
-ユーザーが quality 優先で上書きした場合:
+ユーザーが quality 優先で上書きした場合 (cache ON / window 60s 前提):
 
 | モデル | 中央値ユーザー月額 | 重負荷ユーザー月額 |
 |--------|--------------------|--------------------|
-| Haiku 4.5 (既定) | $9.12 | $13.32 |
-| Sonnet 4.6 | $27.36 | $39.96 |
-| Opus 4.7 | $136.80 | $199.80 |
+| Haiku 4.5 (既定) | $4.62 | $6.80 |
+| Sonnet 4.6 | $13.86 | $20.40 |
+| Opus 4.7 | $69.30 | $102.00 |
 
-UI で「上書き時の試算月額」を出すことを推奨 (Settings > Memory > Cost ペインで `extractionModel` 切替時に再計算)。
+Sonnet / Opus は input 単価が 3x / 15x なので cap $10 を超える。ユーザーは cap を
+明示的に上げるか、Haiku 4.5 に留める判断が必要。UI で「上書き時の試算月額」を
+出すことを推奨 (Settings > Memory > Cost ペインで `extractionModel` 切替時に再計算)。
 
 ---
 
@@ -362,14 +419,19 @@ Phase 2 schema present: yes
 
 | user | rows/day (capture) | dedup skip (実測) | 7-day cost | monthly proj | 判定 |
 |------|--------------------|-------------------|------------|--------------|-----|
-| dev-localhost | **829.5** (capture_ax+sampler) | ⏳ Stage 2 待ち | $0 (worker OFF) | **$13.85** (構造的試算) | ⚠️ cap $10 を 4% 超過 — `pause_extraction` で吸収 |
+| dev-localhost (legacy 試算) | 829.5 | ⏳ Stage 2 待ち | $0 (worker OFF) | $13.85 | ⚠️ cap $10 超過 |
+| dev-localhost (cache ON / window 60s) | **829.5** | ⏳ Stage 2 待ち | $0 (worker OFF) | **$7.01** | ✅ cap $10 内、余裕 30% |
 | (内部ユーザー A) | (待機中) | | | | |
 | (内部ユーザー B) | (待機中) | | | | |
 
-**dev-localhost 試算ロジック**: §3.1 の重負荷上限 (800/day) をわずかに超える 829.5
-行/日 → §3.2 の dedup 係数 0.348 + §3.3 の集約係数 0.4 → 115.4 jobs/day → 115.4
-× $0.004 × 30 = **$13.85/month**。§4.2 の重負荷ユーザー想定 ($13.32) とほぼ一致
-し、構造的試算モデルが現実的に有効であることが裏取れた。
+**dev-localhost 試算ロジック (cache ON 反映)**:
+§3.1 の重負荷上限 (800/day) をわずかに超える 829.5 行/日 → §3.2 の dedup 係数 0.348
++ §3.3 の **集約係数 0.3 (60s window)** → **86.6 jobs/day** → 86.6 ×
+**$0.0027/job (cache hit)** × 30 = **$7.01/month**。
+
+§4.2 の重負荷ユーザー想定 ($6.80) と概ね一致し、構造的試算モデル (cache 後) が
+現実的に有効であることが裏取れた。cache OFF 時 ($13.85) との差 ~$6.84/月 が
+prompt caching + window 倍化の合算効果。
 
 **観測ギャップ (Stage 2 着手前に Select が埋める)**:
 

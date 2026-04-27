@@ -162,12 +162,19 @@ pub struct CaptureContext {
 }
 
 /// What the extraction client returns on a successful call.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ExtractionResponse {
   pub facts: Vec<ExtractedFact>,
   pub model: String,
   pub input_tokens: i64,
   pub output_tokens: i64,
+  /// Tokens written to the prompt cache. 0 when caching is off or the prompt
+  /// is below Anthropic's cache threshold. Used by `cost_ledger` to apply the
+  /// 1.25× write price.
+  pub cache_creation_input_tokens: i64,
+  /// Tokens served from the prompt cache. The bulk of the savings — billed at
+  /// 0.10× normal price.
+  pub cache_read_input_tokens: i64,
 }
 
 /// Distinguish transient (retry) from permanent (give up) errors so the
@@ -288,8 +295,10 @@ impl ExtractionClient for AnthropicExtractionClient {
 
     // Bridge async → sync. The worker driver calls this from a blocking task,
     // so creating a current_thread runtime here is cheap and isolated.
+    let opts = crate::llm::AnthropicToolRequestOptions { enable_prompt_cache: true };
     let result = tauri::async_runtime::block_on(async move {
-      crate::llm::anthropic_tool_complete_with_usage(&system, &user, &tool, &model).await
+      crate::llm::anthropic_tool_complete_with_usage_opts(&system, &user, &tool, &model, opts)
+        .await
     });
 
     let res = match result {
@@ -311,6 +320,8 @@ impl ExtractionClient for AnthropicExtractionClient {
       model: res.resolved_model,
       input_tokens: res.input_tokens,
       output_tokens: res.output_tokens,
+      cache_creation_input_tokens: res.cache_creation_input_tokens,
+      cache_read_input_tokens: res.cache_read_input_tokens,
     })
   }
 }
@@ -545,8 +556,22 @@ pub fn process_one_job<C: ExtractionClient>(
         resolve_write(f, emb.as_deref(), Some(capture_id), now_ms, conn)?;
       }
 
-      let cost = crate::cost_ledger::calc_cost(&resp.model, resp.input_tokens, resp.output_tokens)
-        .unwrap_or(0.0);
+      let cost = crate::cost_ledger::calc_cost_with_cache(
+        &resp.model,
+        resp.input_tokens,
+        resp.cache_creation_input_tokens,
+        resp.cache_read_input_tokens,
+        resp.output_tokens,
+      )
+      .unwrap_or(0.0);
+      let meta_json = if resp.cache_creation_input_tokens > 0 || resp.cache_read_input_tokens > 0 {
+        Some(format!(
+          r#"{{"cache_creation_input_tokens":{},"cache_read_input_tokens":{}}}"#,
+          resp.cache_creation_input_tokens, resp.cache_read_input_tokens,
+        ))
+      } else {
+        None
+      };
       crate::cost_ledger::record(
         &crate::cost_ledger::LedgerEntry {
           recorded_at_ms: now_ms,
@@ -556,7 +581,7 @@ pub fn process_one_job<C: ExtractionClient>(
           output_tokens: resp.output_tokens,
           cost_usd: cost,
           job_id: Some(job_id),
-          meta_json: None,
+          meta_json,
         },
         conn,
       )?;
@@ -1855,6 +1880,7 @@ mod tests {
           model: "claude-haiku-4-5".into(),
           input_tokens: 100,
           output_tokens: 20,
+          ..Default::default()
         })
       }
     }
@@ -1887,6 +1913,7 @@ mod tests {
           model: "claude-haiku-4-5".into(),
           input_tokens: 100,
           output_tokens: 0,
+          ..Default::default()
         })
       }
     }
@@ -1928,6 +1955,7 @@ mod tests {
           model: "claude-haiku-4-5".into(),
           input_tokens: 0,
           output_tokens: 0,
+          ..Default::default()
         })
       }
     }
@@ -2056,6 +2084,7 @@ mod tests {
           model: "claude-haiku-4-5".into(),
           input_tokens: 2_000,
           output_tokens: 400,
+          ..Default::default()
         }))),
       }
     }

@@ -316,9 +316,16 @@ pub enum WindowOutcome {
   Flush(Vec<PendingCapture>),
 }
 
-/// 30-second sliding window aggregator. Holds pending captures until the
-/// window for their `key` expires, then `observe` returns the aggregated
-/// list as `Flush(...)`.
+/// Default batched-dedup window length. 60s gives the aggregator more chances
+/// to collapse same-(app, title) captures into one extraction job. Doubled
+/// from the original 30s after Stage 1 cost observation showed we need ~25%
+/// fewer jobs to keep heavy-load users inside the BYOK monthly cap. See
+/// `docs/kioku-cost-budget.md` §3.3.
+pub const DEFAULT_BATCHED_DEDUP_WINDOW_MS: i64 = 60_000;
+
+/// Sliding window aggregator. Holds pending captures until the window for
+/// their `key` expires, then `observe` returns the aggregated list as
+/// `Flush(...)`. Default window length is `DEFAULT_BATCHED_DEDUP_WINDOW_MS`.
 pub struct BatchedDedupWindow {
   window_ms: i64,
   pending: std::collections::HashMap<String, Vec<PendingCapture>>,
@@ -720,6 +727,11 @@ mod tests {
   }
 
   // ── BatchedDedupWindow ─────────────────────────────────────────────────
+  #[test]
+  fn default_batched_dedup_window_is_60_seconds() {
+    assert_eq!(DEFAULT_BATCHED_DEDUP_WINDOW_MS, 60_000);
+  }
+
   fn pc(key: &str, captured_at_ms: i64, dwell_ms: i64, raw_text_hash: u64) -> PendingCapture {
     PendingCapture {
       key: key.to_string(),
