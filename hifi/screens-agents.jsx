@@ -1295,6 +1295,7 @@ function ScreenAgents() {
   // settingsTick increments (e.g., after Pause/Resume save).
   const [settings, setSettings] = React.useState(null);
   const [settingsTick, setSettingsTick] = React.useState(0);
+  const [runningIds, setRunningIds] = React.useState(() => new Set());
   React.useEffect(() => {
     let cancelled = false;
     runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
@@ -1353,6 +1354,28 @@ function ScreenAgents() {
     () => effectiveAgents.find((a) => a.id === editModalAgentId) || null,
     [effectiveAgents, editModalAgentId],
   );
+
+  const runAgentNow = React.useCallback(async (agentId) => {
+    const agent = effectiveAgents.find((a) => a.id === agentId);
+    const def = AGENT_RUNTIME[agentId];
+    if (!agent || !def) return;
+    setRunningIds((prev) => new Set([...prev, agentId]));
+    try {
+      const res = await runRuntimeActionA(def.runNowAction, def.runNowPayload(), { silentError: true });
+      if (res?.ok) {
+        window.SHOGUN_RUNTIME?.pushToast?.(def.runNowSuccessMsg(res.data), 'success');
+      } else {
+        const errMsg = res?.error?.message || 'Run failed';
+        window.SHOGUN_RUNTIME?.pushToast?.(`${agent.name}: ${errMsg}`, 'warn');
+      }
+    } finally {
+      setRunningIds((prev) => {
+        const next = new Set(prev);
+        next.delete(agentId);
+        return next;
+      });
+    }
+  }, [effectiveAgents]);
 
   React.useEffect(() => {
     let cancelled = false;
