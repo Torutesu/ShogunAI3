@@ -77,7 +77,7 @@ inform future rule additions. No automatic TOML modification.
 | `src-tauri/src/summarizer_store.rs` (modify) | Add `aggregate_user_edits()` helper that walks `mem_summaries` rows and aggregates `raw_json.user_edits[]`. |
 | `src-tauri/src/lib.rs` (modify) | Register the new command in `tauri::generate_handler!`. |
 | `hifi/lib/shogun-api.js` + `action-registry.js` + `app.jsx` + `ipc-client.js` | Wire `memory.summary.edit_insights` action. |
-| `hifi/screens-?.jsx` (likely `screens-b.jsx` or new `screens-debug.jsx`) | Insights debug screen. Reachable only via `setActiveScreen('insights-debug')` (no sidebar/cmdk entry). |
+| `hifi/screens-?.jsx` (likely `screens-b.jsx` or new `screens-debug.jsx`) | Insights debug screen. Reachable only via `setActiveScreen('edit-insights')` (no sidebar/cmdk entry). |
 
 ### Startup flow
 
@@ -367,10 +367,10 @@ commands.
 
 ### Reachability
 
-- `setActiveScreen('insights-debug')` from a debug context (browser console
+- `setActiveScreen('edit-insights')` from a debug context (browser console
   in Hi-Fi preview, or `window.SHOGUN_RUNTIME?.setActiveScreen?.(...)` in
   the Tauri console).
-- Optional: a `hashchange` listener on `#insights-debug` could trigger the
+- Optional: a `hashchange` listener on `#edit-insights` could trigger the
   switch automatically. Out of scope unless trivial.
 - No sidebar entry, no command-palette entry, no keyboard shortcut.
 
@@ -422,7 +422,7 @@ A new function component (location: `hifi/screens-b.jsx` or a new `hifi/screens-
 
 ### Screen registration
 
-Add `'insights-debug'` to whatever enum/switch in `app.jsx` decides which screen to render. Sidebar selection handlers should NOT highlight any sidebar item when this screen is active.
+Add `'edit-insights'` to whatever enum/switch in `app.jsx` decides which screen to render. Sidebar selection handlers should NOT highlight any sidebar item when this screen is active.
 
 ## § 5. Edge Cases
 
@@ -478,7 +478,7 @@ Add `'insights-debug'` to whatever enum/switch in `app.jsx` decides which screen
 
 ### Frontend Playwright (new: `tests/e2e/memory-edit-insights.spec.js`)
 
-- Navigate via `setActiveScreen('insights-debug')` → screen renders.
+- Navigate via `setActiveScreen('edit-insights')` → screen renders.
 - Mock IPC returns dummy aggregation → table visible with expected entries.
 - Reload button click → IPC re-fetched.
 - May be `test.fixme`'d if the same async-summarize race blocks the test (cluster precedent).
@@ -499,7 +499,7 @@ Add `'insights-debug'` to whatever enum/switch in `app.jsx` decides which screen
 - Edit `<app data>/heuristic_patterns.toml`, add a new sender pattern (e.g., a personal `@spammy-newsletter.com` substring with `priority = "low"`).
 - Restart the app.
 - Trigger a Gmail sync (or use mocked items in dev) — confirm matching items render with the new reason and `priority = "low"` in the river.
-- In the dev console, run `window.SHOGUN_RUNTIME?.setActiveScreen?.('insights-debug')` — confirm the Insights screen renders.
+- In the dev console, run `window.SHOGUN_RUNTIME?.setActiveScreen?.('edit-insights')` — confirm the Insights screen renders.
 
 ## § 7. Rollout
 

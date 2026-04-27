@@ -1069,12 +1069,13 @@ mod tests {
 
   #[test]
   #[ignore]
-  fn aggregate_user_edits_empty_db_returns_zero() {
+  fn aggregate_user_edits_returns_successfully() {
     let _lock = DB_TEST_LOCK.lock().unwrap();
-    let r = aggregate_user_edits().expect("aggregate");
-    // Don't assert exact counts (other tests may have inserted rows); just
-    // assert the function returns successfully.
-    assert!(r.total_edits >= 0);
+    // The function should return a successful Result regardless of whether
+    // mem_summaries has any rows. The DB_TEST_LOCK shared with other ignored
+    // tests means we may inherit rows from prior tests in the same run; we
+    // intentionally don't assert specific counts here.
+    let _r = aggregate_user_edits().expect("aggregate");
   }
 
   #[test]
