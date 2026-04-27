@@ -1534,7 +1534,7 @@ function AgentRunHistoryDrawer({ agent, nowMs, onClose }) {
   );
 }
 
-function AgentCard({ agent, expanded, onToggle, nowMs }) {
+function AgentCard({ agent, expanded, onToggle, nowMs, onOpenHistory }) {
   // If the most recent run failed, surface it as `error` regardless of
   // the schema status — operationally this is what matters.
   const lastRun = agent.recentRuns && agent.recentRuns[0];
@@ -1628,7 +1628,7 @@ function AgentCard({ agent, expanded, onToggle, nowMs }) {
             </div>
             <RecentRunsList
               runs={agent.recentRuns}
-              onSeeAll={() => window.SHOGUN_RUNTIME?.pushToast?.(`Run history page coming soon`, 'info')}
+              onSeeAll={() => onOpenHistory(agent.id)}
             />
           </div>
         </div>
@@ -1650,6 +1650,7 @@ function ScreenAgents() {
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
   const [playgroundOpen, setPlaygroundOpen] = React.useState(false);
   const [newAgentModalOpen, setNewAgentModalOpen] = React.useState(false);
+  const [historyDrawerAgentId, setHistoryDrawerAgentId] = React.useState(null);
   const [expandedIds, setExpandedIds] = React.useState(() => new Set());
   const toggleExpanded = React.useCallback((id) => {
     setExpandedIds((prev) => {
@@ -1813,6 +1814,7 @@ function ScreenAgents() {
               expanded={expandedIds.has(a.id)}
               onToggle={() => toggleExpanded(a.id)}
               nowMs={AGENTS_DEMO_NOW}
+              onOpenHistory={setHistoryDrawerAgentId}
             />
           ))}
         </div>
@@ -1849,6 +1851,14 @@ function ScreenAgents() {
           setPlaygroundOpen(true);
         }}
       />
+
+      {historyDrawerAgentId && (
+        <AgentRunHistoryDrawer
+          agent={AGENTS_DEMO.find((a) => a.id === historyDrawerAgentId)}
+          nowMs={AGENTS_DEMO_NOW}
+          onClose={() => setHistoryDrawerAgentId(null)}
+        />
+      )}
 
       {/* Playground drawer — kept for the memory-aware draft + chat flows */}
       {playgroundOpen && (
