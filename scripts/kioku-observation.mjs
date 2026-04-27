@@ -73,7 +73,11 @@ function defaultDbPath() {
 }
 
 function runQuery(dbPath, sql) {
-  const r = spawnSync("sqlite3", ["-readonly", "-cmd", ".mode tabs", dbPath, sql], {
+  // Use URI form with mode=ro + immutable=1 so WAL-mode DBs open without
+  // requiring SHM write permission (the bare `-readonly` flag fails with
+  // SQLITE_CANTOPEN/14 on macOS when the DB is in WAL mode).
+  const uri = `file:${dbPath}?mode=ro&immutable=1`;
+  const r = spawnSync("sqlite3", ["-cmd", ".mode tabs", uri, sql], {
     encoding: "utf8",
   });
   if (r.error) throw new Error(`sqlite3 invocation failed: ${r.error.message}`);

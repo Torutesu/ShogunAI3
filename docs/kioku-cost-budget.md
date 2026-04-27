@@ -304,11 +304,80 @@ Phase 2 schema present: yes
 | decided_in | 23 |
 ```
 
-### 集計 (実観測後に追記)
+### dev-localhost 実観測 (2026-04-27)
 
-| user | rows/day (capture) | dedup skip | 7-day cost | monthly proj | 判定 |
-|------|---------------------|------------|------------|--------------|-----|
-| (待機中) | | | | | |
+`docs/kioku-stage1-gate-2026-04-27.md` から転記。Source DB は当時の Tauri app data
+dir (`~/Library/Application Support/ai.Shogun.ShogunAI3/memory.db`) を `/tmp` に
+スナップショットして `--db /tmp/kioku-memory-snap.db` で計測した。
+
+```markdown
+## KIOKU observation — dev-localhost (7-day window)
+
+Generated: 2026-04-26T23:50:32.990Z
+Source DB: `/tmp/kioku-memory-snap.db` (found)
+Phase 2 schema present: yes
+
+### 1. Capture rate (last 7 days)
+
+**`mem_items` rows by source (legacy capture path):**
+
+| source | rows | rows/day |
+| --- | --- | --- |
+| capture_ax | 5,685 | 812.1 |
+| capture_sampler | 122 | 17.4 |
+| google_calendar | 33 | 4.7 |
+| gmail | 20 | 2.9 |
+| telemetry_chat_context | 1 | 0.1 |
+
+- `mem_captures` (Stage 2 path): no rows in window
+
+### 2. Dedup health (Stage 2 only)
+
+- No mem_captures rows.
+
+### 3. BYOK cost ledger
+
+- No ledger rows in window.
+- Month-to-date (UTC) total: **$0.0000**.
+
+### 4. Queue depth (right now)
+
+- No jobs.
+
+### 5. Graph composition
+
+**Active mem_items by node_kind:**
+
+| node_kind | count |
+| --- | --- |
+| capture_summary | 5,806 |
+| event | 33 |
+| note | 21 |
+| (unset) | 1 |
+
+- No active edges (extraction worker hasn't produced relations yet).
+```
+
+### 集計
+
+| user | rows/day (capture) | dedup skip (実測) | 7-day cost | monthly proj | 判定 |
+|------|--------------------|-------------------|------------|--------------|-----|
+| dev-localhost | **829.5** (capture_ax+sampler) | ⏳ Stage 2 待ち | $0 (worker OFF) | **$13.85** (構造的試算) | ⚠️ cap $10 を 4% 超過 — `pause_extraction` で吸収 |
+| (内部ユーザー A) | (待機中) | | | | |
+| (内部ユーザー B) | (待機中) | | | | |
+
+**dev-localhost 試算ロジック**: §3.1 の重負荷上限 (800/day) をわずかに超える 829.5
+行/日 → §3.2 の dedup 係数 0.348 + §3.3 の集約係数 0.4 → 115.4 jobs/day → 115.4
+× $0.004 × 30 = **$13.85/month**。§4.2 の重負荷ユーザー想定 ($13.32) とほぼ一致
+し、構造的試算モデルが現実的に有効であることが裏取れた。
+
+**観測ギャップ (Stage 2 着手前に Select が埋める)**:
+
+- dedup skip 実測値 (`mem_captures.extraction_status` 別比) — worker ON 後 24h
+  で計測可能
+- 集約係数 0.4 の実測 (`extraction_jobs` 1 件あたり `mem_captures` 件数の中央値)
+- 中央値プロファイルの内部ユーザーで観測 — dev-localhost は重負荷側に振れている
+  ため平均が分からない
 
 ---
 
