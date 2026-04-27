@@ -423,6 +423,7 @@ function EditAgentModal({ agent, onSave, onClose }) {
     return false;
   })();
   const saveEnabled = nameValid && descValid && triggerValid;
+  const fieldErrorStyle = { color: 'var(--danger)', fontSize: 11, marginTop: 'var(--space-1)' };
 
   const setType = (type) => {
     if (type === 'interval') setTriggerForm({ type, value: 1, unit: 'hour' });
@@ -485,6 +486,7 @@ function EditAgentModal({ agent, onSave, onClose }) {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            aria-invalid={!nameValid}
             maxLength={60}
             style={{
               width:'100%',
@@ -494,6 +496,9 @@ function EditAgentModal({ agent, onSave, onClose }) {
               color:'var(--text)', fontFamily:'inherit', fontSize:14,
             }}
           />
+          {!nameValid && (
+            <div style={fieldErrorStyle}>Name is required.</div>
+          )}
         </div>
 
         <div>
@@ -501,6 +506,7 @@ function EditAgentModal({ agent, onSave, onClose }) {
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            aria-invalid={!descValid}
             rows={3}
             maxLength={240}
             style={{
@@ -512,6 +518,9 @@ function EditAgentModal({ agent, onSave, onClose }) {
               resize:'vertical',
             }}
           />
+          {!descValid && (
+            <div style={fieldErrorStyle}>Description is required.</div>
+          )}
         </div>
 
         <div>
@@ -607,6 +616,9 @@ function EditAgentModal({ agent, onSave, onClose }) {
             <div className="t-sm" style={{color:'var(--text-mute)'}}>
               Runs once a week. Specific day/time set by system.
             </div>
+          )}
+          {!triggerValid && (
+            <div style={fieldErrorStyle}>Trigger format is invalid.</div>
           )}
         </div>
 
@@ -1115,7 +1127,7 @@ function AgentRunHistoryDrawer({ agent, nowMs, onClose }) {
   );
 }
 
-function AgentCard({ agent, expanded, onToggle, nowMs, onOpenHistory }) {
+function AgentCard({ agent, expanded, onToggle, nowMs, onOpenHistory, onEdit }) {
   // If the most recent run failed, surface it as `error` regardless of
   // the schema status — operationally this is what matters.
   const lastRun = agent.recentRuns && agent.recentRuns[0];
@@ -1197,7 +1209,7 @@ function AgentCard({ agent, expanded, onToggle, nowMs, onOpenHistory }) {
             <button
               type="button"
               className="btn btn-sm btn-secondary"
-              onClick={() => window.SHOGUN_RUNTIME?.pushToast?.(`Edit: ${agent.name} (stub)`, 'info')}
+              onClick={() => onEdit(agent.id)}
             >
               <Icon name="edit" size={12}/> Edit
             </button>
@@ -1233,14 +1245,15 @@ function ScreenAgents() {
   const [newAgentModalOpen, setNewAgentModalOpen] = React.useState(false);
   const [historyDrawerAgentId, setHistoryDrawerAgentId] = React.useState(null);
   const [editModalAgentId, setEditModalAgentId] = React.useState(null);
+  const [sourceAgents] = React.useState(() => AGENTS_DEMO);
   const [agentOverrides, setAgentOverrides] = React.useState({});
 
   const effectiveAgents = React.useMemo(() => {
-    return AGENTS_DEMO.map((a) => {
+    return sourceAgents.map((a) => {
       const o = agentOverrides[a.id];
       return o ? { ...a, ...o } : a;
     });
-  }, [agentOverrides]);
+  }, [agentOverrides, sourceAgents]);
 
   const [expandedIds, setExpandedIds] = React.useState(() => new Set());
   const toggleExpanded = React.useCallback((id) => {
@@ -1271,6 +1284,10 @@ function ScreenAgents() {
       return eff === filterStatus;
     });
   }, [filterStatus, effectiveAgents]);
+  const editingAgent = React.useMemo(
+    () => effectiveAgents.find((a) => a.id === editModalAgentId) || null,
+    [effectiveAgents, editModalAgentId],
+  );
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1406,6 +1423,7 @@ function ScreenAgents() {
               onToggle={() => toggleExpanded(a.id)}
               nowMs={AGENTS_DEMO_NOW}
               onOpenHistory={setHistoryDrawerAgentId}
+              onEdit={setEditModalAgentId}
             />
           ))}
         </div>
@@ -1448,6 +1466,24 @@ function ScreenAgents() {
           agent={effectiveAgents.find((a) => a.id === historyDrawerAgentId)}
           nowMs={AGENTS_DEMO_NOW}
           onClose={() => setHistoryDrawerAgentId(null)}
+        />
+      )}
+
+      {editingAgent && (
+        <EditAgentModal
+          agent={editingAgent}
+          onClose={() => setEditModalAgentId(null)}
+          onSave={(patch) => {
+            setAgentOverrides((prev) => ({
+              ...prev,
+              [editModalAgentId]: {
+                ...(prev[editModalAgentId] || {}),
+                ...patch,
+              },
+            }));
+            setEditModalAgentId(null);
+            window.SHOGUN_RUNTIME?.pushToast?.('Agent updated', 'success');
+          }}
         />
       )}
 
