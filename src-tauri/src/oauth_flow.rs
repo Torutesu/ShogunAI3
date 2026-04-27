@@ -288,10 +288,6 @@ pub async fn run(token_endpoint_override: Option<&str>) -> Result<OauthTokens, O
       return Err(OauthError::Internal(format!("bind: {}", e)));
     }
   };
-  // tiny_http blocks per-request; wrap in Arc + spawn_blocking so we can
-  // wait with a timeout from async context.
-  let server = std::sync::Arc::new(server);
-  let server_for_open = server.clone();
 
   let auth_url = build_auth_url(&client_id, &state);
   if let Err(e) = open::that(&auth_url) {
@@ -299,11 +295,19 @@ pub async fn run(token_endpoint_override: Option<&str>) -> Result<OauthTokens, O
     // Continue: flow can still complete if the user pastes auth_url into a browser.
   }
 
-  // Wait for callback in a blocking thread, with a timeout.
-  let server_handle = server.clone();
+  // Wait for callback inside a blocking thread. recv_timeout returns
+  // Ok(None) on timeout so the thread exits cleanly and the listener
+  // closes when `server` is dropped (no outer tokio::time::timeout
+  // needed — that approach left the OS thread blocked indefinitely
+  // because dropping just one Arc clone of the Server doesn't interrupt
+  // a blocked recv()).
   let state_for_thread = state.clone();
   let join = tokio::task::spawn_blocking(move || -> Result<(String, String), OauthError> {
-    let req = server_handle.recv().map_err(|e| OauthError::Internal(format!("recv: {}", e)))?;
+    let req = match server.recv_timeout(DEFAULT_TIMEOUT) {
+      Ok(Some(r)) => r,
+      Ok(None) => return Err(OauthError::Timeout),
+      Err(e) => return Err(OauthError::Internal(format!("recv: {}", e))),
+    };
     // Parse the URL path + query. `req.url()` is e.g. "/callback?code=...&state=..."
     let url = req.url().to_string();
     let qs = url.splitn(2, '?').nth(1).unwrap_or("");
@@ -336,20 +340,17 @@ pub async fn run(token_endpoint_override: Option<&str>) -> Result<OauthTokens, O
         Ok((code, got))
       }
       CallbackOutcome::UserCancelled => Err(OauthError::UserCancelled),
-      CallbackOutcome::ProviderError(_) => Err(OauthError::UserCancelled),
+      CallbackOutcome::ProviderError(desc) => Err(OauthError::Internal(format!("provider error: {}", desc))),
       CallbackOutcome::Malformed => Err(OauthError::StateMismatch),
     }
   });
 
-  let result = tokio::time::timeout(DEFAULT_TIMEOUT, join).await;
-  // Drop the server (closes the listener) regardless of outcome.
-  drop(server_for_open);
-
-  let (code, _state) = match result {
-    Ok(Ok(Ok(pair))) => pair,
-    Ok(Ok(Err(e))) => return Err(e),
-    Ok(Err(join_err)) => return Err(OauthError::Internal(format!("join: {}", join_err))),
-    Err(_) => return Err(OauthError::Timeout),
+  // Wait for the blocking thread to finish. The timeout is enforced inside
+  // the thread via recv_timeout, so we wait unbounded here for the join.
+  let (code, _state) = match join.await {
+    Ok(Ok(pair)) => pair,
+    Ok(Err(e)) => return Err(e),
+    Err(join_err) => return Err(OauthError::Internal(format!("join: {}", join_err))),
   };
 
   let tokens = exchange_code(&code, &client_id, &client_secret, token_endpoint_override).await?;
