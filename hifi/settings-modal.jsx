@@ -2515,6 +2515,11 @@ function PaneIntegrations() {
     if (raw === 'oauth_already_in_progress') return 'Already connecting';
     if (raw === 'oauth_network_error') return 'Network error during token exchange';
     if (raw === 'oauth_invalid_provider') return 'Invalid provider';
+    if (raw.startsWith('oauth_internal:')) {
+      // Strip the prefix and "provider error:" if present, leave the rest.
+      const detail = raw.replace(/^oauth_internal:\s*/, '').replace(/^provider error:\s*/, '');
+      return `OAuth flow error: ${detail}`;
+    }
     return `OAuth failed: ${raw}`;
   };
 

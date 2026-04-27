@@ -275,6 +275,10 @@ pub async fn run(token_endpoint_override: Option<&str>) -> Result<OauthTokens, O
   };
 
   let (client_id, client_secret) = load_env_from_disk()?;
+  log::debug!(
+    "oauth: loaded env client_id={} (client_secret masked)",
+    mask_secret(&client_id),
+  );
   let state = generate_state();
 
   // Bind the server. AddrInUse → PortBusy.
@@ -541,6 +545,13 @@ OTHER=ignored
       .expect("exchange_code");
     assert_eq!(r.access_token, "AT");
     assert!(r.refresh_token.is_none());
+  }
+
+  #[tokio::test]
+  async fn exchange_code_network_error() {
+    // Port 1 is reserved/unbindable on most systems → connection refused.
+    let r = exchange_code("CODE", "CID", "CSEC", Some("http://127.0.0.1:1")).await;
+    assert!(matches!(r, Err(OauthError::NetworkError)));
   }
 
   #[tokio::test]
