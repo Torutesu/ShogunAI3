@@ -40,6 +40,7 @@ mod decay;
 mod kioku_capture;
 mod lessons;
 mod patterns;
+mod patterns_sync;
 mod mem_captures;
 mod extraction_jobs;
 mod cost_ledger;
@@ -134,6 +135,7 @@ pub fn run() {
       calendar_sync::spawn_background_calendar_sync();
       connector_sync::spawn_background_connector_sync();
       rollup_sync::spawn_background_rollup_sync();
+      patterns_sync::spawn_background_patterns_sync();
       // KIOKU extraction worker (Phase 2 Stage 2). The thread runs from
       // boot but each tick checks `kioku_graph.worker_enabled` so it stays
       // idle until the user (or settings migration) flips the flag.
