@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
+/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenEditInsights, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
 const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -2217,6 +2217,7 @@ function App() {
     agents: ScreenAgents,
     work: ScreenWork,
     meetings: ScreenMeetings,
+      'edit-insights': ScreenEditInsights,
     memory_debug: ScreenMemoryDebug,
   }[active] || ScreenHome;
 
