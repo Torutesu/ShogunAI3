@@ -335,6 +335,20 @@ function mockIpcInvoke(command, payload) {
       };
     case 'shogun_memory_summary_invalidate':
       return { ok: true, data: { deleted: true } };
+    case 'shogun_memory_summary_edit':
+    case 'shogun_memory_summary_revert':
+      return { ok: true, data: { updated: true, summary: {
+        targetKind: 'item',
+        targetId: (input && input.targetId) || 'm_stub',
+        title: 'Stub summary',
+        keyPoints: ['This is a mocked summary'],
+        sourceType: 'mail',
+        priority: 'medium',
+        reason: 'mock',
+        model: 'mock',
+        schemaVersion: 1,
+        generatedAt: Date.now(),
+      } } };
     case 'shogun_memory_debug_gate':
       return { ok: true, data: { available: false, reason: 'mock_browser' } };
     case 'shogun_memory_debug_recent_calls':
@@ -759,6 +773,8 @@ function ensureRuntimeDeps() {
         memorySummaryGet: (input) => client.invoke('shogun_memory_summary_get', input),
         memorySummaryBatch: (input) => client.invoke('shogun_memory_summary_batch', input),
         memorySummaryInvalidate: (input) => client.invoke('shogun_memory_summary_invalidate', input),
+        memorySummaryEdit: (input) => client.invoke('shogun_memory_summary_edit', input),
+        memorySummaryRevert: (input) => client.invoke('shogun_memory_summary_revert', input),
         memoryEmbedBackfill: (input) =>
           client.invoke('shogun_memory_embed_backfill', input, { timeoutMs: 600000 }),
         memoryEmbedBackfillCancel: (input) =>
@@ -849,6 +865,8 @@ function ensureRuntimeDeps() {
           'memory.summary.get': api.memorySummaryGet,
           'memory.summary.batch': api.memorySummaryBatch,
           'memory.summary.invalidate': api.memorySummaryInvalidate,
+          'memory.summary.edit': api.memorySummaryEdit,
+          'memory.summary.revert': api.memorySummaryRevert,
           'entity.query': api.entityQuery,
           'brief.get': api.briefGet,
           'chat.complete': api.chatComplete,

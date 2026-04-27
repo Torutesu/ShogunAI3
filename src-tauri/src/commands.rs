@@ -1735,3 +1735,106 @@ pub fn shogun_memory_summary_set_priority(payload: serde_json::Value) -> Result<
   )?;
   Ok(serde_json::json!({ "updated": updated, "userPriority": priority_opt }))
 }
+
+/// Append a user edit to a summary's raw_json.user_edits[] and update the
+/// matching column for fast reads. The field must be one of:
+///   "title" | "keyPoints" | "reason".
+/// `value` is the new value (string for title/reason, array of strings for
+/// keyPoints; null is allowed for reason). `baseValue` is the pre-edit
+/// display value, recorded as `from` in the history entry.
+///
+/// payload: {
+///   "targetId": "m_...",
+///   "targetKind"?: "item",
+///   "field": "title" | "keyPoints" | "reason",
+///   "value": <new value>,
+///   "baseValue"?: <prior value>,
+///   "sourceRaw"?: str, "entityId"?: str
+/// }
+#[tauri::command]
+pub fn shogun_memory_summary_edit(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  let field = payload
+    .get("field")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "field required".to_string())?;
+  let value = payload
+    .get("value")
+    .cloned()
+    .ok_or_else(|| "value required".to_string())?;
+  let base_value = payload
+    .get("baseValue")
+    .cloned()
+    .unwrap_or(serde_json::Value::Null);
+  let source_raw = payload.get("sourceRaw").and_then(|v| v.as_str());
+  let entity_id = payload.get("entityId").and_then(|v| v.as_str());
+  let now_ms: i64 = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as i64)
+    .unwrap_or(0);
+
+  let updated = crate::summarizer_store::edit_field(
+    target_kind,
+    target_id,
+    field,
+    base_value,
+    value,
+    now_ms,
+    crate::summarizer_store::EditMetadata { source_raw, entity_id },
+  )?;
+  if !updated {
+    return Ok(serde_json::json!({ "updated": false, "summary": serde_json::Value::Null }));
+  }
+
+  // Return the merged effective summary.
+  // TODO(phase-4-i18n): get_cached is strict on language match — a row
+  // generated with lang='zh' or another non-en/non-jp lang will not be
+  // found by either probe and we'll return "summary missing after edit"
+  // even though the write succeeded. Either make get_cached optionally
+  // lang-agnostic, or rebuild the merged summary directly from the row.
+  // Use .ok().flatten() on the JP fallback so a transient SQLite error
+  // on the fallback probe doesn't mask the fact that the primary write
+  // already succeeded.
+  let s = crate::summarizer_store::get_cached(target_kind, target_id, "en")?
+    .or_else(|| crate::summarizer_store::get_cached(target_kind, target_id, "jp").ok().flatten())
+    .ok_or_else(|| "summary missing after edit".to_string())?;
+  Ok(serde_json::json!({ "updated": true, "summary": s.to_json() }))
+}
+
+/// Clear all `user_edits[]` entries for one field on a summary, restoring the
+/// LLM-baseline value for that field.
+///
+/// payload: { "targetId": "m_...", "targetKind"?: "item", "field": "title" | "keyPoints" | "reason" }
+#[tauri::command]
+pub fn shogun_memory_summary_revert(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  let field = payload
+    .get("field")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "field required".to_string())?;
+
+  let updated = crate::summarizer_store::revert_field(target_kind, target_id, field)?;
+  if !updated {
+    return Ok(serde_json::json!({ "updated": false, "summary": serde_json::Value::Null }));
+  }
+  // See TODO(phase-4-i18n) on shogun_memory_summary_edit for the language
+  // fallback constraint and the rationale for .ok().flatten() on the JP probe.
+  let s = crate::summarizer_store::get_cached(target_kind, target_id, "en")?
+    .or_else(|| crate::summarizer_store::get_cached(target_kind, target_id, "jp").ok().flatten())
+    .ok_or_else(|| "summary missing after revert".to_string())?;
+  Ok(serde_json::json!({ "updated": true, "summary": s.to_json() }))
+}

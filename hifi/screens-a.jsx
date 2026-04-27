@@ -1894,6 +1894,96 @@ function ScreenMemory() {
   const [scrubSummaryLoading, setScrubSummaryLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
   const [summaryEnabled, setSummaryEnabled] = useState(true);     // feature flag from sections.memory.enableMemorySummary
+
+  // Inline edit state for the scrub summary.
+  // editingField: 'title' | 'reason' | `kp:${index}` | null
+  const [editingField, setEditingField] = useState(null);
+  const [editingDraft, setEditingDraft] = useState('');
+
+  // Common save path. Mutates scrubSummary + summaryByMemId optimistically,
+  // dispatches memory.summary.edit, rolls back on failure.
+  const persistSummaryEdit = async (field, value, baseValue) => {
+    const targetId = scrubbed?.memoryId;
+    if (!targetId) return;
+    const prevSummary = scrubSummary;
+    const nextSummary = { ...prevSummary, [field]: value };
+    setScrubSummary(nextSummary);
+    setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+    const res = await runRuntimeActionA('memory.summary.edit', {
+      targetId,
+      targetKind: 'item',
+      field,
+      value,
+      baseValue,
+      sourceRaw: scrubbed?.sourceRaw || null,
+      entityId: scrubbed?.entityId || null,
+    }, { silentError: true });
+    if (!res?.ok) {
+      // Roll back.
+      setScrubSummary(prevSummary);
+      setSummaryByMemId((prev) => ({ ...prev, [targetId]: prevSummary }));
+      window.SHOGUN_RUNTIME?.pushToast?.('Failed to save edit', 'warn');
+    } else if (res.data?.summary) {
+      // Server-confirmed merged summary — adopt it.
+      setScrubSummary(res.data.summary);
+      setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
+    }
+  };
+
+  // Common revert path.
+  const revertSummaryField = async (field) => {
+    const targetId = scrubbed?.memoryId;
+    if (!targetId) return;
+    const res = await runRuntimeActionA('memory.summary.revert', {
+      targetId,
+      targetKind: 'item',
+      field,
+    }, { silentError: true });
+    if (res?.ok && res.data?.summary) {
+      setScrubSummary(res.data.summary);
+      setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
+      // Now unmark — only after confirmed revert.
+      unmarkFieldEdited(targetId, field);
+    } else {
+      // Failure: leave the indicator alone (no need to re-mark since we never unmarked).
+      window.SHOGUN_RUNTIME?.pushToast?.('Failed to revert', 'warn');
+    }
+  };
+
+  // Predicate: did this field have at least one user edit applied?
+  // We can't tell from the current Summary shape alone — it's merged on
+  // the backend. Detect by comparing scrubSummary to the row's "base" via
+  // a side-channel: read raw_json from the runtime if exposed, else use a
+  // simple sentinel: if the edit was just done in this session, mark it.
+  // For Phase 4 we use a session-local Set so the "edited" dot appears
+  // immediately after a save.
+  // memoryId → Set<field> of fields edited in this session. useState (not
+  // useRef) so the "edited · revert" affordance re-renders when marks change,
+  // including when revert IPC fails and we re-mark.
+  const [editedFieldsBySummary, setEditedFieldsBySummary] = useState(new Map());
+  const markFieldEdited = (memoryId, field) => {
+    setEditedFieldsBySummary((prev) => {
+      const next = new Map(prev);
+      const set = new Set(next.get(memoryId) || []);
+      set.add(field);
+      next.set(memoryId, set);
+      return next;
+    });
+  };
+  const unmarkFieldEdited = (memoryId, field) => {
+    setEditedFieldsBySummary((prev) => {
+      const set = prev.get(memoryId);
+      if (!set || !set.has(field)) return prev;
+      const next = new Map(prev);
+      const ns = new Set(set);
+      ns.delete(field);
+      next.set(memoryId, ns);
+      return next;
+    });
+  };
+  const isFieldEdited = (memoryId, field) =>
+    editedFieldsBySummary.get(memoryId)?.has(field) || false;
+
   const timelineLoading = !memorySettingsLoaded;
   const withSemantic = useCallback(
     (payload) => {
@@ -3107,8 +3197,99 @@ function ScreenMemory() {
                 : '2px solid var(--border)',
               paddingLeft:14,
             }}>
+                <span
+                  id="memory-summary-edit-hint"
+                  style={{
+                    position: 'absolute', width: 1, height: 1,
+                    overflow: 'hidden', clip: 'rect(0 0 0 0)',
+                  }}
+                >
+                  Enter to save, Escape to discard
+                </span>
               <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap'}}>
-                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, wordBreak:'break-word', flex:1, minWidth:0}}>{scrubSummary.title}</div>
+                {editingField === 'title' ? (
+                  <textarea
+                    autoFocus
+                    aria-label="Edit title"
+                    aria-describedby="memory-summary-edit-hint"
+                    value={editingDraft}
+                    onChange={(e) => setEditingDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        e.currentTarget.blur(); // triggers onBlur save
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setEditingField(null);
+                        setEditingDraft('');
+                      }
+                    }}
+                    onBlur={async () => {
+                      const next = editingDraft.trim();
+                      const base = (scrubSummary?.title || '').trim();
+                      setEditingField(null);
+                      setEditingDraft('');
+                      if (next && next !== base) {
+                        // Guard scrubbed.memoryId — if the user navigated away
+                        // mid-edit, scrubbed could be null. persistSummaryEdit
+                        // also no-ops when targetId is missing, but we shouldn't
+                        // crash on the markFieldEdited call.
+                        if (scrubbed?.memoryId) {
+                          markFieldEdited(scrubbed.memoryId, 'title');
+                        }
+                        await persistSummaryEdit('title', next, base);
+                      }
+                    }}
+                    style={{
+                      flex: 1, minWidth: 0,
+                      fontSize: 18, fontWeight: 600, lineHeight: 1.3,
+                      fontFamily: 'inherit', color: 'var(--text)',
+                      background: 'var(--surface-mute)',
+                      border: '1px solid var(--border-hi)', borderRadius: 4,
+                      padding: '4px 6px', resize: 'vertical', minHeight: 32,
+                    }}
+                  />
+                ) : (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Edit title"
+                    onClick={() => {
+                      setEditingDraft(scrubSummary?.title || '');
+                      setEditingField('title');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setEditingDraft(scrubSummary?.title || '');
+                        setEditingField('title');
+                      }
+                    }}
+                    style={{
+                      fontSize: 18, fontWeight: 600, lineHeight: 1.3,
+                      wordBreak: 'break-word', flex: 1, minWidth: 0,
+                      cursor: 'text',
+                    }}
+                  >
+                    {scrubSummary.title}
+                    {isFieldEdited(scrubbed?.memoryId, 'title') && (
+                      <span
+                        title="Edited by you"
+                        style={{
+                          marginLeft: 6, fontSize: 10, color: 'var(--text-dim)',
+                          letterSpacing: '0.06em', cursor: 'pointer',
+                          textDecoration: 'underline',
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          revertSummaryField('title');
+                        }}
+                      >
+                        edited · revert
+                      </span>
+                    )}
+                  </div>
+                )}
                 {pinned && (
                   <span className="t-mono" style={{fontSize:9, color:'var(--gold)', letterSpacing:'0.12em', padding:'2px 6px', border:'1px solid var(--gold-dim)', borderRadius:4}}>
                     <span className="en-only">PINNED</span>
@@ -3116,11 +3297,150 @@ function ScreenMemory() {
                   </span>
                 )}
               </div>
-              {Array.isArray(scrubSummary.keyPoints) && scrubSummary.keyPoints.length > 0 && (
+              {Array.isArray(scrubSummary.keyPoints) && (
                 <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
-                  {scrubSummary.keyPoints.slice(0, 4).map((k, i) => (
-                    <li key={i} style={{fontSize:13, color: i === 0 ? 'var(--text)' : 'var(--text-mute)', lineHeight:1.5}}>{k}</li>
-                  ))}
+                  {scrubSummary.keyPoints.map((k, i) => {
+                    const editKey = `kp:${i}`;
+                    if (editingField === editKey) {
+                      return (
+                        <li key={`edit-${i}`} style={{listStyle:'none', marginLeft:-16}}>
+                          <input
+                            autoFocus
+                            type="text"
+                            aria-label={`Edit key point ${i + 1}`}
+                            aria-describedby="memory-summary-edit-hint"
+                            value={editingDraft}
+                            onChange={(e) => setEditingDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setEditingField(null);
+                                setEditingDraft('');
+                                // If this was a freshly-added placeholder (the
+                                // baseline value at this index is empty), splice
+                                // it back out so we don't leave a blank <li>.
+                                const baseArr = Array.isArray(scrubSummary?.keyPoints)
+                                  ? scrubSummary.keyPoints : [];
+                                if (baseArr[i] === '') {
+                                  const targetId = scrubbed?.memoryId;
+                                  const newArr = baseArr.filter((_, idx) => idx !== i);
+                                  const nextSummary = { ...scrubSummary, keyPoints: newArr };
+                                  setScrubSummary(nextSummary);
+                                  if (targetId) {
+                                    setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+                                  }
+                                }
+                              }
+                            }}
+                            onBlur={async () => {
+                              const next = editingDraft;
+                              const baseArr = Array.isArray(scrubSummary?.keyPoints) ? scrubSummary.keyPoints : [];
+                              const baseValue = (baseArr[i] || '').trim();
+                              setEditingField(null);
+                              setEditingDraft('');
+                              const trimmed = next.trim();
+                              if (!trimmed) {
+                                // Empty save = remove this entry.
+                                if (baseValue) {
+                                  const newArr = baseArr.filter((_, idx) => idx !== i);
+                                  if (scrubbed?.memoryId) {
+                                    markFieldEdited(scrubbed.memoryId, 'keyPoints');
+                                  }
+                                  await persistSummaryEdit('keyPoints', newArr, baseArr);
+                                }
+                                return;
+                              }
+                              if (trimmed !== baseValue) {
+                                const newArr = baseArr.map((v, idx) => (idx === i ? trimmed : v));
+                                if (scrubbed?.memoryId) {
+                                  markFieldEdited(scrubbed.memoryId, 'keyPoints');
+                                }
+                                await persistSummaryEdit('keyPoints', newArr, baseArr);
+                              }
+                            }}
+                            style={{
+                              width: '100%', boxSizing: 'border-box',
+                              fontSize: 13, color: 'var(--text)',
+                              fontFamily: 'inherit',
+                              background: 'var(--surface-mute)',
+                              border: '1px solid var(--border-hi)', borderRadius: 4,
+                              padding: '2px 6px',
+                            }}
+                          />
+                        </li>
+                      );
+                    }
+                    return (
+                      <li
+                        key={i}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Edit key point ${i + 1}`}
+                        onClick={() => {
+                          setEditingDraft(k);
+                          setEditingField(editKey);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setEditingDraft(k);
+                            setEditingField(editKey);
+                          }
+                        }}
+                        style={{
+                          fontSize:13,
+                          color: i === 0 ? 'var(--text)' : 'var(--text-mute)',
+                          lineHeight:1.5, cursor:'text',
+                        }}
+                      >
+                        {k}
+                      </li>
+                    );
+                  })}
+                  <li style={{listStyle:'none', marginLeft:-16}}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetId = scrubbed?.memoryId;
+                        if (!targetId) return; // no scrubbed item — nothing to extend
+                        const baseArr = Array.isArray(scrubSummary?.keyPoints) ? scrubSummary.keyPoints : [];
+                        const newArr = [...baseArr, ''];
+                        // Optimistically extend, then enter edit mode for the new index.
+                        const nextSummary = { ...scrubSummary, keyPoints: newArr };
+                        setScrubSummary(nextSummary);
+                        setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+                        setEditingDraft('');
+                        setEditingField(`kp:${newArr.length - 1}`);
+                      }}
+                      style={{
+                        padding: '2px 0', border: 'none', background: 'transparent',
+                        color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      + Add point
+                    </button>
+                  </li>
+                  {isFieldEdited(scrubbed?.memoryId, 'keyPoints') && (
+                    <li style={{listStyle:'none', marginLeft:-16}}>
+                      <span
+                        title="Edited by you"
+                        style={{
+                          fontSize: 10, color: 'var(--text-dim)',
+                          letterSpacing: '0.06em', cursor: 'pointer',
+                          textDecoration: 'underline',
+                        }}
+                        onClick={() => {
+                          revertSummaryField('keyPoints');
+                        }}
+                      >
+                        edited · revert
+                      </span>
+                    </li>
+                  )}
                 </ul>
               )}
               <div style={{display:'flex', gap:14, marginTop:2, alignItems:'center', flexWrap:'wrap'}}>
@@ -3428,10 +3748,99 @@ function ScreenMemory() {
                       <span style={{color:'var(--text)'}}>{String(scrubSummary.priority).toUpperCase()}</span>
                     </>
                   )}
-                  {scrubSummary && scrubSummary.reason && (
+                  {scrubSummary && (
                     <>
                       <span className="t-mono" style={{color:'var(--text-dim)'}}>Reason</span>
-                      <span style={{color:'var(--text-mute)', wordBreak:'break-word', fontSize:12}}>{scrubSummary.reason}</span>
+                      {editingField === 'reason' ? (
+                        <textarea
+                          autoFocus
+                          aria-label="Edit reason"
+                          aria-describedby="memory-summary-edit-hint"
+                          value={editingDraft}
+                          onChange={(e) => setEditingDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setEditingField(null);
+                              setEditingDraft('');
+                            }
+                          }}
+                          onBlur={async () => {
+                            const next = editingDraft;
+                            const base = scrubSummary?.reason || '';
+                            setEditingField(null);
+                            setEditingDraft('');
+                            const trimmed = next.trim();
+                            // Empty/whitespace-only saves as null (clears the
+                            // reason). The (sendValue ?? '') !== (base ?? '')
+                            // guard below treats null and '' as equivalent for
+                            // change detection — an empty-string `reason` is
+                            // never written; null is the canonical "no value".
+                            const sendValue = trimmed.length > 0 ? trimmed : null;
+                            if ((sendValue ?? '') !== (base ?? '')) {
+                              if (scrubbed?.memoryId) {
+                                markFieldEdited(scrubbed.memoryId, 'reason');
+                              }
+                              await persistSummaryEdit('reason', sendValue, base);
+                            }
+                          }}
+                          style={{
+                            width:'100%', boxSizing:'border-box',
+                            color:'var(--text)', wordBreak:'break-word',
+                            fontSize:12, fontFamily:'inherit',
+                            background:'var(--surface-mute)',
+                            border:'1px solid var(--border-hi)',
+                            borderRadius:4, padding:'2px 6px',
+                            resize:'vertical', minHeight:24,
+                          }}
+                        />
+                      ) : (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label="Edit reason"
+                          onClick={() => {
+                            setEditingDraft(scrubSummary?.reason || '');
+                            setEditingField('reason');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setEditingDraft(scrubSummary?.reason || '');
+                              setEditingField('reason');
+                            }
+                          }}
+                          style={{
+                            color:'var(--text-mute)', wordBreak:'break-word',
+                            fontSize:12, cursor:'text',
+                          }}
+                        >
+                          {scrubSummary.reason || (
+                            <span style={{ fontStyle: 'italic', color: 'var(--text-dim)', opacity: 0.7 }}>
+                              (no reason — click to add)
+                            </span>
+                          )}
+                          {isFieldEdited(scrubbed?.memoryId, 'reason') && (
+                            <span
+                              title="Edited by you"
+                              style={{
+                                marginLeft: 6, fontSize: 10, color: 'var(--text-dim)',
+                                letterSpacing: '0.06em', cursor: 'pointer',
+                                textDecoration: 'underline',
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                revertSummaryField('reason');
+                              }}
+                            >
+                              edited · revert
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </>
                   )}
                   {scrubbed.entityId && (

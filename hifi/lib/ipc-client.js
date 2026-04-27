@@ -110,6 +110,40 @@
     }
   }
 
+  // Mock-only state for memory.summary edit/revert (shared across calls).
+  // Keyed by targetId; entries mirror raw_json.user_edits[] entries.
+  if (typeof global.window !== 'undefined') {
+    global.window.__SHOGUN_MOCK_SUMMARY_EDITS__ ||= new Map();
+  }
+  const _mockEditsMap = (typeof global.window !== 'undefined' && global.window.__SHOGUN_MOCK_SUMMARY_EDITS__) || new Map();
+  const applyMockEdits = (base, targetId) => {
+    const arr = _mockEditsMap.get(String(targetId)) || [];
+    const out = { ...base };
+    for (const e of arr) {
+      if (!e || e.schema !== 1) continue;
+      if (e.field === 'title' && typeof e.to === 'string') out.title = e.to;
+      else if (e.field === 'keyPoints' && Array.isArray(e.to)) out.keyPoints = e.to;
+      else if (e.field === 'reason') out.reason = e.to == null ? null : String(e.to);
+    }
+    return out;
+  };
+
+  // Shared stub summary factory for mock transport cases.
+  // Pass optional `overrides` to diverge from defaults (e.g. batch case).
+  const makeSummaryBase = (id, overrides) => ({
+    targetKind: "item",
+    targetId: id,
+    title: "Stub summary",
+    keyPoints: ["This is a mocked summary"],
+    sourceType: "mail",
+    priority: "medium",
+    reason: "mock",
+    model: "mock",
+    schemaVersion: 1,
+    generatedAt: Date.now(),
+    ...(overrides || {}),
+  });
+
   /**
    * Browser mock: JSON bodies aligned with `src-tauri/src/commands.rs` success values.
    * Returned value becomes `invoke().data` (same as Tauri deserialize into JS).
@@ -288,6 +322,7 @@
       echo: echo,
     });
 
+    const mockEdits = _mockEditsMap;
     // Mock-only: derive a stable LOW/MEDIUM/HIGH from the item id so the
     // River cluster UI has something to render. Real backend ignores this.
     const mockPriorityForId = (id) => {
@@ -507,41 +542,61 @@
           google_calendar: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
           gmail: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
         };
-      case "shogun_memory_summary_get":
+      case "shogun_memory_summary_get": {
+        const baseId = String((echo && echo.targetId) || "m_stub");
+        const base = makeSummaryBase(baseId, { priority: mockPriorityForId(baseId) });
         return {
-          summary: {
-            targetKind: "item",
-            targetId: String((echo && echo.targetId) || "m_stub"),
-            title: "Stub summary",
-            keyPoints: ["This is a mocked summary"],
-            sourceType: "mail",
-            priority: mockPriorityForId((echo && echo.targetId) || "m_stub"),
-            reason: "mock",
-            model: "mock",
-            schemaVersion: 1,
-            generatedAt: Date.now(),
-          },
+          summary: applyMockEdits(base, baseId),
           cached: false,
         };
+      }
       case "shogun_memory_summary_batch":
         return {
-          ok: ((echo && echo.items) || []).map((it) => ({
-            targetKind: "item",
-            targetId: String((it && it.id) || "m_stub"),
-            title: `Stub: ${(it && it.title) || "untitled"}`,
-            keyPoints: ["mock point"],
-            sourceType: "mail",
-            priority: mockPriorityForId((it && it.id) || "m_stub"),
-            reason: "mock",
-            model: "mock",
-            schemaVersion: 1,
-            generatedAt: Date.now(),
-          })),
+          ok: ((echo && echo.items) || []).map((it) => {
+            const id = String((it && it.id) || "m_stub");
+            const base = makeSummaryBase(id, {
+              title: `Stub: ${(it && it.title) || "untitled"}`,
+              keyPoints: ["mock point"],
+              priority: mockPriorityForId(id),
+            });
+            return applyMockEdits(base, id);
+          }),
           failed: [],
           heuristicUsed: 0,
         };
       case "shogun_memory_summary_invalidate":
         return { deleted: true };
+      case "shogun_memory_summary_edit": {
+        const id = String((echo && echo.targetId) || "");
+        const field = String((echo && echo.field) || "");
+        // Accept both `value` (sent by the frontend) and `to` (matches the
+        // raw_json.user_edits[] shape) for defensive parity.
+        const to = echo && echo.to !== undefined ? echo.to
+                   : echo && echo.value !== undefined ? echo.value : null;
+        if (!id || !field) return { updated: false, summary: null };
+        const list = mockEdits.get(id) || [];
+        list.push({
+          field,
+          from: echo && echo.baseValue,
+          to,
+          at: Date.now(),
+          source_raw: echo && echo.sourceRaw,
+          entity_id: echo && echo.entityId,
+          schema: 1,
+        });
+        mockEdits.set(id, list);
+        const base = makeSummaryBase(id, { priority: mockPriorityForId(id) });
+        return { updated: true, summary: applyMockEdits(base, id) };
+      }
+      case "shogun_memory_summary_revert": {
+        const id = String((echo && echo.targetId) || "");
+        const field = String((echo && echo.field) || "");
+        if (!id || !field) return { updated: false, summary: null };
+        const list = (mockEdits.get(id) || []).filter((e) => e.field !== field);
+        mockEdits.set(id, list);
+        const base = makeSummaryBase(id, { priority: mockPriorityForId(id) });
+        return { updated: true, summary: applyMockEdits(base, id) };
+      }
       case "shogun_entity_query":
         return {
           entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],
