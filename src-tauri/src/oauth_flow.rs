@@ -132,6 +132,47 @@ pub fn build_auth_url(client_id: &str, state: &str) -> String {
   format!("https://accounts.google.com/o/oauth2/v2/auth?{}", qs)
 }
 
+/// What we extract from the `?code=...&state=...&error=...` query string on
+/// the OAuth redirect URL.
+#[derive(Debug)]
+pub enum CallbackOutcome {
+  Code { code: String, state: String },
+  UserCancelled, // ?error=access_denied
+  ProviderError(String), // any other ?error= value
+  Malformed,
+}
+
+/// Parse the query portion of a /callback URL (the part after `?`, no `?`).
+pub fn parse_callback_query(qs: &str) -> CallbackOutcome {
+  let mut code: Option<String> = None;
+  let mut state: Option<String> = None;
+  let mut err: Option<String> = None;
+  for pair in qs.split('&') {
+    let Some((k, v)) = pair.split_once('=') else { continue; };
+    let v = match urlencoding::decode(v) {
+      Ok(s) => s.into_owned(),
+      Err(_) => continue,
+    };
+    match k {
+      "code" => code = Some(v),
+      "state" => state = Some(v),
+      "error" => err = Some(v),
+      _ => {}
+    }
+  }
+  if let Some(e) = err {
+    return if e == "access_denied" {
+      CallbackOutcome::UserCancelled
+    } else {
+      CallbackOutcome::ProviderError(e)
+    };
+  }
+  match (code, state) {
+    (Some(code), Some(state)) => CallbackOutcome::Code { code, state },
+    _ => CallbackOutcome::Malformed,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -203,5 +244,56 @@ OTHER=ignored
     assert!(url.contains("scope="));
     assert!(url.contains("gmail.readonly"));
     assert!(url.contains("calendar.readonly"));
+  }
+
+  #[test]
+  fn parse_callback_query_ok() {
+    let r = parse_callback_query("code=abc123&state=xyz&scope=gmail.readonly");
+    match r {
+      CallbackOutcome::Code { code, state } => {
+        assert_eq!(code, "abc123");
+        assert_eq!(state, "xyz");
+      }
+      _ => panic!("expected Code, got {:?}", r),
+    }
+  }
+
+  #[test]
+  fn parse_callback_query_url_encoded() {
+    let r = parse_callback_query("code=a%2Fb%2Bc&state=s%3D1");
+    match r {
+      CallbackOutcome::Code { code, state } => {
+        assert_eq!(code, "a/b+c");
+        assert_eq!(state, "s=1");
+      }
+      _ => panic!(),
+    }
+  }
+
+  #[test]
+  fn parse_callback_query_user_cancelled() {
+    let r = parse_callback_query("error=access_denied&state=xyz");
+    assert!(matches!(r, CallbackOutcome::UserCancelled));
+  }
+
+  #[test]
+  fn parse_callback_query_provider_error() {
+    let r = parse_callback_query("error=invalid_request&state=xyz");
+    match r {
+      CallbackOutcome::ProviderError(e) => assert_eq!(e, "invalid_request"),
+      _ => panic!(),
+    }
+  }
+
+  #[test]
+  fn parse_callback_query_no_code() {
+    let r = parse_callback_query("state=xyz");
+    assert!(matches!(r, CallbackOutcome::Malformed));
+  }
+
+  #[test]
+  fn parse_callback_query_empty() {
+    let r = parse_callback_query("");
+    assert!(matches!(r, CallbackOutcome::Malformed));
   }
 }
