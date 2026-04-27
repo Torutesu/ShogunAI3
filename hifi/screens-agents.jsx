@@ -261,6 +261,50 @@ const AGENT_STATUS_META = {
   error: { color: 'var(--danger)', label: 'error' },
 };
 
+// Per-agent runtime mapping: which IPC action backs each agent's
+// Run now button, and which settings path drives its Pause/Resume.
+// Daily-digest and weekly-review intentionally share
+// `enableMemoryDigestAutoSync` — pausing one pauses both, matching
+// the current rollup_sync.rs behavior.
+const AGENT_RUNTIME = {
+  'inbox-triage': {
+    runNowAction: 'gmail.sync',
+    runNowPayload: () => ({ maxResults: 20 }),
+    runNowSuccessMsg: (data) => `Synced ${data?.imported ?? 0} emails`,
+    pausedSettingPath: ['integrations', 'gmailAutoSync'],
+  },
+  'meeting-notes': {
+    runNowAction: 'calendar.sync',
+    runNowPayload: () => ({ maxResults: 25 }),
+    runNowSuccessMsg: (data) => `Synced ${data?.imported ?? 0} events`,
+    pausedSettingPath: ['integrations', 'googleCalendarAutoSync'],
+  },
+  'daily-digest': {
+    runNowAction: 'memory.rollup.day.get',
+    runNowPayload: () => {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      return { dayStartMs: day.getTime(), regenerate: true };
+    },
+    runNowSuccessMsg: () => 'Daily digest regenerated',
+    pausedSettingPath: ['memory', 'enableMemoryDigestAutoSync'],
+  },
+  'weekly-review': {
+    runNowAction: 'memory.rollup.get',
+    runNowPayload: () => {
+      const cursor = new Date();
+      const day = cursor.getDay();
+      const mondayOffset = (day === 0 ? -6 : 1 - day);
+      const monday = new Date(cursor);
+      monday.setDate(cursor.getDate() + mondayOffset);
+      monday.setHours(0, 0, 0, 0);
+      return { weekStartMs: monday.getTime(), regenerate: true };
+    },
+    runNowSuccessMsg: () => 'Weekly review regenerated',
+    pausedSettingPath: ['memory', 'enableMemoryDigestAutoSync'],
+  },
+};
+
 
 const ATTENTION_REASONS = {
   error: (a) => `${a.name} failed last run ${'lastRunRel' in a ? a.lastRunRel : 'recently'}.`,
