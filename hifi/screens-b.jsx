@@ -22,11 +22,6 @@ function normalizeSeedMemoryAssembly(d) {
   return null;
 }
 
-function runRuntimeActionB(key, payload, options) {
-  if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok:false });
-  return window.SHOGUN_RUNTIME.executeAction(key, payload || {}, options || {});
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // L3 · CHAT — interaction layer (memory-aware conversations)
 // ═══════════════════════════════════════════════════════════════════════════
