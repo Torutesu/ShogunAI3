@@ -59,6 +59,7 @@ mod secrets;
 mod settings_store;
 mod slack;
 mod notion;
+mod oauth_flow;
 mod github;
 mod zoom;
 
