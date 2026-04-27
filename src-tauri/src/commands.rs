@@ -1,8 +1,9 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
 use crate::{
-  auth, biometric, brief, brief_actions, embed_backfill, gmail, google_calendar, integration_secrets,
-  integrations, llm, macos_ax, memory_store, secrets, settings_store,
+  auth, biometric, brief, brief_actions, dead_letter, embed_backfill, github, gmail,
+  google_calendar, google_drive, integration_secrets, integrations, linear, llm, macos_ax,
+  memory_store, notion, secrets, settings_store, slack, zoom,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -137,6 +138,267 @@ pub async fn shogun_draft(
 #[tauri::command]
 pub fn shogun_schedule_action(payload: Value) -> Result<Value, String> {
   schedule_queue::append(&payload)
+}
+
+/// KIOKU graph signals consumed by the AMC pipeline. Returns the same shape
+/// as `MorningBriefCandidate.{related_kioku_hits, decision_graph_hits}` so
+/// the Node orchestrator can splice the response into a candidate without a
+/// translation layer.
+///
+/// Payload (all optional):
+/// ```json
+/// { "limit_decisions": 5, "limit_kioku": 12 }
+/// ```
+#[tauri::command]
+pub fn shogun_kioku_brief_signals(payload: Value) -> Result<Value, String> {
+  use crate::kioku_decision_graph::{fetch_decision_graph_hits, fetch_recent_kioku_hits};
+
+  let limit_decisions = payload
+    .get("limit_decisions")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(5)
+    .clamp(1, 50) as usize;
+  let limit_kioku = payload
+    .get("limit_kioku")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(12)
+    .clamp(1, 100) as usize;
+
+  let conn = memory_store::open_conn()?;
+  let decisions = fetch_decision_graph_hits(&conn, limit_decisions)?;
+  let kioku = fetch_recent_kioku_hits(&conn, limit_kioku)?;
+
+  Ok(json!({
+    "decision_graph_hits": decisions,
+    "related_kioku_hits": kioku,
+  }))
+}
+
+/// Debug-only consolidated KIOKU observability snapshot (Phase 2 §8 follow-up).
+/// Returns queue depth, monthly cost, graph counts, active flags, and rules
+/// summary in one payload so the dev `Memory Debugger` UI can render them
+/// without N round-trips.
+#[tauri::command]
+pub fn shogun_kioku_debug_stats(_payload: Value) -> Result<Value, String> {
+  let conn = memory_store::open_conn()?;
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  let now_ms = ts() as i64;
+  crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)
+}
+
+/// Run `VACUUM INTO` on the live `memory.db` to produce a consistent
+/// compacted copy. Designed to be wired to the `Settings > KIOKU Graph >
+/// Backup` button so operators can grab a snapshot before
+/// `shogun_kioku_stage5_apply` (or anytime, really).
+///
+/// Payload:
+/// ```jsonc
+/// { "dest_path": "/optional/explicit/path.db", "label": "pre-stage5" }
+/// ```
+/// `dest_path` overrides the default location entirely; `label` is splice-d
+/// into the default name (`memory.db.<label>-YYYY-MM-DD-HHMMSS`) for quick
+/// labeling without typing the whole path. `dest_path` wins when both are
+/// supplied.
+#[tauri::command]
+pub fn shogun_kioku_backup_db(payload: Value) -> Result<Value, String> {
+  use std::path::{Path, PathBuf};
+  let conn = memory_store::open_conn()?;
+  let source = memory_store::db_path()?;
+  let now_ms = ts() as i64;
+
+  let dest: PathBuf = if let Some(explicit) = payload
+    .get("dest_path")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+  {
+    PathBuf::from(explicit)
+  } else {
+    let default = crate::kioku_backup::default_backup_dest(&source, now_ms);
+    if let Some(label) = payload
+      .get("label")
+      .and_then(|v| v.as_str())
+      .map(|s| s.trim())
+      .filter(|s| !s.is_empty())
+    {
+      // Replace the ".backup-" prefix with the caller's label so e.g.
+      // `pre-stage5-2026-04-27-...` lands without manual rename.
+      if let Some(name) = default.file_name().and_then(|s| s.to_str()) {
+        let renamed = name.replace(".backup-", &format!(".{}-", label));
+        let dir = default
+          .parent()
+          .map(Path::to_path_buf)
+          .unwrap_or_else(|| PathBuf::from("."));
+        dir.join(renamed)
+      } else {
+        default
+      }
+    } else {
+      default
+    }
+  };
+
+  let result = crate::kioku_backup::backup_db(&conn, &source, &dest, now_ms)?;
+  serde_json::to_value(&result).map_err(|e| e.to_string())
+}
+
+/// Stage 5 dry-run. Read-only — counts and reports without touching any data.
+/// Output is JSON-serializable and intended to be archived under
+/// `docs/kioku-stage5-${YYYY-MM-DD}-dryrun.txt` for Select review before
+/// the matching apply command is run.
+#[tauri::command]
+pub fn shogun_kioku_stage5_dry_run(_payload: Value) -> Result<Value, String> {
+  let conn = memory_store::open_conn()?;
+  let now_ms = ts() as i64;
+  let report = crate::kioku_stage5::run_dry_run(&conn, now_ms)?;
+  serde_json::to_value(&report).map_err(|e| e.to_string())
+}
+
+/// Stage 5 destructive apply. **Gated** behind both:
+///   - `settings.kioku_graph.stage5_apply == true` (persisted opt-in)
+///   - `payload.confirm_token == "APPLY"` (per-call confirmation)
+///
+/// Sub-actions follow the migration plan §Stage 5.2–5.5 ordering. Each is
+/// individually opt-in via the payload booleans so reviewers can run them in
+/// sequence on different days. Default `false` ⇒ no-op.
+///
+/// Payload:
+/// ```jsonc
+/// {
+///   "confirm_token": "APPLY",
+///   "soft_retire": true,
+///   "cleanup_ttl": true,
+///   "physical_delete": false,
+///   "vacuum": false
+/// }
+/// ```
+#[tauri::command]
+pub fn shogun_kioku_stage5_apply(payload: Value) -> Result<Value, String> {
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  let flag = settings
+    .pointer("/sections/kioku_graph/stage5_apply")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  if !flag {
+    return Err(
+      "Stage 5 apply gate is OFF. Set `settings.sections.kioku_graph.stage5_apply = true` and \
+       re-run with `confirm_token = APPLY` after reviewing the dry-run output."
+        .into(),
+    );
+  }
+  let confirm = payload
+    .get("confirm_token")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  if confirm != "APPLY" {
+    return Err(
+      "Stage 5 apply requires `confirm_token = \"APPLY\"` in the payload (per-call \
+       confirmation, not just the persisted flag)."
+        .into(),
+    );
+  }
+
+  let conn = memory_store::open_conn()?;
+  let now_ms = ts() as i64;
+  let mut summary = json!({
+    "soft_retire": null,
+    "cleanup_ttl": null,
+    "physical_delete": null,
+    "vacuum": null,
+  });
+
+  let do_soft = payload.get("soft_retire").and_then(|v| v.as_bool()).unwrap_or(false);
+  let do_ttl = payload.get("cleanup_ttl").and_then(|v| v.as_bool()).unwrap_or(false);
+  let do_delete = payload.get("physical_delete").and_then(|v| v.as_bool()).unwrap_or(false);
+  let do_vacuum = payload.get("vacuum").and_then(|v| v.as_bool()).unwrap_or(false);
+
+  if do_soft {
+    let n = crate::kioku_stage5::soft_retire_capture_rows(&conn, now_ms)?;
+    summary["soft_retire"] = json!({ "rows_retired": n });
+  }
+  if do_ttl {
+    let r = crate::kioku_stage5::cleanup_ttl_expired_captures(&conn, now_ms)?;
+    summary["cleanup_ttl"] = json!({
+      "rows_marked_expired": r.rows_marked_expired,
+      "raw_paths_unlinked": r.raw_paths_unlinked,
+      "raw_text_nulled": r.raw_text_nulled,
+    });
+  }
+  if do_delete {
+    let n = crate::kioku_stage5::physical_delete_old_capture_rows(&conn, now_ms)?;
+    summary["physical_delete"] = json!({ "rows_deleted": n });
+  }
+  if do_vacuum {
+    crate::kioku_stage5::vacuum_db(&conn)?;
+    summary["vacuum"] = json!({ "ok": true });
+  }
+  Ok(json!({
+    "applied_at_ms": now_ms,
+    "actions": summary,
+  }))
+}
+
+/// List `edge_type_proposals` for the Stage 4 review UI.
+///
+/// Payload (all optional):
+/// ```jsonc
+/// { "only_unreviewed": true, "limit": 30 }
+/// ```
+/// `only_unreviewed = true` is the default — operators usually only want
+/// to act on rows the worker has freshly proposed. `limit = 0` returns
+/// every row.
+#[tauri::command]
+pub fn shogun_kioku_edge_type_proposals(payload: Value) -> Result<Value, String> {
+  let only_unreviewed = payload
+    .get("only_unreviewed")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(50)
+    .min(500) as usize;
+  let conn = memory_store::open_conn()?;
+  let rows = crate::kioku_edge_types::list_proposals(&conn, only_unreviewed, limit)?;
+  serde_json::to_value(&rows)
+    .map(|arr| json!({ "proposals": arr }))
+    .map_err(|e| e.to_string())
+}
+
+/// Stamp a review decision on an `edge_type_proposals` row.
+///
+/// Payload:
+/// ```jsonc
+/// {
+///   "edge_type": "discusses",
+///   "status": 1,                    // 0 unreview / 1 accept / 2 reject
+///   "note": "matches AMC schema"    // optional
+/// }
+/// ```
+#[tauri::command]
+pub fn shogun_kioku_edge_type_review(payload: Value) -> Result<Value, String> {
+  let edge_type = payload
+    .get("edge_type")
+    .and_then(|v| v.as_str())
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "edge_type is required".to_string())?;
+  let status = payload
+    .get("status")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "status is required (0=unreview, 1=accept, 2=reject)".to_string())?;
+  let note = payload
+    .get("note")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty());
+  let conn = memory_store::open_conn()?;
+  let n = crate::kioku_edge_types::set_review_status(&conn, edge_type, status, note)?;
+  Ok(json!({
+    "updated": n,
+    "edge_type": edge_type,
+    "status": status,
+  }))
 }
 
 fn fmt_decimal_commas(mut n: u64) -> String {
@@ -280,6 +542,12 @@ pub fn app_settings_load(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn app_settings_save(payload: Value) -> Result<Value, String> {
   let doc = settings_store::save_patch(&payload)?;
+  // Phase 2 Stage 3 (T8.3): keep the kioku_rules cache aligned with disk.
+  // We refresh on every save (cheap: in-memory parse) so the next LLM call
+  // sees the update without an app restart, regardless of which section the
+  // user touched (kioku_rules edits also occasionally arrive as part of a
+  // bulk import).
+  crate::kioku_rules::reload_from_settings_now();
   Ok(json!({
     "saved": true,
     "settings": doc,
@@ -475,22 +743,274 @@ pub async fn shogun_google_calendar_sync(payload: Value) -> Result<Value, String
     .get("calendarId")
     .and_then(|c| c.as_str())
     .unwrap_or("primary");
+  let days_opt = payload.get("days").and_then(|d| d.as_u64());
+  let is_historical = days_opt.is_some();
+  let default_max: u64 = if is_historical { 500 } else { 25 };
+  let cap_max: u64 = if is_historical { 2500 } else { 50 };
   let max = payload
     .get("maxResults")
     .and_then(|m| m.as_u64())
-    .unwrap_or(25)
-    .clamp(1, 50) as usize;
-  google_calendar::sync_events_to_memory(cal, max).await
+    .unwrap_or(default_max)
+    .clamp(1, cap_max) as usize;
+  let past_days = days_opt.unwrap_or(0).min(366) as u32;
+  google_calendar::sync_events_to_memory(cal, max, past_days).await
 }
 
 #[tauri::command]
 pub async fn shogun_gmail_sync(payload: Value) -> Result<Value, String> {
+  let days_opt = payload.get("days").and_then(|d| d.as_u64());
+  let is_historical = days_opt.is_some();
+  let default_max: u64 = if is_historical { 500 } else { 20 };
+  let cap_max: u64 = if is_historical { 500 } else { 50 };
   let max = payload
     .get("maxResults")
     .and_then(|m| m.as_u64())
-    .unwrap_or(20)
-    .clamp(1, 50) as usize;
-  gmail::sync_inbox_to_memory(max).await
+    .unwrap_or(default_max)
+    .clamp(1, cap_max) as usize;
+  let days = days_opt.map(|d| d.min(366) as u32);
+  gmail::sync_inbox_to_memory(max, days).await
+}
+
+#[tauri::command]
+pub async fn shogun_slack_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_per_channel = payload
+    .get("maxPerChannel")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 1000) as usize;
+  slack::sync_workspace_to_memory(days, max_per_channel).await
+}
+
+#[tauri::command]
+pub async fn shogun_notion_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_pages = payload
+    .get("maxPages")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(1000)
+    .clamp(1, 5000) as usize;
+  notion::sync_workspace_to_memory(days, max_pages).await
+}
+
+#[tauri::command]
+pub async fn shogun_github_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_items = payload
+    .get("maxItems")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 2000) as usize;
+  github::sync_activity_to_memory(days, max_items).await
+}
+
+#[tauri::command]
+pub async fn shogun_linear_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_items = payload
+    .get("maxItems")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 2000) as usize;
+  linear::sync_activity_to_memory(days, max_items).await
+}
+
+#[tauri::command]
+pub async fn shogun_drive_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_files = payload
+    .get("maxFiles")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(500)
+    .clamp(1, 3000) as usize;
+  google_drive::sync_drive_to_memory(days, max_files).await
+}
+
+/// Export the full settings document as JSON to a user-picked file. Skips
+/// credential secrets (those live in Keychain / integration_secrets, not in
+/// settings.json, so the settings file is already safe to share).
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn app_settings_export(payload: Value) -> Result<Value, String> {
+  #[cfg(target_os = "macos")]
+  {
+    use std::io::Write;
+    let doc = settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
+    let exported_at = ts();
+    let envelope = json!({
+      "app": "SHOGUN",
+      "kind": "settings_backup",
+      "schemaVersion": 1,
+      "exportedAt": exported_at,
+      "settings": doc,
+    });
+    let Some(path) = rfd::FileDialog::new()
+      .set_file_name("shogun-settings.json")
+      .save_file()
+    else {
+      return Ok(json!({ "cancelled": true, "stub": false, "echo": payload }));
+    };
+    let body = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
+    std::fs::File::create(&path)
+      .and_then(|mut f| f.write_all(body.as_bytes()))
+      .map_err(|e| e.to_string())?;
+    Ok(json!({
+      "exported": true,
+      "path": path.display().to_string(),
+      "exportedAt": exported_at,
+      "stub": false,
+      "echo": payload,
+    }))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("Settings export is only available on macOS.".to_string())
+  }
+}
+
+/// Import a settings JSON file (previously produced by `app_settings_export`)
+/// and merge each top-level section via `save_patch`. Individual sections are
+/// replaced wholesale — the user explicitly chose this file, so we trust it
+/// over the current state. Credentials are untouched.
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn app_settings_import(payload: Value) -> Result<Value, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let Some(path) = rfd::FileDialog::new()
+      .add_filter("SHOGUN settings", &["json"])
+      .pick_file()
+    else {
+      return Ok(json!({ "cancelled": true, "stub": false, "echo": payload }));
+    };
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("Parse failed: {}", e))?;
+    let kind = parsed
+      .get("kind")
+      .and_then(|v| v.as_str())
+      .unwrap_or("");
+    if kind != "settings_backup" {
+      return Err("File is not a SHOGUN settings backup.".to_string());
+    }
+    let sections = parsed
+      .pointer("/settings/sections")
+      .and_then(|x| x.as_object())
+      .ok_or_else(|| "Backup has no settings.sections".to_string())?;
+
+    let mut restored = 0u32;
+    for (section_name, section_val) in sections.iter() {
+      let Some(obj) = section_val.as_object() else {
+        continue;
+      };
+      let mut patch = serde_json::Map::new();
+      patch.insert("section".to_string(), json!(section_name));
+      for (k, v) in obj.iter() {
+        patch.insert(k.clone(), v.clone());
+      }
+      settings_store::save_patch(&Value::Object(patch))?;
+      restored += 1;
+    }
+    Ok(json!({
+      "imported": true,
+      "sections": restored,
+      "path": path.display().to_string(),
+      "stub": false,
+      "echo": payload,
+    }))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("Settings import is only available on macOS.".to_string())
+  }
+}
+
+#[tauri::command]
+pub async fn shogun_zoom_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_meetings = payload
+    .get("maxMeetings")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(50)
+    .clamp(1, 200) as usize;
+  zoom::sync_recordings_to_memory(days, max_meetings).await
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_list(payload: Value) -> Result<Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|x| x.as_i64())
+    .unwrap_or(200);
+  let source = payload
+    .get("source")
+    .and_then(|x| x.as_str())
+    .filter(|s| !s.is_empty())
+    .map(|s| s.to_string());
+  let items = dead_letter::list(limit, source.as_deref())?;
+  let counts = dead_letter::counts()?;
+  Ok(json!({ "items": items, "counts": counts }))
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_retry(payload: Value) -> Result<Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|x| x.as_i64())
+    .unwrap_or(500);
+  let source = payload
+    .get("source")
+    .and_then(|x| x.as_str())
+    .filter(|s| !s.is_empty())
+    .map(|s| s.to_string());
+  dead_letter::retry_all(limit, source.as_deref())
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_clear(payload: Value) -> Result<Value, String> {
+  let source = payload
+    .get("source")
+    .and_then(|x| x.as_str())
+    .filter(|s| !s.is_empty())
+    .map(|s| s.to_string());
+  let removed = dead_letter::clear(source.as_deref())?;
+  Ok(json!({ "removed": removed }))
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_retry_one(payload: Value) -> Result<Value, String> {
+  let id = payload
+    .get("id")
+    .and_then(|x| x.as_i64())
+    .ok_or_else(|| "id is required".to_string())?;
+  dead_letter::retry_one(id)
+}
+
+#[tauri::command]
+pub fn shogun_dead_letter_delete(payload: Value) -> Result<Value, String> {
+  let id = payload
+    .get("id")
+    .and_then(|x| x.as_i64())
+    .ok_or_else(|| "id is required".to_string())?;
+  dead_letter::delete_by_id(id)?;
+  Ok(json!({ "deleted": true, "id": id }))
 }
 
 #[tauri::command]
@@ -911,6 +1431,8 @@ pub async fn shogun_memory_debug_query(
     query: &query,
     limit,
     semantic,
+    // Debug command — keep raw signal so the dev tool surfaces every hit.
+    excluded_provenances: None,
   })
   .await?;
 
@@ -1031,4 +1553,454 @@ pub fn shogun_memory_debug_gate() -> Result<serde_json::Value, String> {
     "available": enabled,
     "reason": if enabled { "enabled" } else { "settings_disabled" },
   }))
+}
+
+// ---- Memory Digest Phase 1: summary commands ----
+
+/// target_kind="item" 指定で特定 item の summary を取得。キャッシュ優先、なければ同期生成。
+///
+/// payload: { "targetId": "m_...", "targetKind"?: "item" (default), "item"?: { ... } }
+///   - `item` が同梱されていれば再取得不要 (River 側で既に hit を持っている場合)
+///   - 無ければ mem_items から fetch (Phase 1 では item 同梱必須 = UI 側で用意)
+#[tauri::command]
+pub async fn shogun_memory_summary_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId is required".to_string())?
+    .to_string();
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item")
+    .to_string();
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+
+  // 1. cache lookup (lang-aware: mismatched language → cache miss → regen)
+  if let Some(cached) = crate::summarizer_store::get_cached(&target_kind, &target_id, &lang)? {
+    return Ok(serde_json::json!({ "summary": cached.to_json(), "cached": true }));
+  }
+
+  // 2. generate (Phase 1 は item のみサポート)
+  if target_kind != "item" {
+    return Err(format!("target_kind={} not supported in Phase 1", target_kind));
+  }
+
+  let item = payload
+    .get("item")
+    .cloned()
+    .ok_or_else(|| "item payload required when cache miss".to_string())?;
+
+  let summary = crate::summarizer::summarize_item(&item, &lang).await?;
+  crate::summarizer_store::upsert(&summary)?;
+
+  Ok(serde_json::json!({ "summary": summary.to_json(), "cached": false }))
+}
+
+/// 複数 item 分の summary を並列取得 (max 5)。Phase 1 では item のみ。
+///
+/// payload: { "items": [ { id, title, snippet, source, ... }, ... ] }
+#[tauri::command]
+pub async fn shogun_memory_summary_batch(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let items = payload
+    .get("items")
+    .and_then(|v| v.as_array())
+    .cloned()
+    .ok_or_else(|| "items array required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+
+  if items.is_empty() {
+    return Ok(serde_json::json!({ "ok": [], "failed": [], "heuristicUsed": 0 }));
+  }
+
+  // 1. cache lookup for all ids at once
+  let ids: Vec<String> = items
+    .iter()
+    .filter_map(|it| it.get("id").and_then(|v| v.as_str()).map(String::from))
+    .collect();
+  let cached = crate::summarizer_store::get_cached_many("item", &ids, &lang)?;
+  let cached_ids: std::collections::HashSet<String> =
+    cached.iter().map(|s| s.target_id.clone()).collect();
+
+  let mut ok_results: Vec<serde_json::Value> = cached.iter().map(|s| s.to_json()).collect();
+  let mut failed_results: Vec<serde_json::Value> = Vec::new();
+  let mut heuristic_used: u32 = 0;
+
+  // 2. 未キャッシュの item を並列要約 (max 5 並列)
+  let to_generate: Vec<serde_json::Value> = items
+    .iter()
+    .filter(|it| {
+      it.get("id")
+        .and_then(|v| v.as_str())
+        .map_or(false, |id| !cached_ids.contains(id))
+    })
+    .cloned()
+    .collect();
+
+  for chunk in to_generate.chunks(5) {
+    let futures: Vec<_> = chunk
+      .iter()
+      .map(|item| {
+        let item_clone = item.clone();
+        let lang_clone = lang.clone();
+        async move {
+          let target_id = item_clone
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+          match crate::summarizer::summarize_item(&item_clone, &lang_clone).await {
+            Ok(s) => {
+              if let Err(e) = crate::summarizer_store::upsert(&s) {
+                log::warn!("summary upsert failed for {}: {}", target_id, e);
+              }
+              Ok(s)
+            }
+            Err(e) => Err((target_id, e)),
+          }
+        }
+      })
+      .collect();
+
+    let results = futures::future::join_all(futures).await;
+    for r in results {
+      match r {
+        Ok(s) => {
+          if s.model == "heuristic" || s.model == "heuristic_prefilter" {
+            heuristic_used += 1;
+          }
+          ok_results.push(s.to_json());
+        }
+        Err((id, e)) => {
+          failed_results.push(serde_json::json!({ "targetId": id, "error": e }));
+        }
+      }
+    }
+  }
+
+  Ok(serde_json::json!({
+    "ok": ok_results,
+    "failed": failed_results,
+    "heuristicUsed": heuristic_used,
+  }))
+}
+
+/// 特定 summary のキャッシュを削除。dev 用途 (次回 get で再生成)。
+///
+/// payload: { "targetId": "m_...", "targetKind"?: "item" }
+#[tauri::command]
+pub fn shogun_memory_summary_invalidate(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  let deleted = crate::summarizer_store::delete(target_kind, target_id)?;
+  Ok(serde_json::json!({ "deleted": deleted }))
+}
+
+/// 要約をスヌーズする (`untilMs` まで Home digest から非表示)。
+/// `untilMs: null` (or omitted) でスヌーズ解除。
+///
+/// payload: { "targetId": "...", "targetKind"?: "item", "untilMs"?: i64 | null }
+#[tauri::command]
+pub fn shogun_memory_summary_snooze(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  let until_ms: Option<i64> = match payload.get("untilMs") {
+    Some(v) if v.is_null() => None,
+    Some(v) => Some(
+      v.as_i64()
+        .ok_or_else(|| "untilMs must be a number or null".to_string())?,
+    ),
+    None => None,
+  };
+  let updated = crate::summarizer_store::set_snoozed(target_kind, target_id, until_ms)?;
+  Ok(serde_json::json!({ "updated": updated, "untilMs": until_ms }))
+}
+
+/// エンティティ単位ロールアップ (Phase 3)。`entityId` (例: 連絡先 / プロジェクト) に紐づく
+/// 全アイテム要約を集約 → 1 つの "X の最近の動き" を生成。
+///
+/// payload: {
+///   "entityId": "...",
+///   "entityLabel"?: "...",  // UI で表示する人/プロジェクト名 (LLM プロンプトに渡す)
+///   "lang"?: "en" | "jp" | "bi",
+///   "regenerate"?: bool
+/// }
+#[tauri::command]
+pub async fn shogun_memory_entity_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let entity_id = payload
+    .get("entityId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "entityId is required".to_string())?
+    .to_string();
+  let entity_label = payload
+    .get("entityLabel")
+    .and_then(|v| v.as_str())
+    .unwrap_or(&entity_id)
+    .to_string();
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("entity_rollup", &entity_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_entity_rollup(&entity_id, &entity_label, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// 要約を "既読" にする (または未読に戻す)。`items` の配列で複数を一括処理可能。
+/// unread に戻す場合は `acknowledged: false` を渡す (デフォルトは true = now_ms())。
+///
+/// payload: {
+///   "items": [{ "targetId": "m_...", "targetKind"?: "item" }, ...],
+///   "acknowledged"?: bool (default true)
+/// }
+#[tauri::command]
+pub fn shogun_memory_summary_acknowledge(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let items = payload
+    .get("items")
+    .and_then(|v| v.as_array())
+    .cloned()
+    .ok_or_else(|| "items array required".to_string())?;
+  let acknowledged = payload
+    .get("acknowledged")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let ack_ms: Option<i64> = if acknowledged {
+    Some(
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0),
+    )
+  } else {
+    None
+  };
+
+  let pairs_owned: Vec<(String, String)> = items
+    .iter()
+    .filter_map(|it| {
+      let id = it.get("targetId").and_then(|v| v.as_str())?.to_string();
+      let kind = it
+        .get("targetKind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("item")
+        .to_string();
+      Some((kind, id))
+    })
+    .collect();
+  let pairs_ref: Vec<(&str, &str)> = pairs_owned
+    .iter()
+    .map(|(k, i)| (k.as_str(), i.as_str()))
+    .collect();
+  let updated = if let Some(ms) = ack_ms {
+    crate::summarizer_store::acknowledge_many(&pairs_ref, ms)?
+  } else {
+    let mut n: u64 = 0;
+    for (k, id) in &pairs_ref {
+      if crate::summarizer_store::set_acknowledged(k, id, None)? {
+        n += 1;
+      }
+    }
+    n
+  };
+  Ok(serde_json::json!({ "updated": updated, "acknowledged": acknowledged }))
+}
+
+/// 週次ロールアップ要約を取得 (キャッシュヒット時は即返、無ければ生成)。
+///
+/// payload: { "weekStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// weekStartMs は週の開始 (通常 Monday 00:00 local) の ms。UI で計算して渡す。
+#[tauri::command]
+pub async fn shogun_memory_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let week_start_ms = payload
+    .get("weekStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "weekStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let week_id = crate::summarizer::format_week_id(week_start_ms);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("week_rollup", &week_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_week_rollup(week_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// 日次ロールアップ要約 (Phase 2.5)。週と同じキャッシュインフラ、target_kind="day_rollup"。
+///
+/// payload: { "dayStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// dayStartMs は日の開始 (通常 00:00 local) の ms。UI で計算して渡す。
+#[tauri::command]
+pub async fn shogun_memory_day_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let day_start_ms = payload
+    .get("dayStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "dayStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let day_id = crate::summarizer::format_week_id(day_start_ms); // YYYY-MM-DD
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("day_rollup", &day_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_day_rollup(day_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// 月次ロールアップ要約を取得 (キャッシュヒット時は即返、無ければ生成)。
+///
+/// payload: { "monthStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// monthStartMs は対象月の1日 00:00 (local) の ms。UI で計算して渡す。
+#[tauri::command]
+pub async fn shogun_memory_month_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let month_start_ms = payload
+    .get("monthStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "monthStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let month_id = crate::summarizer::format_month_id(month_start_ms);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("month_rollup", &month_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_month_rollup(month_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// 年次ロールアップ要約 — 構成元は当年内の月次ロールアップ12件。
+/// 未キャッシュの月は内部で月次生成→upsert してから合成。
+///
+/// payload: { "yearStartMs": i64, "lang"?: "en" | "jp" | "bi", "regenerate"?: bool }
+/// yearStartMs は対象年の1月1日 00:00 (local) の ms。UI で計算して渡す。
+/// regenerate=true は YEAR キャッシュのみ無効化する。月次キャッシュは保持。
+#[tauri::command]
+pub async fn shogun_memory_year_rollup_get(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let year_start_ms = payload
+    .get("yearStartMs")
+    .and_then(|v| v.as_i64())
+    .ok_or_else(|| "yearStartMs is required".to_string())?;
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en")
+    .to_string();
+  let regenerate = payload
+    .get("regenerate")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let year_id = crate::summarizer::format_year_id(year_start_ms);
+
+  if !regenerate {
+    if let Some(cached) = crate::summarizer_store::get_cached("year_rollup", &year_id, &lang)? {
+      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+    }
+  }
+
+  let rollup = crate::summarizer::summarize_year_rollup(year_start_ms, &lang).await?;
+  crate::summarizer_store::upsert(&rollup)?;
+  Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW
+/// even when the LLM classified it differently, or clear the override back to
+/// the LLM assignment. `priority: null` clears the override.
+///
+/// payload: { "targetId": "m_...", "targetKind"?: "item", "priority"?: "high" | "medium" | "low" | null }
+#[tauri::command]
+pub fn shogun_memory_summary_set_priority(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let target_id = payload
+    .get("targetId")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "targetId required".to_string())?;
+  let target_kind = payload
+    .get("targetKind")
+    .and_then(|v| v.as_str())
+    .unwrap_or("item");
+  // priority: either a string ('high'|'medium'|'low') to set, or explicit
+  // null / missing key to clear the override.
+  let priority_opt: Option<String> = match payload.get("priority") {
+    Some(v) if v.is_null() => None,
+    Some(v) => Some(
+      v.as_str()
+        .ok_or_else(|| "priority must be a string or null".to_string())?
+        .to_string(),
+    ),
+    None => None,
+  };
+  let updated = crate::summarizer_store::set_user_priority(
+    target_kind,
+    target_id,
+    priority_opt.as_deref(),
+  )?;
+  Ok(serde_json::json!({ "updated": updated, "userPriority": priority_opt }))
 }

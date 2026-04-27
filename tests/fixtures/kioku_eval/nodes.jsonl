@@ -1,0 +1,79 @@
+# KIOKU eval — node fixtures (50+ rows). Schema: kioku_eval::NodeFixture.
+# created_at uses a 7-day window ending 2026-04-25 (epoch ms).
+# IDs follow `m_<provenance-prefix>_<seq>` for legibility.
+
+# ── connector / google_calendar (events) ────────────────────────────────
+{"id":"m_cal_01","title":"Sprint review","snippet":"Demo of the AMC composer pipeline. Attendees: founder, design, eng.","source":"google_calendar","kinds":["event"],"created_at":1714000000000,"provenance":"connector","entity_id":"cal_evt_001","node_kind":"event"}
+{"id":"m_cal_02","title":"1-on-1 with Alex Chen","snippet":"Quarterly check-in on graph layer plan.","source":"google_calendar","kinds":["event"],"created_at":1714003600000,"provenance":"connector","entity_id":"cal_evt_002","node_kind":"event"}
+{"id":"m_cal_03","title":"Investor sync — Tanaka VC","snippet":"Pitch Q2 launch plan and revenue model v2.","source":"google_calendar","kinds":["event"],"created_at":1714086400000,"provenance":"connector","entity_id":"cal_evt_003","node_kind":"event"}
+{"id":"m_cal_04","title":"Customer interview — Acme","snippet":"Discovery call for capture pipeline rollout.","source":"google_calendar","kinds":["event"],"created_at":1714172800000,"provenance":"connector","entity_id":"cal_evt_004","node_kind":"event"}
+{"id":"m_cal_05","title":"Architecture review — KIOKU graph","snippet":"Sign off on bi-temporal schema and decay model weights.","source":"google_calendar","kinds":["event"],"created_at":1714259200000,"provenance":"connector","entity_id":"cal_evt_005","node_kind":"event"}
+{"id":"m_cal_06","title":"On-call handoff","snippet":"Backfill runner ownership transfer.","source":"google_calendar","kinds":["event"],"created_at":1714345600000,"provenance":"connector","entity_id":"cal_evt_006","node_kind":"event"}
+{"id":"m_cal_07","title":"Weekly engineering all-hands","snippet":"Roadmap progress and Q2 risks.","source":"google_calendar","kinds":["event"],"created_at":1714432000000,"provenance":"connector","entity_id":"cal_evt_007","node_kind":"event"}
+
+# ── connector / gmail (notes) ───────────────────────────────────────────
+{"id":"m_gm_01","title":"Re: deploy plan v3","snippet":"Confirmed staging cut at 19:00 JST. Production rollout the next morning.","source":"gmail","kinds":["mail"],"created_at":1714010800000,"provenance":"connector","entity_id":"gmail_msg_a01","node_kind":"note"}
+{"id":"m_gm_02","title":"Acme contract draft","snippet":"Legal review pending; pricing schedule attached.","source":"gmail","kinds":["mail"],"created_at":1714097200000,"provenance":"connector","entity_id":"gmail_msg_a02","node_kind":"note"}
+{"id":"m_gm_03","title":"FW: capture pipeline outage postmortem","snippet":"Root cause: BYOK rate limit. Mitigation: backoff jitter.","source":"gmail","kinds":["mail"],"created_at":1714183600000,"provenance":"connector","entity_id":"gmail_msg_a03","node_kind":"note"}
+{"id":"m_gm_04","title":"Tanaka-san follow-up","snippet":"Asked for revenue_model_v2.xlsx by Friday.","source":"gmail","kinds":["mail"],"created_at":1714270000000,"provenance":"connector","entity_id":"gmail_msg_a04","node_kind":"note"}
+{"id":"m_gm_05","title":"Re: pencil migration","snippet":"Decision: keep on legacy editor through Q2.","source":"gmail","kinds":["mail"],"created_at":1714356400000,"provenance":"connector","entity_id":"gmail_msg_a05","node_kind":"note"}
+{"id":"m_gm_06","title":"Vendor onboarding checklist","snippet":"DPA + SOC2 confirmation needed.","source":"gmail","kinds":["mail"],"created_at":1714442800000,"provenance":"connector","entity_id":"gmail_msg_a06","node_kind":"note"}
+
+# ── meeting (events) — meeting_* sources ────────────────────────────────
+{"id":"m_meet_01","title":"Standup transcript chunk 1","snippet":"Shipped Stage 1 schema; rolling onto fixture authoring.","source":"meeting_zoom","kinds":["transcript"],"created_at":1714014400000,"provenance":"meeting","entity_id":"mt_001","node_kind":"event"}
+{"id":"m_meet_02","title":"1-on-1 notes — Alex","snippet":"Agreed graph traversal latency budget: 200ms at 10K edges.","source":"meeting_granola","kinds":["notes"],"created_at":1714018000000,"provenance":"meeting","entity_id":"mt_002","node_kind":"event"}
+{"id":"m_meet_03","title":"Investor MTG action items","snippet":"Send revenue_model_v2 by Friday. Loop in legal on disclosure.","source":"meetings_granola","kinds":["notes"],"created_at":1714100800000,"provenance":"meeting","entity_id":"mt_003","node_kind":"event"}
+{"id":"m_meet_04","title":"Architecture review excerpt","snippet":"Decided: edge_type fixed at Stage 4 end via top-N proposals.","source":"meeting","kinds":["notes"],"created_at":1714263200000,"provenance":"meeting","entity_id":"mt_004","node_kind":"event"}
+{"id":"m_meet_05","title":"Customer interview — Acme","snippet":"Pain: AX dump leakage in pack files. Want clipping.","source":"meetings_zoom","kinds":["notes"],"created_at":1714176400000,"provenance":"meeting","entity_id":"mt_005","node_kind":"event"}
+{"id":"m_meet_06","title":"Weekly all-hands recap","snippet":"Roadmap on track. Risk: BYOK monthly cost variance.","source":"meeting_granola","kinds":["notes"],"created_at":1714435600000,"provenance":"meeting","entity_id":"mt_006","node_kind":"event"}
+
+# ── user / capture (Quick capture) ──────────────────────────────────────
+{"id":"m_user_01","title":"Idea: snippet clip default 500","snippet":"Pack files leak AX dumps. Clip in format_hits_pack_markdown.","source":"capture","kinds":["note"],"created_at":1714024400000,"provenance":"user","node_kind":"note"}
+{"id":"m_user_02","title":"Stage 5 dry-run output spec","snippet":"6 blocks: soft-retire / TTL / physical / storage / side-effects / backup.","source":"capture","kinds":["note"],"created_at":1714110800000,"provenance":"user","node_kind":"note"}
+{"id":"m_user_03","title":"Decay weights initial","snippet":"w1=0.4 recency, w2=0.2 access, w3=0.3 centrality, w4=0.1 confidence.","source":"capture","kinds":["note"],"created_at":1714197200000,"provenance":"user","node_kind":"note"}
+{"id":"m_user_04","title":"is_same_fact threshold sketch","snippet":"cosine 0.92 OR levenshtein 0.85 — re-tune in Stage 1.","source":"capture","kinds":["note"],"created_at":1714283600000,"provenance":"user","node_kind":"note"}
+{"id":"m_user_05","title":"BYOK cost cap default","snippet":"$10 monthly hard cap. cap_action=pause_extraction.","source":"capture","kinds":["note"],"created_at":1714370000000,"provenance":"user","node_kind":"note"}
+
+# ── user / focus_session ────────────────────────────────────────────────
+{"id":"m_user_focus_01","title":"Focus session start","snippet":"Working block on KIOKU graph schema.","source":"focus_session","kinds":["session"],"created_at":1714028000000,"provenance":"user","node_kind":"note"}
+{"id":"m_user_focus_02","title":"Focus session start","snippet":"Working block on fixture authoring.","source":"focus_session","kinds":["session"],"created_at":1714114400000,"provenance":"user","node_kind":"note"}
+
+# ── user / home_attachment ─────────────────────────────────────────────
+{"id":"m_user_attach_01","title":"revenue_model_v2.xlsx","snippet":"Q2 revenue projection for Tanaka VC.","source":"home_attachment","kinds":["doc"],"created_at":1714200800000,"provenance":"user","entity_id":"file_rm_v2","node_kind":"note"}
+{"id":"m_user_attach_02","title":"capture-platform-polyfill.md","snippet":"Spec for capture API on non-macOS targets.","source":"home_attachment","kinds":["doc"],"created_at":1714287200000,"provenance":"user","entity_id":"file_pp_md","node_kind":"note"}
+
+# ── user / telemetry_chat_context ──────────────────────────────────────
+{"id":"m_telem_01","title":"chat.completion.context","snippet":"Block chars=6800, hits=14, semantic=true, route=chat.complete.","source":"telemetry_chat_context","kinds":["telemetry"],"created_at":1714125200000,"provenance":"user","node_kind":"note"}
+{"id":"m_telem_02","title":"chat.completion.context","snippet":"Block chars=4800, hits=8, semantic=false, route=brief.get.","source":"telemetry_chat_context","kinds":["telemetry"],"created_at":1714211600000,"provenance":"user","node_kind":"note"}
+
+# ── screen / capture_sampler (capture_summary) ─────────────────────────
+{"id":"m_scr_01","title":"Slack focused","snippet":"app=Slack channel=#shogun-eng","source":"capture_sampler","kinds":["screen"],"created_at":1714029000000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_scr_02","title":"VSCode focused","snippet":"app=Code workspace=ShogunAI3","source":"capture_sampler","kinds":["screen"],"created_at":1714032600000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_scr_03","title":"Chrome focused","snippet":"app=Chrome url=docs.anthropic.com","source":"capture_sampler","kinds":["screen"],"created_at":1714036200000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_scr_04","title":"Slack focused","snippet":"app=Slack channel=#shogun-design","source":"capture_sampler","kinds":["screen"],"created_at":1714115400000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_scr_05","title":"VSCode focused","snippet":"app=Code workspace=ShogunAI3 file=memory_store.rs","source":"capture_sampler","kinds":["screen"],"created_at":1714119000000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_scr_06","title":"Notion focused","snippet":"app=Notion page=KIOKU spec","source":"capture_sampler","kinds":["screen"],"created_at":1714201400000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_scr_07","title":"Mail focused","snippet":"app=Mail thread=Tanaka follow-up","source":"capture_sampler","kinds":["screen"],"created_at":1714287800000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_scr_08","title":"Cursor focused","snippet":"app=Cursor file=context_assembly.rs","source":"capture_sampler","kinds":["screen"],"created_at":1714374200000,"provenance":"screen","node_kind":"capture_summary"}
+
+# ── screen / capture_ax (AX snapshots) ──────────────────────────────────
+{"id":"m_ax_01","title":"AX focus","snippet":"role=AXTextField title=Search value=KIOKU","source":"capture_ax","kinds":["ax"],"created_at":1714030800000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_ax_02","title":"AX focus","snippet":"role=AXButton title=Send","source":"capture_ax","kinds":["ax"],"created_at":1714034400000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_ax_03","title":"AX focus","snippet":"role=AXTextArea title=Compose value=Re: deploy plan","source":"capture_ax","kinds":["ax"],"created_at":1714117200000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_ax_04","title":"AX focus","snippet":"role=AXLink title=docs.anthropic.com/messages","source":"capture_ax","kinds":["ax"],"created_at":1714203200000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_ax_05","title":"AX focus","snippet":"role=AXStaticText title=Pencil migration value=Keep legacy through Q2","source":"capture_ax","kinds":["ax"],"created_at":1714289600000,"provenance":"screen","node_kind":"capture_summary"}
+{"id":"m_ax_06","title":"AX focus","snippet":"role=AXTextField title=Subject value=Vendor onboarding checklist","source":"capture_ax","kinds":["ax"],"created_at":1714376000000,"provenance":"screen","node_kind":"capture_summary"}
+
+# ── synthetic decision / task nodes (Phase 2 abstraction; node_kind set explicitly) ──
+{"id":"m_dec_01","title":"Decision: graph layer ships in Phase 2","snippet":"Stage 1 (schema) → Stage 5 (VACUUM). BYOK cloud only.","source":"capture","kinds":["decision"],"created_at":1714112000000,"provenance":"user","node_kind":"decision"}
+{"id":"m_dec_02","title":"Decision: edge_type free in Stage 2","snippet":"Stage 4 末で頻出 top-N を CHECK 制約に固定.","source":"capture","kinds":["decision"],"created_at":1714198400000,"provenance":"user","node_kind":"decision"}
+{"id":"m_dec_03","title":"Decision: monthly BYOK cap $10","snippet":"cap_action default = pause_extraction.","source":"capture","kinds":["decision"],"created_at":1714284800000,"provenance":"user","node_kind":"decision"}
+{"id":"m_task_01","title":"Task: write fixture corpus","snippet":"50+ nodes, 20+ captures, 10 queries, 30 same_fact, 15 same_entity.","source":"capture","kinds":["task"],"created_at":1714115000000,"provenance":"user","node_kind":"task"}
+{"id":"m_task_02","title":"Task: BYOK cost試算 doc","snippet":"docs/kioku-cost-budget.md にコミット — Stage 2 ゲート.","source":"capture","kinds":["task"],"created_at":1714201400000,"provenance":"user","node_kind":"task"}
+{"id":"m_task_03","title":"Task: dry-run CLI","snippet":"scripts/kioku-stage5-dryrun.sh — Stage 5 着手前.","source":"capture","kinds":["task"],"created_at":1714287800000,"provenance":"user","node_kind":"task"}
+
+# ── entity nodes (人 / プロジェクト / プロダクト) ───────────────────────
+{"id":"m_ent_01","title":"Alex Chen","snippet":"Engineering peer, KIOKU graph reviewer.","source":"capture","kinds":["entity"],"created_at":1714018000000,"provenance":"user","entity_id":"person_alex_chen","node_kind":"entity"}
+{"id":"m_ent_02","title":"Tanaka VC","snippet":"Series A lead. Asked for revenue_model_v2 by Friday.","source":"capture","kinds":["entity"],"created_at":1714100800000,"provenance":"user","entity_id":"org_tanaka_vc","node_kind":"entity"}
+{"id":"m_ent_03","title":"Acme","snippet":"Customer evaluating capture pipeline rollout.","source":"capture","kinds":["entity"],"created_at":1714172800000,"provenance":"user","entity_id":"org_acme","node_kind":"entity"}
+{"id":"m_ent_04","title":"KIOKU","snippet":"Internal codename for the local memory layer.","source":"capture","kinds":["entity"],"created_at":1714000000000,"provenance":"user","entity_id":"product_kioku","node_kind":"entity"}

@@ -134,6 +134,36 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.delete`
 - `memory.embed_backfill`
 - `memory.embed_backfill_cancel`
+- `memory.fetch`
+- `memory.summary.get`
+- `memory.summary.batch`
+- `memory.summary.invalidate`
+- `memory.summary.set_priority`
+- `memory.summary.edit`
+- `memory.summary.revert`
+- `memory.summary.acknowledge`
+- `memory.summary.snooze`
+- `memory.rollup.get`
+- `memory.rollup.day.get`
+- `memory.rollup.entity.get`
+- `memory.rollup.month.get`
+- `memory.rollup.year.get`
+- `kioku.backup_db`
+- `kioku.edge_type_proposals`
+- `kioku.edge_type_review`
+- `settings.export`
+- `settings.import`
+- `dead_letter.list`
+- `dead_letter.retry`
+- `dead_letter.clear`
+- `dead_letter.retry_one`
+- `dead_letter.delete`
+- `slack.sync`
+- `notion.sync`
+- `github.sync`
+- `linear.sync`
+- `drive.sync`
+- `zoom.sync`
 - `entity.query`
 - `brief.get`
 - `chat.complete`
@@ -175,6 +205,8 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `meetings.mic.stop`
 - `meetings.transcribe.pcm`
 - `meetings.mcp.tools`
+- `meetings.import.pick`
+- `meetings.import.file`
 
 ## Quick Verification
 

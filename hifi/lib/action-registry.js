@@ -28,6 +28,16 @@
     register("app.create_share_link", (payload) => api.appCreateShareLink(payload));
     register("settings.save", (payload) => api.settingsSave(payload));
     register("settings.load", (payload) => api.settingsLoad(payload));
+    register("kioku.backup_db", (payload) => api.kiokuBackupDb(payload));
+    register("kioku.edge_type_proposals", (payload) => api.kiokuEdgeTypeProposals(payload));
+    register("kioku.edge_type_review", (payload) => api.kiokuEdgeTypeReview(payload));
+    register("settings.export", (payload) => api.settingsExport(payload));
+    register("settings.import", (payload) => api.settingsImport(payload));
+    register("dead_letter.list", (payload) => api.deadLetterList(payload));
+    register("dead_letter.retry", (payload) => api.deadLetterRetry(payload));
+    register("dead_letter.clear", (payload) => api.deadLetterClear(payload));
+    register("dead_letter.retry_one", (payload) => api.deadLetterRetryOne(payload));
+    register("dead_letter.delete", (payload) => api.deadLetterDelete(payload));
     register("integrations.connect", (payload) => api.integrationConnect(payload));
     register("integrations.import_credentials", (payload) =>
       api.integrationImportCredentials(payload),
@@ -38,6 +48,12 @@
     register("integrations.toggle", (payload) => api.integrationToggle(payload));
     register("calendar.sync", (payload) => api.googleCalendarSync(payload));
     register("gmail.sync", (payload) => api.gmailSync(payload));
+    register("slack.sync", (payload) => api.slackSync(payload));
+    register("notion.sync", (payload) => api.notionSync(payload));
+    register("github.sync", (payload) => api.githubSync(payload));
+    register("linear.sync", (payload) => api.linearSync(payload));
+    register("drive.sync", (payload) => api.driveSync(payload));
+    register("zoom.sync", (payload) => api.zoomSync(payload));
     register("capture.pause", () => api.capturePause({ reason: "user_request" }));
     register("capture.resume", () => api.captureResume({ reason: "user_request" }));
     register("permissions.manage", (payload) => api.permissionsManage(payload));
@@ -49,10 +65,22 @@
     register("data.delete_all", () => api.accountDeleteAll({}));
     register("account.delete", () => api.accountDeleteSelf({}));
     register("memory.search", (payload) => api.memorySearch(payload));
+    register("memory.fetch", (payload) => api.memoryFetch(payload));
     register("memory.ingest", (payload) => api.memoryIngest(payload));
     register("memory.delete", (payload) => api.memoryDelete(payload));
     register("memory.embed_backfill", (payload) => api.memoryEmbedBackfill(payload));
     register("memory.embed_backfill_cancel", () => api.memoryEmbedBackfillCancel({}));
+    register("memory.summary.get", (payload) => api.memorySummaryGet(payload));
+    register("memory.summary.batch", (payload) => api.memorySummaryBatch(payload));
+    register("memory.summary.invalidate", (payload) => api.memorySummaryInvalidate(payload));
+    register("memory.rollup.get", (payload) => api.memoryRollupGet(payload));
+    register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
+    register("memory.rollup.month.get", (payload) => api.memoryMonthRollupGet(payload));
+    register("memory.rollup.year.get", (payload) => api.memoryYearRollupGet(payload));
+    register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));
+    register("memory.summary.acknowledge", (payload) => api.memorySummaryAcknowledge(payload));
+    register("memory.rollup.entity.get", (payload) => api.memoryEntityRollupGet(payload));
+    register("memory.summary.snooze", (payload) => api.memorySummarySnooze(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));
@@ -109,6 +137,8 @@
     register("meetings.mic.stop", (payload) => api.meetingMicStop(payload));
     register("meetings.transcribe.pcm", (payload) => api.meetingTranscribePcm(payload));
     register("meetings.mcp.tools", (payload) => api.meetingMcpTools(payload));
+    register("meetings.import.pick", (payload) => api.meetingImportPick(payload));
+    register("meetings.import.file", (payload) => api.meetingImportFile(payload));
 
     return {
       run: run,

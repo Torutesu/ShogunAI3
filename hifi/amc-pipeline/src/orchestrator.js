@@ -8,8 +8,57 @@ import { composeBriefItemHeuristic } from "./heuristic.js";
 import { defaultPipelineTimeZone } from "./timezone.js";
 
 /**
+ * @typedef {object} KiokuSignalsLoader
+ * Optional async hook that returns the KIOKU graph payload to splice into
+ * candidates: `{ decision_graph_hits: ..., related_kioku_hits: ... }`. Caller
+ * usually wires `shogun.kiokuBriefSignals` from `hifi/lib/shogun-api.js`.
+ *
+ * @param {{ candidate_count: number, dry_run: boolean }} ctx
+ * @returns {Promise<{ decision_graph_hits?: any[], related_kioku_hits?: any[] }>}
+ */
+
+/**
+ * @param {object[]} cleaned
+ * @param {KiokuSignalsLoader | null | undefined} loader
+ * @param {boolean} dryRun
+ */
+async function applyKiokuSignals(cleaned, loader, dryRun) {
+  if (typeof loader !== "function") return cleaned;
+  let signals;
+  try {
+    signals = await loader({ candidate_count: cleaned.length, dry_run: dryRun });
+  } catch (e) {
+    // Enrichment is best-effort: a single failure must not collapse the
+    // whole brief. Surface to stderr so dev runs see it.
+    console.warn("[amc] kiokuSignalsLoader failed; continuing without enrichment:", e?.message || e);
+    return cleaned;
+  }
+  if (!signals || typeof signals !== "object") return cleaned;
+  const decisions = Array.isArray(signals.decision_graph_hits) ? signals.decision_graph_hits : null;
+  const kioku = Array.isArray(signals.related_kioku_hits) ? signals.related_kioku_hits : null;
+  if (!decisions && !kioku) return cleaned;
+
+  return cleaned.map((c) => {
+    const next = { ...c };
+    if (decisions && (!Array.isArray(c.decision_graph_hits) || c.decision_graph_hits.length === 0)) {
+      next.decision_graph_hits = decisions;
+    }
+    if (kioku && (!Array.isArray(c.related_kioku_hits) || c.related_kioku_hits.length === 0)) {
+      next.related_kioku_hits = kioku;
+    }
+    return next;
+  });
+}
+
+/**
  * @param {unknown[]} rawCandidates
- * @param {{ dryRun?: boolean, timeZone?: string, mergeDuplicates?: boolean, model?: string }} opts
+ * @param {{
+ *   dryRun?: boolean,
+ *   timeZone?: string,
+ *   mergeDuplicates?: boolean,
+ *   model?: string,
+ *   kiokuSignalsLoader?: KiokuSignalsLoader,
+ * }} opts
  */
 export async function runMorningBriefPipeline(rawCandidates, opts = {}) {
   const dryRun = Boolean(opts.dryRun);
@@ -18,6 +67,7 @@ export async function runMorningBriefPipeline(rawCandidates, opts = {}) {
 
   let cleaned = rawCandidates.map((r) => preprocessCandidate(r));
   if (mergeDuplicates) cleaned = mergeDuplicateCandidates(cleaned);
+  cleaned = await applyKiokuSignals(cleaned, opts.kiokuSignalsLoader, dryRun);
 
   if (cleaned.length === 0) {
     return { skipped: true, reason: "no_candidates" };

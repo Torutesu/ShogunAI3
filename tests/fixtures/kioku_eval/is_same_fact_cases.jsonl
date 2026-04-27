@@ -1,0 +1,62 @@
+# KIOKU eval — is_same_fact cases (30). Schema: kioku_eval::IsSameFactCase.
+# `expected: true` ⇒ the two facts describe the same claim about the same entity
+# and should be deduped (access_count++). `expected: false` ⇒ they are distinct
+# facts and must NOT be merged.
+# Categories cover: name_normalization / phrasing / fact_type / entity_id /
+# unrelated / different_value / multilingual.
+
+# ── name normalization (expected: true) ─────────────────────────────────
+{"id":"sf_01","left":{"entity_name":"Alex Chen","fact_type":"works_at","claim":"Alex works at Acme"},"right":{"entity_name":"alex chen","fact_type":"works_at","claim":"Alex Chen works for Acme"},"expected":true,"category":"name_normalization"}
+{"id":"sf_02","left":{"entity_name":"Tanaka VC","fact_type":"is_lead","claim":"Tanaka VC is the Series A lead"},"right":{"entity_name":"tanaka vc","fact_type":"is_lead","claim":"Tanaka VC leads our Series A"},"expected":true,"category":"name_normalization"}
+{"id":"sf_03","left":{"entity_name":"KIOKU","fact_type":"codename_of","claim":"KIOKU is the local memory layer"},"right":{"entity_name":"kioku","fact_type":"codename_of","claim":"kioku names the local memory layer"},"expected":true,"category":"name_normalization"}
+{"id":"sf_04","left":{"entity_id":"person_alex_chen","entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme"},"right":{"entity_id":"person_alex_chen","entity_name":"Alex C.","fact_type":"works_at","claim":"is at Acme"},"expected":true,"category":"name_normalization"}
+
+# ── phrasing variation (expected: true) ─────────────────────────────────
+{"id":"sf_05","left":{"entity_name":"deploy plan v3","fact_type":"scheduled_at","claim":"staging cut at 19:00 JST"},"right":{"entity_name":"deploy plan v3","fact_type":"scheduled_at","claim":"staging cuts at 7pm Tokyo time"},"expected":true,"category":"phrasing"}
+{"id":"sf_06","left":{"entity_name":"Tanaka VC","fact_type":"deliverable_due","claim":"asked for revenue_model_v2 by Friday"},"right":{"entity_name":"Tanaka VC","fact_type":"deliverable_due","claim":"wants the revenue model v2 by Friday"},"expected":true,"category":"phrasing"}
+{"id":"sf_07","left":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"$10/month default cap"},"right":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"defaults to USD 10 per month"},"expected":true,"category":"phrasing"}
+{"id":"sf_08","left":{"entity_name":"edge_type Stage 4","fact_type":"decision","claim":"fix top-N as CHECK at end of stage 4"},"right":{"entity_name":"edge_type Stage 4","fact_type":"decision","claim":"end of stage 4: fix top N edge types via CHECK"},"expected":true,"category":"phrasing"}
+
+# ── multilingual (expected: true) ────────────────────────────────────────
+{"id":"sf_09","left":{"entity_name":"Tanaka VC","fact_type":"deliverable_due","claim":"asked for revenue_model_v2 by Friday"},"right":{"entity_name":"Tanaka VC","fact_type":"deliverable_due","claim":"金曜までに revenue_model_v2 を求めている"},"expected":true,"category":"multilingual"}
+{"id":"sf_10","left":{"entity_name":"capture pipeline outage","fact_type":"root_cause","claim":"BYOK rate limit caused the outage"},"right":{"entity_name":"capture pipeline outage","fact_type":"root_cause","claim":"原因は BYOK のレート制限だった"},"expected":true,"category":"multilingual"}
+
+# ── identical entity_id forces same (expected: true) ────────────────────
+{"id":"sf_11","left":{"entity_id":"cal_evt_003","entity_name":"Investor sync","fact_type":"scheduled_at","claim":"April 25 11:00 JST"},"right":{"entity_id":"cal_evt_003","entity_name":"Investor MTG with Tanaka","fact_type":"scheduled_at","claim":"4/25 at 11am JST"},"expected":true,"category":"entity_id_match"}
+{"id":"sf_12","left":{"entity_id":"file_rm_v2","entity_name":"revenue_model_v2.xlsx","fact_type":"latest_revision","claim":"Q2 projection v2"},"right":{"entity_id":"file_rm_v2","entity_name":"revenue model v2","fact_type":"latest_revision","claim":"Q2 projection (v2)"},"expected":true,"category":"entity_id_match"}
+
+# ── different fact_type, same entity (expected: false) ─────────────────
+{"id":"sf_13","left":{"entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme"},"right":{"entity_name":"Alex Chen","fact_type":"reports_to","claim":"reports to Sam"},"expected":false,"category":"fact_type"}
+{"id":"sf_14","left":{"entity_name":"Tanaka VC","fact_type":"is_lead","claim":"leads our Series A"},"right":{"entity_name":"Tanaka VC","fact_type":"deliverable_due","claim":"asked for revenue_model_v2"},"expected":false,"category":"fact_type"}
+{"id":"sf_15","left":{"entity_name":"deploy plan v3","fact_type":"scheduled_at","claim":"staging cut at 19:00 JST"},"right":{"entity_name":"deploy plan v3","fact_type":"approved_by","claim":"approved by SRE on call"},"expected":false,"category":"fact_type"}
+
+# ── different entity, same fact_type/claim (expected: false) ───────────
+{"id":"sf_16","left":{"entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme"},"right":{"entity_name":"Sam Park","fact_type":"works_at","claim":"works at Acme"},"expected":false,"category":"different_entity"}
+{"id":"sf_17","left":{"entity_name":"Acme","fact_type":"customer_status","claim":"in evaluation"},"right":{"entity_name":"Beta Industries","fact_type":"customer_status","claim":"in evaluation"},"expected":false,"category":"different_entity"}
+{"id":"sf_18","left":{"entity_id":"person_alex_chen","entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme"},"right":{"entity_id":"person_sam_park","entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme"},"expected":false,"category":"different_entity"}
+
+# ── different value of same fact (expected: false — these are conflicts) ─
+# These are also good candidates for same_entity_different_fact_cases.jsonl
+# but we keep one each here so is_same_fact must distinguish "conflict" from "same".
+{"id":"sf_19","left":{"entity_name":"Q2 launch","fact_type":"scheduled_at","claim":"July 1"},"right":{"entity_name":"Q2 launch","fact_type":"scheduled_at","claim":"July 8"},"expected":false,"category":"different_value"}
+{"id":"sf_20","left":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"$10"},"right":{"entity_name":"BYOK monthly cap","fact_type":"default_value","claim":"$25"},"expected":false,"category":"different_value"}
+
+# ── unrelated (expected: false) ─────────────────────────────────────────
+{"id":"sf_21","left":{"entity_name":"Acme","fact_type":"customer_status","claim":"in evaluation"},"right":{"entity_name":"deploy plan v3","fact_type":"scheduled_at","claim":"19:00 JST"},"expected":false,"category":"unrelated"}
+{"id":"sf_22","left":{"entity_name":"KIOKU","fact_type":"codename_of","claim":"the local memory layer"},"right":{"entity_name":"Slack","fact_type":"app_used","claim":"team chat"},"expected":false,"category":"unrelated"}
+
+# ── true positives that look like negatives (paraphrase + light typo) ──
+{"id":"sf_23","left":{"entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme Inc"},"right":{"entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme, Inc."},"expected":true,"category":"phrasing"}
+{"id":"sf_24","left":{"entity_name":"capture_ax","fact_type":"behavior","claim":"skips embedding"},"right":{"entity_name":"capture_ax","fact_type":"behavior","claim":"does not get embedded"},"expected":true,"category":"phrasing"}
+
+# ── more name normalization edge cases (expected: true) ────────────────
+{"id":"sf_25","left":{"entity_name":"Project KIOKU","fact_type":"owner","claim":"engineering team"},"right":{"entity_name":"project kioku","fact_type":"owner","claim":"the engineering team"},"expected":true,"category":"name_normalization"}
+{"id":"sf_26","left":{"entity_name":"Tanaka","fact_type":"role","claim":"Series A lead"},"right":{"entity_name":"Tanaka VC","fact_type":"role","claim":"Series A lead"},"expected":true,"category":"name_normalization"}
+
+# ── tricky negatives (close phrasing, different entity) ────────────────
+{"id":"sf_27","left":{"entity_name":"deploy plan v3","fact_type":"scheduled_at","claim":"staging at 19:00"},"right":{"entity_name":"deploy plan v4","fact_type":"scheduled_at","claim":"staging at 19:00"},"expected":false,"category":"different_entity"}
+{"id":"sf_28","left":{"entity_name":"Alex Chen","fact_type":"works_at","claim":"works at Acme"},"right":{"entity_name":"Alex Chan","fact_type":"works_at","claim":"works at Acme"},"expected":false,"category":"different_entity"}
+
+# ── phrasing across direction (expected: true) ─────────────────────────
+{"id":"sf_29","left":{"entity_name":"capture_pipeline","fact_type":"root_cause","claim":"BYOK rate limit"},"right":{"entity_name":"capture_pipeline","fact_type":"root_cause","claim":"hit by BYOK rate limit"},"expected":true,"category":"phrasing"}
+{"id":"sf_30","left":{"entity_name":"pencil migration","fact_type":"decision","claim":"keep legacy editor through Q2"},"right":{"entity_name":"pencil migration","fact_type":"decision","claim":"legacy editor remains until end of Q2"},"expected":true,"category":"phrasing"}

@@ -138,6 +138,9 @@ function ScreenMeetings() {
   granolaDraftRef.current = granolaDraft;
 
   const [userMeetingItems, setUserMeetingItems] = useState([]);
+  const [importedMeetings, setImportedMeetings] = useState([]);
+  // { meeting, segments, loading, filter } when the detail modal is open.
+  const [meetingDetail, setMeetingDetail] = useState(null);
   const [listTick, setListTick] = useState(0);
   const [audioRecSession, setAudioRecSession] = useState(null);
   const [recTick, setRecTick] = useState(0);
@@ -285,6 +288,30 @@ function ScreenMeetings() {
     };
     window.addEventListener('shogun-user-meeting-log-changed', onLog);
     return function () { window.removeEventListener('shogun-user-meeting-log-changed', onLog); };
+  }, []);
+
+  // Imported recordings (com.shogun.import): query the backend meetings list
+  // and filter on app_bundle_id. Refreshes when a new import completes via
+  // the `shogun-meetings-changed` event.
+  useEffect(function () {
+    let cancelled = false;
+    const load = function () {
+      runRuntimeActionM('meetings.list', { limit: 50 }, { silentError: true }).then(function (r) {
+        if (cancelled) return;
+        const items = r && r.ok && Array.isArray(r.data && r.data.items) ? r.data.items : [];
+        const filtered = items.filter(function (m) {
+          return m && m.app_bundle_id === 'com.shogun.import';
+        });
+        setImportedMeetings(filtered);
+      });
+    };
+    load();
+    const onChanged = function () { load(); };
+    window.addEventListener('shogun-meetings-changed', onChanged);
+    return function () {
+      cancelled = true;
+      window.removeEventListener('shogun-meetings-changed', onChanged);
+    };
   }, []);
 
   useEffect(function () {
@@ -1034,9 +1061,139 @@ function ScreenMeetings() {
       </section>
 
       {/* Divider */}
-      <div style={{height:1, background:'var(--border)', marginBottom:28, position:'relative'}}>
+      <div style={{height:1, background:'var(--border)', marginBottom:18, position:'relative'}}>
         <span style={{position:'absolute', left:'50%', top:-7, transform:'translateX(-50%)', padding:'0 10px', background:'var(--bg)', fontFamily:'var(--font-jp)', fontSize:11, color:'var(--text-dim)'}} className="jp">記録</span>
       </div>
+
+      {/* Import past recordings */}
+      <div className="row" style={{justifyContent:'center', marginBottom:24, gap:10, flexWrap:'wrap', alignItems:'center'}}>
+        <button
+          type="button"
+          className="btn btn-sm btn-secondary"
+          onClick={async () => {
+            const pick = await runRuntimeActionM('meetings.import.pick', {}, { silentError: true });
+            const paths = pick && pick.ok && Array.isArray(pick.data?.paths) ? pick.data.paths : [];
+            if (!paths.length) return;
+            window.SHOGUN_RUNTIME?.pushToast?.(
+              `Importing ${paths.length} recording${paths.length > 1 ? 's' : ''}…`,
+              'info',
+            );
+            let succeeded = 0;
+            let failed = 0;
+            for (const p of paths) {
+              const r = await runRuntimeActionM('meetings.import.file', { path: p }, { silentError: true });
+              if (r && r.ok) succeeded += 1;
+              else {
+                failed += 1;
+                const msg = (r && r.error && r.error.message) || `Failed: ${p}`;
+                window.SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
+              }
+            }
+            if (succeeded > 0) {
+              window.SHOGUN_RUNTIME?.pushToast?.(
+                failed === 0
+                  ? `Imported ${succeeded} recording${succeeded > 1 ? 's' : ''}`
+                  : `Imported ${succeeded}, failed ${failed}`,
+                failed === 0 ? 'success' : 'warn',
+              );
+              window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
+            }
+          }}
+        >
+          <Icon name="file" size={13} />
+          <span className="en-only">Import past recording</span>
+          <span className="jp" style={{fontSize:12}}>過去の録音を取り込む</span>
+        </button>
+        <span className="s-field-hint" style={{fontSize:11}}>
+          <span className="en-only">Audio / video files (mp3, m4a, mp4, wav…) are transcribed via Deepgram.</span>
+          <span className="jp">音声・動画 (mp3, m4a, mp4, wav など) を Deepgram で文字起こしします。</span>
+        </span>
+      </div>
+
+      {/* Imported recordings */}
+      {importedMeetings.length > 0 && (
+        <div style={{marginBottom:36}}>
+          <div className="row" style={{marginBottom:16, gap:14}}>
+            <span className="t-mono" style={{color:'var(--gold)'}}>IMPORTED</span>
+            <span className="jp dim" style={{fontSize:11}}>取り込み済み</span>
+            <span style={{height:1, flex:1, background:'var(--border)'}}/>
+            <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>{importedMeetings.length} ITEMS</span>
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:8}}>
+            {importedMeetings.map(function (m) {
+              const started = Number(m.started_at) || 0;
+              const ended = Number(m.ended_at) || 0;
+              const durMs = Math.max(0, ended - started);
+              const durMin = Math.floor(durMs / 60000);
+              const durSec = Math.floor((durMs % 60000) / 1000);
+              const durationLabel = durMs > 0
+                ? (durMin > 0 ? durMin + 'm ' + String(durSec).padStart(2, '0') + 's' : durSec + 's')
+                : '—';
+              const date = started > 0 ? new Date(started) : null;
+              const dateLabel = date
+                ? date.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : '';
+              return (
+                <div
+                  key={m.id}
+                  className="card card-interactive"
+                  style={{padding:14, display:'flex', gap:14, alignItems:'center', cursor:'pointer'}}
+                  onClick={function () {
+                    setMeetingDetail({ meeting: m, segments: null, loading: true, filter: '' });
+                    runRuntimeActionM(
+                      'meetings.transcript.get',
+                      { meeting_id: m.id },
+                      { silentError: true },
+                    ).then(function (r) {
+                      const segs = r && r.ok && Array.isArray(r.data && r.data.segments)
+                        ? r.data.segments
+                        : [];
+                      setMeetingDetail((prev) => (
+                        prev && prev.meeting && prev.meeting.id === m.id
+                          ? { ...prev, segments: segs, loading: false }
+                          : prev
+                      ));
+                    });
+                  }}
+                >
+                  <Icon name="calendar" size={14} className="gold" style={{flexShrink:0}}/>
+                  <div style={{flex:1, minWidth:0}}>
+                    <div style={{fontSize:14, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                      {m.title || 'Imported recording'}
+                    </div>
+                    <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginTop:2}}>
+                      {dateLabel} · {durationLabel}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    title="Remove imported recording"
+                    onClick={function (e) {
+                      e.stopPropagation();
+                      const ok = typeof window.confirm === 'function'
+                        ? window.confirm('Remove "' + (m.title || 'this recording') + '" and its transcript?')
+                        : true;
+                      if (!ok) return;
+                      runRuntimeActionM('meetings.purge', { meeting_id: m.id }, { silentError: true }).then(function (r) {
+                        if (r && r.ok) {
+                          window.SHOGUN_RUNTIME?.pushToast?.('Recording removed', 'success');
+                          window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
+                        } else {
+                          const msg = (r && r.error && r.error.message) || 'Remove failed';
+                          window.SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
+                        }
+                      });
+                    }}
+                  >
+                    <Icon name="x" size={12}/>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Your sessions today (from Start meeting) */}
       {userMeetingItems.length > 0 && (
@@ -2869,6 +3026,162 @@ function ScreenMeetings() {
           .mtg-quick-note { right: 16px !important; top: 16px !important; }
         }
       `}</style>
+
+      {meetingDetail && ReactDOM.createPortal(
+        (function () {
+          const m = meetingDetail.meeting || {};
+          const started = Number(m.started_at) || 0;
+          const ended = Number(m.ended_at) || 0;
+          const durMs = Math.max(0, ended - started);
+          const durMin = Math.floor(durMs / 60000);
+          const durSec = Math.floor((durMs % 60000) / 1000);
+          const durationLabel = durMs > 0
+            ? (durMin > 0 ? durMin + 'm ' + String(durSec).padStart(2, '0') + 's' : durSec + 's')
+            : '—';
+          const date = started > 0 ? new Date(started) : null;
+          const dateLabel = date
+            ? date.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : '';
+          const segs = Array.isArray(meetingDetail.segments) ? meetingDetail.segments : [];
+          const filter = String(meetingDetail.filter || '').toLowerCase();
+          const visible = filter
+            ? segs.filter((s) => String(s.text || '').toLowerCase().indexOf(filter) !== -1)
+            : segs;
+          const speakers = Array.from(new Set(segs.map((s) => String(s.speaker || ''))));
+          // Palette cycles so each speaker gets a stable color.
+          const palette = ['var(--gold)', 'var(--success)', '#8ea8ff', '#c97d9e', '#f0a04b', '#7aa98f'];
+          const colorForSpeaker = (speaker) => {
+            const idx = speakers.indexOf(String(speaker || ''));
+            return idx >= 0 ? palette[idx % palette.length] : 'var(--text-mute)';
+          };
+          const labelFor = (speaker) => {
+            const raw = String(speaker || '');
+            if (/^speaker_\d+$/.test(raw)) {
+              const n = parseInt(raw.slice(8), 10);
+              return Number.isFinite(n) ? `Speaker ${n + 1}` : raw;
+            }
+            return raw || 'Unknown';
+          };
+          const fmtMs = (ms) => {
+            const secs = Math.max(0, Math.floor(Number(ms) / 1000));
+            const mm = Math.floor(secs / 60);
+            const ss = secs % 60;
+            return `${mm}:${String(ss).padStart(2, '0')}`;
+          };
+          const close = () => setMeetingDetail(null);
+          return (
+            <div
+              style={{
+                position:'fixed', inset:0, zIndex:1095,
+                background:'color-mix(in srgb, var(--bg) 78%, transparent)',
+                backdropFilter:'blur(4px)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                padding:20,
+              }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                style={{
+                  width:'min(780px, 100%)',
+                  maxHeight:'min(80vh, 720px)',
+                  background:'var(--surface)',
+                  border:'1px solid var(--border-hi)',
+                  borderRadius:16,
+                  boxShadow:'0 30px 60px -16px rgba(0,0,0,0.6)',
+                  display:'flex', flexDirection:'column',
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div style={{padding:'18px 22px 14px', borderBottom:'1px solid var(--border)'}}>
+                  <div className="row" style={{gap:10, alignItems:'center', marginBottom:6}}>
+                    <Icon name="calendar" size={14} className="gold"/>
+                    <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.12em'}}>IMPORTED MEETING</span>
+                    <span style={{flex:1}}/>
+                    <button
+                      type="button"
+                      aria-label="Close"
+                      onClick={close}
+                      style={{width:24, height:24, borderRadius:6, border:0, background:'transparent', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}
+                    >
+                      <Icon name="x" size={14}/>
+                    </button>
+                  </div>
+                  <div style={{fontSize:17, fontWeight:500, lineHeight:1.3}}>
+                    {m.title || 'Imported recording'}
+                  </div>
+                  <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginTop:6, letterSpacing:'0.06em'}}>
+                    {dateLabel} · {durationLabel} · {segs.length} {segs.length === 1 ? 'segment' : 'segments'} · {speakers.length} {speakers.length === 1 ? 'speaker' : 'speakers'}
+                  </div>
+                  <input
+                    type="text"
+                    value={meetingDetail.filter || ''}
+                    onChange={(e) => setMeetingDetail((prev) => (prev ? { ...prev, filter: e.target.value } : prev))}
+                    placeholder="Filter transcript…"
+                    style={{
+                      marginTop:12, width:'100%',
+                      padding:'8px 12px', borderRadius:8,
+                      border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)',
+                      fontSize:13, fontFamily:'inherit',
+                    }}
+                  />
+                </div>
+                <div style={{flex:1, overflowY:'auto', padding:'14px 22px 20px'}}>
+                  {meetingDetail.loading ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
+                      Loading transcript…
+                    </div>
+                  ) : segs.length === 0 ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
+                      No transcript segments for this recording.
+                    </div>
+                  ) : visible.length === 0 ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
+                      No segments match the filter.
+                    </div>
+                  ) : (
+                    <div style={{display:'flex', flexDirection:'column', gap:10}}>
+                      {visible.map(function (seg, i) {
+                        const color = colorForSpeaker(seg.speaker);
+                        return (
+                          <div
+                            key={seg.segment_id || seg.id || i}
+                            style={{
+                              display:'grid',
+                              gridTemplateColumns:'minmax(100px, 120px) 1fr',
+                              columnGap:12, rowGap:4,
+                              padding:'6px 0',
+                              borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                            }}
+                          >
+                            <div style={{display:'flex', flexDirection:'column', gap:2}}>
+                              <span style={{
+                                fontSize:12, fontWeight:500,
+                                color,
+                                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                              }}>
+                                {labelFor(seg.speaker)}
+                              </span>
+                              <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>
+                                {fmtMs(seg.start_ms)} – {fmtMs(seg.end_ms)}
+                              </span>
+                            </div>
+                            <div style={{fontSize:13, lineHeight:1.55, color:'var(--text)', whiteSpace:'pre-wrap'}}>
+                              {seg.text || '—'}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
+      )}
     </div>
   );
 }

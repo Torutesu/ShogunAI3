@@ -281,6 +281,119 @@
       return global.ShogunMorningBrief.mockBriefGetResponse(echo);
     }
 
+    if (command === "shogun_kioku_brief_signals") {
+      return {
+        decision_graph_hits: [],
+        related_kioku_hits: [],
+        stub: false,
+        echo,
+      };
+    }
+
+    if (command === "shogun_kioku_edge_type_proposals") {
+      return {
+        proposals: [],
+        stub: false,
+        echo,
+      };
+    }
+    if (command === "shogun_kioku_edge_type_review") {
+      return {
+        updated: 0,
+        edge_type: (echo && echo.edge_type) || "",
+        status: (echo && echo.status) || 0,
+        stub: false,
+        echo,
+      };
+    }
+    if (command === "shogun_kioku_backup_db") {
+      return {
+        source_path: "/mock/memory.db",
+        dest_path: "/mock/memory.db.backup-2026-04-27-000000",
+        bytes: 0,
+        completed_at_ms: Date.now(),
+        stub: true,
+        echo,
+      };
+    }
+    if (command === "shogun_kioku_stage5_dry_run") {
+      return {
+        generated_at_ms: Date.now(),
+        soft_retire: {
+          matching_rows: 0,
+          already_retired: 0,
+          oldest_created_at_ms: null,
+          newest_created_at_ms: null,
+          embedding_blob_count: 0,
+        },
+        ttl_expired: {
+          rows_with_raw_to_clean: 0,
+          raw_path_files_to_unlink: 0,
+          raw_text_rows_to_null: 0,
+        },
+        physical_delete: { eligible_rows: 0, cascade_edges: 0, orphaned_summaries: 0 },
+        storage: { db_size_before_bytes: 0, raw_path_bytes: 0 },
+        legacy_sources: ["capture_sampler", "capture_ax"],
+        grace_days: 30,
+        stub: false,
+        echo,
+      };
+    }
+    if (command === "shogun_kioku_stage5_apply") {
+      return {
+        applied_at_ms: Date.now(),
+        actions: { soft_retire: null, cleanup_ttl: null, physical_delete: null, vacuum: null },
+        stub: false,
+        echo,
+      };
+    }
+    if (command === "shogun_kioku_debug_stats") {
+      return {
+        queue: {
+          captures_pending: 0,
+          captures_running: 0,
+          captures_done: 0,
+          captures_failed: 0,
+          captures_expired: 0,
+          captures_skipped: 0,
+          jobs_queued: 0,
+          jobs_running: 0,
+          jobs_done: 0,
+          jobs_failed: 0,
+          jobs_expired: 0,
+          oldest_pending_capture_ms: null,
+        },
+        cost: {
+          month_start_ms: 0,
+          spent_usd: 0,
+          monthly_cap_usd: 10,
+          cap_action: "pause_extraction",
+          fallback_model: "claude-haiku-4-5",
+          extraction_model: "claude-haiku-4-5",
+          status: "Proceed",
+        },
+        graph: {
+          mem_items_total: 0,
+          mem_items_active: 0,
+          mem_items_retired: 0,
+          edges_total: 0,
+          edges_active: 0,
+          captures_total: 0,
+          by_node_kind: [],
+          by_edge_type: [],
+        },
+        rules: { count: 0, titles: [] },
+        flags: {
+          read_path: "legacy",
+          capture_to_mem_captures: false,
+          worker_enabled: false,
+        },
+        now_ms: Date.now(),
+        stub: false,
+        echo,
+      };
+    }
+
     const notImpl = (message) => ({
       notImplemented: true,
       message: message,
@@ -491,6 +604,41 @@
           google_calendar: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
           gmail: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
         };
+      case "shogun_memory_summary_get":
+        return {
+          summary: {
+            targetKind: "item",
+            targetId: String((echo && echo.targetId) || "m_stub"),
+            title: "Stub summary",
+            keyPoints: ["This is a mocked summary"],
+            sourceType: "mail",
+            priority: "medium",
+            reason: "mock",
+            model: "mock",
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          },
+          cached: false,
+        };
+      case "shogun_memory_summary_batch":
+        return {
+          ok: ((echo && echo.items) || []).map((it) => ({
+            targetKind: "item",
+            targetId: String((it && it.id) || "m_stub"),
+            title: `Stub: ${(it && it.title) || "untitled"}`,
+            keyPoints: ["mock point"],
+            sourceType: "mail",
+            priority: "medium",
+            reason: "mock",
+            model: "mock",
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          })),
+          failed: [],
+          heuristicUsed: 0,
+        };
+      case "shogun_memory_summary_invalidate":
+        return { deleted: true };
       case "shogun_entity_query":
         return {
           entities: DEMO && Array.isArray(DEMO.entities) ? DEMO.entities : [],

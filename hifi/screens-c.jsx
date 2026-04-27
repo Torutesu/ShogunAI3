@@ -1,4 +1,4 @@
-/* global Icon, Kamon, IntegrationLogo, React, ShogunIntegrationConnectors */
+/* global Icon, Kamon, IntegrationLogo, React, ReactDOM, ShogunIntegrationConnectors */
 
 function runRuntimeAction(key, payload, options) {
   if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok:false });
@@ -6,92 +6,186 @@ function runRuntimeAction(key, payload, options) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// L5 · WORK — documents, tasks generated from memory
+// L5 · WORK — workspace manager (projects/jobs carved out of memory context)
 // ═══════════════════════════════════════════════════════════════════════════
-function workProvenanceLabel(prov) {
-  const p = prov || 'user';
-  if (p === 'screen') return '画面';
-  if (p === 'connector') return '連携';
-  if (p === 'meeting') return '会議';
-  return '手動';
+function useWorkProjects() {
+  const [projects, setProjects] = React.useState(() => {
+    const get = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.getWorkProjects;
+    return typeof get === 'function' ? get() : [];
+  });
+  React.useEffect(() => {
+    const sync = () => {
+      const get = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.getWorkProjects;
+      if (typeof get === 'function') setProjects(get());
+    };
+    sync();
+    window.addEventListener('shogun-work-projects-changed', sync);
+    return () => window.removeEventListener('shogun-work-projects-changed', sync);
+  }, []);
+  return projects;
 }
 
 function ScreenWork() {
-  const [hits, setHits] = React.useState([]);
-  const [draftWithMemory, setDraftWithMemory] = React.useState(true);
-  const [query, setQuery] = React.useState('');
-  const [searching, setSearching] = React.useState(false);
-  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = React.useState(true);
+  const projects = useWorkProjects();
+  const [showArchived, setShowArchived] = React.useState(false);
+  const [newName, setNewName] = React.useState('');
+  const [renaming, setRenaming] = React.useState({ id: null, value: '' });
+  const [menuFor, setMenuFor] = React.useState(null);
+  const [memberships, setMemberships] = React.useState({});
+  // { project, memories, loading, busyId } when the detail modal is open.
+  const [detail, setDetail] = React.useState(null);
+
+  const visible = React.useMemo(
+    () => projects.filter((p) => !!p.archived === showArchived),
+    [projects, showArchived],
+  );
+
+  // Assignment map written by the Memory screen lives in
+  // settings.sections.workspace_memberships.memberships.
   React.useEffect(() => {
     let cancelled = false;
-    void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
-      if (cancelled || !r?.ok || !r.data?.settings?.sections?.privacy) return;
-      const priv = r.data.settings.sections.privacy;
-      if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  React.useEffect(() => {
-    const onPrivacy = () => {
-      void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
-        const priv = r?.ok && r.data?.settings?.sections?.privacy;
-        if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-        }
+    const load = () => {
+      runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
+        if (cancelled) return;
+        const map = r && r.ok
+          && r.data && r.data.settings && r.data.settings.sections
+          && r.data.settings.sections.workspace_memberships
+          && r.data.settings.sections.workspace_memberships.memberships;
+        setMemberships(map && typeof map === 'object' ? map : {});
       });
     };
-    window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
-    return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
-  }, []);
-  const refresh = React.useCallback((q) => {
-    const effective = typeof q === 'string' ? q : query;
-    setSearching(true);
-    runRuntimeAction(
-      'memory.search',
-      { query: effective, limit: 24 },
-      { silentError: true },
-    ).then((res) => {
-      setSearching(false);
-      if (!res?.ok || !Array.isArray(res.data?.hits)) return;
-      setHits(res.data.hits);
-    });
-  }, [query]);
-  // Initial load uses an empty query (recent items). The debounced effect
-  // below owns subsequent fetches as the user types.
-  React.useEffect(() => {
-    runRuntimeAction('memory.search', { query: '', limit: 24 }, { silentError: true }).then((res) => {
-      if (!res?.ok || !Array.isArray(res.data?.hits)) return;
-      setHits(res.data.hits);
-    });
-  }, []);
-  // Debounce keystrokes so a fast typist doesn't trigger a search per key.
-  // 180ms feels responsive while still coalescing a rushed phrase.
-  React.useEffect(() => {
-    if (query === '') return undefined;
-    const t = setTimeout(() => refresh(query), 180);
-    return () => clearTimeout(t);
-  }, [query, refresh]);
-
-  const buildDraftPayload = React.useCallback((prompt, memoryQuery) => {
-    const payload = {
-      target: 'work_document',
-      source: 'work_screen',
-      prompt,
+    load();
+    const onChanged = (ev) => {
+      // Fast path: assignment events carry the new map directly.
+      const m = ev && ev.detail && ev.detail.memberships;
+      if (m && typeof m === 'object') {
+        setMemberships(m);
+      } else {
+        load();
+      }
     };
-    if (draftWithMemory && allowServerMemoryAssembly) {
-      payload.memoryAssembly = {
-        query: String(memoryQuery || '').slice(0, 480),
-        limit: 12,
-        semantic: true,
-      };
+    window.addEventListener('shogun-workspace-memberships-changed', onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('shogun-workspace-memberships-changed', onChanged);
+    };
+  }, []);
+
+  const countByProject = React.useMemo(() => {
+    const out = {};
+    for (const v of Object.values(memberships)) {
+      if (!v) continue;
+      out[v] = (out[v] || 0) + 1;
     }
-    return payload;
-  }, [draftWithMemory, allowServerMemoryAssembly]);
+    return out;
+  }, [memberships]);
+
+  // Provider color metadata mirrors hifi/screens-a.jsx so detail rows look the
+  // same as Memory search / scrubbed cards. Keep in sync if either changes.
+  const PROVIDER_META = React.useMemo(() => ({
+    screen:          { en: 'Screen',   color: 'var(--text-mute)' },
+    meeting:         { en: 'Meeting',  color: 'var(--success)' },
+    gmail:           { en: 'Gmail',    color: '#D93025' },
+    google_calendar: { en: 'Calendar', color: '#1A73E8' },
+    google_drive:    { en: 'Drive',    color: '#0F9D58' },
+    slack:           { en: 'Slack',    color: '#4A154B' },
+    notion:          { en: 'Notion',   color: 'var(--text)' },
+    github:          { en: 'GitHub',   color: 'var(--text-mute)' },
+    linear:          { en: 'Linear',   color: '#5E6AD2' },
+    zoom:            { en: 'Zoom',     color: '#2D8CFF' },
+    manual:          { en: 'Manual',   color: 'var(--text-dim)' },
+  }), []);
+  const providerKey = React.useCallback((source) => {
+    const s = String(source || '').toLowerCase();
+    if (s === 'capture_sampler' || s === 'capture_ax') return 'screen';
+    if (s === 'gmail') return 'gmail';
+    if (s === 'google_calendar') return 'google_calendar';
+    if (s === 'google_drive') return 'google_drive';
+    if (s === 'slack') return 'slack';
+    if (s === 'notion') return 'notion';
+    if (s === 'github') return 'github';
+    if (s === 'linear') return 'linear';
+    if (s === 'zoom') return 'zoom';
+    if (s === 'meeting' || s.startsWith('meetings')) return 'meeting';
+    return 'manual';
+  }, []);
+
+  const openDetail = React.useCallback(async (project) => {
+    setDetail({ project, memories: [], loading: true, busyId: null });
+    const ids = Object.entries(memberships)
+      .filter(([, w]) => w === project.id)
+      .map(([m]) => m);
+    if (ids.length === 0) {
+      setDetail({ project, memories: [], loading: false, busyId: null });
+      return;
+    }
+    const r = await runRuntimeAction('memory.fetch', { ids }, { silentError: true });
+    const items = r && r.ok && Array.isArray(r.data?.items) ? r.data.items : [];
+    setDetail({ project, memories: items, loading: false, busyId: null });
+  }, [memberships]);
+
+  const removeFromWorkspace = React.useCallback(async (memoryId) => {
+    if (!detail) return;
+    setDetail((prev) => (prev ? { ...prev, busyId: memoryId } : prev));
+    const next = { ...memberships };
+    delete next[memoryId];
+    setMemberships(next);
+    await runRuntimeAction(
+      'settings.save',
+      { section: 'workspace_memberships', memberships: next },
+      { silentError: true },
+    );
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-workspace-memberships-changed', { detail: { memberships: next } }));
+    } catch (_) { /* ignore */ }
+    setDetail((prev) => prev
+      ? { ...prev, memories: prev.memories.filter((m) => m.id !== memoryId), busyId: null }
+      : prev);
+  }, [detail, memberships]);
+
+  const createProject = React.useCallback(() => {
+    const name = newName.trim();
+    if (!name) return;
+    const create = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.createWorkProject;
+    if (typeof create === 'function') create(name);
+    setNewName('');
+  }, [newName]);
+
+  const confirmRename = React.useCallback(() => {
+    const id = renaming.id;
+    const name = renaming.value.trim();
+    if (!id || !name) {
+      setRenaming({ id: null, value: '' });
+      return;
+    }
+    const fn = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.renameWorkProject;
+    if (typeof fn === 'function') fn(id, name);
+    setRenaming({ id: null, value: '' });
+  }, [renaming]);
+
+  const archiveProject = React.useCallback((id, archived) => {
+    const fn = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.archiveWorkProject;
+    if (typeof fn === 'function') fn(id, !!archived);
+    setMenuFor(null);
+  }, []);
+
+  const deleteProject = React.useCallback((id, name) => {
+    const label = String(name || 'このWorkspace');
+    const ok = typeof window.confirm === 'function'
+      ? window.confirm(`「${label}」を削除しますか？\n関連するチャットは残ります。`)
+      : true;
+    if (!ok) return;
+    const fn = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.deleteWorkProject;
+    if (typeof fn === 'function') fn(id);
+    setMenuFor(null);
+  }, []);
+
+  React.useEffect(() => {
+    if (menuFor == null) return undefined;
+    const onDocClick = () => setMenuFor(null);
+    window.addEventListener('click', onDocClick);
+    return () => window.removeEventListener('click', onDocClick);
+  }, [menuFor]);
 
   return (
     <div className="content-inner">
@@ -99,96 +193,337 @@ function ScreenWork() {
         <div>
           <div className="t-mono" style={{marginBottom:8}}>OPERATIONS LAYER</div>
           <h1>Work <span className="jp">任務</span></h1>
-          <div className="sub">Recent items from your local memory index. Drafts can include <code className="t-mono" style={{fontSize:11}}>memoryAssembly</code> for extra local context.</div>
+          <div className="sub">
+            <span className="en-only">Workspaces group your memory context by project or job.</span>
+            <span className="jp">Workspace はメモリのコンテキストをプロジェクト / 仕事単位にまとめる器です。</span>
+          </div>
         </div>
         <div className="row" style={{flexWrap:'wrap', gap:8, alignItems:'center'}}>
-          <div className="work-search-wrap">
-            <Icon name="filter" size={13} className="work-search-icon"/>
-            <input
-              type="text"
-              className="work-search-input"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') refresh(query); }}
-              placeholder="Search memory…"
-              aria-label="Search indexed memory"
-            />
-            {query && (
-              <button
-                type="button"
-                className="work-search-clear"
-                onClick={() => { setQuery(''); refresh(''); }}
-                aria-label="Clear search"
-              >×</button>
-            )}
-          </div>
           <label className="row" style={{gap:6, alignItems:'center', fontSize:12, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
             <input
               type="checkbox"
-              checked={draftWithMemory}
-              onChange={(e) => setDraftWithMemory(e.target.checked)}
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
             />
-            <span>Memory を下書きに取り込む</span>
+            <span>
+              <span className="en-only">Show archived</span>
+              <span className="jp">アーカイブを表示</span>
+            </span>
           </label>
-          <button className="btn btn-secondary" type="button" disabled={searching} onClick={() => refresh()}><Icon name="filter" size={14}/>{searching ? '…' : 'Refresh'}</button>
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() =>
-              runRuntimeAction(
-                'draft.create',
-                buildDraftPayload('Create new document shell', ''),
-                { successMessage: 'Draft ready' },
-              )}
-          ><Icon name="plus" size={14}/>New document</button>
         </div>
       </div>
 
-      {hits.length === 0 ? (
-        <div className="card" style={{padding:28}}>
+      <div className="card" style={{padding:16, marginBottom:18, display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
+        <Icon name="plus" size={14} className="gold"/>
+        <input
+          type="text"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') createProject(); }}
+          placeholder="New workspace name / 新規Workspace名"
+          style={{
+            flex:1, minWidth:200,
+            padding:'8px 12px',
+            borderRadius:8,
+            border:'1px solid var(--border)',
+            background:'var(--surface)',
+            color:'var(--text)',
+            fontSize:13,
+            fontFamily:'inherit',
+          }}
+        />
+        <button
+          type="button"
+          data-testid="work-create-workspace"
+          className="btn btn-primary btn-sm"
+          onClick={createProject}
+          disabled={!newName.trim()}
+          style={!newName.trim() ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+        >
+          <span className="en-only">Create</span>
+          <span className="jp">作成</span>
+        </button>
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="card" style={{padding:28, textAlign:'center'}}>
           <p style={{fontSize:14, color:'var(--text-mute)', margin:0, lineHeight:1.6}}>
-            {query
-              ? ('No memory matched "' + query.slice(0, 40) + '". Try a different keyword or clear the search.')
-              : 'No indexed memories yet. Ingest content from Memory or Capture in the desktop app, then refresh.'}
+            {showArchived ? (
+              <>
+                <span className="en-only">No archived workspaces.</span>
+                <span className="jp">アーカイブ済みのWorkspaceはありません。</span>
+              </>
+            ) : (
+              <>
+                <span className="en-only">No workspaces yet. Create one above to start grouping memory context by project.</span>
+                <span className="jp">Workspaceがまだありません。上のフォームから作成して、プロジェクト単位でコンテキストをまとめましょう。</span>
+              </>
+            )}
           </p>
         </div>
       ) : (
         <div className="shogun-grid-cards">
-          {hits.map((h) => {
-            const titleSrc = h.title_highlight || h.title || 'Untitled';
-            const snippetSrc = h.snippet_highlight || h.snippet || '—';
-            const renderHL = window.ShogunHighlight && window.ShogunHighlight.renderHighlighted
-              ? window.ShogunHighlight.renderHighlighted
-              : ((t) => t);
-            return (
-            <div key={h.id || h.title} className="card card-interactive work-memory-card" style={{padding:18}}>
-              <div className="row" style={{gap:10, marginBottom:10, flexWrap:'wrap'}}>
-                <Icon name="file" size={14} className="gold"/>
-                <span className="t-mono" style={{fontSize:10}}>{String(h.source || 'memory')}</span>
-                {h.provenance && (
-                  <span className="label" style={{fontSize:10, borderColor:'var(--gold-dim)', color:'var(--gold)'}}>
-                    {workProvenanceLabel(h.provenance)}
+          {visible.map((p) => (
+            <div
+              key={p.id}
+              className="card card-interactive"
+              style={{padding:18, position:'relative', cursor: renaming.id === p.id ? 'default' : 'pointer'}}
+              onClick={(e) => {
+                // Ignore clicks bubbling from the menu / rename input / kebab
+                // button so they don't open the modal.
+                if (renaming.id === p.id || menuFor === p.id) return;
+                if (e.target.closest('button, input, [role="menu"]')) return;
+                openDetail(p);
+              }}
+            >
+              <div className="row" style={{gap:8, marginBottom:10, flexWrap:'wrap', alignItems:'center'}}>
+                <Icon name="work" size={14} className="gold"/>
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>WORKSPACE</span>
+                {p.archived && (
+                  <span className="label" style={{fontSize:10, borderColor:'var(--border-hi)', color:'var(--text-mute)'}}>
+                    <span className="en-only">Archived</span>
+                    <span className="jp">アーカイブ済み</span>
                   </span>
                 )}
+                <span style={{flex:1}}/>
+                <button
+                  type="button"
+                  aria-label="More actions"
+                  onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === p.id ? null : p.id); }}
+                  style={{
+                    display:'inline-flex', alignItems:'center', justifyContent:'center',
+                    width:26, height:26, padding:0,
+                    border:'1px solid transparent', borderRadius:8,
+                    background:'transparent', color:'var(--text-mute)', cursor:'pointer',
+                  }}
+                >
+                  <Icon name="more" size={14}/>
+                </button>
+                {menuFor === p.id && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      position:'absolute', top:44, right:14, zIndex:5,
+                      minWidth:180,
+                      background:'var(--surface)',
+                      border:'1px solid var(--border-hi)',
+                      borderRadius:10,
+                      boxShadow:'0 10px 30px -8px rgba(0,0,0,0.5)',
+                      padding:4,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => { setRenaming({ id: p.id, value: p.name || '' }); setMenuFor(null); }}
+                      style={{display:'block', width:'100%', textAlign:'left', padding:'8px 10px', border:0, background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer', borderRadius:6}}
+                    >
+                      <span className="en-only">Rename</span>
+                      <span className="jp">名前を変更</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => archiveProject(p.id, !p.archived)}
+                      style={{display:'block', width:'100%', textAlign:'left', padding:'8px 10px', border:0, background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer', borderRadius:6}}
+                    >
+                      {p.archived ? (
+                        <>
+                          <span className="en-only">Unarchive</span>
+                          <span className="jp">復元</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="en-only">Archive</span>
+                          <span className="jp">アーカイブ</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteProject(p.id, p.name)}
+                      style={{display:'block', width:'100%', textAlign:'left', padding:'8px 10px', border:0, background:'transparent', color:'var(--danger)', fontSize:12, cursor:'pointer', borderRadius:6}}
+                    >
+                      <span className="en-only">Delete</span>
+                      <span className="jp">削除</span>
+                    </button>
+                  </div>
+                )}
               </div>
-              <div style={{fontSize:15, fontWeight:500, marginBottom:8}}>{renderHL(titleSrc)}</div>
-              <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.5, marginBottom:12}}>{renderHL(snippetSrc)}</div>
-              <button
-                type="button"
-                className="btn btn-sm btn-secondary"
-                onClick={() => {
-                  const prompt =
-                    'Expand this memory into a structured Markdown work note (headings + bullets).\n\n**Title:** ' +
-                    (h.title || '') +
-                    '\n\n**Snippet:**\n' +
-                    String(h.snippet || '').slice(0, 4000);
-                  runRuntimeAction('draft.create', buildDraftPayload(prompt, h.title || ''), { successMessage: 'Draft ready' });
-                }}
-              ><Icon name="edit" size={12}/> Draft from memory</button>
+
+              {renaming.id === p.id ? (
+                <div className="row" style={{gap:8, alignItems:'center'}}>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={renaming.value}
+                    onChange={(e) => setRenaming({ id: p.id, value: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') confirmRename();
+                      else if (e.key === 'Escape') setRenaming({ id: null, value: '' });
+                    }}
+                    style={{
+                      flex:1,
+                      padding:'6px 10px',
+                      borderRadius:8,
+                      border:'1px solid var(--border-hi)',
+                      background:'var(--bg)',
+                      color:'var(--text)',
+                      fontSize:15,
+                      fontFamily:'inherit',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    onClick={confirmRename}
+                  >
+                    OK
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => setRenaming({ id: null, value: '' })}
+                  >
+                    <Icon name="x" size={12}/>
+                  </button>
+                </div>
+              ) : (
+                <div style={{fontSize:16, fontWeight:500, lineHeight:1.3}}>
+                  {p.name || <span style={{color:'var(--text-dim)'}}>Untitled</span>}
+                </div>
+              )}
+
+              <div style={{fontSize:11, color:'var(--text-dim)', marginTop:10, lineHeight:1.5}}>
+                {(() => {
+                  const n = countByProject[p.id] || 0;
+                  return n > 0
+                    ? `${n} memor${n === 1 ? 'y' : 'ies'} assigned · click to view`
+                    : 'No memories assigned yet — use "Assign to workspace" on a memory.';
+                })()}
+              </div>
             </div>
-            );
-          })}
+          ))}
         </div>
+      )}
+
+      {detail && ReactDOM.createPortal(
+        (() => {
+          const close = () => setDetail(null);
+          const items = detail.memories || [];
+          const fmtDate = (ms) => {
+            try { return new Date(Number(ms) || 0).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }); } catch (_) { return ''; }
+          };
+          return (
+            <div
+              style={{
+                position:'fixed', inset:0, zIndex:1098,
+                background:'color-mix(in srgb, var(--bg) 78%, transparent)',
+                backdropFilter:'blur(4px)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                padding:20,
+              }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                style={{
+                  width:'min(860px, 100%)',
+                  maxHeight:'min(82vh, 760px)',
+                  background:'var(--surface)',
+                  border:'1px solid var(--border-hi)',
+                  borderRadius:16,
+                  boxShadow:'0 30px 60px -16px rgba(0,0,0,0.6)',
+                  display:'flex', flexDirection:'column',
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div style={{padding:'18px 22px 14px', borderBottom:'1px solid var(--border)'}}>
+                  <div className="row" style={{gap:10, alignItems:'center', marginBottom:6}}>
+                    <Icon name="work" size={14} className="gold"/>
+                    <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.12em'}}>WORKSPACE</span>
+                    <span style={{flex:1}}/>
+                    <button
+                      type="button"
+                      aria-label="Close"
+                      onClick={close}
+                      style={{width:24, height:24, borderRadius:6, border:0, background:'transparent', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}
+                    >
+                      <Icon name="x" size={14}/>
+                    </button>
+                  </div>
+                  <div style={{fontSize:18, fontWeight:500, lineHeight:1.3}}>
+                    {detail.project?.name || 'Untitled workspace'}
+                  </div>
+                  <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginTop:6, letterSpacing:'0.06em'}}>
+                    {items.length} {items.length === 1 ? 'memory' : 'memories'} assigned
+                  </div>
+                </div>
+                <div style={{flex:1, overflowY:'auto', padding:'14px 22px 20px'}}>
+                  {detail.loading ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>Loading…</div>
+                  ) : items.length === 0 ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center', lineHeight:1.55}}>
+                      No memories yet. Use Memory → Search to bulk-assign, or click a memory's "Assign to workspace" chip.
+                    </div>
+                  ) : (
+                    <div style={{display:'flex', flexDirection:'column', gap:10}}>
+                      {items.map((m) => {
+                        const id = m.id;
+                        const busy = detail.busyId === id;
+                        const provKey = providerKey(m.source);
+                        const meta = PROVIDER_META[provKey];
+                        const created = Number(m.created_at) || 0;
+                        return (
+                          <div
+                            key={id}
+                            className="card"
+                            style={{padding:14, display:'flex', flexDirection:'column', gap:6}}
+                          >
+                            <div className="row" style={{gap:8, alignItems:'center', flexWrap:'wrap'}}>
+                              {meta && (
+                                <span style={{
+                                  display:'inline-flex', alignItems:'center', gap:5,
+                                  padding:'2px 7px', borderRadius:4,
+                                  border:`1px solid color-mix(in srgb, ${meta.color} 50%, var(--border))`,
+                                  background:`color-mix(in srgb, ${meta.color} 10%, transparent)`,
+                                  color: meta.color,
+                                  fontSize:9, letterSpacing:'0.06em', fontFamily:'var(--font-mono)',
+                                }}>
+                                  <span style={{width:5, height:5, borderRadius:'50%', background: meta.color}} aria-hidden="true"/>
+                                  {meta.en}
+                                </span>
+                              )}
+                              <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>{fmtDate(created)}</span>
+                              <span style={{flex:1}}/>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                disabled={busy}
+                                onClick={() => removeFromWorkspace(id)}
+                                style={busy ? {opacity:0.55, cursor:'default'} : undefined}
+                              >
+                                {busy ? 'Removing…' : 'Remove'}
+                              </button>
+                            </div>
+                            <div style={{fontSize:14, fontWeight:500, lineHeight:1.35}}>
+                              {m.title || 'Untitled'}
+                            </div>
+                            {m.snippet && (
+                              <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.55, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:3, WebkitBoxOrient:'vertical'}}>
+                                {m.snippet}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
       )}
     </div>
   );
@@ -413,6 +748,33 @@ function ScreenCapture() {
 function ScreenIntegrations() {
   const [calCred, setCalCred] = React.useState(false);
   const [calRefresh, setCalRefresh] = React.useState(false);
+  const [gmailCred, setGmailCred] = React.useState(false);
+  const [gmailRefresh, setGmailRefresh] = React.useState(false);
+  const [slackCred, setSlackCred] = React.useState(false);
+  const [notionCred, setNotionCred] = React.useState(false);
+  const [githubCred, setGithubCred] = React.useState(false);
+  const [linearCred, setLinearCred] = React.useState(false);
+  const [driveCred, setDriveCred] = React.useState(false);
+  const [zoomCred, setZoomCred] = React.useState(false);
+  const [calHistDays, setCalHistDays] = React.useState(null);
+  const [gmailHistDays, setGmailHistDays] = React.useState(null);
+  const [slackHistDays, setSlackHistDays] = React.useState(null);
+  const [notionHistDays, setNotionHistDays] = React.useState(null);
+  const [githubHistDays, setGithubHistDays] = React.useState(null);
+  const [linearHistDays, setLinearHistDays] = React.useState(null);
+  const [driveHistDays, setDriveHistDays] = React.useState(null);
+  const [zoomHistDays, setZoomHistDays] = React.useState(null);
+  // Per-provider auto-sync toggle. Backend reads
+  // `sections.integrations.<provider>AutoSync`.
+  const [autoSync, setAutoSync] = React.useState({
+    gmail: false,
+    slack: false,
+    notion: false,
+    github: false,
+    linear: false,
+    google_drive: false,
+    zoom: false,
+  });
   const [tools, setTools] = React.useState(() => {
     const C = typeof window !== 'undefined' ? window.ShogunIntegrationConnectors : null;
     const base = C && C.hydrateTools ? C.hydrateTools(C.DEFAULT_GRID_TOOLS) : [
@@ -440,10 +802,128 @@ function ScreenIntegrations() {
       return res;
     });
   }, []);
-  React.useEffect(() => { refreshCalStatus(); }, [refreshCalStatus]);
+  const refreshGmailStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'gmail' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setGmailCred(!!res.data.configured);
+        setGmailRefresh(!!res.data.tokenRefreshReady);
+      }
+      return res;
+    });
+  }, []);
+  const refreshSlackStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'slack' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setSlackCred(!!res.data.configured);
+      }
+      return res;
+    });
+  }, []);
+  const refreshNotionStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'notion' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setNotionCred(!!res.data.configured);
+      }
+      return res;
+    });
+  }, []);
+  const toggleAutoSync = React.useCallback((provider, next) => {
+    setAutoSync((prev) => ({ ...prev, [provider]: next }));
+    const key = `${provider}AutoSync`;
+    return runRuntimeAction(
+      'settings.save',
+      { section: 'integrations', [key]: next },
+      { silentError: true },
+    );
+  }, []);
+  const refreshGithubStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'github' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setGithubCred(!!res.data.configured);
+      }
+      return res;
+    });
+  }, []);
+  const refreshLinearStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'linear' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setLinearCred(!!res.data.configured);
+      }
+      return res;
+    });
+  }, []);
+  const refreshDriveStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'google_drive' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setDriveCred(!!res.data.configured);
+      }
+      return res;
+    });
+  }, []);
+  const refreshZoomStatus = React.useCallback(() => {
+    return runRuntimeAction('integrations.credentials_status', { provider:'zoom' }, { silentError:true }).then((res) => {
+      if (res.ok && res.data) {
+        setZoomCred(!!res.data.configured);
+      }
+      return res;
+    });
+  }, []);
+  const refreshHistSettings = React.useCallback(() => {
+    return runRuntimeAction('settings.load', {}, { silentError:true }).then((res) => {
+      const sec = res && res.ok && res.data && res.data.settings && res.data.settings.sections;
+      if (sec) {
+        const g = sec.gmail && typeof sec.gmail === 'object' ? sec.gmail.historicalSyncDays : null;
+        const c = sec.google_calendar && typeof sec.google_calendar === 'object' ? sec.google_calendar.historicalSyncDays : null;
+        const s = sec.slack && typeof sec.slack === 'object' ? sec.slack.historicalSyncDays : null;
+        const n = sec.notion && typeof sec.notion === 'object' ? sec.notion.historicalSyncDays : null;
+        const gh = sec.github && typeof sec.github === 'object' ? sec.github.historicalSyncDays : null;
+        const li = sec.linear && typeof sec.linear === 'object' ? sec.linear.historicalSyncDays : null;
+        const dr = sec.google_drive && typeof sec.google_drive === 'object' ? sec.google_drive.historicalSyncDays : null;
+        const zm = sec.zoom && typeof sec.zoom === 'object' ? sec.zoom.historicalSyncDays : null;
+        setGmailHistDays(Number.isFinite(Number(g)) ? Number(g) : null);
+        setCalHistDays(Number.isFinite(Number(c)) ? Number(c) : null);
+        setSlackHistDays(Number.isFinite(Number(s)) ? Number(s) : null);
+        setNotionHistDays(Number.isFinite(Number(n)) ? Number(n) : null);
+        setGithubHistDays(Number.isFinite(Number(gh)) ? Number(gh) : null);
+        setLinearHistDays(Number.isFinite(Number(li)) ? Number(li) : null);
+        setDriveHistDays(Number.isFinite(Number(dr)) ? Number(dr) : null);
+        setZoomHistDays(Number.isFinite(Number(zm)) ? Number(zm) : null);
+        const integ = sec.integrations && typeof sec.integrations === 'object' ? sec.integrations : {};
+        setAutoSync({
+          gmail: !!integ.gmailAutoSync,
+          slack: !!integ.slackAutoSync,
+          notion: !!integ.notionAutoSync,
+          github: !!integ.githubAutoSync,
+          linear: !!integ.linearAutoSync,
+          google_drive: !!integ.google_driveAutoSync,
+          zoom: !!integ.zoomAutoSync,
+        });
+      }
+      return res;
+    });
+  }, []);
+  React.useEffect(() => {
+    refreshCalStatus();
+    refreshGmailStatus();
+    refreshSlackStatus();
+    refreshNotionStatus();
+    refreshGithubStatus();
+    refreshLinearStatus();
+    refreshDriveStatus();
+    refreshZoomStatus();
+    refreshHistSettings();
+  }, [refreshCalStatus, refreshGmailStatus, refreshSlackStatus, refreshNotionStatus, refreshGithubStatus, refreshLinearStatus, refreshDriveStatus, refreshZoomStatus, refreshHistSettings]);
   React.useEffect(() => {
     const onCred = () => {
       void refreshCalStatus();
+      void refreshGmailStatus();
+      void refreshSlackStatus();
+      void refreshNotionStatus();
+      void refreshGithubStatus();
+      void refreshLinearStatus();
+      void refreshDriveStatus();
+      void refreshZoomStatus();
+      void refreshHistSettings();
       const C = window.ShogunIntegrationConnectors;
       if (C && typeof C.hydrateTools === 'function') {
         setTools(C.hydrateTools(C.DEFAULT_GRID_TOOLS));
@@ -451,7 +931,7 @@ function ScreenIntegrations() {
     };
     window.addEventListener('shogun-credentials-updated', onCred);
     return () => window.removeEventListener('shogun-credentials-updated', onCred);
-  }, [refreshCalStatus]);
+  }, [refreshCalStatus, refreshGmailStatus, refreshSlackStatus, refreshNotionStatus, refreshGithubStatus, refreshLinearStatus, refreshDriveStatus, refreshZoomStatus, refreshHistSettings]);
   const nConnected = tools.filter((t) => t.connected).length;
 
   return (
@@ -514,6 +994,385 @@ function ScreenIntegrations() {
           ) : null}
           <button type="button" className="btn btn-sm btn-secondary" onClick={() => { refreshCalStatus(); }}>Refresh status</button>
           <button type="button" className="btn btn-sm btn-primary" onClick={() => runRuntimeAction('calendar.sync', { calendarId:'primary', maxResults:25 }, { successMessage:'Calendar synced to Memory' })}>Sync to Memory</button>
+        </div>
+      </div>
+
+      <div className="card" style={{padding:20, marginTop:20, borderColor:'var(--border-hi)'}}>
+        <div className="t-mono" style={{marginBottom:8}}>HISTORICAL IMPORT</div>
+        <div style={{fontSize:13, color:'var(--text-mute)', lineHeight:1.6, marginBottom:14}}>
+          Pull past data from connected Gmail / Google Calendar into Memory. Up to 1 year. Re-running an import may create duplicates.
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginBottom:10}}>
+          <span style={{fontSize:13, minWidth:120}}>Google Calendar</span>
+          {calCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {calHistDays != null && calHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {calHistDays}d</span>
+          ) : calHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!calCred}
+            style={!calCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('google_calendar', calHistDays && calHistDays > 0 ? calHistDays : 30);
+              }
+            }}
+          >
+            {calHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center'}}>
+          <span style={{fontSize:13, minWidth:120}}>Gmail</span>
+          {gmailCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {gmailCred && gmailRefresh ? (
+            <span className="label label-success" style={{fontSize:11}}>Auto-refresh ready</span>
+          ) : null}
+          {gmailHistDays != null && gmailHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {gmailHistDays}d</span>
+          ) : gmailHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {gmailCred && gmailHistDays != null && gmailHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.gmail}
+                onChange={(e) => { void toggleAutoSync('gmail', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!gmailCred}
+            style={!gmailCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('gmail', gmailHistDays && gmailHistDays > 0 ? gmailHistDays : 30);
+              }
+            }}
+          >
+            {gmailHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginTop:10}}>
+          <span style={{fontSize:13, minWidth:120}}>Slack</span>
+          {slackCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {slackHistDays != null && slackHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {slackHistDays}d</span>
+          ) : slackHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {!slackCred && (
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={() => {
+                const rt = window.SHOGUN_RUNTIME;
+                if (rt && typeof rt.openPasteToken === 'function') {
+                  rt.openPasteToken('slack');
+                }
+              }}
+            >
+              Paste token…
+            </button>
+          )}
+          {slackCred && slackHistDays != null && slackHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.slack}
+                onChange={(e) => { void toggleAutoSync('slack', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!slackCred}
+            style={!slackCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('slack', slackHistDays && slackHistDays > 0 ? slackHistDays : 30);
+              }
+            }}
+          >
+            {slackHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginTop:10}}>
+          <span style={{fontSize:13, minWidth:120}}>Notion</span>
+          {notionCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {notionHistDays != null && notionHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {notionHistDays}d</span>
+          ) : notionHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {!notionCred && (
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={() => {
+                const rt = window.SHOGUN_RUNTIME;
+                if (rt && typeof rt.openPasteToken === 'function') {
+                  rt.openPasteToken('notion');
+                }
+              }}
+            >
+              Paste token…
+            </button>
+          )}
+          {notionCred && notionHistDays != null && notionHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.notion}
+                onChange={(e) => { void toggleAutoSync('notion', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!notionCred}
+            style={!notionCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('notion', notionHistDays && notionHistDays > 0 ? notionHistDays : 30);
+              }
+            }}
+          >
+            {notionHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginTop:10}}>
+          <span style={{fontSize:13, minWidth:120}}>GitHub</span>
+          {githubCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {githubHistDays != null && githubHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {githubHistDays}d</span>
+          ) : githubHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {!githubCred && (
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={() => {
+                const rt = window.SHOGUN_RUNTIME;
+                if (rt && typeof rt.openPasteToken === 'function') {
+                  rt.openPasteToken('github');
+                }
+              }}
+            >
+              Paste token…
+            </button>
+          )}
+          {githubCred && githubHistDays != null && githubHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.github}
+                onChange={(e) => { void toggleAutoSync('github', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!githubCred}
+            style={!githubCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('github', githubHistDays && githubHistDays > 0 ? githubHistDays : 30);
+              }
+            }}
+          >
+            {githubHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginTop:10}}>
+          <span style={{fontSize:13, minWidth:120}}>Linear</span>
+          {linearCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {linearHistDays != null && linearHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {linearHistDays}d</span>
+          ) : linearHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {!linearCred && (
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={() => {
+                const rt = window.SHOGUN_RUNTIME;
+                if (rt && typeof rt.openPasteToken === 'function') {
+                  rt.openPasteToken('linear');
+                }
+              }}
+            >
+              Paste token…
+            </button>
+          )}
+          {linearCred && linearHistDays != null && linearHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.linear}
+                onChange={(e) => { void toggleAutoSync('linear', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!linearCred}
+            style={!linearCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('linear', linearHistDays && linearHistDays > 0 ? linearHistDays : 30);
+              }
+            }}
+          >
+            {linearHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginTop:10}}>
+          <span style={{fontSize:13, minWidth:120}}>Google Drive</span>
+          {driveCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {driveHistDays != null && driveHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {driveHistDays}d</span>
+          ) : driveHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {driveCred && driveHistDays != null && driveHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.google_drive}
+                onChange={(e) => { void toggleAutoSync('google_drive', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!driveCred}
+            style={!driveCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('google_drive', driveHistDays && driveHistDays > 0 ? driveHistDays : 30);
+              }
+            }}
+          >
+            {driveHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
+          {!driveCred && (
+            <span className="s-field-hint" style={{fontSize:10, marginLeft:8}}>
+              OAuth token needed: import via app_integration_import_credentials (provider: google_drive, scope: drive.readonly)
+            </span>
+          )}
+        </div>
+
+        <div className="row" style={{gap:10, flexWrap:'wrap', alignItems:'center', marginTop:10}}>
+          <span style={{fontSize:13, minWidth:120}}>Zoom</span>
+          {zoomCred ? (
+            <span className="label label-success" style={{fontSize:11}}>Connected</span>
+          ) : (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Not connected</span>
+          )}
+          {zoomHistDays != null && zoomHistDays > 0 ? (
+            <span className="label" style={{fontSize:11}}>Last imported: past {zoomHistDays}d</span>
+          ) : zoomHistDays === 0 ? (
+            <span className="label" style={{fontSize:11, opacity:0.7}}>Skipped previously</span>
+          ) : null}
+          {!zoomCred && (
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={() => {
+                const rt = window.SHOGUN_RUNTIME;
+                if (rt && typeof rt.openPasteToken === 'function') {
+                  rt.openPasteToken('zoom');
+                }
+              }}
+            >
+              Paste token…
+            </button>
+          )}
+          {zoomCred && zoomHistDays != null && zoomHistDays > 0 && (
+            <label className="row" style={{gap:6, alignItems:'center', fontSize:11, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
+              <input
+                type="checkbox"
+                checked={!!autoSync.zoom}
+                onChange={(e) => { void toggleAutoSync('zoom', e.target.checked); }}
+              />
+              <span>Auto-sync</span>
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            disabled={!zoomCred}
+            style={!zoomCred ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+            onClick={() => {
+              const rt = window.SHOGUN_RUNTIME;
+              if (rt && typeof rt.openHistoricalImport === 'function') {
+                rt.openHistoricalImport('zoom', zoomHistDays && zoomHistDays > 0 ? zoomHistDays : 30);
+              }
+            }}
+          >
+            {zoomHistDays != null ? 'Re-sync past…' : 'Import past…'}
+          </button>
         </div>
       </div>
     </div>

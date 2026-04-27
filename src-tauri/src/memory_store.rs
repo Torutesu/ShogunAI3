@@ -8,7 +8,7 @@ use crate::{embeddings, paths, secrets};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
 
 const MEMORY_DB: &str = "memory.db";
@@ -49,6 +49,10 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
   ensure_context_layer_columns(&conn)?;
   ensure_redaction_nullable(&conn)?;
   migrate_json_if_needed(&conn)?;
+  // Phase 2 Stage 1: KIOKU graph layer columns + new tables + backfill.
+  // Must run after the Phase 1 ensures so the redaction-nullable table
+  // rebuild does not strip Phase 2 columns out from under us.
+  crate::kioku_graph_schema::ensure_kioku_graph_schema(&conn)?;
   Ok(conn)
 }
 
@@ -393,6 +397,116 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
       )
       .map_err(|e| e.to_string())?;
   }
+  // Memory Digest (Phase 1): per-item summary cache.
+  // target_kind: 'item' | 'session' | 'week_rollup' (Phase 1 uses 'item' only)
+  // target_id: item.id / session.id / ISO week
+  conn.execute_batch(
+    "CREATE TABLE IF NOT EXISTS mem_summaries (
+      target_kind    TEXT    NOT NULL,
+      target_id      TEXT    NOT NULL,
+      title          TEXT    NOT NULL,
+      key_points     TEXT    NOT NULL,
+      source_type    TEXT    NOT NULL,
+      priority       TEXT    NOT NULL,
+      reason         TEXT,
+      model          TEXT    NOT NULL,
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      generated_at   INTEGER NOT NULL,
+      raw_json       TEXT    NOT NULL,
+      lang           TEXT    NOT NULL DEFAULT 'en',
+      PRIMARY KEY (target_kind, target_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mem_summaries_generated_at
+      ON mem_summaries(generated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mem_summaries_priority
+      ON mem_summaries(priority, generated_at DESC);"
+  ).map_err(|e| format!("mem_summaries DDL: {}", e))?;
+  // Migration: add lang column to pre-existing tables (idempotent).
+  let has_lang = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'lang'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_lang == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'",
+      [],
+    ).map_err(|e| format!("mem_summaries add lang: {}", e))?;
+  }
+  // Migration: user_priority override ('high'|'medium'|'low' or NULL).
+  // When non-NULL, UI uses it instead of the LLM-assigned priority.
+  // Added 2026-04-24 for the manual-override UX.
+  let has_user_priority = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'user_priority'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_user_priority == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN user_priority TEXT",
+      [],
+    ).map_err(|e| format!("mem_summaries add user_priority: {}", e))?;
+  }
+  // Migration: acknowledged_at (ms) for "mark as read" UX. NULL = unread.
+  // Reset to NULL when the summary is invalidated/regenerated so a refreshed
+  // HIGH item resurfaces in the unread badge.
+  let has_acknowledged_at = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'acknowledged_at'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_acknowledged_at == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN acknowledged_at INTEGER",
+      [],
+    ).map_err(|e| format!("mem_summaries add acknowledged_at: {}", e))?;
+  }
+  // Migration: snooze_until (ms) lets the user defer an item to "look at
+  // later" without acknowledging it. Hidden from highlights while
+  // snooze_until > now_ms; re-surfaces automatically when the deadline
+  // passes. Reset (= NULL) when the summary is invalidated/regenerated.
+  let has_snooze_until = conn.query_row(
+    "SELECT COUNT(*) FROM pragma_table_info('mem_summaries') WHERE name = 'snooze_until'",
+    [],
+    |r| r.get::<_, i64>(0),
+  ).unwrap_or(0);
+  if has_snooze_until == 0 {
+    conn.execute(
+      "ALTER TABLE mem_summaries ADD COLUMN snooze_until INTEGER",
+      [],
+    ).map_err(|e| format!("mem_summaries add snooze_until: {}", e))?;
+  }
+
+
+
+  // Partial UNIQUE index to dedupe historical-sync ingestion keyed by
+  // (source, entity_id). Skipped for rows without an entity_id (e.g. screen
+  // captures, free-form notes) so those remain append-only.
+  //
+  // Because pre-existing databases may already contain duplicates from prior
+  // calendar / gmail re-runs, compress dupes first (keep the oldest rowid per
+  // (source, entity_id)) so the index creation doesn't abort.
+  conn
+    .execute(
+      "DELETE FROM mem_items \
+       WHERE entity_id IS NOT NULL AND entity_id != '' \
+         AND rowid NOT IN ( \
+           SELECT MIN(rowid) FROM mem_items \
+           WHERE entity_id IS NOT NULL AND entity_id != '' \
+           GROUP BY source, entity_id \
+         )",
+      [],
+    )
+    .map_err(|e| format!("mem_items dedupe pre-index: {}", e))?;
+  conn
+    .execute(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_items_entity_unique \
+       ON mem_items(source, entity_id) \
+       WHERE entity_id IS NOT NULL AND entity_id != ''",
+      [],
+    )
+    .map_err(|e| format!("mem_items entity unique index: {}", e))?;
+
   crate::meeting_store::ensure_meeting_schema(conn)?;
   Ok(())
 }
@@ -802,12 +916,14 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
     .filter(|s| is_valid_redaction(s))
     .map(String::from);
 
-  let id = format!("m_{}", now_ms());
+  static INGEST_SEQ: AtomicU64 = AtomicU64::new(0);
+  let seq = INGEST_SEQ.fetch_add(1, Ordering::Relaxed);
+  let id = format!("m_{}_{}", now_ms(), seq);
   let created = now_ms() as i64;
 
-  conn
+  let affected = conn
     .execute(
-      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction) \
+      "INSERT OR IGNORE INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction) \
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
       params![
         id,
@@ -823,6 +939,7 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
       ],
     )
     .map_err(|e| e.to_string())?;
+  let skipped = affected == 0;
 
   let mut item_map = serde_json::Map::new();
   item_map.insert("id".to_string(), json!(id));
@@ -845,12 +962,13 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
 
   let out = json!({
     "item": item,
+    "skipped": skipped,
     "echo": payload,
     "stub": false,
   });
 
   let skip_embed = source == "capture_sampler" || source == "capture_ax";
-  if !skip_embed {
+  if !skipped && !skip_embed {
     let id_spawn = id.clone();
     tauri::async_runtime::spawn(async move {
       if let Err(e) = embed_row_by_id(&id_spawn).await {
@@ -1720,5 +1838,44 @@ mod tests {
       None,
     );
     assert_eq!(v.get("kinds"), Some(&json!(["note", "screen"])));
+  }
+
+  #[test]
+  fn init_schema_creates_mem_summaries_table() {
+    use rusqlite::Connection;
+    let conn = Connection::open_in_memory().expect("open in-memory");
+    // Mirror the same CREATE TABLE statement from init_schema.
+    conn.execute_batch(
+      "CREATE TABLE IF NOT EXISTS mem_summaries (
+        target_kind    TEXT    NOT NULL,
+        target_id      TEXT    NOT NULL,
+        title          TEXT    NOT NULL,
+        key_points     TEXT    NOT NULL,
+        source_type    TEXT    NOT NULL,
+        priority       TEXT    NOT NULL,
+        reason         TEXT,
+        model          TEXT    NOT NULL,
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        generated_at   INTEGER NOT NULL,
+        raw_json       TEXT    NOT NULL,
+        PRIMARY KEY (target_kind, target_id)
+      );"
+    ).expect("create mem_summaries");
+
+    // Verify we can insert a row.
+    conn.execute(
+      "INSERT INTO mem_summaries
+         (target_kind, target_id, title, key_points, source_type, priority, reason, model, generated_at, raw_json)
+       VALUES
+         ('item', 'm_1', 'T', '[\"k\"]', 'mail', 'medium', 'r', 'heuristic', 1, '{}')",
+      [],
+    ).expect("insert row");
+
+    let count: i64 = conn.query_row(
+      "SELECT COUNT(*) FROM mem_summaries",
+      [],
+      |r| r.get(0),
+    ).expect("count");
+    assert_eq!(count, 1);
   }
 }

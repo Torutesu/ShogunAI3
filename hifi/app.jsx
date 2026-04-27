@@ -14,7 +14,6 @@ const NAV = [
   {id:'chat',      label:'Chat',         jp:'対話',   icon:'chat',      section:'main'},
   {id:'agents',    label:'Agents',       jp:'家臣',   icon:'agents',    section:'main'},
   {id:'work',      label:'Work',         jp:'任務',   icon:'work',      section:'workspace'},
-  {id:'tasks',     label:'Tasks',        jp:'任務',   icon:'check',     section:'workspace'},
   {id:'meetings',  label:'Meetings',     jp:'会議',   icon:'calendar',  section:'workspace'},
 ];
 
@@ -71,6 +70,10 @@ const DUMMY_WORK_PROJECT_IDS = new Set([
 function purgeDummyWorkProjects(list) {
   if (!Array.isArray(list)) return [];
   return list.filter((p) => p && typeof p === 'object' && !DUMMY_WORK_PROJECT_IDS.has(p.id));
+}
+function purgeDummyChats(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((c) => c && typeof c === 'object' && typeof c.id === 'string' && !c.id.startsWith('demo-'));
 }
 const SIDEBAR_WIDTH_LS = 'shogun.hifi.sidebar.width.v1';
 const SIDEBAR_MIN_WIDTH = 200;
@@ -291,6 +294,86 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'shogun_memory_summary_get':
+      return {
+        ok: true,
+        data: {
+          summary: {
+            targetKind: 'item',
+            targetId: String((echo && echo.targetId) || 'm_stub'),
+            title: 'Stub summary',
+            keyPoints: ['This is a mocked summary'],
+            sourceType: 'mail',
+            priority: 'medium',
+            reason: 'mock',
+            model: 'mock',
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          },
+          cached: false,
+        },
+      };
+    case 'shogun_memory_summary_batch':
+      return {
+        ok: true,
+        data: {
+          ok: ((echo && echo.items) || []).map((it) => ({
+            targetKind: 'item',
+            targetId: String((it && it.id) || 'm_stub'),
+            title: `Stub: ${(it && it.title) || 'untitled'}`,
+            keyPoints: ['mock point'],
+            sourceType: 'mail',
+            priority: 'medium',
+            reason: 'mock',
+            model: 'mock',
+            schemaVersion: 1,
+            generatedAt: Date.now(),
+          })),
+          failed: [],
+          heuristicUsed: 0,
+        },
+      };
+    case 'shogun_memory_summary_invalidate':
+      return { ok: true, data: { deleted: true } };
+    case 'shogun_memory_debug_gate':
+      return { ok: true, data: { available: false, reason: 'mock_browser' } };
+    case 'shogun_memory_debug_recent_calls':
+      return { ok: true, data: { calls: [], capacity: 50 } };
+    case 'shogun_memory_debug_query':
+      return {
+        ok: true,
+        data: {
+          hits: [],
+          draft_block: '',
+          brief_block: '',
+          reply_block: '',
+          query: (echo && echo.query) || '',
+          limit: (echo && echo.limit) || 12,
+          semantic: !!(echo && echo.semantic),
+        },
+      };
+    case 'shogun_memory_debug_stats':
+      return {
+        ok: true,
+        data: {
+          total: 0,
+          fts_total: 0,
+          fts_integrity: true,
+          by_source: [],
+          by_provenance: [],
+          earliest_ms: null,
+          latest_ms: null,
+          db_bytes: 0,
+        },
+      };
+    case 'shogun_memory_debug_sync_status':
+      return {
+        ok: true,
+        data: {
+          google_calendar: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
+          gmail: { last_sync_ms: null, last_ingested: null, last_error: null, last_duration_ms: null, credentials_present: false, auto_enabled: false },
+        },
+      };
     case 'shogun_stats': {
       const DEMO = typeof window !== 'undefined' ? window.SHOGUN_DEMO_SEED : null;
       const empty = {
@@ -372,6 +455,127 @@ function mockIpcInvoke(command, payload) {
         data: {
           skipped: true,
           brief: null,
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_brief_signals':
+      return {
+        ok: true,
+        data: {
+          decision_graph_hits: [],
+          related_kioku_hits: [],
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_edge_type_proposals':
+      return {
+        ok: true,
+        data: {
+          proposals: [],
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_edge_type_review':
+      return {
+        ok: true,
+        data: {
+          updated: 0,
+          edge_type: (echo && echo.edge_type) || '',
+          status: (echo && echo.status) || 0,
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_backup_db':
+      return {
+        ok: true,
+        data: {
+          source_path: '/mock/memory.db',
+          dest_path: '/mock/memory.db.backup-2026-04-27-000000',
+          bytes: 0,
+          completed_at_ms: Date.now(),
+          stub: true,
+          echo,
+        },
+      };
+    case 'shogun_kioku_stage5_dry_run':
+      return {
+        ok: true,
+        data: {
+          generated_at_ms: Date.now(),
+          soft_retire: {
+            matching_rows: 0,
+            already_retired: 0,
+            oldest_created_at_ms: null,
+            newest_created_at_ms: null,
+            embedding_blob_count: 0,
+          },
+          ttl_expired: {
+            rows_with_raw_to_clean: 0,
+            raw_path_files_to_unlink: 0,
+            raw_text_rows_to_null: 0,
+          },
+          physical_delete: { eligible_rows: 0, cascade_edges: 0, orphaned_summaries: 0 },
+          storage: { db_size_before_bytes: 0, raw_path_bytes: 0 },
+          legacy_sources: ['capture_sampler', 'capture_ax'],
+          grace_days: 30,
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_stage5_apply':
+      return {
+        ok: true,
+        data: {
+          applied_at_ms: Date.now(),
+          actions: { soft_retire: null, cleanup_ttl: null, physical_delete: null, vacuum: null },
+          stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_debug_stats':
+      return {
+        ok: true,
+        data: {
+          queue: {
+            captures_pending: 0,
+            captures_running: 0,
+            captures_done: 0,
+            captures_failed: 0,
+            captures_expired: 0,
+            captures_skipped: 0,
+            jobs_queued: 0,
+            jobs_running: 0,
+            jobs_done: 0,
+            jobs_failed: 0,
+            jobs_expired: 0,
+            oldest_pending_capture_ms: null,
+          },
+          cost: {
+            month_start_ms: 0,
+            spent_usd: 0,
+            monthly_cap_usd: 10,
+            cap_action: 'pause_extraction',
+            fallback_model: 'claude-haiku-4-5',
+            extraction_model: 'claude-haiku-4-5',
+            status: 'Proceed',
+          },
+          graph: {
+            mem_items_total: 0,
+            mem_items_active: 0,
+            mem_items_retired: 0,
+            edges_total: 0,
+            edges_active: 0,
+            captures_total: 0,
+            by_node_kind: [],
+            by_edge_type: [],
+          },
+          rules: { count: 0, titles: [] },
+          flags: { read_path: 'legacy', capture_to_mem_captures: false, worker_enabled: false },
+          now_ms: Date.now(),
           stub: false,
           echo,
         },
@@ -637,6 +841,13 @@ function ensureRuntimeDeps() {
         appCreateShareLink: (input) => client.invoke('app_create_share_link', input),
         settingsLoad: (input) => client.invoke('app_settings_load', input),
         settingsSave: (input) => client.invoke('app_settings_save', input),
+        settingsExport: (input) => client.invoke('app_settings_export', input || {}),
+        settingsImport: (input) => client.invoke('app_settings_import', input || {}),
+        deadLetterList: (input) => client.invoke('shogun_dead_letter_list', input || {}),
+        deadLetterRetry: (input) => client.invoke('shogun_dead_letter_retry', input || {}),
+        deadLetterClear: (input) => client.invoke('shogun_dead_letter_clear', input || {}),
+        deadLetterRetryOne: (input) => client.invoke('shogun_dead_letter_retry_one', input || {}),
+        deadLetterDelete: (input) => client.invoke('shogun_dead_letter_delete', input || {}),
         integrationConnect: (input) => client.invoke('app_integration_connect', input),
         integrationImportCredentials: (input) =>
           client.invoke('app_integration_import_credentials', input),
@@ -645,6 +856,12 @@ function ensureRuntimeDeps() {
         integrationToggle: (input) => client.invoke('app_integration_toggle', input),
         googleCalendarSync: (input) => client.invoke('shogun_google_calendar_sync', input),
         gmailSync: (input) => client.invoke('shogun_gmail_sync', input),
+        slackSync: (input) => client.invoke('shogun_slack_sync', input),
+        notionSync: (input) => client.invoke('shogun_notion_sync', input),
+        githubSync: (input) => client.invoke('shogun_github_sync', input),
+        linearSync: (input) => client.invoke('shogun_linear_sync', input),
+        driveSync: (input) => client.invoke('shogun_drive_sync', input),
+        zoomSync: (input) => client.invoke('shogun_zoom_sync', input),
         capturePause: (input) => client.invoke('app_capture_pause', input),
         captureResume: (input) => client.invoke('app_capture_resume', input),
         permissionsManage: (input) => client.invoke('app_permissions_manage', input),
@@ -657,8 +874,12 @@ function ensureRuntimeDeps() {
         accountDeleteAll: (input) => client.invoke('app_delete_all_data', input),
         accountDeleteSelf: (input) => client.invoke('app_delete_account', input),
         memorySearch: (input) => client.invoke('shogun_memory_search', input),
+        memoryFetch: (input) => client.invoke('shogun_memory_fetch', input),
         memoryIngest: (input) => client.invoke('shogun_memory_ingest', input),
         memoryDelete: (input) => client.invoke('shogun_memory_delete', input),
+        memorySummaryGet: (input) => client.invoke('shogun_memory_summary_get', input),
+        memorySummaryBatch: (input) => client.invoke('shogun_memory_summary_batch', input),
+        memorySummaryInvalidate: (input) => client.invoke('shogun_memory_summary_invalidate', input),
         memoryEmbedBackfill: (input) =>
           client.invoke('shogun_memory_embed_backfill', input, { timeoutMs: 600000 }),
         memoryEmbedBackfillCancel: (input) =>
@@ -698,6 +919,8 @@ function ensureRuntimeDeps() {
         meetingMicStop: (input) => client.invoke('shogun_meeting_mic_stop', input),
         meetingTranscribePcm: (input) => client.invoke('shogun_meeting_transcribe_pcm', input),
         meetingMcpTools: (input) => client.invoke('shogun_meeting_mcp_tools', input),
+        meetingImportPick: (input) => client.invoke('shogun_meeting_import_pick', input || {}),
+        meetingImportFile: (input) => client.invoke('shogun_meeting_import_file', input),
       }),
     };
   }
@@ -709,12 +932,25 @@ function ensureRuntimeDeps() {
           'app.create_share_link': api.appCreateShareLink,
           'settings.save': api.settingsSave,
           'settings.load': api.settingsLoad,
+          'settings.export': api.settingsExport,
+          'settings.import': api.settingsImport,
+          'dead_letter.list': api.deadLetterList,
+          'dead_letter.retry': api.deadLetterRetry,
+          'dead_letter.clear': api.deadLetterClear,
+          'dead_letter.retry_one': api.deadLetterRetryOne,
+          'dead_letter.delete': api.deadLetterDelete,
           'integrations.connect': api.integrationConnect,
           'integrations.import_credentials': api.integrationImportCredentials,
           'integrations.credentials_status': api.integrationCredentialsStatus,
           'integrations.toggle': api.integrationToggle,
           'calendar.sync': api.googleCalendarSync,
           'gmail.sync': api.gmailSync,
+          'slack.sync': api.slackSync,
+          'notion.sync': api.notionSync,
+          'github.sync': api.githubSync,
+          'linear.sync': api.linearSync,
+          'drive.sync': api.driveSync,
+          'zoom.sync': api.zoomSync,
           'capture.pause': api.capturePause,
           'capture.resume': api.captureResume,
           'permissions.manage': api.permissionsManage,
@@ -726,10 +962,14 @@ function ensureRuntimeDeps() {
           'data.delete_all': api.accountDeleteAll,
           'account.delete': api.accountDeleteSelf,
           'memory.search': api.memorySearch,
+          'memory.fetch': api.memoryFetch,
           'memory.ingest': api.memoryIngest,
           'memory.delete': api.memoryDelete,
           'memory.embed_backfill': api.memoryEmbedBackfill,
           'memory.embed_backfill_cancel': api.memoryEmbedBackfillCancel,
+          'memory.summary.get': api.memorySummaryGet,
+          'memory.summary.batch': api.memorySummaryBatch,
+          'memory.summary.invalidate': api.memorySummaryInvalidate,
           'entity.query': api.entityQuery,
           'brief.get': api.briefGet,
           'chat.complete': api.chatComplete,
@@ -765,6 +1005,8 @@ function ensureRuntimeDeps() {
           'meetings.mic.stop': api.meetingMicStop,
           'meetings.transcribe.pcm': api.meetingTranscribePcm,
           'meetings.mcp.tools': api.meetingMcpTools,
+          'meetings.import.pick': api.meetingImportPick,
+          'meetings.import.file': api.meetingImportFile,
         };
         return {
           run: async (key, payload) => {
@@ -885,6 +1127,13 @@ function App() {
   const [profileAvatarGlyph, setProfileAvatarGlyph] = useState('');
   const [profileAvatarImageDataUrl, setProfileAvatarImageDataUrl] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(null); // null | 'general' | 'system' | 'appearance' | 'privacy' | 'data' | 'hummingbird' | 'meetings' | 'chat' | 'integrations' | 'shortcuts' | 'team' | 'support' | 'api' | 'upgrade' | 'changelog' | 'feedback'
+  // { provider: 'gmail' | 'google_calendar', days: 30 } when prompting; null when hidden.
+  const [historicalImport, setHistoricalImport] = useState(null);
+  const [historicalImportBusy, setHistoricalImportBusy] = useState(false);
+  // { current, total, phase } — live status from the backend `historical-sync-progress` event.
+  const [historicalImportProgress, setHistoricalImportProgress] = useState(null);
+  // { provider, token, busy } when the Paste-token modal is open (Slack / Notion / GitHub).
+  const [pasteTokenModal, setPasteTokenModal] = useState(null);
   const [toast, setToast] = useState(null);
   const [writeConfirm, setWriteConfirm] = useState({ open:false, actionKey:null, payload:null, title:null, description:null });
   const [writePending, setWritePending] = useState(false);
@@ -908,6 +1157,9 @@ function App() {
   const toastTimerRef = useRef(null);
   const bioWantLockRef = useRef(false);
   const [bioGate, setBioGate] = useState({ ready: false, open: false });
+  // Sidebar Memory nav badge — count of HIGH-priority items from the last
+  // 7 days. Updated by ScreenHome's brief.get callback via a window event.
+  const [memoryHighUnreadCount, setMemoryHighUnreadCount] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try {
@@ -1093,6 +1345,54 @@ function App() {
     };
   }, []);
 
+  // Prompt the user to import historical data the first time they connect
+  // Gmail or Google Calendar. Choice is persisted so we don't re-ask.
+  useEffect(() => {
+    const HISTORICAL_PROVIDERS = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear', 'zoom']);
+    const onCred = async (ev) => {
+      const detail = (ev && ev.detail) || {};
+      const provider = String(detail.provider || '').trim();
+      if (!provider || !HISTORICAL_PROVIDERS.has(provider)) return;
+      try {
+        const res = await executeAction('settings.load', {}, { silentError: true });
+        const sections = res && res.ok && res.data && res.data.settings && res.data.settings.sections;
+        const prev = sections && sections[provider];
+        // Already decided (0 = skipped, >0 = imported) — don't re-prompt.
+        if (prev && typeof prev === 'object' && prev.historicalSyncDays != null) return;
+      } catch (_) {
+        /* ignore — show the modal anyway */
+      }
+      setHistoricalImport({ provider, days: 30 });
+    };
+    window.addEventListener('shogun-credentials-updated', onCred);
+    return () => window.removeEventListener('shogun-credentials-updated', onCred);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live progress from the backend while a historical sync runs.
+  useEffect(() => {
+    let unlisten;
+    const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
+    if (typeof listen !== 'function') return undefined;
+    (async () => {
+      try {
+        unlisten = await listen('historical-sync-progress', (e) => {
+          const p = (e && e.payload) || {};
+          setHistoricalImportProgress({
+            provider: p.provider || null,
+            current: Number(p.current) || 0,
+            total: p.total == null ? null : Number(p.total),
+            phase: p.phase || '',
+          });
+        });
+      } catch (_) {
+        /* ignore */
+      }
+    })();
+    return () => {
+      if (typeof unlisten === 'function') unlisten();
+    };
+  }, []);
+
   useEffect(() => {
     let unlisten;
     const listen = typeof window !== 'undefined' && window.__TAURI__?.event?.listen;
@@ -1264,6 +1564,14 @@ function App() {
       getActiveChat: () => chats.find(c => c.id === activeChat) || null,
       getChats: () => chats.slice(),
       getWorkProjects: () => workProjects.slice(),
+      createWorkProject: (name) => {
+        const n = String(name || '').trim();
+        if (!n) return null;
+        const id = `w-${Date.now()}`;
+        setWorkProjects((prev) => [...prev, { id, name: n }]);
+        pushToast(`Workspaceを作成: ${n}`, 'success');
+        return id;
+      },
       renameWorkProject: (projectId, nextName) => {
         const id = String(projectId || '').trim();
         const name = String(nextName || '').trim();
@@ -1322,6 +1630,25 @@ function App() {
       setActiveScreen: (id) => {
         if (id && typeof id === 'string') setActive(id);
       },
+      createNewChat: () => createNewChat(),
+      openWorkPickerForNewChat: () => {
+        setChatWorkModal({ open: true, chatId: null, query: '' });
+      },
+      openHistoricalImport: (provider, defaultDays) => {
+        const p = String(provider || '').trim();
+        const allowed = new Set(['gmail', 'google_calendar', 'google_drive', 'slack', 'notion', 'github', 'linear', 'zoom']);
+        if (!allowed.has(p)) return false;
+        const d = Number.isFinite(Number(defaultDays)) ? Number(defaultDays) : 30;
+        setHistoricalImport({ provider: p, days: d });
+        return true;
+      },
+      openPasteToken: (provider) => {
+        const p = String(provider || '').trim();
+        const allowed = new Set(['slack', 'notion', 'github', 'linear', 'zoom']);
+        if (!allowed.has(p)) return false;
+        setPasteTokenModal({ provider: p, token: '', busy: false });
+        return true;
+      },
       applyShortcutBindings: (raw) => {
         if (window.ShogunKeyboardShortcuts) {
           shortcutBindingsRef.current = window.ShogunKeyboardShortcuts.mergeShortcutBindings(raw);
@@ -1358,7 +1685,7 @@ function App() {
         const ws = sec && sec.chat_workspace && typeof sec.chat_workspace === 'object' ? sec.chat_workspace : null;
         if (ws) {
           if (Array.isArray(ws.chats)) {
-            setChats(ws.chats);
+            setChats(purgeDummyChats(ws.chats));
             loaded = true;
           }
           if (Array.isArray(ws.workProjects)) {
@@ -1376,7 +1703,7 @@ function App() {
             const parsed = JSON.parse(raw);
             if (parsed && typeof parsed === 'object') {
               if (Array.isArray(parsed.chats)) {
-                setChats(parsed.chats);
+                setChats(purgeDummyChats(parsed.chats));
                 loaded = true;
               }
               if (Array.isArray(parsed.workProjects)) {
@@ -1551,11 +1878,18 @@ function App() {
     setChatWorkModal({ open:true, chatId:id, query:'' });
   }, [chats]);
   const assignChatToWork = useCallback((workId, workName) => {
-    const id = chatWorkModal.chatId;
-    if (!id) return;
-    setChats((cs) => cs.map((c) => (c.id === id ? { ...c, workProjectId:workId, workProjectName:workName } : c)));
+    let id = chatWorkModal.chatId;
+    const newChat = !id;
+    if (newChat) {
+      id = `c${Date.now()}`;
+      const item = { id, title: 'New Chat', time: '', when: 'TODAY', jp: '今日', favorite: false, workProjectId: workId, workProjectName: workName };
+      setChats((prev) => [item, ...prev]);
+      setActiveChat(id);
+    } else {
+      setChats((cs) => cs.map((c) => (c.id === id ? { ...c, workProjectId:workId, workProjectName:workName } : c)));
+    }
     setChatWorkModal({ open:false, chatId:null, query:'' });
-    setActive('work');
+    setActive(newChat ? 'chat' : 'work');
     pushToast(`Workに追加: ${workName}`, 'success');
   }, [chatWorkModal.chatId]);
   const createAndAssignWork = useCallback(() => {
@@ -1825,6 +2159,16 @@ function App() {
     return () => window.removeEventListener('shogun-appearance-changed', onAppearance);
   }, []);
 
+  // Keep the sidebar Memory badge in sync with ScreenHome's digest load.
+  useEffect(() => {
+    const onHighCount = (e) => {
+      const n = Number(e && e.detail && e.detail.count);
+      setMemoryHighUnreadCount(Number.isFinite(n) && n > 0 ? n : 0);
+    };
+    window.addEventListener('shogun-memory-high-count', onHighCount);
+    return () => window.removeEventListener('shogun-memory-high-count', onHighCount);
+  }, []);
+
   const executeActionRef = useRef(executeAction);
   executeActionRef.current = executeAction;
 
@@ -1973,7 +2317,6 @@ function App() {
     chat: ScreenChat,
     agents: ScreenAgents,
     work: ScreenWork,
-    tasks: ScreenTasks,
     meetings: ScreenMeetings,
     memory_debug: ScreenMemoryDebug,
   }[active] || ScreenHome;
@@ -2048,9 +2391,15 @@ function App() {
   };
 
   // Include memory_debug nav entry only when the dev gate returns available.
-  const effectiveNav = devGate.available
-    ? [...NAV, { id: "memory_debug", label: "Memory DBG", jp: "DBG", icon: "memory", section: "workspace" }]
-    : NAV;
+  // Also inject the HIGH-priority unread count onto the Memory item so the
+  // sidebar surfaces "you have N important things waiting" at a glance.
+  const effectiveNav = (() => {
+    const base = devGate.available
+      ? [...NAV, { id: "memory_debug", label: "Memory DBG", jp: "DBG", icon: "memory", section: "workspace" }]
+      : NAV;
+    if (!memoryHighUnreadCount) return base;
+    return base.map((n) => (n.id === 'memory' ? { ...n, count: memoryHighUnreadCount } : n));
+  })();
 
   return (
     <div
@@ -2859,7 +3208,7 @@ function App() {
               </button>
               <div className="context-awareness-heading">Context Awareness</div>
               <div className="context-panel-body-copy">
-                Littlebird remembers your work across apps, no integrations needed.
+                SHOGUN AI remembers your work across apps, no integrations needed.
               </div>
               <button type="button" className="context-link-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
                 Learn more <Icon name="arrowUpRight" size={14} />
@@ -2874,9 +3223,6 @@ function App() {
               <Icon name="chevronRight" size={14} />
             </button>
             <div className="context-panel-foot">
-              <span className="context-panel-body-copy">
-                Exclude apps and websites Littlebird can access context from
-              </span>
               <button type="button" className="context-manage-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
                 Manage
               </button>
@@ -3056,6 +3402,308 @@ function App() {
           }
         }}
       />
+
+      {historicalImport && ReactDOM.createPortal(
+        <div
+          style={{
+            position:'fixed', inset:0, zIndex:1090,
+            background:'color-mix(in srgb, var(--bg) 78%, transparent)',
+            backdropFilter:'blur(4px)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            padding:20,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !historicalImportBusy) setHistoricalImport(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{
+              width:'min(460px, 100%)',
+              background:'var(--surface)',
+              border:'1px solid var(--border-hi)',
+              borderRadius:16,
+              boxShadow:'0 30px 60px -16px rgba(0,0,0,0.6)',
+              padding:22,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={{fontSize:16, fontWeight:500, marginBottom:6}}>
+              {historicalImport.provider === 'gmail'
+                ? 'Import past Gmail'
+                : historicalImport.provider === 'slack'
+                  ? 'Import past Slack messages'
+                  : historicalImport.provider === 'notion'
+                    ? 'Import past Notion pages'
+                    : historicalImport.provider === 'github'
+                      ? 'Import past GitHub activity'
+                      : historicalImport.provider === 'linear'
+                        ? 'Import past Linear issues'
+                        : historicalImport.provider === 'google_drive'
+                          ? 'Import past Drive files'
+                          : historicalImport.provider === 'zoom'
+                            ? 'Import past Zoom recordings'
+                            : 'Import past Calendar events'}
+            </div>
+            <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.5, marginBottom:16}}>
+              How far back should SHOGUN pull history into Memory? You can change this later in Settings. Up to 1 year.
+            </div>
+
+            <div style={{display:'flex', flexDirection:'column', gap:8}}>
+              {[
+                { d: 7,   label: 'Past 7 days' },
+                { d: 30,  label: 'Past 30 days' },
+                { d: 90,  label: 'Past 3 months' },
+                { d: 180, label: 'Past 6 months' },
+                { d: 365, label: 'Past 1 year (max)' },
+              ].map((opt) => {
+                const selected = historicalImport.days === opt.d;
+                return (
+                  <button
+                    key={opt.d}
+                    type="button"
+                    disabled={historicalImportBusy}
+                    onClick={() => setHistoricalImport((prev) => (prev ? { ...prev, days: opt.d } : prev))}
+                    style={{
+                      display:'flex', alignItems:'center', gap:10,
+                      padding:'10px 12px',
+                      borderRadius:10,
+                      border: selected
+                        ? '1px solid color-mix(in srgb, var(--gold) 65%, var(--border))'
+                        : '1px solid var(--border)',
+                      background: selected
+                        ? 'color-mix(in srgb, var(--gold) 8%, var(--surface))'
+                        : 'var(--surface)',
+                      color:'var(--text)',
+                      fontSize:13,
+                      cursor: historicalImportBusy ? 'default' : 'pointer',
+                      fontFamily:'inherit',
+                      textAlign:'left',
+                    }}
+                  >
+                    <span style={{
+                      width:14, height:14, borderRadius:'50%',
+                      border:'1px solid ' + (selected ? 'var(--gold)' : 'var(--border-hi)'),
+                      background: selected ? 'var(--gold)' : 'transparent',
+                      flexShrink:0,
+                    }}/>
+                    <span>{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="row" style={{marginTop:18, gap:8, justifyContent:'flex-end'}}>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                disabled={historicalImportBusy}
+                onClick={async () => {
+                  const provider = historicalImport.provider;
+                  setHistoricalImportBusy(true);
+                  await executeAction(
+                    'settings.save',
+                    { section: provider, historicalSyncDays: 0 },
+                    { silentError: true },
+                  );
+                  setHistoricalImportBusy(false);
+                  setHistoricalImport(null);
+                }}
+              >
+                Skip
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={historicalImportBusy}
+                onClick={async () => {
+                  const { provider, days } = historicalImport;
+                  const providerLabels = {
+                    gmail: 'Gmail',
+                    google_calendar: 'Calendar',
+                    google_drive: 'Drive',
+                    slack: 'Slack',
+                    notion: 'Notion',
+                    github: 'GitHub',
+                    linear: 'Linear',
+                    zoom: 'Zoom',
+                  };
+                  const actionKeys = {
+                    gmail: 'gmail.sync',
+                    google_calendar: 'calendar.sync',
+                    google_drive: 'drive.sync',
+                    slack: 'slack.sync',
+                    notion: 'notion.sync',
+                    github: 'github.sync',
+                    linear: 'linear.sync',
+                    zoom: 'zoom.sync',
+                  };
+                  const label = providerLabels[provider] || provider;
+                  const actionKey = actionKeys[provider] || `${provider}.sync`;
+                  setHistoricalImportBusy(true);
+                  pushToast(`${label}: importing past ${days} days…`, 'info');
+                  const syncPayload = provider === 'google_calendar'
+                    ? { calendarId: 'primary', days }
+                    : { days };
+                  const res = await executeAction(actionKey, syncPayload, { silentError: true });
+                  if (res && res.ok) {
+                    const n = (res.data && res.data.ingested) || 0;
+                    const skipped = (res.data && res.data.skipped) || 0;
+                    const msgSuffix = skipped > 0
+                      ? ` (${skipped} already in memory)`
+                      : '';
+                    pushToast(
+                      `${label}: imported ${n} item(s)${msgSuffix}`,
+                      'success',
+                    );
+                  } else {
+                    const msg = (res && res.error && res.error.message) || 'Import failed';
+                    pushToast(msg, 'error');
+                  }
+                  await executeAction(
+                    'settings.save',
+                    { section: provider, historicalSyncDays: days },
+                    { silentError: true },
+                  );
+                  setHistoricalImportBusy(false);
+                  setHistoricalImport(null);
+                  setHistoricalImportProgress(null);
+                  window.dispatchEvent(new CustomEvent('shogun-memory-index-changed'));
+                }}
+              >
+                {historicalImportBusy ? (
+                  historicalImportProgress &&
+                  historicalImportProgress.provider === historicalImport.provider
+                    ? (
+                        historicalImportProgress.total != null && historicalImportProgress.total > 0
+                          ? `Importing… ${historicalImportProgress.current}/${historicalImportProgress.total}`
+                          : `Importing… ${historicalImportProgress.current}`
+                      )
+                    : 'Importing…'
+                ) : 'Import'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {pasteTokenModal && ReactDOM.createPortal(
+        <div
+          style={{
+            position:'fixed', inset:0, zIndex:1091,
+            background:'color-mix(in srgb, var(--bg) 78%, transparent)',
+            backdropFilter:'blur(4px)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            padding:20,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !pasteTokenModal.busy) setPasteTokenModal(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{
+              width:'min(480px, 100%)',
+              background:'var(--surface)',
+              border:'1px solid var(--border-hi)',
+              borderRadius:16,
+              boxShadow:'0 30px 60px -16px rgba(0,0,0,0.6)',
+              padding:22,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={{fontSize:16, fontWeight:500, marginBottom:6}}>
+              {pasteTokenModal.provider === 'slack'
+                ? 'Connect Slack'
+                : pasteTokenModal.provider === 'notion'
+                  ? 'Connect Notion'
+                  : pasteTokenModal.provider === 'linear'
+                    ? 'Connect Linear'
+                    : pasteTokenModal.provider === 'zoom'
+                      ? 'Connect Zoom'
+                      : 'Connect GitHub'}
+            </div>
+            <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.55, marginBottom:14}}>
+              {pasteTokenModal.provider === 'slack' ? (
+                <>Paste a Slack Bot token (<code>xoxb-…</code>) or User token (<code>xoxp-…</code>). Required scopes: <code>channels:history</code>, <code>groups:history</code>, <code>im:history</code>, <code>channels:read</code>.</>
+              ) : pasteTokenModal.provider === 'notion' ? (
+                <>Paste a Notion <em>Internal Integration Token</em> (<code>ntn_…</code> / <code>secret_…</code>). Share each page/database with the integration from Notion.</>
+              ) : pasteTokenModal.provider === 'linear' ? (
+                <>Paste a Linear <em>Personal API Key</em> (starts with <code>lin_api_…</code>) from Linear → Settings → API, or a Linear OAuth access token.</>
+              ) : pasteTokenModal.provider === 'zoom' ? (
+                <>Paste a Zoom OAuth access token. Required scope: <code>cloud_recording:read</code> (User OAuth) or the Server-to-Server equivalent. Only cloud-recorded meetings are accessible.</>
+              ) : (
+                <>Paste a GitHub Personal Access Token. Recommended scopes: <code>repo</code>, <code>read:user</code>. Fine-grained PATs work too with read permissions on your repos.</>
+              )}
+            </div>
+
+            <label style={{display:'block', fontSize:11, color:'var(--text-dim)', marginBottom:4}}>Token</label>
+            <input
+              type="password"
+              value={pasteTokenModal.token}
+              onChange={(e) => setPasteTokenModal((prev) => (prev ? { ...prev, token: e.target.value } : prev))}
+              placeholder="Paste token here"
+              autoFocus
+              style={{
+                width:'100%',
+                padding:'10px 12px',
+                borderRadius:8,
+                border:'1px solid var(--border-hi)',
+                background:'var(--bg)',
+                color:'var(--text)',
+                fontSize:13,
+                fontFamily:'var(--font-mono)',
+              }}
+              disabled={pasteTokenModal.busy}
+            />
+
+            <div className="row" style={{marginTop:18, gap:8, justifyContent:'flex-end'}}>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                disabled={pasteTokenModal.busy}
+                onClick={() => setPasteTokenModal(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={pasteTokenModal.busy || !pasteTokenModal.token.trim()}
+                style={(pasteTokenModal.busy || !pasteTokenModal.token.trim()) ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+                onClick={async () => {
+                  const provider = pasteTokenModal.provider;
+                  const token = pasteTokenModal.token.trim();
+                  if (!token) return;
+                  setPasteTokenModal((prev) => (prev ? { ...prev, busy: true } : prev));
+                  const res = await executeAction(
+                    'integrations.import_credentials',
+                    { provider, accessToken: token },
+                    { silentError: true },
+                  );
+                  if (res && res.ok) {
+                    pushToast(`${provider}: token saved`, 'success');
+                    setPasteTokenModal(null);
+                    // credentials-imported event from Tauri will fire
+                    // `shogun-credentials-updated` which triggers the
+                    // historical-import prompt automatically.
+                  } else {
+                    const msg = (res && res.error && res.error.message) || 'Save failed';
+                    pushToast(msg, 'error');
+                    setPasteTokenModal((prev) => (prev ? { ...prev, busy: false } : prev));
+                  }
+                }}
+              >
+                {pasteTokenModal.busy ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {toast && (
         <div className={'app-toast '+toast.kind+(toast.action?' has-action':'')}>
@@ -3426,9 +4074,9 @@ function App() {
           padding:0 14px;
           border-radius:13px;
           border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
-          background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
+          background:color-mix(in srgb, var(--surface) 78%, var(--pill-tint) 22%);
           box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);
-          color:color-mix(in srgb, var(--text) 92%, #dfe3ea 8%);
+          color:var(--text);
           font-size:13px;
           font-weight:480;
           letter-spacing:0.01em;
@@ -3438,8 +4086,8 @@ function App() {
           transition:border-color 120ms, background 120ms;
         }
         .context-enabled-pill:hover {
-          border-color:color-mix(in srgb, var(--border-hi) 88%, #8ea8ff 12%);
-          background:color-mix(in srgb, var(--surface) 72%, #101726 28%);
+          border-color:color-mix(in srgb, var(--border-hi) 88%, var(--gold-dim) 12%);
+          background:color-mix(in srgb, var(--surface) 72%, var(--pill-tint-hover) 28%);
         }
         .context-enabled-dot {
           width:9px; height:9px; border-radius:50%;
@@ -3451,11 +4099,11 @@ function App() {
           position:fixed;
           z-index:1079;
           max-width:min(420px, calc(100vw - 24px));
-          background:color-mix(in srgb, var(--surface) 86%, #070b13 14%);
+          background:color-mix(in srgb, var(--surface) 86%, var(--pill-tint-panel) 14%);
           border:1px solid color-mix(in srgb, var(--border-hi) 78%, transparent);
-          border-radius:16px;
+          border-radius:14px;
           box-shadow:0 26px 54px -16px rgba(0,0,0,0.65), 0 4px 12px rgba(0,0,0,0.36);
-          padding:14px;
+          padding:10px;
           animation:contextPanelIn 140ms var(--ease-out);
         }
         @keyframes contextPanelIn {
@@ -3464,25 +4112,26 @@ function App() {
         }
         .context-panel-title {
           color:var(--text-dim);
-          font-size:11px;
-          margin-bottom:10px;
+          font-size:10.5px;
+          margin-bottom:8px;
+          padding:0 2px;
         }
         .context-awareness-card {
           position:relative;
           border-radius:12px;
           border:1px solid color-mix(in srgb, var(--border-hi) 70%, transparent);
-          background:linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 80%, #111827 20%), color-mix(in srgb, var(--surface) 86%, #111827 14%));
-          padding:12px 14px 10px;
-          margin-bottom:8px;
+          background:linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 80%, var(--pill-tint) 20%), color-mix(in srgb, var(--surface) 86%, var(--pill-tint) 14%));
+          padding:10px 12px 9px;
+          margin-bottom:6px;
         }
         .context-awareness-close {
           position:absolute;
-          right:10px;
-          top:10px;
-          width:24px;
-          height:24px;
+          right:8px;
+          top:8px;
+          width:20px;
+          height:20px;
           border:0;
-          border-radius:8px;
+          border-radius:6px;
           background:transparent;
           color:var(--text-mute);
           display:flex;
@@ -3492,27 +4141,27 @@ function App() {
         }
         .context-awareness-close:hover { background:var(--surface-2); color:var(--text); }
         .context-awareness-heading {
-          font-size:16px;
-          font-weight:600;
-          letter-spacing:-0.01em;
-          margin-bottom:6px;
-          padding-right:28px;
+          font-size:13px;
+          font-weight:500;
+          letter-spacing:0;
+          margin-bottom:4px;
+          padding-right:22px;
         }
         .context-panel-body-copy {
           color:var(--text-mute);
-          line-height:1.5;
-          font-size:13px;
+          line-height:1.45;
+          font-size:11.5px;
         }
         .context-link-btn {
-          margin-top:8px;
+          margin-top:6px;
           padding:0;
           border:0;
           background:transparent;
           color:var(--text);
           display:inline-flex;
-          gap:6px;
+          gap:4px;
           align-items:center;
-          font-size:13px;
+          font-size:11.5px;
           font-weight:500;
           cursor:pointer;
         }
@@ -3525,27 +4174,27 @@ function App() {
           display:flex;
           align-items:center;
           justify-content:space-between;
-          font-size:13px;
-          padding:11px 4px;
+          font-size:12px;
+          padding:8px 4px;
           cursor:pointer;
         }
         .context-panel-row:hover { color:var(--gold); }
         .context-panel-foot {
-          margin-top:4px;
-          padding-top:12px;
+          margin-top:2px;
+          padding-top:8px;
           border-top:1px solid var(--border);
           display:flex;
           align-items:center;
-          justify-content:space-between;
+          justify-content:flex-end;
           gap:10px;
         }
         .context-manage-btn {
           border:1px solid var(--border-hi);
           background:var(--surface-2);
           color:var(--text);
-          font-size:13px;
-          border-radius:12px;
-          padding:8px 12px;
+          font-size:11.5px;
+          border-radius:10px;
+          padding:6px 10px;
           cursor:pointer;
         }
         .context-manage-btn:hover { border-color:var(--gold-dim); color:var(--gold); }
@@ -3584,7 +4233,7 @@ function App() {
           min-height:44px;
           padding:6px 14px;
           margin:0;
-          background:color-mix(in srgb, var(--surface) 78%, #0b0f16 22%);
+          background:color-mix(in srgb, var(--surface) 78%, var(--pill-tint) 22%);
           border:1px solid color-mix(in srgb, var(--border-hi) 58%, transparent);
           border-radius:13px;
           box-shadow:inset 0 1px 0 rgba(255,255,255,0.02);
@@ -3592,8 +4241,8 @@ function App() {
           transition:border-color 120ms, background 120ms;
         }
         .user-pill:hover {
-          border-color:color-mix(in srgb, var(--border-hi) 88%, #8ea8ff 12%);
-          background:color-mix(in srgb, var(--surface) 72%, #101726 28%);
+          border-color:color-mix(in srgb, var(--border-hi) 88%, var(--gold-dim) 12%);
+          background:color-mix(in srgb, var(--surface) 72%, var(--pill-tint-hover) 28%);
         }
 
         /* User floating menu */

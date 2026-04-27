@@ -9,6 +9,7 @@
     "check:actions": "python3 hifi/scripts/check-actions.py",
     "check:ipc-mock": "node hifi/scripts/check-ipc-mock-sync.mjs",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "build:web-dist": "node scripts/sync-web-dist.mjs",
     "build:icons": "node scripts/build-icons.mjs",
     "tauri": "tauri",

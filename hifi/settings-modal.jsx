@@ -11,6 +11,7 @@ const SETTINGS_NAV = [
   {id:'meetings',     label:'Meetings',           jp:'会議', icon:'calendar'},
   {id:'chat',         label:'Chat',               jp:'対話', icon:'chat'},
   {id:'llm',          label:'Model & API',        jp:'モデル', icon:'key'},
+  {id:'kioku_graph',  label:'KIOKU Graph',        jp:'記憶グラフ', icon:'memory'},
   {id:'integrations', label:'Integrations',       jp:'連携', icon:'plug'},
   {id:'shortcuts',    label:'Keyboard Shortcuts', jp:'捷径', icon:'keyboard'},
   {id:'team',         label:'Team',               jp:'組',   icon:'users'},
@@ -1308,7 +1309,126 @@ function PanePrivacy() {
 }
 
 function PaneData() {
-  const { confirmWrite } = useRuntimeActions();
+  const { run, confirmWrite, toast } = useRuntimeActions();
+  const [deadLetter, setDeadLetter] = useStateS({ total: 0, bySource: {}, busy: false });
+  // { open, items, sourceFilter, loading, busyId } when the detail modal is open.
+  const [dlDetail, setDlDetail] = useStateS(null);
+  const refreshDeadLetter = React.useCallback(async () => {
+    const res = await run('dead_letter.list', { limit: 1 }, { silentError: true });
+    if (res && res.ok && res.data && res.data.counts) {
+      const c = res.data.counts;
+      setDeadLetter((prev) => ({
+        ...prev,
+        total: Number(c.total) || 0,
+        bySource: c.bySource && typeof c.bySource === 'object' ? c.bySource : {},
+      }));
+    }
+  }, [run]);
+  React.useEffect(() => { void refreshDeadLetter(); }, [refreshDeadLetter]);
+  const onRetryDeadLetter = React.useCallback(async () => {
+    setDeadLetter((prev) => ({ ...prev, busy: true }));
+    const res = await run('dead_letter.retry', { limit: 500 }, { silentError: true });
+    if (res && res.ok && res.data) {
+      const ok = Number(res.data.succeeded) || 0;
+      const bad = Number(res.data.failed) || 0;
+      toast(
+        bad > 0
+          ? `Retried: ${ok} succeeded, ${bad} still failing`
+          : `Retried ${ok} item(s) successfully`,
+        bad > 0 ? 'warn' : 'success',
+      );
+    } else {
+      toast((res && res.error && res.error.message) || 'Retry failed', 'error');
+    }
+    await refreshDeadLetter();
+    setDeadLetter((prev) => ({ ...prev, busy: false }));
+  }, [run, toast, refreshDeadLetter]);
+  const openDeadLetterDetail = React.useCallback(async (sourceFilter) => {
+    setDlDetail({ open: true, items: [], sourceFilter: sourceFilter || '', loading: true, busyId: null });
+    const res = await run(
+      'dead_letter.list',
+      sourceFilter ? { limit: 200, source: sourceFilter } : { limit: 200 },
+      { silentError: true },
+    );
+    const items = res && res.ok && Array.isArray(res.data && res.data.items) ? res.data.items : [];
+    setDlDetail((prev) => (prev ? { ...prev, items, loading: false } : prev));
+  }, [run]);
+  const reloadDeadLetterDetail = React.useCallback(async () => {
+    setDlDetail((prev) => (prev ? { ...prev, loading: true } : prev));
+    const filter = (dlDetail && dlDetail.sourceFilter) || '';
+    const res = await run(
+      'dead_letter.list',
+      filter ? { limit: 200, source: filter } : { limit: 200 },
+      { silentError: true },
+    );
+    const items = res && res.ok && Array.isArray(res.data && res.data.items) ? res.data.items : [];
+    setDlDetail((prev) => (prev ? { ...prev, items, loading: false } : prev));
+    await refreshDeadLetter();
+  }, [dlDetail, run, refreshDeadLetter]);
+  const retryDeadLetterRow = React.useCallback(async (id) => {
+    setDlDetail((prev) => (prev ? { ...prev, busyId: id } : prev));
+    const res = await run('dead_letter.retry_one', { id }, { silentError: true });
+    if (res && res.ok && res.data && res.data.succeeded) {
+      toast('Item retried successfully', 'success');
+    } else {
+      const msg = (res && res.data && res.data.error)
+        || (res && res.error && res.error.message)
+        || 'Retry failed';
+      toast(msg, 'warn');
+    }
+    await reloadDeadLetterDetail();
+    setDlDetail((prev) => (prev ? { ...prev, busyId: null } : prev));
+  }, [run, toast, reloadDeadLetterDetail]);
+  const deleteDeadLetterRow = React.useCallback(async (id) => {
+    setDlDetail((prev) => (prev ? { ...prev, busyId: id } : prev));
+    const res = await run('dead_letter.delete', { id }, { silentError: true });
+    if (res && res.ok) {
+      toast('Item removed', 'success');
+    } else {
+      toast((res && res.error && res.error.message) || 'Delete failed', 'error');
+    }
+    await reloadDeadLetterDetail();
+    setDlDetail((prev) => (prev ? { ...prev, busyId: null } : prev));
+  }, [run, toast, reloadDeadLetterDetail]);
+  const onClearDeadLetter = React.useCallback(async () => {
+    if (!(typeof window.confirm === 'function' && window.confirm('Clear the failed-ingest queue? Items cannot be recovered.'))) return;
+    setDeadLetter((prev) => ({ ...prev, busy: true }));
+    const res = await run('dead_letter.clear', {}, { silentError: true });
+    if (res && res.ok) {
+      const n = (res.data && res.data.removed) || 0;
+      toast(`Cleared ${n} item(s)`, 'success');
+    } else {
+      toast((res && res.error && res.error.message) || 'Clear failed', 'error');
+    }
+    await refreshDeadLetter();
+    setDeadLetter((prev) => ({ ...prev, busy: false }));
+  }, [run, toast, refreshDeadLetter]);
+  const onExport = React.useCallback(async () => {
+    const res = await run('settings.export', {}, { silentError: true });
+    if (res && res.ok) {
+      if (res.data && res.data.cancelled) return;
+      const p = (res.data && res.data.path) || '';
+      toast(p ? `Exported to ${p}` : 'Settings exported', 'success');
+    } else {
+      const msg = (res && res.error && res.error.message) || 'Export failed';
+      toast(msg, 'error');
+    }
+  }, [run, toast]);
+  const onImport = React.useCallback(async () => {
+    const ok = typeof window.confirm === 'function'
+      ? window.confirm('Import settings from file? Existing sections in the backup will be replaced.')
+      : true;
+    if (!ok) return;
+    const res = await run('settings.import', {}, { silentError: true });
+    if (res && res.ok) {
+      if (res.data && res.data.cancelled) return;
+      const n = (res.data && res.data.sections) || 0;
+      toast(`Imported ${n} section(s). Reload the app to see all changes.`, 'success');
+    } else {
+      const msg = (res && res.error && res.error.message) || 'Import failed';
+      toast(msg, 'error');
+    }
+  }, [run, toast]);
   return (
     <Pane
       title="Data Controls"
@@ -1322,7 +1442,205 @@ function PaneData() {
         </span>
       }
     >
-      <div className="s-field-label">Manage Context Collected</div>
+      <div className="s-field-label">Backup & Restore</div>
+      <div className="s-card">
+        <Row
+          title="Export settings"
+          desc="Save all app settings (integrations toggles, workspaces, preferences) as a JSON file. Credentials and memory data are NOT included."
+        >
+          <button className="btn btn-sm btn-secondary" onClick={onExport}>Export…</button>
+        </Row>
+        <Row
+          title="Import settings"
+          desc="Restore settings from a previously exported JSON file. Existing sections in the backup will replace current values."
+          last
+        >
+          <button className="btn btn-sm btn-secondary" onClick={onImport}>Import…</button>
+        </Row>
+      </div>
+
+      <div className="s-field-label" style={{marginTop:22}}>Failed Ingests</div>
+      <div className="s-card">
+        <Row
+          title={
+            <span>
+              {deadLetter.total > 0
+                ? `${deadLetter.total} item${deadLetter.total === 1 ? '' : 's'} pending retry`
+                : 'No failed ingests'}
+              {deadLetter.total > 0 && (
+                <span style={{display:'block', fontSize:11, color:'var(--text-dim)', marginTop:4, fontWeight:400}}>
+                  By source:{' '}
+                  {Object.entries(deadLetter.bySource || {})
+                    .map(([s, n]) => `${s} ${n}`)
+                    .join(' · ')}
+                </span>
+              )}
+            </span>
+          }
+          desc="Items that failed to ingest during a connector sync. Retry replays each through the normal ingest path; succeeded rows are removed from the queue."
+          last
+        >
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => openDeadLetterDetail('')}
+            disabled={deadLetter.busy || deadLetter.total === 0}
+            style={(deadLetter.busy || deadLetter.total === 0) ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+          >
+            Details…
+          </button>
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={onRetryDeadLetter}
+            disabled={deadLetter.busy || deadLetter.total === 0}
+            style={(deadLetter.busy || deadLetter.total === 0) ? {opacity:0.5, cursor:'not-allowed', marginLeft:6} : {marginLeft:6}}
+          >
+            {deadLetter.busy ? 'Retrying…' : 'Retry all'}
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={onClearDeadLetter}
+            disabled={deadLetter.busy || deadLetter.total === 0}
+            style={(deadLetter.busy || deadLetter.total === 0) ? {opacity:0.5, cursor:'not-allowed', marginLeft:6} : {marginLeft:6}}
+          >
+            Clear
+          </button>
+        </Row>
+      </div>
+
+      {dlDetail && dlDetail.open && ReactDOM.createPortal(
+        (() => {
+          const sources = ['', ...Object.keys(deadLetter.bySource || {})];
+          const fmtTime = (ms) => {
+            try { return new Date(Number(ms) || 0).toLocaleString(); } catch (_) { return ''; }
+          };
+          const close = () => setDlDetail(null);
+          return (
+            <div
+              style={{
+                position:'fixed', inset:0, zIndex:1097,
+                background:'color-mix(in srgb, var(--bg) 78%, transparent)',
+                backdropFilter:'blur(4px)',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                padding:20,
+              }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                style={{
+                  width:'min(820px, 100%)',
+                  maxHeight:'min(82vh, 760px)',
+                  background:'var(--surface)',
+                  border:'1px solid var(--border-hi)',
+                  borderRadius:16,
+                  boxShadow:'0 30px 60px -16px rgba(0,0,0,0.6)',
+                  display:'flex', flexDirection:'column',
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div style={{padding:'18px 22px 12px', borderBottom:'1px solid var(--border)'}}>
+                  <div className="row" style={{gap:10, alignItems:'center', marginBottom:8}}>
+                    <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.12em'}}>FAILED INGESTS</span>
+                    <span style={{flex:1}}/>
+                    <button
+                      type="button"
+                      aria-label="Close"
+                      onClick={close}
+                      style={{width:24, height:24, borderRadius:6, border:0, background:'transparent', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}
+                    >
+                      <Icon name="x" size={14}/>
+                    </button>
+                  </div>
+                  <div className="row" style={{gap:6, flexWrap:'wrap'}}>
+                    {sources.map((s) => {
+                      const active = (dlDetail.sourceFilter || '') === s;
+                      const label = s || `All${deadLetter.total ? ` (${deadLetter.total})` : ''}`;
+                      const n = s ? (deadLetter.bySource && deadLetter.bySource[s]) || 0 : 0;
+                      return (
+                        <button
+                          key={s || '__all'}
+                          type="button"
+                          onClick={() => openDeadLetterDetail(s)}
+                          style={{
+                            padding:'4px 10px', borderRadius:999,
+                            border:'1px solid ' + (active ? 'var(--gold-dim)' : 'var(--border)'),
+                            background: active ? 'color-mix(in srgb, var(--gold) 10%, var(--surface))' : 'var(--surface)',
+                            color: active ? 'var(--gold)' : 'var(--text-mute)',
+                            fontSize:11, cursor:'pointer', fontFamily:'inherit',
+                          }}
+                        >
+                          {s ? `${s} · ${n}` : label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div style={{flex:1, overflowY:'auto', padding:'10px 18px 18px'}}>
+                  {dlDetail.loading ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>Loading…</div>
+                  ) : dlDetail.items.length === 0 ? (
+                    <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
+                      No failed items{dlDetail.sourceFilter ? ` for ${dlDetail.sourceFilter}` : ''}.
+                    </div>
+                  ) : (
+                    <div style={{display:'flex', flexDirection:'column', gap:10}}>
+                      {dlDetail.items.map((it) => {
+                        const id = Number(it.id);
+                        const busy = dlDetail.busyId === id;
+                        const title = (it.payload && it.payload.title) || '(untitled)';
+                        return (
+                          <div
+                            key={id}
+                            className="card"
+                            style={{padding:14, display:'flex', flexDirection:'column', gap:6}}
+                          >
+                            <div className="row" style={{gap:10, alignItems:'center', flexWrap:'wrap'}}>
+                              <span className="t-mono" style={{fontSize:10, color:'var(--gold)', letterSpacing:'0.1em'}}>{String(it.source || '').toUpperCase()}</span>
+                              <span style={{fontSize:13, fontWeight:500, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={title}>{title}</span>
+                              <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)'}}>{it.attempts || 1}× · {fmtTime(it.lastFailedAt)}</span>
+                            </div>
+                            {it.entityId && (
+                              <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={String(it.entityId)}>
+                                id: {String(it.entityId)}
+                              </div>
+                            )}
+                            <div style={{fontSize:12, color:'var(--danger)', lineHeight:1.45, whiteSpace:'pre-wrap', wordBreak:'break-word'}}>
+                              {String(it.errorMessage || '').slice(0, 600)}
+                            </div>
+                            <div className="row" style={{gap:6, justifyContent:'flex-end', marginTop:2}}>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-secondary"
+                                disabled={busy}
+                                onClick={() => retryDeadLetterRow(id)}
+                                style={busy ? {opacity:0.55, cursor:'default'} : undefined}
+                              >
+                                {busy ? 'Working…' : 'Retry'}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                disabled={busy}
+                                onClick={() => deleteDeadLetterRow(id)}
+                                style={busy ? {opacity:0.55, cursor:'default'} : undefined}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
+      )}
+      <div className="s-field-label" style={{marginTop:22}}>Manage Context Collected</div>
       <div className="s-card">
         <Row title="Delete Last Hour of Context" desc="Remove all context collected in the last hour">
           <button className="btn btn-sm btn-secondary" onClick={()=>confirmWrite('data.delete_range', { range:'last_hour' }, 'Delete last hour', 'This permanently deletes local memory for the selected range.')}>Delete</button>
@@ -2374,54 +2692,6 @@ function PaneShortcuts() {
     }));
   }, [Kbd, merged]);
 
-  const [jsonText, setJsonText] = useStateS('{}');
-  React.useEffect(() => {
-    const raw = sections.shortcuts && sections.shortcuts.bindings;
-    setJsonText(JSON.stringify(raw && typeof raw === 'object' ? raw : {}, null, 2));
-  }, [sections.shortcuts]);
-
-  const applyFromRuntime = React.useCallback((bindings) => {
-    if (window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.applyShortcutBindings) {
-      window.SHOGUN_RUNTIME.applyShortcutBindings(bindings);
-    }
-  }, []);
-
-  const saveJson = async () => {
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonText);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        toast('JSON must be an object: action id -> { key, super, ctrl, alt, shift }', 'error');
-        return;
-      }
-    } catch (_err) {
-      toast('Invalid JSON', 'error');
-      return;
-    }
-    const res = await run(
-      'settings.save',
-      { section: 'shortcuts', bindings: parsed },
-      { silentError: true, successMessage: 'Shortcuts saved' },
-    );
-    if (res && res.ok) {
-      applyFromRuntime(parsed);
-      await refreshSections();
-    }
-  };
-
-  const resetDefaults = async () => {
-    const res = await run(
-      'settings.save',
-      { section: 'shortcuts', bindings: {} },
-      { silentError: true, successMessage: 'Shortcuts reset to defaults' },
-    );
-    if (res && res.ok) {
-      applyFromRuntime({});
-      setJsonText('{}');
-      await refreshSections();
-    }
-  };
-
   if (!Kbd || !merged) {
     return (
       <Pane title="Keyboard Shortcuts" jp="捷径">
@@ -2429,8 +2699,6 @@ function PaneShortcuts() {
       </Pane>
     );
   }
-
-  const actionIds = Object.keys(Kbd.DEFAULT_BINDINGS).join(', ');
 
   return (
     <Pane title="Keyboard Shortcuts" jp="捷径">
@@ -2451,55 +2719,154 @@ function PaneShortcuts() {
           </div>
         </div>
       ))}
-      <div style={{ marginTop: 22 }}>
-        <div className="s-field-label" style={{ marginBottom: 8 }}>Overrides (JSON)</div>
-        <div className="s-field-hint" style={{ marginBottom: 8 }}>
-          Only list keys you want to change. Booleans: super (Cmd/Ctrl chord), ctrl (Control), alt, shift. Example:
-          {' '}
-          <span className="t-mono" style={{ fontSize: 11 }}>{'{"shortcut.new_chat":{"key":"e","super":true,"ctrl":false,"alt":false,"shift":false}}'}</span>
-        </div>
-        <textarea
-          className="s-input"
-          value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
-          rows={12}
-          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.45 }}
-          spellCheck={false}
-        />
-        <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => void saveJson()}>Save</button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => void resetDefaults()}>Reset to defaults</button>
-        </div>
-        <div className="s-field-hint" style={{ marginTop: 10, fontSize: 11, lineHeight: 1.5 }}>
-          Action ids: <span className="t-mono">{actionIds}</span>
-        </div>
-      </div>
     </Pane>
   );
 }
 
 function PaneTeam() {
-  const { run } = useRuntimeActions();
+  const { toast } = useRuntimeActions();
+  const [size, setSize] = useStateS('');
+  const [purpose, setPurpose] = useStateS('');
+  const [email, setEmail] = useStateS('');
+  const [sending, setSending] = useStateS(false);
+
+  const canSend = size.trim().length > 0 && purpose.trim().length > 0;
+
+  const sendFeedback = React.useCallback(() => {
+    if (!canSend || sending) return;
+    setSending(true);
+    try {
+      const recipient = (PRODUCT.supportMailto || '').replace(/^mailto:/, '').split('?')[0] || 'support@yourcompany.com';
+      const subject = 'SHOGUN for Teams — Feedback / フィードバック';
+      const bodyLines = [
+        'Team size / チーム規模:',
+        size.trim(),
+        '',
+        'What you would use it for / 用途:',
+        purpose.trim(),
+      ];
+      if (email.trim()) {
+        bodyLines.push('', 'Reply to / 返信先:', email.trim());
+      }
+      const href = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+      if (typeof window !== 'undefined') {
+        window.location.href = href;
+      }
+      toast('Thanks! / ありがとうございます', 'info');
+      setSize('');
+      setPurpose('');
+      setEmail('');
+    } finally {
+      setSending(false);
+    }
+  }, [canSend, sending, size, purpose, email, toast, setSize, setPurpose, setEmail, setSending]);
+
   return (
     <Pane title="Team" jp="組">
       <div className="s-card" style={{padding:20}}>
-        <div className="s-field-hint" style={{ marginBottom: 12, fontSize: 11, lineHeight: 1.5 }}>
-          Team checkout and seat billing are <strong>preview (not connected)</strong> in v1. Contact{' '}
-          <a className="s-link" href={PRODUCT.supportMailto}>
-            support
-          </a>{' '}
-          for enterprise interest.
+        <div className="row" style={{gap:10, alignItems:'center', marginBottom:10}}>
+          <span style={{
+            display:'inline-flex', alignItems:'center', gap:6,
+            padding:'4px 10px', borderRadius:999,
+            border:'1px solid var(--gold-dim)', color:'var(--gold)',
+            fontSize:11, fontWeight:500, letterSpacing:'0.04em', textTransform:'uppercase',
+          }}>
+            <span className="en-only">Coming Soon</span>
+            <span className="jp">近日公開</span>
+          </span>
         </div>
-        <div style={{fontSize:16, fontWeight:500}}>SHOGUN for Teams <span className="jp dim" style={{fontSize:11, marginLeft:6}}>組織版</span></div>
-        <div className="s-field-hint" style={{marginTop:6}}>Get SHOGUN for your whole company with one subscription.</div>
-        <ul style={{margin:'16px 0 0', padding:0, listStyle:'none', fontSize:13, lineHeight:2}}>
-          {['Centralized billing for your company','Invite and manage team members','Mix Plus and Pro seats in one team'].map(f=>(
+        <div style={{fontSize:16, fontWeight:500}}>
+          SHOGUN for Teams
+          <span className="jp dim" style={{fontSize:11, marginLeft:6}}>組織版</span>
+        </div>
+        <div className="s-field-hint" style={{marginTop:6}}>
+          <span className="en-only">Team features are in development. Tell us what you need and we&apos;ll prioritize.</span>
+          <span className="jp">チーム機能は開発中です。必要な内容を教えていただけると優先度を決める参考になります。</span>
+        </div>
+        <div className="s-field-hint" style={{marginTop:12, fontSize:11, textTransform:'uppercase', letterSpacing:'0.06em'}}>
+          <span className="en-only">Planned</span>
+          <span className="jp">予定機能</span>
+        </div>
+        <ul style={{margin:'6px 0 0', padding:0, listStyle:'none', fontSize:13, lineHeight:2}}>
+          {[
+            'Centralized billing for your company',
+            'Invite and manage team members',
+            'Mix Plus and Pro seats in one team',
+          ].map(f => (
             <li key={f}><Icon name="check" size={11} className="gold" style={{marginRight:8}}/>{f}</li>
           ))}
         </ul>
-        <div style={{borderTop:'1px solid var(--border)', marginTop:16, paddingTop:14}} className="row">
-          <button className="btn btn-secondary" onClick={()=>run('settings.save', { section:'team', action:'create' }, { successMessage:'Team creation flow started' })}>Create a Team</button>
-          <span className="s-field-hint" style={{marginLeft:12}}>Pricing and checkout will appear here after billing is connected.</span>
+      </div>
+
+      <div className="s-card" style={{padding:20, marginTop:14}}>
+        <div style={{fontSize:14, fontWeight:500}}>
+          <span className="en-only">Send us feedback</span>
+          <span className="jp">フィードバックを送る</span>
+        </div>
+        <div className="s-field-hint" style={{marginTop:4}}>
+          <span className="en-only">Two quick questions — this helps us ship the right thing first.</span>
+          <span className="jp">2問だけ。優先順位付けに役立てます。</span>
+        </div>
+
+        <div style={{marginTop:14}}>
+          <label className="s-field-hint" style={{display:'block', fontSize:11, marginBottom:4}}>
+            <span className="en-only">Team size (e.g. 5, 20, 100+)</span>
+            <span className="jp">チーム規模（例: 5人 / 20人 / 100人以上）</span>
+          </label>
+          <input
+            className="s-input"
+            type="text"
+            value={size}
+            onChange={(e)=>setSize(e.target.value)}
+            placeholder="e.g. 20 / 20人"
+            style={{width:'100%'}}
+          />
+        </div>
+
+        <div style={{marginTop:12}}>
+          <label className="s-field-hint" style={{display:'block', fontSize:11, marginBottom:4}}>
+            <span className="en-only">What would you use SHOGUN for Teams for?</span>
+            <span className="jp">どんな用途で使いたいですか？</span>
+          </label>
+          <textarea
+            className="s-input"
+            value={purpose}
+            onChange={(e)=>setPurpose(e.target.value)}
+            rows={4}
+            placeholder="e.g. Share prompts across our sales org / 営業部門でプロンプトを共有したい"
+            style={{width:'100%', resize:'vertical', minHeight:90, fontFamily:'inherit'}}
+          />
+        </div>
+
+        <div style={{marginTop:12}}>
+          <label className="s-field-hint" style={{display:'block', fontSize:11, marginBottom:4}}>
+            <span className="en-only">Email (optional — for replies)</span>
+            <span className="jp">メール（任意・返信希望の場合）</span>
+          </label>
+          <input
+            className="s-input"
+            type="email"
+            value={email}
+            onChange={(e)=>setEmail(e.target.value)}
+            placeholder="you@company.com"
+            style={{width:'100%'}}
+          />
+        </div>
+
+        <div className="row" style={{marginTop:16, gap:12, alignItems:'center'}}>
+          <button
+            className="btn btn-secondary"
+            onClick={sendFeedback}
+            disabled={!canSend || sending}
+            style={!canSend || sending ? {opacity:0.5, cursor:'not-allowed'} : undefined}
+          >
+            <span className="en-only">Send feedback</span>
+            <span className="jp">送信</span>
+          </button>
+          <span className="s-field-hint" style={{fontSize:11}}>
+            <span className="en-only">Opens your mail app to deliver the message.</span>
+            <span className="jp">メールアプリが起動して送信されます。</span>
+          </span>
         </div>
       </div>
     </Pane>
@@ -2578,12 +2945,468 @@ function PaneSupport() {
   );
 }
 
+function PaneKiokuGraph() {
+  const { run } = useRuntimeActions();
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
+
+  // kioku_graph section
+  const [readPath, setReadPath] = useStateS('legacy');
+  const [workerEnabled, setWorkerEnabled] = useStateS(false);
+  const [captureFlag, setCaptureFlag] = useStateS(false);
+  const [pollSecs, setPollSecs] = useStateS('30');
+  const [maxJobs, setMaxJobs] = useStateS('5');
+
+  // kioku_cost section
+  const [monthlyCap, setMonthlyCap] = useStateS('10');
+  const [capAction, setCapAction] = useStateS('pause_extraction');
+  const [fallbackModel, setFallbackModel] = useStateS('claude-haiku-4-5');
+
+  // llm.extractionModel
+  const [extractionModel, setExtractionModel] = useStateS('claude-haiku-4-5');
+
+  // kioku_rules — text area editing of raw JSON
+  const [rulesText, setRulesText] = useStateS('[]');
+  const [rulesError, setRulesError] = useStateS('');
+
+  // edge_type review section state
+  const [proposals, setProposals] = useStateS([]);
+  const [proposalsBusy, setProposalsBusy] = useStateS(false);
+  const [proposalsErr, setProposalsErr] = useStateS(null);
+  const [reviewNotes, setReviewNotes] = useStateS({}); // edge_type -> draft note
+  const [reviewBusy, setReviewBusy] = useStateS(null);  // edge_type currently being reviewed
+  const [showAllProposals, setShowAllProposals] = useStateS(false);
+
+  const refreshProposals = React.useCallback(async () => {
+    setProposalsBusy(true);
+    setProposalsErr(null);
+    const r = await run(
+      'kioku.edge_type_proposals',
+      { only_unreviewed: !showAllProposals, limit: 50 },
+      { silentError: true },
+    );
+    setProposalsBusy(false);
+    if (r.ok && r.data && Array.isArray(r.data.proposals)) {
+      setProposals(r.data.proposals);
+    } else {
+      setProposalsErr((r && (r.message || r.error)) || 'Failed to load proposals.');
+    }
+  }, [run, showAllProposals]);
+
+  React.useEffect(() => { void refreshProposals(); }, [refreshProposals]);
+
+  const reviewProposal = async (edge_type, status) => {
+    setReviewBusy(edge_type);
+    const note = (reviewNotes[edge_type] || '').trim();
+    const payload = { edge_type, status };
+    if (note) payload.note = note;
+    const r = await run('kioku.edge_type_review', payload, { silentError: true });
+    setReviewBusy(null);
+    if (r.ok) {
+      setReviewNotes((prev) => {
+        const next = { ...prev };
+        delete next[edge_type];
+        return next;
+      });
+      await refreshProposals();
+    }
+  };
+
+  // Backup section state
+  const [backupLabel, setBackupLabel] = useStateS('');
+  const [backupBusy, setBackupBusy] = useStateS(false);
+  const [backupResult, setBackupResult] = useStateS(null);
+  const [backupError, setBackupError] = useStateS(null);
+
+  const runBackup = async () => {
+    setBackupBusy(true);
+    setBackupResult(null);
+    setBackupError(null);
+    const payload = {};
+    const trimmed = backupLabel.trim();
+    if (trimmed) payload.label = trimmed;
+    const r = await run('kioku.backup_db', payload, { silentError: true });
+    setBackupBusy(false);
+    if (r.ok && r.data) {
+      setBackupResult(r.data);
+    } else {
+      setBackupError((r && (r.message || r.error)) || 'Backup failed; check logs.');
+    }
+  };
+
+  React.useEffect(() => {
+    const g = sections.kioku_graph || {};
+    if (typeof g.read_path === 'string') setReadPath(g.read_path);
+    if (typeof g.worker_enabled === 'boolean') setWorkerEnabled(g.worker_enabled);
+    if (typeof g.capture_to_mem_captures === 'boolean') setCaptureFlag(g.capture_to_mem_captures);
+    if (g.poll_interval_secs != null) setPollSecs(String(g.poll_interval_secs));
+    if (g.max_jobs_per_tick != null) setMaxJobs(String(g.max_jobs_per_tick));
+
+    const c = sections.kioku_cost || {};
+    if (c.monthly_cap_usd != null) setMonthlyCap(String(c.monthly_cap_usd));
+    if (typeof c.cap_action === 'string') setCapAction(c.cap_action);
+    if (typeof c.fallback_model === 'string') setFallbackModel(c.fallback_model);
+
+    const l = sections.llm || {};
+    if (typeof l.extractionModel === 'string') setExtractionModel(l.extractionModel);
+
+    const arr = Array.isArray(sections.kioku_rules) ? sections.kioku_rules : [];
+    try {
+      setRulesText(JSON.stringify(arr, null, 2));
+    } catch (_) {
+      setRulesText('[]');
+    }
+  }, [sections]);
+
+  const persistGraph = (patch) => run(
+    'settings.save',
+    {
+      section: 'kioku_graph',
+      read_path: readPath,
+      worker_enabled: workerEnabled,
+      capture_to_mem_captures: captureFlag,
+      poll_interval_secs: Number(pollSecs) || 30,
+      max_jobs_per_tick: Number(maxJobs) || 5,
+      ...patch,
+    },
+    { silentError: true },
+  ).then(() => refreshSections && refreshSections());
+
+  const persistCost = (patch) => run(
+    'settings.save',
+    {
+      section: 'kioku_cost',
+      monthly_cap_usd: Number(monthlyCap) || 10,
+      cap_action: capAction,
+      fallback_model: fallbackModel,
+      ...patch,
+    },
+    { silentError: true },
+  ).then(() => refreshSections && refreshSections());
+
+  const persistLLMModel = (val) => run(
+    'settings.save',
+    { section: 'llm', extractionModel: val },
+    { silentError: true },
+  ).then(() => refreshSections && refreshSections());
+
+  const saveRules = async () => {
+    setRulesError('');
+    let parsed;
+    try {
+      parsed = JSON.parse(rulesText);
+    } catch (e) {
+      setRulesError(`Invalid JSON: ${e.message}`);
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      setRulesError('kioku_rules must be a JSON array.');
+      return;
+    }
+    // settings.save expects an object payload under `section`. We replace
+    // the entire section with the array so editing is round-trippable.
+    await run(
+      'settings.save',
+      { section: 'kioku_rules', value: parsed },
+      { silentError: true },
+    );
+    if (refreshSections) await refreshSections();
+  };
+
+  return (
+    <Pane
+      title="KIOKU Graph"
+      jp="記憶グラフ"
+      subtitle="Phase 2 graph layer flags, BYOK extraction worker, monthly cost cap, and user-defined rules. All toggles default OFF — Phase 1 behavior is preserved until you opt in."
+    >
+      <div className="s-card" style={{padding:20, marginBottom:16}}>
+        <Row title="Retrieval read path" desc="Switch context_assembly between legacy FTS+semantic and the KIOKU graph traversal (recursive CTE + decay).">
+          <select
+            className="s-select"
+            value={readPath}
+            onChange={(e) => { const v = e.target.value; setReadPath(v); persistGraph({ read_path: v }); }}
+          >
+            <option value="legacy">legacy</option>
+            <option value="graph">graph</option>
+          </select>
+        </Row>
+        <Row title="Capture → mem_captures" desc="When ON, capture_sampler / macos_ax route raw captures into mem_captures + extraction_jobs instead of mem_items.">
+          <Toggle on={captureFlag} onClick={() => { const next = !captureFlag; setCaptureFlag(next); persistGraph({ capture_to_mem_captures: next }); }} />
+        </Row>
+        <Row title="Worker enabled" desc="Background thread polls extraction_jobs and calls the BYOK extraction model. Disabled = jobs queue but never run.">
+          <Toggle on={workerEnabled} onClick={() => { const next = !workerEnabled; setWorkerEnabled(next); persistGraph({ worker_enabled: next }); }} />
+        </Row>
+        <Row title="Worker poll interval (sec)" desc="Clamped 5–600 server-side. Lower values check the queue more often at the cost of CPU wake-ups.">
+          <input
+            className="s-input"
+            type="number"
+            min="5"
+            max="600"
+            value={pollSecs}
+            onChange={(e) => setPollSecs(e.target.value)}
+            onBlur={() => persistGraph({ poll_interval_secs: Number(pollSecs) || 30 })}
+            style={{width:90}}
+          />
+        </Row>
+        <Row title="Max jobs per tick" desc="Bounds tick latency. Clamped 1–50 server-side." last>
+          <input
+            className="s-input"
+            type="number"
+            min="1"
+            max="50"
+            value={maxJobs}
+            onChange={(e) => setMaxJobs(e.target.value)}
+            onBlur={() => persistGraph({ max_jobs_per_tick: Number(maxJobs) || 5 })}
+            style={{width:90}}
+          />
+        </Row>
+      </div>
+
+      <div className="s-card" style={{padding:20, marginBottom:16}}>
+        <h3 style={{marginTop:0}}>BYOK extraction cost</h3>
+        <Row title="Extraction model" desc="Anthropic ID used by AnthropicExtractionClient. Sonnet / Opus increase quality + cost (3x / 15x).">
+          <select
+            className="s-select"
+            value={extractionModel}
+            onChange={(e) => { const v = e.target.value; setExtractionModel(v); persistLLMModel(v); }}
+          >
+            <option value="claude-haiku-4-5">claude-haiku-4-5 (default, ~$9/mo median)</option>
+            <option value="claude-sonnet-4-6">claude-sonnet-4-6 (3x cost)</option>
+            <option value="claude-opus-4-7">claude-opus-4-7 (15x cost)</option>
+          </select>
+        </Row>
+        <Row title="Monthly cap (USD)" desc="When this month's cost_ledger total reaches the cap, cap_action below decides what happens.">
+          <input
+            className="s-input"
+            type="number"
+            step="1"
+            min="0"
+            value={monthlyCap}
+            onChange={(e) => setMonthlyCap(e.target.value)}
+            onBlur={() => persistCost({ monthly_cap_usd: Number(monthlyCap) || 10 })}
+            style={{width:90}}
+          />
+        </Row>
+        <Row title="Cap action" desc="pause_extraction = capture continues, jobs sit until next month. pause_capture = capture also stops. fallback_to_lighter = swap to fallback model.">
+          <select
+            className="s-select"
+            value={capAction}
+            onChange={(e) => { const v = e.target.value; setCapAction(v); persistCost({ cap_action: v }); }}
+          >
+            <option value="pause_extraction">pause_extraction (recommended)</option>
+            <option value="pause_capture">pause_capture (hard cap)</option>
+            <option value="fallback_to_lighter">fallback_to_lighter</option>
+          </select>
+        </Row>
+        <Row title="Fallback model" desc="Used when cap_action = fallback_to_lighter and the cap is reached." last>
+          <select
+            className="s-select"
+            value={fallbackModel}
+            onChange={(e) => { const v = e.target.value; setFallbackModel(v); persistCost({ fallback_model: v }); }}
+          >
+            <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+            <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+          </select>
+        </Row>
+      </div>
+
+      <div className="s-card" style={{padding:20}}>
+        <h3 style={{marginTop:0}}>User-defined rules (kioku_rules)</h3>
+        <p style={{color:'#aaa', fontSize:12, marginTop:0}}>
+          A JSON array of rule objects. Each object has <code>id</code>, optional <code>yaml</code> (frontmatter
+          with <code>title:</code>), and <code>body</code>. Rules are injected at the top of every chat / brief /
+          draft / pack system prompt. Saved to <code>settings.json</code>; the cache reloads on save.
+        </p>
+        <textarea
+          className="s-input"
+          value={rulesText}
+          onChange={(e) => setRulesText(e.target.value)}
+          rows={12}
+          spellCheck={false}
+          style={{fontFamily:'monospace', fontSize:12, width:'100%'}}
+        />
+        {rulesError && <div style={{color:'#e57373', marginTop:8, fontSize:12}}>{rulesError}</div>}
+        <div style={{marginTop:12, display:'flex', gap:8}}>
+          <button className="btn btn-sm btn-primary" onClick={() => void saveRules()}>
+            Save rules
+          </button>
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => setRulesText(JSON.stringify(Array.isArray(sections.kioku_rules) ? sections.kioku_rules : [], null, 2))}
+          >
+            Discard changes
+          </button>
+        </div>
+      </div>
+
+      <div className="s-card" style={{padding:20, marginTop:16}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+          <h3 style={{margin:0}}>edge_type review queue</h3>
+          <div style={{display:'flex', gap:8}}>
+            <label style={{fontSize:12, color:'#aaa'}}>
+              <input
+                type="checkbox"
+                checked={showAllProposals}
+                onChange={(e) => setShowAllProposals(e.target.checked)}
+                style={{marginRight:4}}
+              />
+              Show reviewed
+            </label>
+            <button
+              className="btn btn-sm btn-secondary"
+              onClick={() => void refreshProposals()}
+              disabled={proposalsBusy}
+            >
+              {proposalsBusy ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+        <p style={{color:'#aaa', fontSize:12, marginTop:0}}>
+          Each edge the extraction worker writes records its <code>edge_type</code> here. Mark
+          new types as <strong>Accept</strong> to feed them into Stage 4's CHECK constraint
+          candidate set, or <strong>Reject</strong> to flag them for soft-retire. Canonical
+          types (<code>mentions</code> / <code>follows_up</code> / ...) are pre-accepted.
+        </p>
+        {proposalsErr && <div style={{color:'#e57373', marginBottom:8, fontSize:12}}>{proposalsErr}</div>}
+        {proposals.length === 0 ? (
+          <div style={{color:'#888', fontStyle:'italic', padding:'8px 0'}}>
+            {showAllProposals
+              ? 'No proposals yet. Once the extraction worker runs, it logs every edge_type here.'
+              : 'No unreviewed proposals. Toggle "Show reviewed" to see canonical and previously-judged types.'}
+          </div>
+        ) : (
+          <table className="mdbg-table" style={{marginTop:8}}>
+            <thead>
+              <tr>
+                <th style={{textAlign:'left'}}>edge_type</th>
+                <th style={{textAlign:'right'}}>seen</th>
+                <th style={{textAlign:'left'}}>status</th>
+                <th style={{textAlign:'left'}}>note (optional)</th>
+                <th style={{textAlign:'right'}}>actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proposals.map((p) => {
+                const status =
+                  p.reviewed === 1 ? 'accepted' :
+                  p.reviewed === 2 ? 'rejected' :
+                  'unreviewed';
+                const statusColor =
+                  p.reviewed === 1 ? '#8fdc8f' :
+                  p.reviewed === 2 ? '#e57373' :
+                  '#aaa';
+                return (
+                  <tr key={p.edge_type}>
+                    <td>
+                      <code>{p.edge_type}</code>
+                      {p.canonical && (
+                        <span style={{
+                          marginLeft:6, fontSize:10, padding:'2px 6px', borderRadius:8,
+                          background:'#1f3a1f', color:'#8fdc8f', border:'1px solid #2f5a2f',
+                        }}>canonical</span>
+                      )}
+                    </td>
+                    <td style={{textAlign:'right'}}>{p.seen_count}</td>
+                    <td style={{color:statusColor}}>{status}</td>
+                    <td>
+                      {p.reviewer_note ? (
+                        <span style={{color:'#aaa', fontSize:11}}>{p.reviewer_note}</span>
+                      ) : (
+                        <input
+                          className="s-input"
+                          placeholder="why accept/reject?"
+                          value={reviewNotes[p.edge_type] || ''}
+                          onChange={(e) => setReviewNotes((prev) => ({
+                            ...prev, [p.edge_type]: e.target.value,
+                          }))}
+                          style={{fontSize:11, padding:'2px 6px', width:200}}
+                        />
+                      )}
+                    </td>
+                    <td style={{textAlign:'right'}}>
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => void reviewProposal(p.edge_type, 1)}
+                        disabled={reviewBusy === p.edge_type || p.reviewed === 1}
+                        style={{marginRight:4}}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => void reviewProposal(p.edge_type, 2)}
+                        disabled={reviewBusy === p.edge_type || p.reviewed === 2}
+                      >
+                        Reject
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="s-card" style={{padding:20, marginTop:16}}>
+        <h3 style={{marginTop:0}}>Backup</h3>
+        <p style={{color:'#aaa', fontSize:12, marginTop:0}}>
+          Run <code>VACUUM INTO</code> on the live <code>memory.db</code> to produce a consistent
+          compacted copy. Recommended before flipping <code>kioku_graph.stage5_apply</code> on, or
+          anytime you want a snapshot. The Tauri app can stay running.
+        </p>
+        <Row title="Label" desc='Inserted into the default filename ("memory.db.<label>-YYYY-MM-DD-HHMMSS"). Leave blank for "backup".'>
+          <input
+            className="s-input"
+            value={backupLabel}
+            onChange={(e) => setBackupLabel(e.target.value)}
+            placeholder="pre-stage5"
+            style={{width:200}}
+          />
+        </Row>
+        <Row title="Create backup now" desc="Writes to the same directory as memory.db. Refuses to overwrite existing files." last>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => void runBackup()}
+            disabled={backupBusy}
+          >
+            {backupBusy ? 'Backing up…' : 'Create backup'}
+          </button>
+        </Row>
+        {backupError && (
+          <div style={{color:'#e57373', marginTop:8, fontSize:12}}>{backupError}</div>
+        )}
+        {backupResult && !backupError && (
+          <div style={{marginTop:12, fontSize:12, color:'#aaa', lineHeight:1.6}}>
+            <div>✓ Backup complete</div>
+            <div>dest: <code>{backupResult.dest_path}</code></div>
+            <div>size: {formatBytes(backupResult.bytes)}</div>
+            <div>at: {new Date(backupResult.completed_at_ms).toLocaleString()}</div>
+          </div>
+        )}
+      </div>
+    </Pane>
+  );
+}
+
+function formatBytes(n) {
+  if (!n || n < 1024) return `${n || 0} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)} ${units[i]}`;
+}
+
 const PANES = {
   general: PaneGeneral, system: PaneSystem, appearance: PaneAppearance,
   privacy: PanePrivacy, data: PaneData, hummingbird: PaneHummingbird,
   meetings: PaneMeetings, chat: PaneChat, llm: PaneLLM, integrations: PaneIntegrations,
   shortcuts: PaneShortcuts,
   team: PaneTeam, support: PaneSupport,
+  kioku_graph: PaneKiokuGraph,
 };
 
 function SettingsModal({pane, setPane, close}) {

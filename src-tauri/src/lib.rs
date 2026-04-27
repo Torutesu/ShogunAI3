@@ -4,21 +4,27 @@ mod brief;
 mod brief_actions;
 mod calendar_sync;
 mod capture_sampler;
+mod connector_sync;
 mod context_assembly;
+mod dead_letter;
 mod commands;
 mod deep_link_credentials;
 mod embed_backfill;
 mod embeddings;
 mod gmail;
 mod google_calendar;
+mod google_drive;
 mod google_oauth;
+mod http_retry;
 mod integration_secrets;
 mod integrations;
+mod linear;
 mod llm;
 mod llm_providers;
 mod macos_ax;
 mod meeting_commands;
 mod meeting_enhance;
+mod meeting_import;
 mod meeting_mic;
 mod meeting_mcp;
 mod meeting_recipes;
@@ -28,10 +34,33 @@ mod meeting_stt;
 mod memory_debug;
 mod memory_obs;
 mod memory_store;
+mod kioku_graph_schema;
+mod kioku_eval;
+mod decay;
+mod kioku_capture;
+mod mem_captures;
+mod extraction_jobs;
+mod cost_ledger;
+mod kioku_extraction;
+mod kioku_decision_graph;
+mod kioku_rules;
+mod kioku_graph_traversal;
+mod kioku_debug_stats;
+mod kioku_edge_types;
+mod kioku_stage5;
+mod kioku_backup;
+mod rollup_sync;
+mod summarizer_store;
+mod summarizer;
 mod paths;
+mod progress_emitter;
 mod schedule_queue;
 mod secrets;
 mod settings_store;
+mod slack;
+mod notion;
+mod github;
+mod zoom;
 
 fn load_dotenv() {
   let _ = dotenvy::dotenv();
@@ -101,6 +130,16 @@ pub fn run() {
       }
       capture_sampler::start_background_sampler(app.handle().clone());
       calendar_sync::spawn_background_calendar_sync();
+      connector_sync::spawn_background_connector_sync();
+      rollup_sync::spawn_background_rollup_sync();
+      // KIOKU extraction worker (Phase 2 Stage 2). The thread runs from
+      // boot but each tick checks `kioku_graph.worker_enabled` so it stays
+      // idle until the user (or settings migration) flips the flag.
+      kioku_extraction::start_extraction_worker(app.handle().clone());
+      // Phase 2 Stage 3 (T8.2): warm the kioku_rules cache so the first
+      // chat / brief call doesn't pay a settings round-trip.
+      kioku_rules::reload_from_settings_now();
+      progress_emitter::set_app_handle(app.handle().clone());
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -118,11 +157,20 @@ pub fn run() {
       commands::shogun_chat_complete,
       commands::shogun_draft,
       commands::shogun_schedule_action,
+      commands::shogun_kioku_brief_signals,
+      commands::shogun_kioku_debug_stats,
+      commands::shogun_kioku_stage5_dry_run,
+      commands::shogun_kioku_stage5_apply,
+      commands::shogun_kioku_backup_db,
+      commands::shogun_kioku_edge_type_proposals,
+      commands::shogun_kioku_edge_type_review,
       commands::shogun_stats,
       commands::app_open_hummingbird,
       commands::app_create_share_link,
       commands::app_settings_load,
       commands::app_settings_save,
+      commands::app_settings_export,
+      commands::app_settings_import,
       commands::app_llm_api_key_set,
       commands::app_llm_api_key_status,
       commands::app_llm_api_key_clear,
@@ -132,6 +180,17 @@ pub fn run() {
       commands::app_integration_toggle,
       commands::shogun_google_calendar_sync,
       commands::shogun_gmail_sync,
+      commands::shogun_slack_sync,
+      commands::shogun_notion_sync,
+      commands::shogun_github_sync,
+      commands::shogun_linear_sync,
+      commands::shogun_drive_sync,
+      commands::shogun_zoom_sync,
+      commands::shogun_dead_letter_list,
+      commands::shogun_dead_letter_retry,
+      commands::shogun_dead_letter_clear,
+      commands::shogun_dead_letter_retry_one,
+      commands::shogun_dead_letter_delete,
       commands::app_capture_pause,
       commands::app_capture_resume,
       commands::app_permissions_manage,
@@ -174,6 +233,8 @@ pub fn run() {
       meeting_commands::shogun_meeting_mic_stop,
       meeting_commands::shogun_meeting_transcribe_pcm,
       meeting_commands::shogun_meeting_mcp_tools,
+      meeting_commands::shogun_meeting_import_pick,
+      meeting_commands::shogun_meeting_import_file,
       #[cfg(debug_assertions)]
       commands::shogun_memory_debug_query,
       #[cfg(debug_assertions)]
@@ -183,6 +244,17 @@ pub fn run() {
       #[cfg(debug_assertions)]
       commands::shogun_memory_debug_sync_status,
       commands::shogun_memory_debug_gate,
+      commands::shogun_memory_summary_get,
+      commands::shogun_memory_summary_batch,
+      commands::shogun_memory_summary_invalidate,
+      commands::shogun_memory_summary_acknowledge,
+      commands::shogun_memory_summary_snooze,
+      commands::shogun_memory_entity_rollup_get,
+      commands::shogun_memory_rollup_get,
+      commands::shogun_memory_day_rollup_get,
+      commands::shogun_memory_month_rollup_get,
+      commands::shogun_memory_year_rollup_get,
+      commands::shogun_memory_summary_set_priority,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

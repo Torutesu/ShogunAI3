@@ -84,7 +84,7 @@ pub fn spawn_background_calendar_sync() {
         continue;
       }
       let sync_start = std::time::Instant::now();
-      match google_calendar::sync_events_to_memory("primary", 25).await {
+      match google_calendar::sync_events_to_memory("primary", 25, 0).await {
         Ok(out) => {
           let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
           log::info!("calendar auto-sync: ingested {} event(s)", n);

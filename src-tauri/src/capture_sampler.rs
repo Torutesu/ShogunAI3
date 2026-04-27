@@ -321,6 +321,34 @@ fn maybe_ingest_focus(app: &str) {
     }
     *last = Some(sig);
   }
+
+  // Phase 2 Stage 2 (T4): when the kioku_graph flag is on, route captures
+  // through `mem_captures` + `extraction_jobs` instead of writing them to
+  // `mem_items`. The flag defaults OFF; production flips it after Stage 2
+  // validation per `migration-plan.md` §Stage 2.
+  let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
+  if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
+    let snippet = format!("Frontmost app (capture sampler): {}", app);
+    let input = crate::mem_captures::CaptureInput {
+      kind: "screen_app".into(),
+      raw_text: Some(snippet),
+      app_bundle_id: None,
+      window_title: Some(app.to_string()),
+      url: None,
+      captured_at_ms: now_ms() as i64,
+      ..Default::default()
+    };
+    match memory_store::open_conn() {
+      Ok(conn) => {
+        if let Err(e) = crate::kioku_capture::route_capture(&input, &conn) {
+          maybe_log_ingest_error("capture_sampler", &e);
+        }
+      }
+      Err(e) => maybe_log_ingest_error("capture_sampler", &e),
+    }
+    return;
+  }
+
   let title = format!("Focus · {}", app);
   let snippet = format!("Frontmost app (capture sampler): {}", app);
   let payload = json!({
@@ -362,6 +390,30 @@ fn maybe_ingest_ax(text: &str) {
     }
   }
   let snippet = text.chars().take(2000).collect::<String>();
+
+  // Phase 2 Stage 2 (T4): same flag-gated branch as `maybe_ingest_focus`.
+  let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
+  if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
+    let input = crate::mem_captures::CaptureInput {
+      kind: "screen_ax".into(),
+      raw_text: Some(snippet),
+      app_bundle_id: None,
+      window_title: None,
+      url: None,
+      captured_at_ms: now_ms() as i64,
+      ..Default::default()
+    };
+    match memory_store::open_conn() {
+      Ok(conn) => {
+        if let Err(e) = crate::kioku_capture::route_capture(&input, &conn) {
+          maybe_log_ingest_error("capture_ax", &e);
+        }
+      }
+      Err(e) => maybe_log_ingest_error("capture_ax", &e),
+    }
+    return;
+  }
+
   let payload = json!({
     "title": "Focus · AX",
     "snippet": snippet,

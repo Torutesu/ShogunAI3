@@ -22,8 +22,16 @@ async fn calendar_events_request(
   token: &str,
   cal: &str,
   max_results: usize,
+  past_days: u32,
 ) -> Result<(StatusCode, String), String> {
-  let time_min = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+  let past_days = past_days as i64;
+  let time_min = if past_days > 0 {
+    (Utc::now() - Duration::days(past_days))
+      .format("%Y-%m-%dT%H:%M:%SZ")
+      .to_string()
+  } else {
+    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+  };
   let time_max = (Utc::now() + Duration::days(7))
     .format("%Y-%m-%dT%H:%M:%SZ")
     .to_string();
@@ -61,8 +69,9 @@ async fn calendar_events_request(
   Ok((status, text))
 }
 
-fn ingest_event_items(items: &[Value], max_results: usize) -> Result<u32, String> {
+fn ingest_event_items(items: &[Value], max_results: usize) -> Result<(u32, u32), String> {
   let mut ingested = 0u32;
+  let mut skipped = 0u32;
   for item in items.iter().take(max_results) {
     let title = item
       .get("summary")
@@ -89,13 +98,21 @@ fn ingest_event_items(items: &[Value], max_results: usize) -> Result<u32, String
     if !ev_id.is_empty() {
       ing["entity_id"] = json!(ev_id);
     }
-    memory_store::ingest(&ing)?;
-    ingested += 1;
+    let out = memory_store::ingest(&ing)?;
+    if out.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false) {
+      skipped += 1;
+    } else {
+      ingested += 1;
+    }
   }
-  Ok(ingested)
+  Ok((ingested, skipped))
 }
 
-pub async fn sync_events_to_memory(calendar_id: &str, max_results: usize) -> Result<Value, String> {
+pub async fn sync_events_to_memory(
+  calendar_id: &str,
+  max_results: usize,
+  past_days: u32,
+) -> Result<Value, String> {
   let mut creds = integration_secrets::get_credentials(PROVIDER)?
     .ok_or_else(not_configured_msg)?;
 
@@ -108,7 +125,7 @@ pub async fn sync_events_to_memory(calendar_id: &str, max_results: usize) -> Res
   };
 
   let mut token = google_oauth::access_token_from_doc(&creds)?;
-  let (status, text) = calendar_events_request(&token, cal, max_results).await?;
+  let (status, text) = calendar_events_request(&token, cal, max_results, past_days).await?;
 
   let (status, text) = if status == StatusCode::UNAUTHORIZED && google_oauth::credentials_can_refresh(&creds) {
     log::warn!("Google Calendar API 401; attempting token refresh");
@@ -116,7 +133,7 @@ pub async fn sync_events_to_memory(calendar_id: &str, max_results: usize) -> Res
     integration_secrets::set_credentials(PROVIDER, &refreshed)?;
     creds = refreshed;
     token = google_oauth::access_token_from_doc(&creds)?;
-    calendar_events_request(&token, cal, max_results).await?
+    calendar_events_request(&token, cal, max_results, past_days).await?
   } else {
     (status, text)
   };
@@ -135,11 +152,13 @@ pub async fn sync_events_to_memory(calendar_id: &str, max_results: usize) -> Res
     .cloned()
     .unwrap_or_default();
 
-  let ingested = ingest_event_items(&items, max_results)?;
+  let (ingested, skipped) = ingest_event_items(&items, max_results)?;
 
   Ok(json!({
     "ingested": ingested,
+    "skipped": skipped,
     "calendarId": cal,
+    "pastDays": past_days,
     "stub": false,
   }))
 }

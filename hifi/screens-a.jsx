@@ -20,6 +20,30 @@ function deriveLocalProvenance(source) {
   return 'user';
 }
 
+/** Collapse a raw `sources` row value into a filter bucket. */
+function memoryProviderKey(sourceRaw) {
+  const s = String(sourceRaw || '').toLowerCase();
+  if (s === 'capture_sampler' || s === 'capture_ax') return 'screen';
+  if (s === 'gmail') return 'gmail';
+  if (s === 'google_calendar') return 'google_calendar';
+  if (s === 'slack') return 'slack';
+  if (s === 'notion') return 'notion';
+  if (s === 'github') return 'github';
+  if (s === 'meeting' || s.startsWith('meetings')) return 'meeting';
+  return 'manual';
+}
+
+const MEMORY_PROVIDER_META = {
+  screen:          { en: 'Screen',   jp: '画面',   color: 'var(--text-mute)' },
+  meeting:         { en: 'Meeting',  jp: '会議',   color: 'var(--success)' },
+  gmail:           { en: 'Gmail',    jp: 'メール', color: '#D93025' },
+  google_calendar: { en: 'Calendar', jp: '予定',   color: '#1A73E8' },
+  slack:           { en: 'Slack',    jp: 'Slack',  color: '#4A154B' },
+  notion:          { en: 'Notion',   jp: 'Notion', color: 'var(--text)' },
+  github:          { en: 'GitHub',   jp: 'GitHub', color: 'var(--text-mute)' },
+  manual:          { en: 'Manual',   jp: '手動',   color: 'var(--text-dim)' },
+};
+
 function memoryProvenanceLabel(prov) {
   const p = prov || 'user';
   if (p === 'screen') return { en: 'Screen', jp: '画面' };
@@ -59,6 +83,84 @@ function memoryHitToRiverEvent(hit) {
   };
 }
 
+/** Parse a window/app identifier out of the AX snippet dump.
+ *  Falls back to the first 40 chars of the snippet when nothing matches. */
+/** Compute smart snooze deadlines from "now":
+ *   - tomorrowMorning: tomorrow 9:00 local
+ *   - nextMondayMorning: next Monday 9:00 local (weekend snoozes skip past it)
+ *  If today is already past 9am, tomorrow's 9am is still tomorrow (not today).
+ *  Returned values are ms epoch so the IPC can pass them straight through. */
+function smartSnoozePresets(now = new Date()) {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(9, 0, 0, 0);
+  // ISO weekday: Mon=1..Sun=7. JS: Sun=0..Sat=6.
+  const jsDow = now.getDay();
+  const daysToMonday = jsDow === 1
+    ? 7                 // already Monday — next Monday is 7 days out
+    : (8 - jsDow) % 7;  // Tue→6, Wed→5, ..., Sun→1
+  const nextMonday = new Date(now);
+  nextMonday.setDate(nextMonday.getDate() + (daysToMonday || 7));
+  nextMonday.setHours(9, 0, 0, 0);
+  return { tomorrowMorning: tomorrow.getTime(), nextMondayMorning: nextMonday.getTime() };
+}
+
+function extractWindowLabel(snippet) {
+  const s = String(snippet || '');
+  const winMatch = s.match(/^window=([^\n]{1,80})/m);
+  if (winMatch) {
+    const w = winMatch[1].trim();
+    // "App — Document — claude — 120x30" → keep up to 2 segments for brevity
+    const parts = w.split(/\s*[—·]\s*/);
+    return parts.slice(0, 2).join(' · ').slice(0, 60);
+  }
+  const titleMatch = s.match(/^title=([^\n]{1,80})/m);
+  if (titleMatch) return titleMatch[1].trim().slice(0, 60);
+  const roleDesc = s.match(/^roleDesc=([^\n]{1,40})/m);
+  if (roleDesc) return `AX · ${roleDesc[1].trim()}`;
+  return 'Screen capture';
+}
+
+/** Collapse consecutive capture_ax / capture_sampler events with the same
+ *  window label into a single "session" card. Gap > `gapMs` starts a new
+ *  session. Non-screen events are passed through unchanged. */
+function clusterScreenSessions(events, gapMs = 15 * 60 * 1000) {
+  if (!Array.isArray(events) || events.length === 0) return events;
+  const out = [];
+  let current = null;
+  for (const e of events) {
+    const raw = String(e.sourceRaw || '').toLowerCase();
+    const isScreen = raw === 'capture_ax' || raw === 'capture_sampler';
+    if (!isScreen) {
+      if (current) { out.push(current); current = null; }
+      out.push(e);
+      continue;
+    }
+    const label = extractWindowLabel(e.snippet);
+    if (current && current.clusterLabel === label && Math.abs(e.ts - current.ts) <= gapMs) {
+      current.clusterCount += 1;
+      current.clusterStart = Math.min(current.clusterStart, e.ts);
+      current.clusterEnd = Math.max(current.clusterEnd, e.ts);
+      // Prefer the longest snippet so the raw view is informative.
+      if ((e.snippet || '').length > (current.snippet || '').length) {
+        current.snippet = e.snippet;
+      }
+    } else {
+      if (current) out.push(current);
+      current = {
+        ...e,
+        title: `Session · ${label}`,
+        clusterLabel: label,
+        clusterCount: 1,
+        clusterStart: e.ts,
+        clusterEnd: e.ts,
+      };
+    }
+  }
+  if (current) out.push(current);
+  return out;
+}
+
 /** Shared FTS5 highlight renderer. Definition lives in `hifi/lib/highlight.js`. */
 const renderHighlighted = (text) =>
   (window.ShogunHighlight && window.ShogunHighlight.renderHighlighted)
@@ -90,18 +192,28 @@ function openMemoryEntryInChat(entry, options) {
   const limRaw = opts.memoryAssemblyLimit != null ? Number(opts.memoryAssemblyLimit) : 14;
   const limit = Number.isFinite(limRaw) ? Math.min(80, Math.max(1, Math.floor(limRaw))) : 14;
   const semantic = opts.memoryAssemblySemantic !== false;
+  if (opts.newChat && typeof window.SHOGUN_RUNTIME?.createNewChat === 'function') {
+    window.SHOGUN_RUNTIME.createNewChat();
+  }
   const detail = {
     text,
     webSearch: !!opts.webSearch,
     assembleMemory: allowAsm,
+    autoSend: !!opts.autoSend,
   };
   if (allowAsm) {
     detail.memoryAssemblyPreset = { query: memQ, limit, semantic };
   } else {
     detail.clearMemoryAssemblyPreset = true;
   }
-  window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
+  const dispatch = () => window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
   window.SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+  if (opts.newChat) {
+    // Let React mount the new chat + composer listener before seeding.
+    setTimeout(dispatch, 0);
+  } else {
+    dispatch();
+  }
 }
 
 /** IANA zone from Shogun helper or `Intl` (browser / OS). */
@@ -255,6 +367,12 @@ function pickHomeText(item, uiLang) {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenHome() {
   const [morningBrief, setMorningBrief] = useState(null);
+  const [memoryDigest, setMemoryDigest] = useState(null); // { highlights: [], week_rollup: {...} | null }
+  // Item-detail expansion: when the user clicks a highlight, show full
+  // keyPoints + reason + (if entityId present) an entity rollup of related
+  // items underneath.
+  const [expandedHighlightId, setExpandedHighlightId] = useState(null);
+  const [entityRollupCache, setEntityRollupCache] = useState({}); // { [entityId]: { rollup, loading } }
   const [memoryTotal, setMemoryTotal] = useState(null);
   const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
@@ -384,17 +502,37 @@ function ScreenHome() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
       const res = await runRuntimeActionA(
         "brief.get",
-        { span: "today", source: "home", user_tz: resolveUserTimeZoneId() },
+        { span: "today", source: "home", user_tz: resolveUserTimeZoneId(), lang },
         { silentError: true }
       );
       if (cancelled) return;
       if (!res.ok || !res.data) {
         setMorningBrief(null);
+        setMemoryDigest(null);
         return;
       }
       const inner = res.data;
+      // Memory digest rides alongside the brief. Always surface it when the
+      // backend provides it, even if the main brief is skipped / unavailable.
+      if (inner.memory_digest) {
+        setMemoryDigest(inner.memory_digest);
+        // Tell the App-level sidebar how many HIGH items to badge.
+        try {
+          const highlights = Array.isArray(inner.memory_digest.highlights)
+            ? inner.memory_digest.highlights
+            : [];
+          const nowMs = Date.now();
+          const highCount = highlights.filter(
+            (h) => (h.userPriority || h.priority) === 'high'
+              && !h.acknowledgedAt
+              && !(h.snoozeUntil && h.snoozeUntil > nowMs),
+          ).length;
+          window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: highCount } }));
+        } catch (_) { /* ignore */ }
+      }
       if (inner.skipped || !inner.brief) {
         setMorningBrief(null);
         return;
@@ -519,12 +657,16 @@ function ScreenHome() {
           onPick: () => plusFileInputRef.current && plusFileInputRef.current.click(),
         },
         {
-          icon: 'layers',
-          label: 'プロジェクトに追加',
+          icon: 'folder',
+          label: 'Workに追加',
           chev: true,
           onPick: () => {
-            window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
-            window.SHOGUN_RUNTIME?.pushToast?.('Memory を開きました — タイムラインでプロジェクトを整理できます', 'info');
+            const open = window.SHOGUN_RUNTIME?.openWorkPickerForNewChat;
+            if (typeof open === 'function') {
+              open();
+            } else {
+              window.SHOGUN_RUNTIME?.pushToast?.('Work picker not ready', 'warn');
+            }
           },
         },
         {
@@ -590,14 +732,6 @@ function ScreenHome() {
           chev: false,
           active: assembleMemoryOn,
           onPick: () => setAssembleMemoryOn((v) => !v),
-        },
-        {
-          icon: 'edit',
-          label: 'スタイルを使用',
-          chev: true,
-          onPick: () => {
-            window.SHOGUN_RUNTIME?.openSettingsPane?.('appearance');
-          },
         },
       ],
     ],
@@ -1117,6 +1251,326 @@ function ScreenHome() {
           </div>
         </div>
       )}
+
+      {/* Memory digest — HIGH/MED item highlights from the last week +
+          current week rollup. Surfaces here regardless of whether the
+          main brief rendered, so users get value from Memory right on Home. */}
+      {memoryDigest && (
+        (memoryDigest.highlights && memoryDigest.highlights.length > 0) ||
+        memoryDigest.week_rollup ||
+        memoryDigest.day_rollup
+      ) && (
+        <div className="card" style={{ width: '100%', maxWidth: 760, marginInline: 'auto', padding: 24, marginTop: 18, background: 'var(--surface)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="row" style={{ alignItems: 'baseline', gap: 12 }}>
+            <div className="t-mono gold" style={{ textTransform: 'none', letterSpacing: '0.02em' }}>
+              <span className="en-only">Memory digest</span>
+              <span className="jp">メモリのハイライト</span>
+            </div>
+            <span className="spacer" />
+          </div>
+
+          {memoryDigest.day_rollup && (
+            <div style={{ borderLeft: '2px solid var(--gold)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
+                <span className="en-only">TODAY</span>
+                <span className="jp">今日</span>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{memoryDigest.day_rollup.title}</div>
+              {Array.isArray(memoryDigest.day_rollup.keyPoints) && (
+                <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {memoryDigest.day_rollup.keyPoints.slice(0, 4).map((k, i) => (
+                    <li key={i} style={{ fontSize: 12, color: 'var(--text-mute)', lineHeight: 1.5 }}>{k}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {memoryDigest.week_rollup && (
+            <div style={{ borderLeft: '2px solid var(--border-hi)', paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
+                <span className="en-only">THIS WEEK</span>
+                <span className="jp">今週</span>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.3 }}>{memoryDigest.week_rollup.title}</div>
+              {Array.isArray(memoryDigest.week_rollup.keyPoints) && (
+                <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {memoryDigest.week_rollup.keyPoints.slice(0, 4).map((k, i) => (
+                    <li key={i} style={{ fontSize: 12, color: 'var(--text-mute)', lineHeight: 1.5 }}>{k}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {(() => {
+            // Hide items the user already marked as read — they've been dealt with.
+            // Also hide currently-snoozed items (re-surface when snooze passes).
+            const nowMs = Date.now();
+            const unreadHighlights = Array.isArray(memoryDigest.highlights)
+              ? memoryDigest.highlights.filter((h) =>
+                  !h.acknowledgedAt && !(h.snoozeUntil && h.snoozeUntil > nowMs),
+                )
+              : [];
+            if (unreadHighlights.length === 0) return null;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <div className="t-mono" style={{ fontSize: 10, color: 'var(--text-mute)', letterSpacing: '0.12em' }}>
+                    <span className="en-only">NEEDS ATTENTION</span>
+                    <span className="jp">要確認</span>
+                  </div>
+                  <span className="spacer" />
+                  <button
+                    type="button"
+                    style={{
+                      padding: '2px 0', border: 'none', background: 'transparent',
+                      color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer',
+                      fontFamily: 'inherit', textDecoration: 'underline',
+                    }}
+                    title="Mark all shown items as read"
+                    onClick={async () => {
+                      const items = unreadHighlights.map((h) => ({
+                        targetId: h.targetId, targetKind: h.targetKind || 'item',
+                      }));
+                      if (items.length === 0) return;
+                      // Optimistic UI: clear local badge + highlights immediately.
+                      setMemoryDigest((prev) => prev ? {
+                        ...prev,
+                        highlights: (prev.highlights || []).map((h) => ({
+                          ...h, acknowledgedAt: h.acknowledgedAt || Date.now(),
+                        })),
+                      } : prev);
+                      window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: 0 } }));
+                      await runRuntimeActionA('memory.summary.acknowledge', {
+                        items, acknowledged: true,
+                      }, { silentError: true });
+                    }}
+                  >Mark all read</button>
+                </div>
+                {unreadHighlights.slice(0, 5).map((h) => {
+                  const expanded = expandedHighlightId === h.targetId;
+                  const allPoints = Array.isArray(h.keyPoints) ? h.keyPoints : [];
+                  const ent = h.entityId
+                    ? (entityRollupCache[h.entityId] || null)
+                    : null;
+                  const toggleExpand = () => {
+                    if (expanded) {
+                      setExpandedHighlightId(null);
+                      return;
+                    }
+                    setExpandedHighlightId(h.targetId);
+                    // Lazy-load the entity rollup the first time the user
+                    // expands a highlight that has an entity_id.
+                    if (h.entityId && !entityRollupCache[h.entityId]) {
+                      setEntityRollupCache((prev) => ({ ...prev, [h.entityId]: { rollup: null, loading: true } }));
+                      const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                      runRuntimeActionA('memory.rollup.entity.get', {
+                        entityId: h.entityId, entityLabel: h.entityId, lang,
+                      }, { silentError: true }).then((res) => {
+                        const rollup = res?.ok && res.data?.rollup ? res.data.rollup : null;
+                        setEntityRollupCache((prev) => ({ ...prev, [h.entityId]: { rollup, loading: false } }));
+                      }).catch(() => {
+                        setEntityRollupCache((prev) => ({ ...prev, [h.entityId]: { rollup: null, loading: false } }));
+                      });
+                    }
+                  };
+                  return (
+                    <div
+                      key={h.targetId}
+                      role="button"
+                      tabIndex={0}
+                      onClick={toggleExpand}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(); } }}
+                      style={{
+                        borderLeft: (h.userPriority || h.priority) === 'high' ? '2px solid var(--gold)' : '2px solid var(--border)',
+                        paddingLeft: 12,
+                        display: 'flex', flexDirection: 'column', gap: expanded ? 8 : 3,
+                        cursor: 'pointer',
+                        transition: 'gap 120ms',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.35, wordBreak: 'break-word', flex: 1, minWidth: 0 }}>{h.title}</div>
+                        <span className="t-mono" style={{ fontSize: 9, color: 'var(--text-dim)' }}>{expanded ? '−' : '+'}</span>
+                      </div>
+                      {!expanded && allPoints[0] && (
+                        <div style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{allPoints[0]}</div>
+                      )}
+                      {expanded && (
+                        <>
+                          {allPoints.length > 0 && (
+                            <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              {allPoints.map((p, i) => (
+                                <li key={i} style={{ fontSize: 12, color: i === 0 ? 'var(--text)' : 'var(--text-mute)', lineHeight: 1.5 }}>{p}</li>
+                              ))}
+                            </ul>
+                          )}
+                          {h.reason && (
+                            <div style={{ fontSize: 10, color: 'var(--text-dim)', fontStyle: 'italic' }}>{h.reason}</div>
+                          )}
+                          <div className="t-mono" style={{ fontSize: 9, color: 'var(--text-dim)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <span>{(h.sourceType || '').toUpperCase()}</span>
+                            {h.entityId && <span title={h.entityId}>· entity {String(h.entityId).slice(0, 16)}…</span>}
+                          </div>
+                          {h.entityId && ent && (
+                            <div style={{ marginTop: 4, padding: '8px 10px', background: 'color-mix(in srgb, var(--surface-2) 80%, var(--bg))', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <div className="t-mono" style={{ fontSize: 9, color: 'var(--text-mute)', letterSpacing: '0.1em' }}>RELATED · 関連</div>
+                              {ent.loading && (
+                                <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                                  <span className="en-only">Loading related items…</span>
+                                  <span className="jp">関連アイテムを読み込み中…</span>
+                                </div>
+                              )}
+                              {ent.rollup && (
+                                <>
+                                  <div style={{ fontSize: 12, fontWeight: 500 }}>{ent.rollup.title}</div>
+                                  {Array.isArray(ent.rollup.keyPoints) && ent.rollup.keyPoints.length > 0 && (
+                                    <ul style={{ margin: 0, paddingLeft: 14, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                      {ent.rollup.keyPoints.slice(0, 4).map((k, i) => (
+                                        <li key={i} style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>{k}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                await runRuntimeActionA('memory.summary.acknowledge', {
+                                  items: [{ targetId: h.targetId, targetKind: h.targetKind || 'item' }],
+                                  acknowledged: true,
+                                }, { silentError: true });
+                                // Optimistic local update.
+                                setMemoryDigest((prev) => prev ? {
+                                  ...prev,
+                                  highlights: (prev.highlights || []).map((x) => x.targetId === h.targetId ? { ...x, acknowledgedAt: Date.now() } : x),
+                                } : prev);
+                              }}
+                              style={{ padding: '2px 0', border: 'none', background: 'transparent', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+                            >Mark read</button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.dispatchEvent(new Event('shogun-jump-memory-timeline'));
+                                window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
+                              }}
+                              style={{ padding: '2px 0', border: 'none', background: 'transparent', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+                            >Open in Memory</button>
+                            {/* Snooze: defer the item until later. Hides it
+                                from highlights + sidebar badge until the
+                                snooze deadline passes. */}
+                            {[
+                              { label: '1h', label_jp: '1時間', compute: (now) => now + 60 * 60 * 1000 },
+                              { label: 'Tomorrow 9am', label_jp: '明日9時', compute: (now) => smartSnoozePresets(new Date(now)).tomorrowMorning },
+                              { label: 'Next Monday', label_jp: '来週月曜', compute: (now) => smartSnoozePresets(new Date(now)).nextMondayMorning },
+                            ].map((opt) => (
+                              <button
+                                key={opt.label}
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const untilMs = opt.compute(Date.now());
+                                  // Optimistic: hide locally + drop badge
+                                  setMemoryDigest((prev) => prev ? {
+                                    ...prev,
+                                    highlights: (prev.highlights || []).map((x) => x.targetId === h.targetId ? { ...x, snoozeUntil: untilMs } : x),
+                                  } : prev);
+                                  await runRuntimeActionA('memory.summary.snooze', {
+                                    targetId: h.targetId, targetKind: h.targetKind || 'item', untilMs,
+                                  }, { silentError: true });
+                                }}
+                                style={{ padding: '2px 0', border: 'none', background: 'transparent', color: 'var(--text-dim)', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+                                title={`Snooze for ${opt.label}`}
+                              >
+                                <span className="en-only">Snooze · {opt.label}</span>
+                                <span className="jp">後で · {opt.label_jp}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          <div style={{ display: 'flex', gap: 8, alignSelf: 'stretch', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11 }}
+              onClick={() => {
+                window.dispatchEvent(new Event('shogun-jump-memory-timeline'));
+                window.SHOGUN_RUNTIME?.setActiveScreen?.('memory');
+              }}
+            >
+              <span className="en-only">Open Memory</span>
+              <span className="jp">メモリを開く</span>
+              <Icon name="arrowRight" size={12} />
+            </button>
+            <span className="spacer" />
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              style={{ fontSize: 11 }}
+              title="Copy this digest as Markdown (for weekly status notes, journals, etc.)"
+              onClick={async () => {
+                const md = (() => {
+                  // Build a Markdown representation of the current digest.
+                  const lines = [];
+                  const day = memoryDigest && memoryDigest.day_rollup;
+                  const week = memoryDigest && memoryDigest.week_rollup;
+                  const highlights = (memoryDigest && memoryDigest.highlights) || [];
+                  if (day) {
+                    lines.push(`## Today — ${day.title || ''}`.trim());
+                    (day.keyPoints || []).forEach((k) => lines.push(`- ${k}`));
+                    lines.push('');
+                  }
+                  if (week) {
+                    lines.push(`## This week — ${week.title || ''}`.trim());
+                    (week.keyPoints || []).forEach((k) => lines.push(`- ${k}`));
+                    lines.push('');
+                  }
+                  const unread = highlights.filter((h) => !h.acknowledgedAt);
+                  if (unread.length > 0) {
+                    lines.push('## Needs attention');
+                    unread.slice(0, 8).forEach((h) => {
+                      const tag = (h.userPriority || h.priority || '').toUpperCase();
+                      lines.push(`- **[${tag}] ${h.title}**${h.keyPoints && h.keyPoints[0] ? ` — ${h.keyPoints[0]}` : ''}`);
+                    });
+                    lines.push('');
+                  }
+                  if (lines.length === 0) lines.push('_(empty digest)_');
+                  return lines.join('\n').trimEnd() + '\n';
+                })();
+                try {
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(md);
+                    window.SHOGUN_RUNTIME?.pushToast?.('Digest copied as Markdown', 'success');
+                  } else {
+                    window.SHOGUN_RUNTIME?.pushToast?.('Clipboard unavailable', 'warn');
+                  }
+                } catch (_) {
+                  window.SHOGUN_RUNTIME?.pushToast?.('Copy failed', 'error');
+                }
+              }}
+            >
+              <Icon name="file" size={12} />
+              <span className="en-only">Copy as Markdown</span>
+              <span className="jp">Markdown でコピー</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .home-composer-dropzone.is-drag-over {
           background:color-mix(in srgb, var(--gold) 6%, var(--surface) 94%);
@@ -1173,13 +1627,95 @@ function ScreenHome() {
 // ═══════════════════════════════════════════════════════════════════════════
 function ScreenMemory() {
   const [view, setView] = useState('river');
-  const [events, setEvents] = useState(() => []);
+  // Rollup cache keyed by lang. `week` is Monday-start; `day` is local midnight.
+  const [digestState, setDigestState] = useState({
+    week: null, day: null, loading: false, error: null, generatingWeek: false, generatingDay: false,
+  });
+  // { [memoryId]: workProjectId } assignment map, persisted in
+  // settings.sections.workspace_memberships.memberships.
+  const [workspaceAssignments, setWorkspaceAssignments] = useState({});
+  const [workProjects, setWorkProjectsLocal] = useState(() => {
+    const get = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.getWorkProjects;
+    return typeof get === 'function' ? get() : [];
+  });
+  const [assignMenuOpen, setAssignMenuOpen] = useState(false);
+  const [newWorkspaceDraft, setNewWorkspaceDraft] = useState('');
+
+  useEffect(() => {
+    // Hydrate workProjects from the shell on mount and keep in sync when the
+    // user creates / renames / archives one elsewhere.
+    const syncProjects = () => {
+      const get = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.getWorkProjects;
+      if (typeof get === 'function') setWorkProjectsLocal(get());
+    };
+    syncProjects();
+    window.addEventListener('shogun-work-projects-changed', syncProjects);
+    return () => window.removeEventListener('shogun-work-projects-changed', syncProjects);
+  }, []);
+
+  useEffect(() => {
+    // Load persisted { memoryId → workspaceId } map on first mount.
+    runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
+      const map = r && r.ok
+        && r.data && r.data.settings && r.data.settings.sections
+        && r.data.settings.sections.workspace_memberships
+        && r.data.settings.sections.workspace_memberships.memberships;
+      if (map && typeof map === 'object') {
+        setWorkspaceAssignments(map);
+      }
+    });
+  }, []);
+
+  const assignMemoryToWorkspace = useCallback(async (memoryId, workspaceId) => {
+    if (!memoryId) return;
+    const next = { ...workspaceAssignments };
+    if (workspaceId) next[memoryId] = workspaceId;
+    else delete next[memoryId];
+    setWorkspaceAssignments(next);
+    await runRuntimeActionA(
+      'settings.save',
+      { section: 'workspace_memberships', memberships: next },
+      { silentError: true },
+    );
+    // Let other screens (e.g. Work) refresh counts without polling.
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-workspace-memberships-changed', {
+        detail: { memberships: next },
+      }));
+    } catch (_) { /* ignore */ }
+  }, [workspaceAssignments]);
+  const [rawEvents, setRawEvents] = useState(() => []);
+  const [summaryByMemId, setSummaryByMemId] = useState(() => ({}));
+  const [batchSummarizing, setBatchSummarizing] = useState(0); // count of items being processed; 0 = idle
+  const [weekRollup, setWeekRollup] = useState(null); // { title, keyPoints, reason, generatedAt } or null
+  const [weekRollupLoading, setWeekRollupLoading] = useState(false);
+  const [dayRollup, setDayRollup] = useState(null); // { title, keyPoints, reason, generatedAt } or null
+  const [dayRollupLoading, setDayRollupLoading] = useState(false);
+  const [monthRollup, setMonthRollup] = useState(null);
+  const [monthRollupLoading, setMonthRollupLoading] = useState(false);
+  const [yearRollup, setYearRollup] = useState(null);
+  const [yearRollupLoading, setYearRollupLoading] = useState(false);
   const [scrubIdx, setScrubIdx] = useState(0);
   const [timelineSpan, setTimelineSpan] = useState('week');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [activeFilters, setActiveFilters] = useState(() => ({ screen: true, audio: true, input: true }));
+  const [activeFilters, setActiveFilters] = useState(() => ({
+    sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
+    priority: { high: true, medium: true, low: false },
+    // Filter by the raw provider source (screen captures, connector imports, ...).
+    // All on by default so new users see everything they've indexed.
+    providers: {
+      screen: true,
+      meeting: true,
+      gmail: true,
+      google_calendar: true,
+      slack: true,
+      notion: true,
+      github: true,
+      manual: true,
+    },
+  }));
   const timelineScrollRef = useRef(null);
   const scrollTimeline = useCallback((dir) => {
     const el = timelineScrollRef.current;
@@ -1200,64 +1736,156 @@ function ScreenMemory() {
     setTimelineCursor(new Date());
     setSelectedDayOffset(0);
   }, []);
+  const spanDayCount = useMemo(() => {
+    if (timelineSpan === 'day') return 1;
+    if (timelineSpan === 'week') return 7;
+    if (timelineSpan === 'month') return 12; // last 12 months (one slot per month)
+    return 12; // year: show 12 months as 12 slots (one per month)
+  }, [timelineSpan]);
   const weekDays = useMemo(() => {
     const out = [];
     const base = new Date(timelineCursor);
     base.setHours(0, 0, 0, 0);
-    for (let i = 6; i >= 0; i -= 1) {
-      out.push(new Date(base.getTime() - i * 24 * 60 * 60 * 1000));
+    if (timelineSpan === 'year') {
+      // One slot per year: show last 12 years ending at cursor year.
+      for (let i = 12 - 1; i >= 0; i -= 1) {
+        const d = new Date(base);
+        d.setMonth(0, 1);
+        d.setFullYear(d.getFullYear() - i);
+        out.push(d);
+      }
+    } else if (timelineSpan === 'month') {
+      // One slot per month: show last 12 months ending at cursor month.
+      for (let i = 12 - 1; i >= 0; i -= 1) {
+        const d = new Date(base);
+        d.setDate(1);
+        d.setMonth(d.getMonth() - i);
+        out.push(d);
+      }
+    } else {
+      for (let i = spanDayCount - 1; i >= 0; i -= 1) {
+        out.push(new Date(base.getTime() - i * 24 * 60 * 60 * 1000));
+      }
     }
     return out;
-  }, [timelineCursor]);
+  }, [timelineCursor, timelineSpan, spanDayCount]);
   const fmtMonthDay = (d) => d.toLocaleString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
   const selectedDate = useMemo(() => {
-    const idx = Math.min(6, Math.max(0, 6 - selectedDayOffset));
+    const last = weekDays.length - 1;
+    const idx = Math.min(last, Math.max(0, last - selectedDayOffset));
     return weekDays[idx] || timelineCursor;
   }, [weekDays, selectedDayOffset, timelineCursor]);
+  // Page-title date formatter — granularity follows the timeline span so
+  // a Month view doesn't read "Sunday, February 1" for a card that
+  // represents the whole month. Day/Week stay full-date; Month collapses
+  // to "<Month> <Year>"; Year collapses to "<Year>".
   const fmtFullDate = (d) => {
-    try { return d.toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }); }
-    catch (_e) { return d.toDateString(); }
+    try {
+      if (timelineSpan === 'year')  return d.toLocaleString('en-US', { year: 'numeric' });
+      if (timelineSpan === 'month') return d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      return d.toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    } catch (_e) { return d.toDateString(); }
   };
   const fmtFullDateJp = (d) => {
-    try { return d.toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' }); }
-    catch (_e) { return ''; }
+    try {
+      if (timelineSpan === 'year')  return d.toLocaleString('ja-JP', { year: 'numeric' });
+      if (timelineSpan === 'month') return d.toLocaleString('ja-JP', { year: 'numeric', month: 'long' });
+      return d.toLocaleString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
+    } catch (_e) { return ''; }
   };
-  const rangeLabel = useMemo(() => `${fmtMonthDay(weekDays[0])} – ${fmtMonthDay(weekDays[weekDays.length - 1])}`, [weekDays]);
-  /** Per-day, 12-bucket (2h each) histograms sourced from real indexed events. */
+  const rangeLabel = useMemo(() => {
+    if (timelineSpan === 'day') return fmtMonthDay(weekDays[0]);
+    if (timelineSpan === 'year') {
+      const first = weekDays[0];
+      const last = weekDays[weekDays.length - 1];
+      return `${first.getFullYear()} – ${last.getFullYear()}`;
+    }
+    if (timelineSpan === 'month') {
+      const first = weekDays[0];
+      const last = weekDays[weekDays.length - 1];
+      return `${first.toLocaleString('en-US', { month: 'short', year: 'numeric' }).toUpperCase()} – ${last.toLocaleString('en-US', { month: 'short', year: 'numeric' }).toUpperCase()}`;
+    }
+    return `${fmtMonthDay(weekDays[0])} – ${fmtMonthDay(weekDays[weekDays.length - 1])}`;
+  }, [weekDays, timelineSpan]);
+  /** Per-slot histograms:
+   *  - day/week span → slot = 1 day, 12 bars (2-hour buckets)
+   *  - month span    → slot = 1 month, 4 bars (weeks-within-month)
+   *  - year span     → slot = 1 year, 12 bars (months-within-year)
+   */
   const weekHistograms = useMemo(() => {
     let globalMax = 1;
+    const src = Array.isArray(rawEvents) ? rawEvents : [];
     const perDay = weekDays.map((d) => {
-      const start = new Date(d);
-      start.setHours(0, 0, 0, 0);
-      const startMs = start.getTime();
-      const endMs = startMs + 24 * 60 * 60 * 1000;
-      const bars = new Array(12).fill(0);
+      let bars;
       let count = 0;
-      events.forEach((e) => {
-        if (!Number.isFinite(e.ts) || e.ts < startMs || e.ts >= endMs) return;
-        const h = Math.max(0, Math.min(23, Math.floor(Number(e.h))));
-        bars[Math.min(11, Math.floor(h / 2))] += 1;
-        count += 1;
-      });
+      if (timelineSpan === 'year') {
+        // Slot = one calendar year; bars[0..11] = months of that year.
+        bars = new Array(12).fill(0);
+        const slotYear = d.getFullYear();
+        src.forEach((e) => {
+          if (!Number.isFinite(e.ts)) return;
+          const ed = new Date(e.ts);
+          if (ed.getFullYear() !== slotYear) return;
+          bars[Math.min(11, ed.getMonth())] += 1;
+          count += 1;
+        });
+      } else if (timelineSpan === 'month') {
+        // Slot = one calendar month; bars[0..3] for weeks-within-month.
+        bars = new Array(4).fill(0);
+        const slotYear = d.getFullYear();
+        const slotMonth = d.getMonth();
+        src.forEach((e) => {
+          if (!Number.isFinite(e.ts)) return;
+          const ed = new Date(e.ts);
+          if (ed.getFullYear() !== slotYear || ed.getMonth() !== slotMonth) return;
+          bars[Math.min(3, Math.floor((ed.getDate() - 1) / 7))] += 1;
+          count += 1;
+        });
+      } else {
+        bars = new Array(12).fill(0);
+        const start = new Date(d);
+        start.setHours(0, 0, 0, 0);
+        const startMs = start.getTime();
+        const endMs = startMs + 24 * 60 * 60 * 1000;
+        src.forEach((e) => {
+          if (!Number.isFinite(e.ts) || e.ts < startMs || e.ts >= endMs) return;
+          const h = Math.max(0, Math.min(23, Math.floor(Number(e.h))));
+          bars[Math.min(11, Math.floor(h / 2))] += 1;
+          count += 1;
+        });
+      }
       const dayMax = bars.reduce((a, b) => Math.max(a, b), 0);
       if (dayMax > globalMax) globalMax = dayMax;
       return { bars, count, dayMax };
     });
     return { perDay, globalMax };
-  }, [weekDays, events]);
+  }, [weekDays, rawEvents, timelineSpan]);
   const memoryTotals = useMemo(() => {
     const counts = weekHistograms.perDay.map((d) => d.count);
     const total = counts.reduce((a, b) => a + b, 0);
     return { counts, total };
   }, [weekHistograms]);
-  const activeFilterCount = Object.values(activeFilters).filter(Boolean).length;
-  const toggleFilter = useCallback((key) => {
-    setActiveFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+  const activeFilterCount =
+    Object.values(activeFilters.sources).filter(Boolean).length +
+    Object.values(activeFilters.priority).filter(Boolean).length +
+    // Providers: count the ones that are explicitly OFF so the Filters button
+    // advertises that results are narrowed.
+    Object.values(activeFilters.providers || {}).filter((v) => v === false).length;
+  const toggleFilter = useCallback((group, key) => {
+    setActiveFilters((prev) => ({
+      ...prev,
+      [group]: { ...prev[group], [key]: !prev[group][key] },
+    }));
   }, []);
   const [sourceEntities, setSourceEntities] = useState([]);
   const [semanticMemorySearch, setSemanticMemorySearch] = useState(true);
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
   const [memorySettingsLoaded, setMemorySettingsLoaded] = useState(false);
+  // Memory Digest Phase 1: River summary card state.
+  const [scrubSummary, setScrubSummary] = useState(null);         // { title, keyPoints, priority, ... } or null
+  const [scrubSummaryLoading, setScrubSummaryLoading] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
+  const [summaryEnabled, setSummaryEnabled] = useState(true);     // feature flag from sections.memory.enableMemorySummary
   const timelineLoading = !memorySettingsLoaded;
   const withSemantic = useCallback(
     (payload) => {
@@ -1286,6 +1914,10 @@ function ScreenMemory() {
       if (mem && typeof mem === 'object' && typeof mem.semanticRerank === 'boolean') {
         setSemanticMemorySearch(mem.semanticRerank);
       }
+      if (mem && typeof mem === 'object') {
+        // Default to true when the flag is unset; only disable when explicitly false.
+        setSummaryEnabled(mem.enableMemorySummary !== false);
+      }
       const priv = r?.ok && r.data?.settings?.sections?.privacy;
       if (priv && typeof priv === 'object') {
         setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
@@ -1306,31 +1938,247 @@ function ScreenMemory() {
     window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
     return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
   }, []);
+  const activeKinds = useMemo(
+    () => Object.entries(activeFilters.sources).filter(([, on]) => on).map(([k]) => k),
+    [activeFilters.sources],
+  );
+  // River = rawEvents filtered by priority, then screen-captures clustered
+  // into sessions. Low-priority (自動通知など) items stay in Memory but are
+  // hidden from the surface unless the user toggles the Low filter on.
+  const events = useMemo(() => {
+    const showLow = !!activeFilters.priority.low;
+    const provs = activeFilters.providers || {};
+    const matchesProvider = (e) => provs[memoryProviderKey(e.sourceRaw)] !== false;
+    // effective = user's manual override takes precedence over LLM priority.
+    const effectivePriority = (s) => (s && (s.userPriority || s.priority)) || null;
+    const filtered = rawEvents.filter((e) => {
+      if (!matchesProvider(e)) return false;
+      if (showLow) return true;
+      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+      if (!s) return true;
+      return effectivePriority(s) !== 'low';
+    });
+    // Collapse consecutive capture_ax/capture_sampler items into session cards
+    // so that enabling the Screen filter doesn't flood the River.
+    const clustered = clusterScreenSessions(filtered);
+    // Surface HIGH first, then MED, then unclassified, then LOW. Within the
+    // same tier, newer events come first. This makes the top of the River
+    // read as a "what needs attention" feed.
+    const rank = (e) => {
+      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+      const p = effectivePriority(s);
+      if (!p) return 2; // unclassified sits between MED and LOW
+      if (p === 'high') return 0;
+      if (p === 'medium') return 1;
+      if (p === 'low') return 3;
+      return 2;
+    };
+    return clustered
+      .slice()
+      .sort((a, b) => {
+        const rA = rank(a);
+        const rB = rank(b);
+        if (rA !== rB) return rA - rB;
+        return (b.ts || 0) - (a.ts || 0);
+      });
+  }, [rawEvents, summaryByMemId, activeFilters.priority.low, activeFilters.providers]);
+  // Batch-summarize connector items on River load so priority data is ready
+  // for filtering. Cached summaries short-circuit on the backend.
+  useEffect(() => {
+    if (!summaryEnabled || rawEvents.length === 0) return;
+    let cancelled = false;
+    const connectorItems = rawEvents
+      .filter((e) => {
+        const r = String(e.sourceRaw || '').toLowerCase();
+        const isSummarizable =
+          r === 'gmail' ||
+          r === 'google_calendar' ||
+          r === 'meetings' ||
+          r === 'meeting_note' ||
+          r === 'audio_meeting' ||
+          e.provenance === 'connector' ||
+          e.provenance === 'meeting';
+        return isSummarizable && e.memoryId && !summaryByMemId[e.memoryId];
+      })
+      .slice(0, 30)
+      .map((e) => ({
+        id: e.memoryId,
+        title: e.title || '',
+        snippet: e.snippet || '',
+        source: e.sourceRaw || '',
+      }));
+    if (connectorItems.length === 0) return;
+    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+    setBatchSummarizing(connectorItems.length);
+    (async () => {
+      try {
+        const res = await runRuntimeActionA('memory.summary.batch', { items: connectorItems, lang }, { silentError: true });
+        if (cancelled || !res?.ok || !res.data?.ok) return;
+        const next = {};
+        for (const s of res.data.ok) {
+          if (s && s.targetId) next[s.targetId] = s;
+        }
+        if (Object.keys(next).length === 0) return;
+        setSummaryByMemId((prev) => ({ ...prev, ...next }));
+      } finally {
+        if (!cancelled) setBatchSummarizing(0);
+      }
+    })();
+    return () => { cancelled = true; };
+    // summaryByMemId intentionally omitted: we read it inside the effect to
+    // dedupe, but don't want to re-run when it changes (would thrash).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawEvents, summaryEnabled]);
+  // Phase 2: fetch a week rollup when the user is in Week span. The rollup
+  // is cached server-side per (week_start_ms, lang), so repeated visits are
+  // free. Re-runs when item summaries finish (batchSummarizing transition to 0)
+  // so the rollup sees freshly classified items.
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'week') {
+      setWeekRollup(null);
+      return;
+    }
+    const cursor = new Date(timelineCursor);
+    const day = cursor.getDay();
+    const mondayOffset = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(cursor);
+    monday.setDate(cursor.getDate() + mondayOffset);
+    monday.setHours(0, 0, 0, 0);
+    const weekStartMs = monday.getTime();
+    let cancelled = false;
+    setWeekRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.get', { weekStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setWeekRollup(res.data.rollup);
+        } else {
+          setWeekRollup(null);
+        }
+      } finally {
+        if (!cancelled) setWeekRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
+  // Phase 2.5: same pattern for day rollup. Triggers when the user selects
+  // the Day span so day_rollup gets generated on demand, then surfaces on
+  // Home via brief.get's cache-only read.
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'day') {
+      setDayRollup(null);
+      return;
+    }
+    const cursor = new Date(timelineCursor);
+    const day = new Date(cursor);
+    day.setHours(0, 0, 0, 0);
+    const dayStartMs = day.getTime();
+    let cancelled = false;
+    setDayRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.day.get', { dayStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setDayRollup(res.data.rollup);
+        } else {
+          setDayRollup(null);
+        }
+      } finally {
+        if (!cancelled) setDayRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
+  // Month rollup — calendar month of the SELECTED card (not the timeline
+  // cursor): clicking a different month card switches the rollup.
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'month') {
+      setMonthRollup(null);
+      return;
+    }
+    const sel = selectedDate || timelineCursor;
+    const monthStart = new Date(sel.getFullYear(), sel.getMonth(), 1, 0, 0, 0, 0);
+    const monthStartMs = monthStart.getTime();
+    let cancelled = false;
+    setMonthRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.month.get', { monthStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setMonthRollup(res.data.rollup);
+        } else {
+          setMonthRollup(null);
+        }
+      } finally {
+        if (!cancelled) setMonthRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, selectedDate, summaryEnabled, batchSummarizing]);
+  // Year rollup — calendar year of the SELECTED card. Composed from the
+  // 12 monthly rollups within that year (cascading generation on miss).
+  useEffect(() => {
+    if (!summaryEnabled || timelineSpan !== 'year') {
+      setYearRollup(null);
+      return;
+    }
+    const sel = selectedDate || timelineCursor;
+    const yearStart = new Date(sel.getFullYear(), 0, 1, 0, 0, 0, 0);
+    const yearStartMs = yearStart.getTime();
+    let cancelled = false;
+    setYearRollupLoading(true);
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.rollup.year.get', { yearStartMs, lang }, { silentError: true });
+        if (cancelled) return;
+        if (res?.ok && res.data?.rollup) {
+          setYearRollup(res.data.rollup);
+        } else {
+          setYearRollup(null);
+        }
+      } finally {
+        if (!cancelled) setYearRollupLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [timelineSpan, selectedDate, summaryEnabled, batchSummarizing]);
   useEffect(() => {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
     (async () => {
-      const res = await runRuntimeActionA('memory.search', withSemantic({ query: '', limit: 40 }), { silentError: true });
+      const res = await runRuntimeActionA('memory.search', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
       if (cancelled) return;
-      mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
+      mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
     })();
     return () => { cancelled = true; };
-  }, [memorySettingsLoaded, withSemantic]);
+  }, [memorySettingsLoaded, withSemantic, activeKinds]);
   useEffect(() => {
     const onIndexChanged = async () => {
-      const r = await runRuntimeActionA('memory.search', withSemantic({ query: '', limit: 40 }), { silentError: true });
-      mergeIndexHitsIntoRiver(r, setEvents, setScrubIdx);
+      const r = await runRuntimeActionA('memory.search', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
+      mergeIndexHitsIntoRiver(r, setRawEvents, setScrubIdx);
       refreshSourceEntities();
     };
     window.addEventListener('shogun-memory-index-changed', onIndexChanged);
     return () => window.removeEventListener('shogun-memory-index-changed', onIndexChanged);
-  }, [withSemantic]);
+  }, [withSemantic, activeKinds]);
   useEffect(() => {
     setScrubIdx((i) => {
       if (events.length === 0) return 0;
       return Math.min(i, events.length - 1);
     });
   }, [events.length]);
+  // Reset day selection when the timeline span changes so the active card
+  // always points to the last slot (most-recent day/month) in the new range.
+  useEffect(() => {
+    setSelectedDayOffset(0);
+  }, [timelineSpan]);
   useEffect(() => {
     const onJump = () => {
       setView('river');
@@ -1360,6 +2208,83 @@ function ScreenMemory() {
       : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null };
   const srcIcon = s => s==='chat'?'chat':s==='meet'?'calendar':s==='note'?'note':s==='mail'?'mail':s==='agent'?'bot':s==='code'?'terminal':'file';
   const srcLabel = s => ({chat:'Conversation',meet:'Meeting',note:'Note',mail:'Email',agent:'Agent run',code:'Code'})[s]||'Event';
+
+  // Memory Digest Phase 1: Fetch a summary for the currently scrubbed item when
+  // it comes from a connector source (gmail / google_calendar). Screen/meeting
+  // items stay on the raw snippet for now.
+  useEffect(() => {
+    // Guard: feature flag OFF → always show raw, skip fetch.
+    if (!summaryEnabled) {
+      setScrubSummary(null);
+      setShowRaw(true);
+      return;
+    }
+    if (!scrubbed || !scrubbed.memoryId) {
+      setScrubSummary(null);
+      setShowRaw(false);
+      return;
+    }
+    // Summarize connector (gmail/google_calendar) and meeting items. Screen
+    // capture and other raw-only items stay on the raw snippet.
+    const rawSrc = String(scrubbed.sourceRaw || '').toLowerCase();
+    const isSummarizable =
+      rawSrc === 'gmail' ||
+      rawSrc === 'google_calendar' ||
+      rawSrc === 'meetings' ||
+      rawSrc === 'meeting_note' ||
+      rawSrc === 'audio_meeting' ||
+      scrubbed.provenance === 'connector' ||
+      scrubbed.provenance === 'meeting';
+    if (!isSummarizable) {
+      setScrubSummary(null);
+      setShowRaw(true);
+      return;
+    }
+
+    setShowRaw(false);
+    // Cache-first: the River batch effect likely already populated this.
+    const cached = summaryByMemId[scrubbed.memoryId];
+    if (cached) {
+      setScrubSummary(cached);
+      setScrubSummaryLoading(false);
+      return;
+    }
+    setScrubSummary(null);
+    setScrubSummaryLoading(true);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+        const res = await runRuntimeActionA('memory.summary.get', {
+          targetId: scrubbed.memoryId,
+          targetKind: 'item',
+          lang,
+          item: {
+            id: scrubbed.memoryId,
+            title: scrubbed.title || '',
+            snippet: scrubbed.snippet || '',
+            source: scrubbed.sourceRaw || '',
+          },
+        }, { silentError: true });
+        if (cancelled) return;
+        if (res && res.ok && res.data && res.data.summary) {
+          setScrubSummary(res.data.summary);
+          const s = res.data.summary;
+          if (s.targetId) {
+            setSummaryByMemId((prev) => (prev[s.targetId] ? prev : { ...prev, [s.targetId]: s }));
+          }
+        } else {
+          setScrubSummary(null);
+        }
+      } catch {
+        if (!cancelled) setScrubSummary(null);
+      } finally {
+        if (!cancelled) setScrubSummaryLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scrubbed?.memoryId, scrubbed?.sourceRaw, scrubbed?.provenance, summaryEnabled, summaryByMemId]);
   const memoryHeadDate = useMemo(() => {
     const d = new Date();
     return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -1368,15 +2293,24 @@ function ScreenMemory() {
   const hourIndexFromEvents = useMemo(() => {
     const counts = new Array(24).fill(0);
     const firstIdx = new Array(24).fill(-1);
+    const topPriority = new Array(24).fill(null); // best-tier priority found in the hour (or null)
+    const priorityRank = (p) => (p === 'high' ? 2 : p === 'medium' ? 1 : 0);
     events.forEach((e, i) => {
       const hh = Math.floor(Number(e.h));
       const h = Math.max(0, Math.min(23, Number.isFinite(hh) ? hh : 12));
       if (firstIdx[h] < 0) firstIdx[h] = i;
       counts[h] += 1;
+      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
+      const p = s && (s.userPriority || s.priority);
+      if (p === 'high' || p === 'medium') {
+        if (priorityRank(p) > priorityRank(topPriority[h])) {
+          topPriority[h] = p;
+        }
+      }
     });
     const maxC = Math.max(1, ...counts);
-    return { counts, firstIdx, maxC };
-  }, [events]);
+    return { counts, firstIdx, maxC, topPriority };
+  }, [events, summaryByMemId]);
 
   const timeSpanLabel = useMemo(() => {
     if (!events.length) return '—';
@@ -1405,7 +2339,7 @@ function ScreenMemory() {
         </div>
         <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
           <div style={{display:'inline-flex', border:'1px solid var(--border)', borderRadius:999, padding:2, background:'var(--surface)'}}>
-            {[['river','River'],['kakejiku','Kakejiku'],['heatmap','Heatmap']].map(([k,l])=>(
+            {[['river','River'],['kakejiku','Kakejiku'],['heatmap','Heatmap'],['digest','Digest'],['search','Search']].map(([k,l])=>(
               <button key={k} type="button" onClick={()=>setView(k)} style={{
                 padding:'6px 14px', borderRadius:999, border:'none',
                 background: view===k ? 'var(--surface-2)' : 'transparent',
@@ -1429,25 +2363,57 @@ function ScreenMemory() {
                 <div role="presentation" onMouseDown={()=>setFiltersOpen(false)} style={{position:'fixed', inset:0, zIndex:40}}/>
                 <div role="menu" onMouseDown={(e)=>e.stopPropagation()} style={{
                   position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41,
-                  minWidth:220, padding:10, borderRadius:12,
+                  minWidth:420, padding:10, borderRadius:12,
                   border:'1px solid var(--border-hi)', background:'var(--surface-2)',
                   boxShadow:'var(--shadow-md, 0 10px 30px rgba(0,0,0,0.25))',
                 }}>
-                  <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Sources</div>
-                  {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input']].map(([k,l])=>(
-                    <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
-                      <input type="checkbox" checked={!!activeFilters[k]} onChange={()=>toggleFilter(k)}/>
-                      <span>{l}</span>
-                    </label>
-                  ))}
+                  <div style={{ display: 'flex', gap: 20 }}>
+                    <div style={{ flex: 1 }}>
+                      <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Sources</div>
+                      {[['screen','Screen capture'],['audio','Audio / Meetings'],['input','Manual input'],['calendar','Calendar'],['mail','Mail']].map(([k,l])=>(
+                        <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
+                          <input type="checkbox" checked={!!activeFilters.sources[k]} onChange={()=>toggleFilter('sources', k)}/>
+                          <span>{l}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Priority</div>
+                      {[['high','High'],['medium','Medium'],['low','Low']].map(([k,l])=>(
+                        <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
+                          <input type="checkbox" checked={!!activeFilters.priority[k]} onChange={()=>toggleFilter('priority', k)}/>
+                          <span>{l}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div className="t-mono" style={{fontSize:11, color:'var(--text-dim)', padding:'2px 6px 6px'}}>Providers</div>
+                      {Object.entries(MEMORY_PROVIDER_META).map(([k,meta])=>(
+                        <label key={k} style={{display:'flex', alignItems:'center', gap:10, padding:'8px 6px', cursor:'pointer', fontSize:13, color:'var(--text)'}}>
+                          <input type="checkbox" checked={activeFilters.providers?.[k] !== false} onChange={()=>toggleFilter('providers', k)}/>
+                          <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                            <span style={{width:8, height:8, borderRadius:2, background: meta.color, flexShrink:0}} aria-hidden="true"/>
+                            {meta.en}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                   <div style={{display:'flex', gap:8, marginTop:8}}>
                     <button type="button" onClick={async ()=>{
-                      const kinds = Object.entries(activeFilters).filter(([,on])=>on).map(([x])=>x);
+                      const kinds = Object.entries(activeFilters.sources).filter(([,on])=>on).map(([x])=>x);
                       const res = await runRuntimeActionA('memory.search', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
-                      mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
+                      mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
                       setFiltersOpen(false);
                     }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
-                    <button type="button" onClick={()=>{ setActiveFilters({ screen:true, audio:true, input:true }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
+                    <button type="button" onClick={()=>{ setActiveFilters({
+                      sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
+                      priority: { high: true, medium: true, low: false },
+                      providers: {
+                        screen: true, meeting: true, gmail: true, google_calendar: true,
+                        slack: true, notion: true, github: true, manual: true,
+                      },
+                    }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
                   </div>
                 </div>
               </>
@@ -1482,14 +2448,39 @@ function ScreenMemory() {
           <span className="en-only">Today</span>
           <span className="jp" style={{marginLeft:4, fontSize:11}}>· 今日</span>
         </button>
+        <label
+          style={{display:'inline-flex', alignItems:'center', gap:8, fontSize:12, color:'var(--text-mute)', cursor:'pointer', userSelect:'none'}}
+          title="Use semantic re-rank for non-empty memory searches"
+        >
+          <input
+            data-testid="memory-semantic-rerank"
+            type="checkbox"
+            checked={semanticMemorySearch}
+            onChange={async (e) => {
+              const prev = semanticMemorySearch;
+              const next = e.target.checked;
+              setSemanticMemorySearch(next);
+              const r = await runRuntimeActionA(
+                'settings.save',
+                { section: 'memory', semanticRerank: next },
+                { silentError: true },
+              );
+              if (!r?.ok) {
+                setSemanticMemorySearch(prev);
+                window.SHOGUN_RUNTIME?.pushToast?.('Failed to save Semantic re-rank setting', 'warn');
+              }
+            }}
+          />
+          <span>Semantic re-rank</span>
+        </label>
         <span style={{flex:1}}/>
         <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>{memoryTotals.total} MEMORIES · {Math.round(memoryTotals.total * 0.25)}H</span>
       </div>
 
-      {/* 7-day week cards — each day shows a 12-bucket hour histogram */}
-      <div style={{padding:'18px 40px 0', display:'grid', gridTemplateColumns:'repeat(7, minmax(0, 1fr))', gap:10}}>
+      {/* Span cards — one per day/month depending on timelineSpan */}
+      <div style={{padding:'18px 40px 0', display:'grid', gridTemplateColumns:`repeat(${weekDays.length}, minmax(0, 1fr))`, gap:10}}>
         {weekDays.map((d, i)=>{
-          const offset = 6 - i;
+          const offset = (weekDays.length - 1) - i;
           const active = offset === selectedDayOffset;
           const { bars } = weekHistograms.perDay[i] || { bars: new Array(12).fill(0) };
           const maxBar = Math.max(1, weekHistograms.globalMax);
@@ -1505,26 +2496,348 @@ function ScreenMemory() {
               boxShadow: active ? '0 0 0 1px color-mix(in srgb, var(--gold) 25%, transparent)' : 'none',
               transition: 'border-color 120ms, background 120ms',
             }}>
-              <div className="t-mono" style={{fontSize:11, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>{fmtMonthDay(d)}</div>
-              <div style={{display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:2, height:28}} aria-hidden="true">
-                {bars.map((v, j)=>{
-                  const h = v > 0 ? Math.round((v / maxBar) * 22) + 4 : 3;
-                  return (
-                    <span key={j} style={{
-                      flex:'1 1 0',
-                      height: h,
-                      borderRadius:2,
+              <div className="t-mono" style={{fontSize:11, color: active ? 'var(--gold)' : 'var(--text-dim)', letterSpacing:'0.14em'}}>
+                {timelineSpan === 'year'
+                  ? String(d.getFullYear())
+                  : timelineSpan === 'month'
+                    ? d.toLocaleString('en-US', { month: 'short', year: '2-digit' }).toUpperCase()
+                    : fmtMonthDay(d)}
+              </div>
+              <div style={{position:'relative', height:28}} aria-hidden="true">
+                {/* Faint grid guides so empty cells still read as a timeline */}
+                <div style={{position:'absolute', inset:0, display:'flex', justifyContent:'space-between', pointerEvents:'none'}}>
+                  {[0,1,2,3,4].map((k)=>(
+                    <span key={k} style={{
+                      width:1,
                       background: active
-                        ? (v > 0 ? 'var(--gold)' : 'color-mix(in srgb, var(--gold) 18%, transparent)')
-                        : (v > 0 ? 'var(--border-hi)' : 'var(--border)'),
-                      opacity: active ? (v > 0 ? 0.95 : 0.4) : (v > 0 ? 0.7 : 0.45),
+                        ? 'color-mix(in srgb, var(--gold) 22%, transparent)'
+                        : 'color-mix(in srgb, var(--border) 90%, transparent)',
+                      opacity: (k === 0 || k === 4) ? 0 : 0.55,
                     }}/>
-                  );
-                })}
+                  ))}
+                </div>
+                <div style={{display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:2, height:'100%'}}>
+                  {bars.map((v, j)=>{
+                    const h = v > 0 ? Math.round((v / maxBar) * 22) + 4 : 3;
+                    return (
+                      <span key={j} style={{
+                        flex:'1 1 0',
+                        height: h,
+                        borderRadius:2,
+                        background: active
+                          ? (v > 0 ? 'var(--gold)' : 'color-mix(in srgb, var(--gold) 18%, transparent)')
+                          : (v > 0 ? 'var(--border-hi)' : 'var(--border)'),
+                        opacity: active ? (v > 0 ? 0.95 : 0.4) : (v > 0 ? 0.7 : 0.45),
+                      }}/>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="t-mono" style={{
+                display:'flex',
+                justifyContent:'space-between',
+                fontSize:9,
+                color: active ? 'color-mix(in srgb, var(--gold) 70%, var(--text-dim))' : 'var(--text-dim)',
+                letterSpacing:0,
+                opacity:0.75,
+                marginTop:3,
+                pointerEvents:'none',
+              }} aria-hidden="true">
+                {timelineSpan === 'year' ? (
+                  <>
+                    <span>Jan</span>
+                    <span>Dec</span>
+                  </>
+                ) : timelineSpan === 'month' ? (
+                  <>
+                    <span>W1</span>
+                    <span>W4</span>
+                  </>
+                ) : (
+                  <>
+                    <span>0</span>
+                    <span>12</span>
+                    <span>24</span>
+                  </>
+                )}
               </div>
             </button>
           );
         })}
+      </div>
+
+      {/* Day rollup banner — reflection digest for the selected day. */}
+      {timelineSpan === 'day' && summaryEnabled && (dayRollup || dayRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">DAY ROLLUP</span>
+                <span className="jp">本日のまとめ</span>
+              </span>
+              {dayRollupLoading && !dayRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {dayRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const day = new Date(timelineCursor);
+                    day.setHours(0, 0, 0, 0);
+                    setDayRollupLoading(true);
+                    setDayRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.day.get', {
+                      dayStartMs: day.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setDayRollup(res.data.rollup);
+                    setDayRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate today's rollup"
+                >Regenerate</button>
+              )}
+            </div>
+            {dayRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {dayRollup.title}
+                </div>
+                {Array.isArray(dayRollup.keyPoints) && dayRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {dayRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Week rollup banner — synthesized digest for the selected week. */}
+      {timelineSpan === 'week' && summaryEnabled && (weekRollup || weekRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">WEEK ROLLUP</span>
+                <span className="jp">週次サマリ</span>
+              </span>
+              {weekRollupLoading && !weekRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {weekRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const cursor = new Date(timelineCursor);
+                    const day = cursor.getDay();
+                    const mondayOffset = (day === 0 ? -6 : 1 - day);
+                    const monday = new Date(cursor);
+                    monday.setDate(cursor.getDate() + mondayOffset);
+                    monday.setHours(0, 0, 0, 0);
+                    setWeekRollupLoading(true);
+                    setWeekRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.get', {
+                      weekStartMs: monday.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setWeekRollup(res.data.rollup);
+                    setWeekRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate this week's rollup"
+                >Regenerate</button>
+              )}
+            </div>
+            {weekRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {weekRollup.title}
+                </div>
+                {Array.isArray(weekRollup.keyPoints) && weekRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {weekRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Month rollup banner — synthesized digest for the selected calendar month. */}
+      {timelineSpan === 'month' && summaryEnabled && (monthRollup || monthRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">MONTH ROLLUP</span>
+                <span className="jp">今月のまとめ</span>
+              </span>
+              {monthRollupLoading && !monthRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {monthRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const sel = selectedDate || timelineCursor;
+                    const monthStart = new Date(sel.getFullYear(), sel.getMonth(), 1, 0, 0, 0, 0);
+                    setMonthRollupLoading(true);
+                    setMonthRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.month.get', {
+                      monthStartMs: monthStart.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setMonthRollup(res.data.rollup);
+                    setMonthRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate this month's rollup"
+                >Regenerate</button>
+              )}
+            </div>
+            {monthRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {monthRollup.title}
+                </div>
+                {Array.isArray(monthRollup.keyPoints) && monthRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {monthRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Year rollup banner — composed from the year's 12 monthly rollups. */}
+      {timelineSpan === 'year' && summaryEnabled && (yearRollup || yearRollupLoading) && (
+        <div style={{padding:'4px 40px 16px'}}>
+          <div style={{
+            padding:'14px 18px', borderRadius:12,
+            border:'1px solid var(--border)',
+            background:'color-mix(in srgb, var(--gold) 4%, var(--surface-2))',
+            display:'flex', flexDirection:'column', gap:10,
+          }}>
+            <div style={{display:'flex', alignItems:'center', gap:10}}>
+              <Icon name="memory" size={14} className="gold"/>
+              <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.14em'}}>
+                <span className="en-only">YEAR ROLLUP</span>
+                <span className="jp">今年のまとめ</span>
+              </span>
+              {yearRollupLoading && !yearRollup && (
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', marginLeft:'auto'}}>
+                  <span className="en-only">generating…</span>
+                  <span className="jp">生成中…</span>
+                </span>
+              )}
+              {yearRollup && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const sel = selectedDate || timelineCursor;
+                    const yearStart = new Date(sel.getFullYear(), 0, 1, 0, 0, 0, 0);
+                    setYearRollupLoading(true);
+                    setYearRollup(null);
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.rollup.year.get', {
+                      yearStartMs: yearStart.getTime(), lang, regenerate: true,
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.rollup) setYearRollup(res.data.rollup);
+                    setYearRollupLoading(false);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 0', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:10, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Regenerate this year's rollup (cached monthly rollups are reused)"
+                >Regenerate</button>
+              )}
+            </div>
+            {yearRollup && (
+              <>
+                <div style={{fontSize:16, fontWeight:600, lineHeight:1.3, wordBreak:'break-word'}}>
+                  {yearRollup.title}
+                </div>
+                {Array.isArray(yearRollup.keyPoints) && yearRollup.keyPoints.length > 0 && (
+                  <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                    {yearRollup.keyPoints.slice(0, 6).map((k, i) => (
+                      <li key={i} style={{fontSize:13, color:'var(--text)', lineHeight:1.5}}>{k}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div style={{padding:'12px 40px 0'}}>
+        <div
+          data-testid="memory-entity-sources"
+          className="card"
+          style={{padding:'12px 14px', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}
+        >
+          <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.1em'}}>SOURCES IN INDEX</span>
+          <span className="label">{sourceEntities.length}</span>
+          <span style={{fontSize:12, color:'var(--text-mute)'}}>
+            {sourceEntities.length > 0 ? 'entity sources discovered' : 'no entity sources yet'}
+          </span>
+        </div>
       </div>
 
       {/* River view: two-card split + hourly timeline scrubber */}
@@ -1546,59 +2859,259 @@ function ScreenMemory() {
             <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>
               {srcLabel(scrubbed.src).toUpperCase()} · {scrubbed.t}
             </div>
+            {(() => {
+              const pk = memoryProviderKey(scrubbed.sourceRaw);
+              const meta = MEMORY_PROVIDER_META[pk];
+              if (!meta) return null;
+              return (
+                <span style={{
+                  display:'inline-flex', alignItems:'center', gap:5,
+                  padding:'2px 7px', borderRadius:4,
+                  border:`1px solid color-mix(in srgb, ${meta.color} 50%, var(--border))`,
+                  background:`color-mix(in srgb, ${meta.color} 10%, transparent)`,
+                  color: meta.color,
+                  fontSize:10, letterSpacing:'0.06em',
+                  fontFamily:'var(--font-mono)',
+                }}>
+                  <span style={{width:6, height:6, borderRadius:'50%', background: meta.color}} aria-hidden="true"/>
+                  {meta.en}
+                </span>
+              );
+            })()}
             {events.length > 0 && !timelineLoading && (
-              <span className="t-mono" style={{marginLeft:'auto', fontSize:10, color:'var(--text-dim)'}}>
-                {Math.min(scrubIdx + 1, events.length)} / {events.length}
-              </span>
+              <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:4}}>
+                <button
+                  type="button"
+                  aria-label="Previous memory"
+                  onClick={() => setScrubIdx((i) => Math.max(0, i - 1))}
+                  disabled={scrubIdx === 0}
+                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx === 0 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx === 0 ? 0.35 : 1}}
+                ><Icon name="chevronLeft" size={11}/></button>
+                <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'0 2px'}}>
+                  {Math.min(scrubIdx + 1, events.length)} / {events.length}
+                  {rawEvents.length > events.length && (
+                    <span style={{marginLeft:6, color:'var(--text-mute)'}} title="Low-priority items hidden. Toggle in Filters to show.">
+                      (+{rawEvents.length - events.length})
+                    </span>
+                  )}
+                  {batchSummarizing > 0 && (
+                    <span style={{marginLeft:8, color:'var(--gold)'}} title={`Summarizing ${batchSummarizing} item(s)…`}>
+                      · summarizing {batchSummarizing}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Next memory"
+                  onClick={() => setScrubIdx((i) => Math.min(events.length - 1, i + 1))}
+                  disabled={scrubIdx >= events.length - 1}
+                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx >= events.length - 1 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx >= events.length - 1 ? 0.35 : 1}}
+                ><Icon name="chevronRight" size={11}/></button>
+              </div>
             )}
           </div>
-          <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
-            {timelineLoading ? (
-              <span className="muted" style={{fontWeight:400, fontSize:16}}>
-                <span className="en-only">Loading timeline…</span>
-                <span className="jp">読み込み中…</span>
-              </span>
-            ) : (
-              renderHighlighted(scrubbed.titleHighlight || scrubbed.title)
-            )}
-          </h2>
-          <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:16}}>
-            {scrubbed.memoryId && (
-              <span className="label">index</span>
-            )}
-            {scrubbed.provenance && (
-              <span className="label" style={{borderColor:'var(--gold-dim)', color:'var(--gold)'}} title={scrubbed.sourceRaw || ''}>
-                <span className="en-only">{memoryProvenanceLabel(scrubbed.provenance).en}</span>
-                <span className="jp" style={{fontSize:10}}>{memoryProvenanceLabel(scrubbed.provenance).jp}</span>
-              </span>
-            )}
-            {scrubbed.entityId && (
-              <span className="label t-mono" style={{fontSize:9, maxWidth:140, overflow:'hidden', textOverflow:'ellipsis'}} title={scrubbed.entityId}>
-                id · {scrubbed.entityId.slice(0, 24)}{scrubbed.entityId.length > 24 ? '…' : ''}
-              </span>
-            )}
-          </div>
-          <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
-            {timelineLoading ? (
-              <span className="muted">
-                <span className="en-only">Applying Memory search preferences before the first fetch.</span>
-                <span className="jp" style={{display:'block', marginTop:4}}>初回取得の前に設定を適用しています。</span>
-              </span>
-            ) : (
-              scrubbed.snippetHighlight
-                ? renderHighlighted(scrubbed.snippetHighlight)
-                : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')
-            )}
-          </p>
+          {timelineLoading && (
+            <>
+              <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
+                <span className="muted" style={{fontWeight:400, fontSize:16}}>
+                  <span className="en-only">Loading timeline…</span>
+                  <span className="jp">読み込み中…</span>
+                </span>
+              </h2>
+              <p style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
+                <span className="muted">
+                  <span className="en-only">Applying Memory search preferences before the first fetch.</span>
+                  <span className="jp" style={{display:'block', marginTop:4}}>初回取得の前に設定を適用しています。</span>
+                </span>
+              </p>
+            </>
+          )}
+          {!timelineLoading && (
+            <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
+              {scrubbed.memoryId && (
+                <span className="label">index</span>
+              )}
+              {scrubbed.provenance && (
+                <span className="label" style={{borderColor:'var(--gold-dim)', color:'var(--gold)'}} title={scrubbed.sourceRaw || ''}>
+                  <span className="en-only">{memoryProvenanceLabel(scrubbed.provenance).en}</span>
+                  <span className="jp" style={{fontSize:10}}>{memoryProvenanceLabel(scrubbed.provenance).jp}</span>
+                </span>
+              )}
+              {scrubbed.entityId && (
+                <span className="label t-mono" style={{fontSize:9, maxWidth:140, overflow:'hidden', textOverflow:'ellipsis'}} title={scrubbed.entityId}>
+                  id · {scrubbed.entityId.slice(0, 24)}{scrubbed.entityId.length > 24 ? '…' : ''}
+                </span>
+              )}
+            </div>
+          )}
+          {!timelineLoading && scrubSummary && !showRaw && (() => {
+            const effPriority = scrubSummary.userPriority || scrubSummary.priority;
+            const pinned = !!scrubSummary.userPriority;
+            const setPinPriority = async (tier) => {
+              if (!scrubbed?.memoryId) return;
+              const targetId = scrubbed.memoryId;
+              // Clicking the currently-active tier clears the override.
+              const nextValue = tier === scrubSummary.userPriority ? null : tier;
+              // Optimistic update.
+              const nextSummary = { ...scrubSummary, userPriority: nextValue };
+              setScrubSummary(nextSummary);
+              setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
+              await runRuntimeActionA('memory.summary.set_priority', {
+                targetId, targetKind: 'item', priority: nextValue,
+              }, { silentError: true });
+            };
+            return (
+            <div className="memory-summary-card" style={{
+              display:'flex', flexDirection:'column', gap:10,
+              marginBottom:14,
+              borderLeft: effPriority === 'high'
+                ? '2px solid var(--gold)'
+                : '2px solid var(--border)',
+              paddingLeft:14,
+            }}>
+              <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap'}}>
+                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, wordBreak:'break-word', flex:1, minWidth:0}}>{scrubSummary.title}</div>
+                {pinned && (
+                  <span className="t-mono" style={{fontSize:9, color:'var(--gold)', letterSpacing:'0.12em', padding:'2px 6px', border:'1px solid var(--gold-dim)', borderRadius:4}}>
+                    <span className="en-only">PINNED</span>
+                    <span className="jp">手動</span>
+                  </span>
+                )}
+              </div>
+              {Array.isArray(scrubSummary.keyPoints) && scrubSummary.keyPoints.length > 0 && (
+                <ul style={{margin:0, paddingLeft:16, display:'flex', flexDirection:'column', gap:4}}>
+                  {scrubSummary.keyPoints.slice(0, 4).map((k, i) => (
+                    <li key={i} style={{fontSize:13, color: i === 0 ? 'var(--text)' : 'var(--text-mute)', lineHeight:1.5}}>{k}</li>
+                  ))}
+                </ul>
+              )}
+              <div style={{display:'flex', gap:14, marginTop:2, alignItems:'center', flexWrap:'wrap'}}>
+                {/* Priority override: click a tier to pin; click the active tier again to clear. */}
+                <div style={{display:'flex', gap:4, alignItems:'center'}} title="Set the priority for this item. Click the active tier to clear the override.">
+                  <span className="t-mono" style={{fontSize:9, color:'var(--text-dim)', letterSpacing:'0.1em', marginRight:2}}>PIN</span>
+                  {[{k:'high', label:'H'}, {k:'medium', label:'M'}, {k:'low', label:'L'}].map(({k, label}) => {
+                    const active = effPriority === k;
+                    const isOverride = scrubSummary.userPriority === k;
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setPinPriority(k)}
+                        style={{
+                          width:18, height:18, padding:0,
+                          border:'1px solid ' + (active ? (k === 'high' ? 'var(--gold)' : 'var(--border-hi)') : 'var(--border)'),
+                          background: active ? (k === 'high' ? 'var(--gold)' : 'var(--border-hi)') : 'transparent',
+                          color: active ? 'var(--bg)' : 'var(--text-dim)',
+                          fontFamily: 'inherit', fontSize: 10, fontWeight: isOverride ? 700 : 500,
+                          borderRadius: 3, cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >{label}</button>
+                    );
+                  })}
+                </div>
+                <button type="button" onClick={() => setShowRaw(true)} style={{
+                  padding:'4px 0', borderRadius:0, border:'none',
+                  background:'transparent', color:'var(--text-dim)', fontSize:11, cursor:'pointer', fontFamily:'inherit', textDecoration:'underline',
+                }}>Show raw</button>
+                <button
+                  type="button"
+                  disabled={scrubSummaryLoading}
+                  onClick={async () => {
+                    if (!scrubbed?.memoryId) return;
+                    const targetId = scrubbed.memoryId;
+                    setScrubSummaryLoading(true);
+                    setScrubSummary(null);
+                    setSummaryByMemId((prev) => {
+                      const next = { ...prev };
+                      delete next[targetId];
+                      return next;
+                    });
+                    await runRuntimeActionA('memory.summary.invalidate', {
+                      targetId, targetKind: 'item',
+                    }, { silentError: true });
+                    const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
+                    const res = await runRuntimeActionA('memory.summary.get', {
+                      targetId, targetKind: 'item', lang,
+                      item: {
+                        id: targetId,
+                        title: scrubbed.title || '',
+                        snippet: scrubbed.snippet || '',
+                        source: scrubbed.sourceRaw || '',
+                      },
+                    }, { silentError: true });
+                    if (res?.ok && res.data?.summary) {
+                      setScrubSummary(res.data.summary);
+                      setSummaryByMemId((prev) => ({ ...prev, [targetId]: res.data.summary }));
+                    }
+                    setScrubSummaryLoading(false);
+                  }}
+                  style={{
+                    padding:'4px 0', borderRadius:0, border:'none',
+                    background:'transparent',
+                    color: scrubSummaryLoading ? 'var(--text-mute)' : 'var(--text-dim)',
+                    fontSize:11,
+                    cursor: scrubSummaryLoading ? 'default' : 'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                    opacity: scrubSummaryLoading ? 0.5 : 1,
+                  }}
+                  title="Regenerate this summary (clears cache)"
+                >
+                  {scrubSummaryLoading ? 'Regenerating…' : 'Regenerate'}
+                </button>
+              </div>
+            </div>
+            );
+          })()}
+          {!timelineLoading && scrubSummaryLoading && !scrubSummary && (
+            <div style={{padding:'20px 18px', marginBottom:16, color:'var(--text-dim)', fontSize:13, textAlign:'center', border:'1px solid var(--border)', borderRadius:12, background:'var(--surface)'}}>
+              <span className="en-only">Generating summary…</span>
+              <span className="jp">要約を生成中…</span>
+            </div>
+          )}
+          {!timelineLoading && (showRaw || (!scrubSummary && !scrubSummaryLoading)) && (
+            <>
+              <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
+                {renderHighlighted(scrubbed.titleHighlight || scrubbed.title)}
+              </h2>
+              {scrubbed.clusterCount > 1 && (
+                <div className="t-mono" style={{margin:'-8px 0 14px', fontSize:11, color:'var(--text-dim)', letterSpacing:'0.06em'}}>
+                  {scrubbed.clusterCount} captures · {new Date(scrubbed.clusterStart).toTimeString().slice(0,5)}
+                  {' – '}
+                  {new Date(scrubbed.clusterEnd).toTimeString().slice(0,5)}
+                </div>
+              )}
+              <div style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap', maxHeight:320, overflowY:'auto', wordBreak:'break-word'}}>
+                {scrubbed.snippetHighlight
+                  ? renderHighlighted(scrubbed.snippetHighlight)
+                  : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')}
+              </div>
+              {scrubSummary && (
+                <div style={{marginBottom:16}}>
+                  <button type="button" onClick={() => setShowRaw(false)} style={{
+                    padding:'6px 12px', borderRadius:8, border:'1px solid var(--border)',
+                    background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit',
+                  }}>Show summary</button>
+                </div>
+              )}
+            </>
+          )}
           <span style={{flex:1}}/>
-          <div style={{display:'flex', gap:8, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)', flexWrap:'wrap'}}>
+          <div style={{display:'flex', gap:8, marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)', flexWrap:'wrap', alignItems:'center', position:'relative'}}>
             {scrubbed.memoryId && !timelineLoading && (
               <button
                 type="button"
-                onClick={() => openMemoryEntryInChat(
-                  { title: scrubbed.title, snippet: scrubbed.snippet },
-                  { memoryAssemblyQuery: scrubbed.title, memoryAssemblyLimit: 14, allowServerMemoryAssembly },
-                )}
+                onClick={() => {
+                  openMemoryEntryInChat(
+                    { title: scrubbed.title, snippet: scrubbed.snippet },
+                    {
+                      memoryAssemblyQuery: scrubbed.title,
+                      memoryAssemblyLimit: 14,
+                      allowServerMemoryAssembly,
+                      newChat: true,
+                    },
+                  );
+                }}
                 style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}
               >
                 <Icon name="chat" size={13}/>
@@ -1606,66 +3119,145 @@ function ScreenMemory() {
                 <span className="jp" style={{fontSize:11}}>チャットへ</span>
               </button>
             )}
-            <button
-              type="button"
-              disabled={timelineLoading || !scrubbed.title}
-              onClick={async () => {
-                const res = await runRuntimeActionA('memory.search', withSemantic({ query: scrubbed.title, limit: 10 }), { successMessage: 'Search run' });
-                mergeIndexHitsIntoRiver(res, setEvents, setScrubIdx);
-              }}
-              style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit', opacity: (timelineLoading || !scrubbed.title) ? 0.5 : 1}}
-            >
-              <Icon name="search" size={13}/>Search title
-            </button>
-            {scrubbed.memoryId && !timelineLoading && (
-              <button
-                type="button"
-                onClick={() => {
-                  const prompt =
-                    'Turn this indexed memory into a concise Markdown work note (bullets OK).\n\n**Title:** ' +
-                    (scrubbed.title || '') +
-                    '\n\n**Snippet:**\n' +
-                    (scrubbed.snippet || '').slice(0, 4000);
-                  runRuntimeActionA(
-                    'draft.create',
-                    (() => {
-                      const p = { target: 'work_document', source: 'memory_timeline', prompt };
-                      if (allowServerMemoryAssembly) {
-                        p.memoryAssembly = {
-                          query: String(scrubbed.title || '').slice(0, 240),
-                          limit: 12,
-                          semantic: true,
-                        };
-                      }
-                      return p;
-                    })(),
-                    { successMessage: 'Draft ready' },
-                  );
-                }}
-                style={{display:'inline-flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}
-              >
-                <Icon name="edit" size={13}/>
-                <span className="en-only">Draft</span>
-                <span className="jp" style={{fontSize:11}}>下書き</span>
-              </button>
-            )}
+            {scrubbed.memoryId && !timelineLoading && (() => {
+              const assignedId = workspaceAssignments[scrubbed.memoryId];
+              const assignedProject = assignedId
+                ? workProjects.find((p) => p.id === assignedId)
+                : null;
+              const label = assignedProject ? assignedProject.name : 'Assign to workspace';
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setAssignMenuOpen((v) => !v)}
+                    style={{
+                      display:'inline-flex', alignItems:'center', gap:6,
+                      padding:'7px 12px', borderRadius:10,
+                      border:'1px solid ' + (assignedProject ? 'var(--gold-dim)' : 'var(--border)'),
+                      background: assignedProject ? 'color-mix(in srgb, var(--gold) 10%, var(--surface))' : 'var(--surface)',
+                      color: assignedProject ? 'var(--gold)' : 'var(--text-mute)',
+                      fontSize:12, cursor:'pointer', fontFamily:'inherit', maxWidth:240,
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                    }}
+                  >
+                    <Icon name="work" size={13}/>
+                    <span style={{overflow:'hidden', textOverflow:'ellipsis'}}>{label}</span>
+                  </button>
+                  {assignMenuOpen && (
+                    <>
+                      <div role="presentation" onMouseDown={()=>setAssignMenuOpen(false)} style={{position:'fixed', inset:0, zIndex:40}}/>
+                      <div
+                        role="menu"
+                        onMouseDown={(e)=>e.stopPropagation()}
+                        style={{
+                          position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:41,
+                          minWidth:240, padding:6, borderRadius:10,
+                          border:'1px solid var(--border-hi)', background:'var(--surface-2)',
+                          boxShadow:'0 10px 30px rgba(0,0,0,0.35)',
+                          display:'flex', flexDirection:'column', gap:2,
+                          maxHeight:280, overflowY:'auto',
+                        }}
+                      >
+                        {workProjects.length === 0 && (
+                          <div style={{padding:'8px 10px', fontSize:12, color:'var(--text-dim)'}}>
+                            No workspaces yet.
+                          </div>
+                        )}
+                        {workProjects
+                          .filter((p) => !p.archived)
+                          .map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={async () => {
+                                await assignMemoryToWorkspace(scrubbed.memoryId, p.id);
+                                setAssignMenuOpen(false);
+                              }}
+                              style={{
+                                textAlign:'left', padding:'8px 10px', borderRadius:6,
+                                border:0, background: p.id === assignedId ? 'color-mix(in srgb, var(--gold) 12%, transparent)' : 'transparent',
+                                color: 'var(--text)', fontSize:13, cursor:'pointer',
+                                display:'flex', alignItems:'center', gap:8, fontFamily:'inherit',
+                              }}
+                            >
+                              <Icon name="work" size={12} className={p.id === assignedId ? 'gold' : 'dim'}/>
+                              <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.name}</span>
+                              {p.id === assignedId && <Icon name="check" size={11} className="gold"/>}
+                            </button>
+                          ))}
+                        {assignedId && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await assignMemoryToWorkspace(scrubbed.memoryId, null);
+                              setAssignMenuOpen(false);
+                            }}
+                            style={{
+                              textAlign:'left', padding:'8px 10px', borderRadius:6,
+                              border:0, background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer',
+                              borderTop:'1px solid var(--border)', marginTop:2, fontFamily:'inherit',
+                            }}
+                          >
+                            Unassign
+                          </button>
+                        )}
+                        <div style={{borderTop:'1px solid var(--border)', marginTop:4, paddingTop:6, display:'flex', gap:6}}>
+                          <input
+                            type="text"
+                            value={newWorkspaceDraft}
+                            onChange={(e) => setNewWorkspaceDraft(e.target.value)}
+                            onKeyDown={async (e) => {
+                              if (e.key !== 'Enter') return;
+                              const name = newWorkspaceDraft.trim();
+                              if (!name) return;
+                              const create = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.createWorkProject;
+                              const newId = typeof create === 'function' ? create(name) : null;
+                              if (newId) {
+                                setNewWorkspaceDraft('');
+                                await assignMemoryToWorkspace(scrubbed.memoryId, newId);
+                                setAssignMenuOpen(false);
+                              }
+                            }}
+                            placeholder="New workspace…"
+                            style={{
+                              flex:1, padding:'6px 8px', borderRadius:6,
+                              border:'1px solid var(--border)', background:'var(--bg)', color:'var(--text)',
+                              fontSize:12, fontFamily:'inherit',
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const name = newWorkspaceDraft.trim();
+                              if (!name) return;
+                              const create = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.createWorkProject;
+                              const newId = typeof create === 'function' ? create(name) : null;
+                              if (newId) {
+                                setNewWorkspaceDraft('');
+                                await assignMemoryToWorkspace(scrubbed.memoryId, newId);
+                                setAssignMenuOpen(false);
+                              }
+                            }}
+                            disabled={!newWorkspaceDraft.trim()}
+                            style={{
+                              padding:'6px 10px', borderRadius:6,
+                              border:'1px solid var(--border-hi)',
+                              background:'var(--surface)', color:'var(--text)',
+                              fontSize:12, cursor: newWorkspaceDraft.trim() ? 'pointer' : 'default',
+                              opacity: newWorkspaceDraft.trim() ? 1 : 0.5,
+                              fontFamily:'inherit',
+                            }}
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              );
+            })()}
             <span style={{flex:1}}/>
-            {scrubbed.memoryId && (
-              <button
-                type="button"
-                onClick={() => requestWriteActionA(
-                  'memory.delete',
-                  { id: scrubbed.memoryId },
-                  'Remove from memory index',
-                  'Deletes this entry from the local memory index.',
-                )}
-                aria-label="Remove from index"
-                title="Remove from index"
-                style={{display:'inline-flex', alignItems:'center', justifyContent:'center', width:32, height:30, padding:0, borderRadius:10, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer'}}
-              >
-                <Icon name="x" size={13}/>
-              </button>
-            )}
           </div>
         </div>
 
@@ -1692,23 +3284,24 @@ function ScreenMemory() {
                   <span style={{color:'var(--text)', wordBreak:'break-word'}}>{scrubbed.sourceRaw || srcLabel(scrubbed.src)}</span>
                   <span className="t-mono" style={{color:'var(--text-dim)'}}>Captured</span>
                   <span style={{color:'var(--text)'}}>{scrubbed.t}</span>
+                  {scrubSummary && scrubSummary.priority && (
+                    <>
+                      <span className="t-mono" style={{color:'var(--text-dim)'}}>Priority</span>
+                      <span style={{color:'var(--text)'}}>{String(scrubSummary.priority).toUpperCase()}</span>
+                    </>
+                  )}
+                  {scrubSummary && scrubSummary.reason && (
+                    <>
+                      <span className="t-mono" style={{color:'var(--text-dim)'}}>Reason</span>
+                      <span style={{color:'var(--text-mute)', wordBreak:'break-word', fontSize:12}}>{scrubSummary.reason}</span>
+                    </>
+                  )}
                   {scrubbed.entityId && (
                     <>
                       <span className="t-mono" style={{color:'var(--text-dim)'}}>Entity</span>
                       <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.entityId}</span>
                     </>
                   )}
-                  {scrubbed.memoryId && (
-                    <>
-                      <span className="t-mono" style={{color:'var(--text-dim)'}}>ID</span>
-                      <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.memoryId}</span>
-                    </>
-                  )}
-                </div>
-                <div style={{borderTop:'1px solid var(--border)', paddingTop:14, fontSize:13, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap'}}>
-                  {scrubbed.snippetHighlight
-                    ? renderHighlighted(scrubbed.snippetHighlight)
-                    : scrubbed.snippet || <span className="muted">No snippet text for this entry.</span>}
                 </div>
               </>
             ) : (
@@ -1754,19 +3347,32 @@ function ScreenMemory() {
                 const height = count > 0 ? Math.round((count / hourIndexFromEvents.maxC) * 42) + 6 : 4;
                 const active = firstIdx >= 0 && scrubIdx >= firstIdx && scrubIdx < firstIdx + count;
                 const clickable = firstIdx >= 0;
+                const topTier = hourIndexFromEvents.topPriority[h];
+                // Color the bar by the BEST-tier event in the hour so the eye
+                // tracks "when did important stuff happen today".
+                const inactiveBg = topTier === 'high'
+                  ? 'var(--gold)'
+                  : topTier === 'medium'
+                    ? 'var(--border-hi)'
+                    : 'var(--border)';
+                const inactiveOpacity = topTier === 'high'
+                  ? 0.9
+                  : topTier === 'medium'
+                    ? 0.6
+                    : (clickable ? 0.4 : 0.3);
                 return (
                   <button
                     key={h}
                     type="button"
                     disabled={!clickable}
                     onClick={() => { if (clickable) setScrubIdx(firstIdx); }}
-                    aria-label={`${count} memories at ${String(h).padStart(2,'0')}:00`}
+                    aria-label={`${count} memories at ${String(h).padStart(2,'0')}:00${topTier ? ` (top priority: ${topTier})` : ''}`}
                     style={{
                       height,
                       padding:0,
                       border:'none',
-                      background: active ? 'var(--gold)' : (count > 0 ? 'var(--border-hi)' : 'var(--border)'),
-                      opacity: clickable ? (active ? 0.95 : 0.65) : 0.3,
+                      background: active ? 'var(--gold)' : inactiveBg,
+                      opacity: clickable ? (active ? 0.95 : inactiveOpacity) : 0.3,
                       borderRadius:2,
                       cursor: clickable ? 'pointer' : 'default',
                       transition: 'opacity 120ms, background 120ms',
@@ -1966,6 +3572,18 @@ function ScreenMemory() {
         </div>
       )}
 
+      {view === 'digest' && (
+        <MemoryDigestView state={digestState} setState={setDigestState} />
+      )}
+
+      {view === 'search' && (
+        <MemorySearchView
+          workProjects={workProjects}
+          assignments={workspaceAssignments}
+          setAssignments={setWorkspaceAssignments}
+        />
+      )}
+
       {/* FTS5 highlight styles */}
       <style>{`
         .memory-scrub-stage mark {
@@ -1975,6 +3593,463 @@ function ScreenMemory() {
           border-radius: 2px;
         }
       `}</style>
+    </div>
+  );
+}
+
+/** Helpers for `MemoryDigestView` below. */
+function startOfDayMs(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x.getTime();
+}
+/** ISO Monday (day index 1). Returns ms of local midnight on that Monday. */
+function startOfWeekMs(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  // JS: getDay() 0=Sun..6=Sat. Shift so Mon=0.
+  const offset = (x.getDay() + 6) % 7;
+  x.setDate(x.getDate() - offset);
+  return x.getTime();
+}
+
+function MemoryDigestView({ state, setState }) {
+  const now = new Date();
+  const weekStartMs = useMemo(() => startOfWeekMs(now), [now.getDate()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dayStartMs = useMemo(() => startOfDayMs(now), [now.getDate()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lang = 'en';
+
+  const loadRollups = useCallback(async (regenerate) => {
+    setState((prev) => ({
+      ...prev,
+      loading: !regenerate,
+      generatingWeek: !!regenerate,
+      generatingDay: !!regenerate,
+      error: null,
+    }));
+    const [weekRes, dayRes] = await Promise.all([
+      runRuntimeActionA(
+        'memory.rollup.get',
+        { weekStartMs, lang, regenerate: !!regenerate },
+        { silentError: true },
+      ),
+      runRuntimeActionA(
+        'memory.rollup.day.get',
+        { dayStartMs, lang, regenerate: !!regenerate },
+        { silentError: true },
+      ),
+    ]);
+    const weekRollup = weekRes && weekRes.ok && weekRes.data ? weekRes.data.rollup : null;
+    const dayRollup = dayRes && dayRes.ok && dayRes.data ? dayRes.data.rollup : null;
+    const errMsg = (!weekRes || !weekRes.ok) && (!dayRes || !dayRes.ok)
+      ? ((weekRes && weekRes.error && weekRes.error.message)
+         || (dayRes && dayRes.error && dayRes.error.message)
+         || 'Rollup failed')
+      : null;
+    setState({
+      week: weekRollup,
+      day: dayRollup,
+      loading: false,
+      generatingWeek: false,
+      generatingDay: false,
+      error: errMsg,
+    });
+  }, [setState, weekStartMs, dayStartMs]);
+
+  useEffect(() => {
+    // Only load on first entry to this view (state.week / .day null).
+    if (state.week == null && state.day == null && !state.loading) {
+      void loadRollups(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fmtRange = (startMs, endMs) => {
+    try {
+      const s = new Date(startMs);
+      const e = new Date(endMs);
+      const opts = { month: 'short', day: 'numeric' };
+      if (s.getFullYear() !== e.getFullYear()) {
+        opts.year = 'numeric';
+      }
+      return `${s.toLocaleDateString('en-US', opts)} – ${e.toLocaleDateString('en-US', opts)}`;
+    } catch (_e) {
+      return '';
+    }
+  };
+
+  const renderCard = (rollup, label, onRegen, generating) => {
+    const priority = rollup && typeof rollup === 'object'
+      ? String(rollup.userPriority || rollup.priority || '').toLowerCase()
+      : '';
+    const priColor = priority === 'high'
+      ? 'var(--danger)'
+      : priority === 'medium'
+        ? 'var(--gold)'
+        : 'var(--text-dim)';
+    return (
+      <div className="card" style={{padding:22, display:'flex', flexDirection:'column', gap:14}}>
+        <div className="row" style={{gap:10, alignItems:'center'}}>
+          <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>{label.toUpperCase()}</span>
+          {rollup && priority && (
+            <span className="label" style={{fontSize:10, borderColor:priColor, color:priColor, textTransform:'uppercase'}}>
+              {priority}
+            </span>
+          )}
+          <span style={{flex:1}}/>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={generating}
+            onClick={() => void onRegen()}
+            style={generating ? {opacity:0.55, cursor:'default'} : undefined}
+          >
+            {generating ? 'Regenerating…' : 'Regenerate'}
+          </button>
+        </div>
+        {!rollup ? (
+          <div style={{color:'var(--text-dim)', fontSize:13, lineHeight:1.5}}>
+            No summary yet. Run Regenerate to build one from your indexed memory.
+          </div>
+        ) : (
+          <>
+            <div style={{fontSize:18, fontWeight:500, lineHeight:1.35}}>
+              {rollup.title || 'Untitled digest'}
+            </div>
+            {Array.isArray(rollup.keyPoints) && rollup.keyPoints.length > 0 && (
+              <ul style={{margin:0, paddingLeft:20, fontSize:13, lineHeight:1.6, color:'var(--text)'}}>
+                {rollup.keyPoints.map((p, i) => (
+                  <li key={i} style={{marginBottom:4}}>{p}</li>
+                ))}
+              </ul>
+            )}
+            {rollup.reason && (
+              <div style={{fontSize:11, color:'var(--text-dim)', lineHeight:1.5}}>
+                <span className="t-mono" style={{fontSize:9, letterSpacing:'0.1em'}}>WHY</span>{' '}{rollup.reason}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{flex:1, padding:'24px 40px 40px', minHeight:0, overflowY:'auto'}}>
+      <div style={{maxWidth:820, margin:'0 auto', display:'flex', flexDirection:'column', gap:18}}>
+        {state.loading ? (
+          <div style={{padding:32, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>Loading digest…</div>
+        ) : state.error ? (
+          <div className="card" style={{padding:18, color:'var(--danger)', fontSize:13}}>
+            {state.error}
+          </div>
+        ) : null}
+
+        <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em'}}>
+          WEEK · {fmtRange(weekStartMs, weekStartMs + 6 * 86_400_000)}
+        </div>
+        {renderCard(
+          state.week,
+          'Weekly digest',
+          async () => {
+            setState((prev) => ({ ...prev, generatingWeek: true }));
+            const res = await runRuntimeActionA(
+              'memory.rollup.get',
+              { weekStartMs, lang, regenerate: true },
+              { silentError: true },
+            );
+            setState((prev) => ({
+              ...prev,
+              week: res && res.ok && res.data ? res.data.rollup : prev.week,
+              generatingWeek: false,
+              error: res && res.ok ? null : ((res && res.error && res.error.message) || 'Regenerate failed'),
+            }));
+          },
+          state.generatingWeek,
+        )}
+
+        <div className="t-mono" style={{fontSize:10, color:'var(--text-dim)', letterSpacing:'0.14em', marginTop:8}}>
+          DAY · {(() => { try { return new Date(dayStartMs).toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }); } catch (_) { return ''; } })()}
+        </div>
+        {renderCard(
+          state.day,
+          'Daily digest',
+          async () => {
+            setState((prev) => ({ ...prev, generatingDay: true }));
+            const res = await runRuntimeActionA(
+              'memory.rollup.day.get',
+              { dayStartMs, lang, regenerate: true },
+              { silentError: true },
+            );
+            setState((prev) => ({
+              ...prev,
+              day: res && res.ok && res.data ? res.data.rollup : prev.day,
+              generatingDay: false,
+              error: res && res.ok ? null : ((res && res.error && res.error.message) || 'Regenerate failed'),
+            }));
+          },
+          state.generatingDay,
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MemorySearchView({ workProjects, assignments, setAssignments }) {
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [targetWorkspace, setTargetWorkspace] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [newDraft, setNewDraft] = useState('');
+
+  // Initial load: most recent hits, no query.
+  useEffect(() => {
+    let cancelled = false;
+    setSearching(true);
+    runRuntimeActionA('memory.search', { query: '', limit: 60 }, { silentError: true })
+      .then((r) => {
+        if (cancelled) return;
+        setSearching(false);
+        const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];
+        setHits(arr);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Debounced search as the user types.
+  useEffect(() => {
+    if (query === '') return undefined;
+    const t = setTimeout(() => {
+      setSearching(true);
+      runRuntimeActionA('memory.search', { query, limit: 60 }, { silentError: true })
+        .then((r) => {
+          setSearching(false);
+          const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];
+          setHits(arr);
+        });
+    }, 220);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const toggleOne = useCallback((id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const selectAllVisible = useCallback(() => {
+    setSelected(new Set(hits.map((h) => h.id).filter(Boolean)));
+  }, [hits]);
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
+  const applyAssign = useCallback(async () => {
+    if (selected.size === 0 || !targetWorkspace) return;
+    setBusy(true);
+    const next = { ...assignments };
+    let resolvedTarget = targetWorkspace;
+    if (targetWorkspace === '__new__') {
+      const name = newDraft.trim();
+      if (!name) { setBusy(false); return; }
+      const create = window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.createWorkProject;
+      const id = typeof create === 'function' ? create(name) : null;
+      if (!id) { setBusy(false); return; }
+      resolvedTarget = id;
+      setNewDraft('');
+    } else if (targetWorkspace === '__unassign__') {
+      resolvedTarget = '';
+    }
+    selected.forEach((id) => {
+      if (resolvedTarget) next[id] = resolvedTarget;
+      else delete next[id];
+    });
+    setAssignments(next);
+    await runRuntimeActionA(
+      'settings.save',
+      { section: 'workspace_memberships', memberships: next },
+      { silentError: true },
+    );
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-workspace-memberships-changed', { detail: { memberships: next } }));
+    } catch (_) { /* ignore */ }
+    window.SHOGUN_RUNTIME?.pushToast?.(
+      resolvedTarget
+        ? `Assigned ${selected.size} memor${selected.size === 1 ? 'y' : 'ies'}`
+        : `Unassigned ${selected.size} memor${selected.size === 1 ? 'y' : 'ies'}`,
+      'success',
+    );
+    setSelected(new Set());
+    if (targetWorkspace !== '__new__') setTargetWorkspace('');
+    setBusy(false);
+  }, [assignments, selected, targetWorkspace, newDraft, setAssignments]);
+
+  const visibleProjects = workProjects.filter((p) => !p.archived);
+  const renderHL = window.ShogunHighlight && window.ShogunHighlight.renderHighlighted
+    ? window.ShogunHighlight.renderHighlighted
+    : ((t) => t);
+
+  return (
+    <div style={{flex:1, padding:'24px 40px 40px', minHeight:0, display:'flex', flexDirection:'column', gap:14}}>
+      <div className="row" style={{gap:10, alignItems:'center'}}>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search indexed memory…"
+          autoFocus
+          style={{
+            flex:1, padding:'10px 14px', borderRadius:10,
+            border:'1px solid var(--border-hi)', background:'var(--bg)',
+            color:'var(--text)', fontSize:14, fontFamily:'inherit',
+          }}
+        />
+        <span className="t-mono" style={{fontSize:11, color:'var(--text-dim)'}}>
+          {searching ? 'Searching…' : `${hits.length} hits`}
+        </span>
+        {hits.length > 0 && (
+          selected.size === hits.length ? (
+            <button
+              type="button" className="btn btn-sm btn-ghost"
+              onClick={clearSelection}
+            >Clear</button>
+          ) : (
+            <button
+              type="button" className="btn btn-sm btn-secondary"
+              onClick={selectAllVisible}
+            >Select all</button>
+          )
+        )}
+      </div>
+
+      <div style={{flex:1, minHeight:0, overflowY:'auto', display:'flex', flexDirection:'column', gap:8, paddingRight:4}}>
+        {hits.length === 0 ? (
+          <div style={{padding:32, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
+            {searching ? 'Loading…' : 'No matches.'}
+          </div>
+        ) : (
+          hits.map((h) => {
+            const id = h.id;
+            const isOn = !!id && selected.has(id);
+            const titleSrc = h.title_highlight || h.title || 'Untitled';
+            const snippetSrc = h.snippet_highlight || h.snippet || '';
+            const provider = memoryProviderKey(h.source);
+            const meta = MEMORY_PROVIDER_META[provider];
+            const assignedId = id ? assignments[id] : null;
+            const assignedProj = assignedId ? workProjects.find((p) => p.id === assignedId) : null;
+            return (
+              <label
+                key={id || h.title}
+                style={{
+                  display:'grid', gridTemplateColumns:'24px 1fr', columnGap:12,
+                  padding:'12px 14px', borderRadius:12,
+                  border:'1px solid ' + (isOn ? 'color-mix(in srgb, var(--gold) 65%, var(--border))' : 'var(--border)'),
+                  background: isOn ? 'color-mix(in srgb, var(--gold) 6%, var(--surface))' : 'var(--surface)',
+                  cursor: id ? 'pointer' : 'default',
+                  alignItems:'flex-start',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isOn}
+                  disabled={!id}
+                  onChange={() => id && toggleOne(id)}
+                  style={{marginTop:3}}
+                />
+                <div style={{minWidth:0}}>
+                  <div className="row" style={{gap:8, alignItems:'center', flexWrap:'wrap', marginBottom:4}}>
+                    {meta && (
+                      <span style={{
+                        display:'inline-flex', alignItems:'center', gap:5,
+                        padding:'2px 7px', borderRadius:4,
+                        border:`1px solid color-mix(in srgb, ${meta.color} 50%, var(--border))`,
+                        background:`color-mix(in srgb, ${meta.color} 10%, transparent)`,
+                        color: meta.color,
+                        fontSize:9, letterSpacing:'0.06em', fontFamily:'var(--font-mono)',
+                      }}>
+                        <span style={{width:5, height:5, borderRadius:'50%', background: meta.color}} aria-hidden="true"/>
+                        {meta.en}
+                      </span>
+                    )}
+                    {assignedProj && (
+                      <span className="label" style={{fontSize:10, borderColor:'var(--gold-dim)', color:'var(--gold)'}}>
+                        ▣ {assignedProj.name}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{fontSize:14, fontWeight:500, lineHeight:1.35, marginBottom:4}}>
+                    {renderHL(titleSrc)}
+                  </div>
+                  {snippetSrc && (
+                    <div style={{fontSize:12, color:'var(--text-dim)', lineHeight:1.55, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical'}}>
+                      {renderHL(snippetSrc)}
+                    </div>
+                  )}
+                </div>
+              </label>
+            );
+          })
+        )}
+      </div>
+
+      {selected.size > 0 && (
+        <div className="card" style={{padding:14, display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', borderColor:'var(--gold-dim)'}}>
+          <span style={{fontSize:13, fontWeight:500}}>
+            {selected.size} selected
+          </span>
+          <span style={{flex:1}}/>
+          <select
+            value={targetWorkspace}
+            onChange={(e) => setTargetWorkspace(e.target.value)}
+            disabled={busy}
+            style={{
+              padding:'6px 10px', borderRadius:8,
+              border:'1px solid var(--border-hi)', background:'var(--surface)', color:'var(--text)',
+              fontSize:12, fontFamily:'inherit',
+            }}
+          >
+            <option value="">Choose workspace…</option>
+            {visibleProjects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+            <option value="__new__">+ New workspace…</option>
+            <option value="__unassign__">Unassign</option>
+          </select>
+          {targetWorkspace === '__new__' && (
+            <input
+              type="text"
+              value={newDraft}
+              onChange={(e) => setNewDraft(e.target.value)}
+              placeholder="New workspace name"
+              disabled={busy}
+              style={{
+                padding:'6px 10px', borderRadius:8,
+                border:'1px solid var(--border-hi)', background:'var(--bg)', color:'var(--text)',
+                fontSize:12, fontFamily:'inherit', width:180,
+              }}
+            />
+          )}
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            disabled={busy || !targetWorkspace || (targetWorkspace === '__new__' && !newDraft.trim())}
+            onClick={applyAssign}
+            style={(busy || !targetWorkspace || (targetWorkspace === '__new__' && !newDraft.trim())) ? {opacity:0.55, cursor:'not-allowed'} : undefined}
+          >
+            {busy ? 'Applying…' : 'Apply'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            disabled={busy}
+            onClick={clearSelection}
+          >
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   );
 }
