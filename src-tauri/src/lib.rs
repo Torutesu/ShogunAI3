@@ -38,6 +38,7 @@ mod kioku_graph_schema;
 mod kioku_eval;
 mod decay;
 mod kioku_capture;
+mod lessons;
 mod mem_captures;
 mod extraction_jobs;
 mod cost_ledger;
@@ -254,6 +255,8 @@ pub fn run() {
       commands::shogun_memory_day_rollup_get,
       commands::shogun_memory_month_rollup_get,
       commands::shogun_memory_year_rollup_get,
+      commands::shogun_lesson_capture_rejection,
+      commands::shogun_lesson_capture_tool_failure,
       commands::shogun_memory_summary_set_priority,
     ])
     .run(tauri::generate_context!())

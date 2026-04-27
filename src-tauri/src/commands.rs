@@ -7,6 +7,7 @@ use crate::{
 };
 use crate::paths;
 use crate::schedule_queue;
+use rusqlite::params;
 use serde_json::{json, Value};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -437,6 +438,103 @@ fn usage_percent_from_bytes(bytes: u64) -> u64 {
   u64::min(100, bytes.saturating_mul(100) / cap.max(1))
 }
 
+fn percentile_ms(values: &mut [i64], percentile: f64) -> Option<i64> {
+  if values.is_empty() {
+    return None;
+  }
+  values.sort_unstable();
+  let idx = ((values.len() - 1) as f64 * percentile).round() as usize;
+  values.get(idx).copied()
+}
+
+fn compute_sli_snapshot(now_ms: i64) -> Result<Value, String> {
+  let conn = memory_store::open_conn()?;
+  let window_start_ms = now_ms.saturating_sub(24 * 60 * 60 * 1000);
+
+  let mut stmt = conn
+    .prepare(
+      "SELECT status, COUNT(*)
+         FROM extraction_jobs
+        WHERE created_at >= ?1
+          AND status IN ('done', 'failed')
+        GROUP BY status",
+    )
+    .map_err(|e| format!("prepare extraction_jobs status query: {}", e))?;
+  let rows = stmt
+    .query_map(params![window_start_ms], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+    .map_err(|e| format!("run extraction_jobs status query: {}", e))?;
+  let mut done = 0_i64;
+  let mut failed = 0_i64;
+  for row in rows {
+    let (status, count) = row.map_err(|e| e.to_string())?;
+    match status.as_str() {
+      "done" => done = count,
+      "failed" => failed = count,
+      _ => {}
+    }
+  }
+  drop(stmt);
+
+  let completed = done.saturating_add(failed);
+  let success_rate = if completed > 0 {
+    (done as f64 / completed as f64) * 100.0
+  } else {
+    100.0
+  };
+
+  let mut stmt = conn
+    .prepare(
+      "SELECT (finished_at - started_at) AS elapsed_ms
+         FROM extraction_jobs
+        WHERE status = 'done'
+          AND finished_at IS NOT NULL
+          AND started_at IS NOT NULL
+          AND finished_at >= ?1",
+    )
+    .map_err(|e| format!("prepare extraction_jobs p95 query: {}", e))?;
+  let rows = stmt
+    .query_map(params![window_start_ms], |r| r.get::<_, i64>(0))
+    .map_err(|e| format!("run extraction_jobs p95 query: {}", e))?;
+  let mut latencies: Vec<i64> = Vec::new();
+  for row in rows {
+    let elapsed = row.map_err(|e| e.to_string())?;
+    if elapsed >= 0 {
+      latencies.push(elapsed);
+    }
+  }
+  drop(stmt);
+  let p95_ms = percentile_ms(&mut latencies, 0.95);
+
+  let queued_jobs = conn
+    .query_row(
+      "SELECT COUNT(*) FROM extraction_jobs WHERE status = 'queued'",
+      [],
+      |r| r.get::<_, i64>(0),
+    )
+    .map_err(|e| format!("count queued extraction_jobs: {}", e))?;
+  let pending_captures = conn
+    .query_row(
+      "SELECT COUNT(*) FROM mem_captures WHERE extraction_status IN ('queued', 'failed')",
+      [],
+      |r| r.get::<_, i64>(0),
+    )
+    .map_err(|e| format!("count pending mem_captures: {}", e))?;
+  let backlog = queued_jobs.saturating_add(pending_captures);
+
+  Ok(json!({
+    "windowHours": 24,
+    "completed": completed,
+    "done": done,
+    "failed": failed,
+    "successRate": success_rate,
+    "p95LatencyMs": p95_ms,
+    "backlog": backlog,
+    "queuedJobs": queued_jobs,
+    "pendingCaptures": pending_captures,
+    "generatedAtMs": now_ms,
+  }))
+}
+
 #[tauri::command]
 pub fn shogun_stats(payload: Value) -> Result<Value, String> {
   let m = memory_store::stats()?;
@@ -464,6 +562,13 @@ pub fn shogun_stats(payload: Value) -> Result<Value, String> {
   {
     let settings = settings_store::load().unwrap_or_else(|_| json!({}));
     out["settings"] = settings;
+  }
+  if payload
+    .get("stage")
+    .and_then(|s| s.as_str())
+    .is_some_and(|s| s == "sli")
+  {
+    out["sli"] = compute_sli_snapshot(ts() as i64)?;
   }
   Ok(out)
 }
@@ -1969,6 +2074,175 @@ pub async fn shogun_memory_year_rollup_get(payload: serde_json::Value) -> Result
   let rollup = crate::summarizer::summarize_year_rollup(year_start_ms, &lang).await?;
   crate::summarizer_store::upsert(&rollup)?;
   Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
+}
+
+/// Capture a user-rejected chat reply as a Lesson. Frontend calls this from
+/// the "Bad response" button click.
+///
+/// payload: { "userMsg": string, "assistantMsg": string, "chatId"?: string }
+#[tauri::command]
+pub async fn shogun_lesson_capture_rejection(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let user_msg = payload
+    .get("userMsg")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "userMsg is required".to_string())?;
+  let assistant_msg = payload
+    .get("assistantMsg")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "assistantMsg is required".to_string())?;
+  let chat_id = payload.get("chatId").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+  let system = "You generate a one-sentence actionable rule (English) explaining what the AI should NOT do, based on a rejected response. <= 140 chars. Be specific and concrete. Example: 'Don't use emojis in meeting notes.' Output via the emit_lesson_rule tool only.";
+  let user_content = format!(
+    "User asked: {}\n\nAI replied: {}\n\nUser flagged this reply as bad.",
+    user_msg, assistant_msg
+  );
+  let tool = serde_json::json!({
+    "name": "emit_lesson_rule",
+    "description": "Emit a single actionable rule.",
+    "input_schema": {
+      "type": "object",
+      "properties": { "rule": { "type": "string" } },
+      "required": ["rule"]
+    }
+  });
+
+  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, "claude-haiku-4-5-20251001").await {
+    Ok(input) => input
+      .get("rule")
+      .and_then(|v| v.as_str())
+      .map(|s| s.trim().to_string())
+      .filter(|s| !s.is_empty())
+      .unwrap_or_else(|| {
+        let date = chrono::Local::now().format("%Y-%m-%d");
+        format!("Avoid replies similar to one rejected on {}", date)
+      }),
+    Err(e) => {
+      log::warn!("lesson rejection rule LLM error: {}", e);
+      let date = chrono::Local::now().format("%Y-%m-%d");
+      format!("Avoid replies similar to one rejected on {}", date)
+    }
+  };
+
+  let embedding = crate::embeddings::embed_one(&rule).await.ok();
+
+  let conn = crate::memory_store::open_conn()?;
+  let id = crate::lessons::insert_lesson(
+    &conn,
+    &crate::lessons::NewLesson {
+      category: "user_rejection".to_string(),
+      trigger_context: serde_json::json!({"userMsg": user_msg, "chatId": chat_id}),
+      attempted: serde_json::json!({"assistantMsg": assistant_msg}),
+      outcome: serde_json::json!({"feedback": "user_rejected"}),
+      rule: rule.clone(),
+      source: "explicit_feedback".to_string(),
+      embedding,
+    },
+  )?;
+  Ok(serde_json::json!({ "id": id, "rule": rule }))
+}
+
+/// Capture an agent Run-now tool failure as a Lesson. Frontend calls this from
+/// the runAgentNow callback's failure branch in screens-agents.jsx.
+///
+/// payload: { "agentId": string, "agentName": string, "action": string, "payload": object, "errorMessage": string }
+#[tauri::command]
+pub async fn shogun_lesson_capture_tool_failure(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let agent_id = payload
+    .get("agentId")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "agentId is required".to_string())?
+    .to_string();
+  let agent_name = payload
+    .get("agentName")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "agentName is required".to_string())?
+    .to_string();
+  let action = payload
+    .get("action")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "action is required".to_string())?
+    .to_string();
+  let inner_payload = payload.get("payload").cloned().unwrap_or(serde_json::json!({}));
+  let error_message = payload
+    .get("errorMessage")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "errorMessage is required".to_string())?
+    .to_string();
+
+  let conn = crate::memory_store::open_conn()?;
+
+  let attempted = serde_json::json!({"action": action, "payload": inner_payload, "agentId": agent_id});
+  let outcome = serde_json::json!({"errorMessage": error_message});
+  let attempted_json = attempted.to_string();
+  let outcome_json = outcome.to_string();
+
+  if let Some(existing_id) = crate::lessons::recent_match(
+    &conn,
+    "tool_failure",
+    &attempted_json,
+    &outcome_json,
+    24 * 60 * 60 * 1000,
+  )? {
+    return Ok(serde_json::json!({ "id": existing_id, "deduped": true }));
+  }
+
+  let payload_pretty = serde_json::to_string(&inner_payload).unwrap_or_else(|_| "{}".to_string());
+  let system = "You generate a one-sentence actionable rule (English) explaining a precondition or constraint to check before invoking a tool, based on an observed failure. <= 140 chars. Output via the emit_lesson_rule tool only.";
+  let user_content = format!(
+    "Agent '{}' invoked tool '{}' with payload {} and got error: {}.\nWhat rule should the AI follow next time?",
+    agent_name, action, payload_pretty, error_message
+  );
+  let tool = serde_json::json!({
+    "name": "emit_lesson_rule",
+    "description": "Emit a single actionable rule.",
+    "input_schema": {
+      "type": "object",
+      "properties": { "rule": { "type": "string" } },
+      "required": ["rule"]
+    }
+  });
+
+  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, "claude-haiku-4-5-20251001").await {
+    Ok(input) => input
+      .get("rule")
+      .and_then(|v| v.as_str())
+      .map(|s| s.trim().to_string())
+      .filter(|s| !s.is_empty())
+      .unwrap_or_else(|| format!("{} failed with: {} — verify preconditions", action, error_message)),
+    Err(e) => {
+      log::warn!("lesson tool_failure rule LLM error: {}", e);
+      format!("{} failed with: {} — verify preconditions", action, error_message)
+    }
+  };
+
+  let embedding = crate::embeddings::embed_one(&rule).await.ok();
+
+  let id = crate::lessons::insert_lesson(
+    &conn,
+    &crate::lessons::NewLesson {
+      category: "tool_failure".to_string(),
+      trigger_context: serde_json::json!({"agentId": agent_id, "agentName": agent_name}),
+      attempted,
+      outcome,
+      rule: rule.clone(),
+      source: "tool_error".to_string(),
+      embedding,
+    },
+  )?;
+  Ok(serde_json::json!({ "id": id, "deduped": false, "rule": rule }))
 }
 
 /// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW

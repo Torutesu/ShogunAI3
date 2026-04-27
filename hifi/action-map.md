@@ -148,6 +148,8 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.rollup.entity.get`
 - `memory.rollup.month.get`
 - `memory.rollup.year.get`
+- `lesson.capture.rejection`
+- `lesson.capture.tool_failure`
 - `kioku.backup_db`
 - `kioku.edge_type_proposals`
 - `kioku.edge_type_review`

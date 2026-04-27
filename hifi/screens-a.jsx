@@ -374,6 +374,7 @@ function ScreenHome() {
   const [expandedHighlightId, setExpandedHighlightId] = useState(null);
   const [entityRollupCache, setEntityRollupCache] = useState({}); // { [entityId]: { rollup, loading } }
   const [memoryTotal, setMemoryTotal] = useState(null);
+  const [sliSnapshot, setSliSnapshot] = useState(null);
   const [profileFullName, setProfileFullName] = useState('');
   const [modelHint, setModelHint] = useState('');
   const [homeInput, setHomeInput] = useState('');
@@ -452,6 +453,21 @@ function ScreenHome() {
       if (!Number.isNaN(n)) setMemoryTotal(n);
     });
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSli = () =>
+      runRuntimeActionA('stats.get', { stage: 'sli' }, { silentError: true }).then((r) => {
+        if (cancelled || !r?.ok || !r.data?.sli) return;
+        setSliSnapshot(r.data.sli);
+      });
+    void fetchSli();
+    const id = window.setInterval(fetchSli, 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, []);
 
   useEffect(() => {
@@ -1205,6 +1221,11 @@ function ScreenHome() {
           <div className="row" style={{ marginBottom: 14, alignItems: 'baseline', gap: 12 }}>
             <div className="t-mono gold" style={{textTransform:'none', letterSpacing:'0.02em'}}>Morning brief · AMC</div>
             <span className="pill" style={{ fontSize: 10 }}>{morningBrief.posture}</span>
+            {sliSnapshot && (
+              <span className="pill" style={{ fontSize: 10 }} title="Last 24h SLI snapshot">
+                SLI {Number(sliSnapshot.successRate || 0).toFixed(1)}% · p95 {sliSnapshot.p95LatencyMs ?? '—'}ms · backlog {sliSnapshot.backlog ?? 0}
+              </span>
+            )}
             <span className="spacer" />
             <span className="t-mono xsmall muted">{briefGeneratedDisplay || '—'}</span>
           </div>
@@ -1215,6 +1236,12 @@ function ScreenHome() {
                 <div className="row" style={{ gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                   <span className="t-mono xsmall" style={{ color: 'var(--gold)' }}>P{item.priority}</span>
                   <span className="t-mono xsmall muted">{item.category}</span>
+                  {Array.isArray(item.related_context) && item.related_context.length > 0 && (
+                    <span className="t-mono xsmall muted">src:{item.related_context.length}</span>
+                  )}
+                  {Array.isArray(item.related_context) && item.related_context[0]?.last_touched && (
+                    <span className="t-mono xsmall muted">fresh:{item.related_context[0].last_touched}</span>
+                  )}
                   {item.time_hint && <span className="t-mono xsmall">{item.time_hint}</span>}
                   <span className="spacer" />
                   <button type="button" className="btn btn-sm btn-ghost" style={{ fontSize: 10, height: 24 }} onClick={() => dismissBriefItem(item)}>見送る</button>

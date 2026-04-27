@@ -1371,6 +1371,14 @@ function ScreenAgents() {
       } else {
         const errMsg = res?.error?.message || 'Run failed';
         window.SHOGUN_RUNTIME?.pushToast?.(`${agent.name}: ${errMsg}`, 'warn');
+        // Capture this failure as a Lesson (silent — no toast, no UI feedback)
+        runRuntimeActionA('lesson.capture.tool_failure', {
+          agentId,
+          agentName: agent.name,
+          action: def.runNowAction,
+          payload: def.runNowPayload(),
+          errorMessage: errMsg,
+        }, { silentError: true });
       }
     } finally {
       setRunningIds((prev) => {
