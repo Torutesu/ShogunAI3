@@ -312,7 +312,7 @@ const ATTENTION_REASONS = {
   auth_expired: (a) => `${a.name} needs re-authorization.`,
 };
 
-function AttentionStrip({ agents, nowMs, onView }) {
+function AttentionStrip({ agents, nowMs, onView, onRunNow }) {
   // Derive issues: explicit `attention` flag, OR last run was error,
   // OR scheduled/cron and lastRunMs is older than 24h.
   const issues = [];
@@ -358,7 +358,7 @@ function AttentionStrip({ agents, nowMs, onView }) {
           <button
             type="button"
             className="btn btn-sm btn-secondary"
-            onClick={() => window.SHOGUN_RUNTIME?.pushToast?.(`Run now: ${agent.name} (stub)`, 'info')}
+            onClick={() => onRunNow(agent.id)}
           >
             Run now
           </button>
@@ -1501,6 +1501,7 @@ function ScreenAgents() {
       <AttentionStrip
         agents={effectiveAgents}
         nowMs={AGENTS_DEMO_NOW}
+        onRunNow={runAgentNow}
         onView={(id) => {
           setExpandedIds((prev) => new Set([...prev, id]));
           requestAnimationFrame(() => {
