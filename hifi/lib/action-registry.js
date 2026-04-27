@@ -78,6 +78,7 @@
     register("memory.rollup.day.get", (payload) => api.memoryDayRollupGet(payload));
     register("lesson.capture.rejection", (payload) => api.lessonCaptureRejection(payload));
     register("lesson.capture.tool_failure", (payload) => api.lessonCaptureToolFailure(payload));
+    register("patterns.run_now", (payload) => api.patternsRunNow(payload));
     register("memory.rollup.month.get", (payload) => api.memoryMonthRollupGet(payload));
     register("memory.rollup.year.get", (payload) => api.memoryYearRollupGet(payload));
     register("memory.summary.set_priority", (payload) => api.memorySummarySetPriority(payload));

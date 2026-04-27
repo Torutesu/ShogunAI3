@@ -38,6 +38,7 @@
       memoryDayRollupGet: (input) => call("shogun_memory_day_rollup_get", input, READ),
       lessonCaptureRejection: (input) => call("shogun_lesson_capture_rejection", input, WRITE),
       lessonCaptureToolFailure: (input) => call("shogun_lesson_capture_tool_failure", input, WRITE),
+      patternsRunNow: (input) => call("shogun_patterns_run_now", input, WRITE),
       memoryMonthRollupGet: (input) => call("shogun_memory_month_rollup_get", input, READ),
       memoryYearRollupGet: (input) => call("shogun_memory_year_rollup_get", input, READ),
       memorySummarySetPriority: (input) => call("shogun_memory_summary_set_priority", input, WRITE),

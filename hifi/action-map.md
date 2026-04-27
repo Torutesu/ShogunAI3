@@ -150,6 +150,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.rollup.year.get`
 - `lesson.capture.rejection`
 - `lesson.capture.tool_failure`
+- `patterns.run_now`
 - `kioku.backup_db`
 - `kioku.edge_type_proposals`
 - `kioku.edge_type_review`
