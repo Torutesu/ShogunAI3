@@ -232,6 +232,7 @@ pub fn run() {
       commands::shogun_memory_summary_set_priority,
       commands::shogun_memory_summary_edit,
       commands::shogun_memory_summary_revert,
+      commands::shogun_memory_summary_edit_insights,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

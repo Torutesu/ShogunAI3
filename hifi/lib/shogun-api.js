@@ -44,6 +44,7 @@
       memorySummarySnooze: (input) => call("shogun_memory_summary_snooze", input, WRITE),
       memorySummaryEdit: (input) => call("shogun_memory_summary_edit", input, WRITE),
       memorySummaryRevert: (input) => call("shogun_memory_summary_revert", input, WRITE),
+      memorySummaryEditInsights: (input) => call("shogun_memory_summary_edit_insights", input, READ),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
       memoryEmbedBackfill: (input) =>
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),
