@@ -1971,6 +1971,76 @@ pub async fn shogun_memory_year_rollup_get(payload: serde_json::Value) -> Result
   Ok(serde_json::json!({ "rollup": rollup.to_json(), "cached": false }))
 }
 
+/// Capture a user-rejected chat reply as a Lesson. Frontend calls this from
+/// the "Bad response" button click.
+///
+/// payload: { "userMsg": string, "assistantMsg": string, "chatId"?: string }
+#[tauri::command]
+pub async fn shogun_lesson_capture_rejection(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let user_msg = payload
+    .get("userMsg")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "userMsg is required".to_string())?;
+  let assistant_msg = payload
+    .get("assistantMsg")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "assistantMsg is required".to_string())?;
+  let chat_id = payload.get("chatId").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+  let system = "You generate a one-sentence actionable rule (English) explaining what the AI should NOT do, based on a rejected response. <= 140 chars. Be specific and concrete. Example: 'Don't use emojis in meeting notes.' Output via the emit_lesson_rule tool only.";
+  let user_content = format!(
+    "User asked: {}\n\nAI replied: {}\n\nUser flagged this reply as bad.",
+    user_msg, assistant_msg
+  );
+  let tool = serde_json::json!({
+    "name": "emit_lesson_rule",
+    "description": "Emit a single actionable rule.",
+    "input_schema": {
+      "type": "object",
+      "properties": { "rule": { "type": "string" } },
+      "required": ["rule"]
+    }
+  });
+
+  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, "claude-haiku-4-5-20251001").await {
+    Ok(input) => input
+      .get("rule")
+      .and_then(|v| v.as_str())
+      .map(|s| s.trim().to_string())
+      .filter(|s| !s.is_empty())
+      .unwrap_or_else(|| {
+        let date = chrono::Local::now().format("%Y-%m-%d");
+        format!("Avoid replies similar to one rejected on {}", date)
+      }),
+    Err(e) => {
+      log::warn!("lesson rejection rule LLM error: {}", e);
+      let date = chrono::Local::now().format("%Y-%m-%d");
+      format!("Avoid replies similar to one rejected on {}", date)
+    }
+  };
+
+  let embedding = crate::embeddings::embed_one(&rule).await.ok();
+
+  let conn = crate::memory_store::open_conn()?;
+  let id = crate::lessons::insert_lesson(
+    &conn,
+    &crate::lessons::NewLesson {
+      category: "user_rejection".to_string(),
+      trigger_context: serde_json::json!({"userMsg": user_msg, "chatId": chat_id}),
+      attempted: serde_json::json!({"assistantMsg": assistant_msg}),
+      outcome: serde_json::json!({"feedback": "user_rejected"}),
+      rule: rule.clone(),
+      source: "explicit_feedback".to_string(),
+      embedding,
+    },
+  )?;
+  Ok(serde_json::json!({ "id": id, "rule": rule }))
+}
+
 /// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW
 /// even when the LLM classified it differently, or clear the override back to
 /// the LLM assignment. `priority: null` clears the override.
