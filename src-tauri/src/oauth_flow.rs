@@ -246,6 +246,116 @@ pub async fn exchange_code(
   })
 }
 
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
+
+/// Process-global single-flight lock. Only one OAuth flow at a time.
+static IN_FLIGHT: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn in_flight_lock() -> &'static Mutex<()> {
+  IN_FLIGHT.get_or_init(|| Mutex::new(()))
+}
+
+/// Generate a 32-byte hex state string for CSRF protection.
+fn generate_state() -> String {
+  uuid::Uuid::new_v4().simple().to_string()
+}
+
+/// Run the full OAuth flow. Reads `.env.google-oauth`, binds localhost:8723,
+/// opens the system browser, awaits the callback with a timeout, exchanges
+/// the code for tokens. Returns the tokens (or an OauthError).
+///
+/// The optional `token_endpoint_override` is for testing; production passes
+/// `None`.
+pub async fn run(token_endpoint_override: Option<&str>) -> Result<OauthTokens, OauthError> {
+  let lock = in_flight_lock();
+  let _guard = match lock.try_lock() {
+    Ok(g) => g,
+    Err(_) => return Err(OauthError::AlreadyInProgress),
+  };
+
+  let (client_id, client_secret) = load_env_from_disk()?;
+  let state = generate_state();
+
+  // Bind the server. AddrInUse → PortBusy.
+  let server = match tiny_http::Server::http(("127.0.0.1", PORT)) {
+    Ok(s) => s,
+    Err(e) => {
+      let s = e.to_string();
+      if s.contains("Address already in use") || s.contains("address in use") {
+        return Err(OauthError::PortBusy);
+      }
+      return Err(OauthError::Internal(format!("bind: {}", e)));
+    }
+  };
+  // tiny_http blocks per-request; wrap in Arc + spawn_blocking so we can
+  // wait with a timeout from async context.
+  let server = std::sync::Arc::new(server);
+  let server_for_open = server.clone();
+
+  let auth_url = build_auth_url(&client_id, &state);
+  if let Err(e) = open::that(&auth_url) {
+    log::warn!("open browser failed: {} — user must open URL manually", e);
+    // Continue: flow can still complete if the user pastes auth_url into a browser.
+  }
+
+  // Wait for callback in a blocking thread, with a timeout.
+  let server_handle = server.clone();
+  let state_for_thread = state.clone();
+  let join = tokio::task::spawn_blocking(move || -> Result<(String, String), OauthError> {
+    let req = server_handle.recv().map_err(|e| OauthError::Internal(format!("recv: {}", e)))?;
+    // Parse the URL path + query. `req.url()` is e.g. "/callback?code=...&state=..."
+    let url = req.url().to_string();
+    let qs = url.splitn(2, '?').nth(1).unwrap_or("");
+    let outcome = parse_callback_query(qs);
+    // Always respond so the browser tab shows feedback.
+    let (status_code, body) = match &outcome {
+      CallbackOutcome::Code { state: got, .. } if got == &state_for_thread => (
+        200u32,
+        "<!DOCTYPE html><html><body style='font-family:system-ui;max-width:560px;margin:80px auto;padding:24px'><h1 style='color:#0a7a2a'>✓ Connected</h1><p>You can close this tab and return to Shogun AI.</p></body></html>".to_string(),
+      ),
+      _ => (
+        400u32,
+        "<!DOCTYPE html><html><body style='font-family:system-ui;max-width:560px;margin:80px auto;padding:24px'><h1 style='color:#b00020'>✗ OAuth error</h1><p>Return to Shogun AI for details.</p></body></html>".to_string(),
+      ),
+    };
+    let resp = tiny_http::Response::from_string(body)
+      .with_status_code(status_code)
+      .with_header(
+        "Content-Type: text/html; charset=utf-8"
+          .parse::<tiny_http::Header>()
+          .unwrap(),
+      );
+    let _ = req.respond(resp);
+
+    match outcome {
+      CallbackOutcome::Code { code, state: got } => {
+        if got != state_for_thread {
+          return Err(OauthError::StateMismatch);
+        }
+        Ok((code, got))
+      }
+      CallbackOutcome::UserCancelled => Err(OauthError::UserCancelled),
+      CallbackOutcome::ProviderError(_) => Err(OauthError::UserCancelled),
+      CallbackOutcome::Malformed => Err(OauthError::StateMismatch),
+    }
+  });
+
+  let result = tokio::time::timeout(DEFAULT_TIMEOUT, join).await;
+  // Drop the server (closes the listener) regardless of outcome.
+  drop(server_for_open);
+
+  let (code, _state) = match result {
+    Ok(Ok(Ok(pair))) => pair,
+    Ok(Ok(Err(e))) => return Err(e),
+    Ok(Err(join_err)) => return Err(OauthError::Internal(format!("join: {}", join_err))),
+    Err(_) => return Err(OauthError::Timeout),
+  };
+
+  let tokens = exchange_code(&code, &client_id, &client_secret, token_endpoint_override).await?;
+  Ok(tokens)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -430,5 +540,55 @@ OTHER=ignored
       .expect("exchange_code");
     assert_eq!(r.access_token, "AT");
     assert!(r.refresh_token.is_none());
+  }
+
+  #[tokio::test]
+  #[ignore] // requires localhost port 8723 and is end-to-end
+  async fn run_end_to_end_with_mocked_token_endpoint() {
+    // Set up a mocked token endpoint.
+    let mut token_server = mockito::Server::new_async().await;
+    let _mock = token_server
+      .mock("POST", "/token")
+      .with_status(200)
+      .with_body(
+        r#"{"access_token":"AT","refresh_token":"RT","expires_in":3600,"scope":"https://www.googleapis.com/auth/gmail.readonly"}"#,
+      )
+      .create_async()
+      .await;
+    let endpoint = format!("{}/token", token_server.url());
+
+    // Set up a writable temp env file. We can't easily override the real
+    // load_env_from_disk path; this test assumes a real .env.google-oauth
+    // exists at <repo>/scripts/. Skip by checking the prerequisite.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let env_path = manifest.parent().unwrap().join("scripts/.env.google-oauth");
+    if !env_path.exists() {
+      eprintln!("SKIP: scripts/.env.google-oauth not present");
+      return;
+    }
+
+    // Spawn the run() in the background; meanwhile fake-browser hits /callback.
+    let run_task = tokio::spawn(async move { run(Some(&endpoint)).await });
+    // Give the server a moment to bind.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // We don't know the state without exposing it; for an integration test
+    // we'd need the orchestrator to expose state via a channel. As a simpler
+    // approach, this test only checks that the flow rejects an unrelated
+    // /callback (state mismatch).
+    let client = reqwest::Client::new();
+    let _ = client
+      .get("http://127.0.0.1:8723/callback?code=fake&state=wrong-state")
+      .send()
+      .await;
+
+    let result = tokio::time::timeout(Duration::from_secs(5), run_task)
+      .await
+      .expect("timeout")
+      .expect("join");
+    match result {
+      Err(OauthError::StateMismatch) => {} // expected
+      other => panic!("expected StateMismatch, got {:?}", other),
+    }
   }
 }
