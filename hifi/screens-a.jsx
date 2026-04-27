@@ -85,6 +85,11 @@ function memoryHitToRiverEvent(hit) {
 
 /** Parse a window/app identifier out of the AX snippet dump.
  *  Falls back to the first 40 chars of the snippet when nothing matches. */
+// Memory River — Low-priority cluster expand state. Module-scope so the
+// value survives React unmounts (Home tab roundtrip) but resets on app
+// reload. Read on River mount; written on every toggle.
+let lowClusterExpandedSession = false;
+
 /** Compute smart snooze deadlines from "now":
  *   - tomorrowMorning: tomorrow 9:00 local
  *   - nextMondayMorning: next Monday 9:00 local (weekend snoozes skip past it)
@@ -1720,6 +1725,15 @@ function ScreenMemory() {
       manual: true,
     },
   }));
+  const [lowClusterExpanded, setLowClusterExpandedRaw] = useState(lowClusterExpandedSession);
+  const setLowClusterExpanded = (next) => {
+    setLowClusterExpandedRaw((prev) => {
+      const v = typeof next === 'function' ? next(prev) : next;
+      lowClusterExpandedSession = v;
+      return v;
+    });
+  };
+  const toggleCluster = () => setLowClusterExpanded((v) => !v);
   const timelineScrollRef = useRef(null);
   const scrollTimeline = useCallback((dir) => {
     const el = timelineScrollRef.current;
@@ -2026,6 +2040,13 @@ function ScreenMemory() {
     () => Object.entries(activeFilters.sources).filter(([, on]) => on).map(([k]) => k),
     [activeFilters.sources],
   );
+  // Resolves an event's effective priority via the summary cache.
+  // userPriority (manual pin) wins over priority (LLM). Returns null when
+  // unsummarized or when the summary lacks a priority field.
+  const getEventPriority = useCallback((e) => {
+    const s = e && e.memoryId ? summaryByMemId[e.memoryId] : null;
+    return (s && (s.userPriority || s.priority)) || null;
+  }, [summaryByMemId]);
   // River = rawEvents filtered by priority, then screen-captures clustered
   // into sessions. Low-priority (自動通知など) items stay in Memory but are
   // hidden from the surface unless the user toggles the Low filter on.
@@ -2033,14 +2054,10 @@ function ScreenMemory() {
     const showLow = !!activeFilters.priority.low;
     const provs = activeFilters.providers || {};
     const matchesProvider = (e) => provs[memoryProviderKey(e.sourceRaw)] !== false;
-    // effective = user's manual override takes precedence over LLM priority.
-    const effectivePriority = (s) => (s && (s.userPriority || s.priority)) || null;
     const filtered = rawEvents.filter((e) => {
       if (!matchesProvider(e)) return false;
       if (showLow) return true;
-      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      if (!s) return true;
-      return effectivePriority(s) !== 'low';
+      return getEventPriority(e) !== 'low';
     });
     // Collapse consecutive capture_ax/capture_sampler items into session cards
     // so that enabling the Screen filter doesn't flood the River.
@@ -2049,8 +2066,7 @@ function ScreenMemory() {
     // same tier, newer events come first. This makes the top of the River
     // read as a "what needs attention" feed.
     const rank = (e) => {
-      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      const p = effectivePriority(s);
+      const p = getEventPriority(e);
       if (!p) return 2; // unclassified sits between MED and LOW
       if (p === 'high') return 0;
       if (p === 'medium') return 1;
@@ -2065,21 +2081,85 @@ function ScreenMemory() {
         if (rA !== rB) return rA - rB;
         return (b.ts || 0) - (a.ts || 0);
       });
-  }, [rawEvents, summaryByMemId, activeFilters.priority.low, activeFilters.providers]);
-  // Batch-summarize connector items on River load so priority data is ready
+  }, [rawEvents, getEventPriority, activeFilters.priority.low, activeFilters.providers]);
+
+  // Memory Digest Phase 4 — Low-priority cluster.
+  // Only the River scrubber consumes this. Other view modes keep using
+  // `events` directly so the synthetic cluster entry never leaks into
+  // Kakejiku, Heatmap, Digest, or Search.
+  // - L filter ON  → passthrough (mixed mode).
+  // - L filter OFF → partition LOW out, append a synthetic cluster entry,
+  //   and (when expanded) splice the LOW items back in after the cluster.
+  const riverEvents = useMemo(() => {
+    if (activeFilters.priority.low) return events;
+    // `events` already excludes LOW items (the LOW filter is OFF), so we
+    // derive lowEvents from rawEvents directly, applying the same provider
+    // filter so the cluster count stays consistent with provider toggles.
+    const mainEvents = events; // already HIGH + MED, provider-filtered
+    const provs = activeFilters.providers || {};
+    const matchesProvider = (e) => provs[memoryProviderKey(e.sourceRaw)] !== false;
+    const lowEvents = rawEvents.filter((e) => {
+      // Hard exclude screen captures: they're high-volume and never intended
+      // for the cluster (clusterScreenSessions collapses them into session
+      // cards inside `events`). This makes the invariant explicit so a future
+      // path that stamps `low` priority onto a capture can't silently leak.
+      const r = String(e.sourceRaw || '').toLowerCase();
+      if (r === 'capture_ax' || r === 'capture_sampler' || r.startsWith('capture_')) return false;
+      // Defensive: handles server-emitted events whose provenance string
+      // differs from deriveLocalProvenance's 'screen' mapping.
+      if (e.provenance === 'screen_capture') return false;
+      return matchesProvider(e) && getEventPriority(e) === 'low';
+    });
+    if (lowEvents.length === 0) return mainEvents;
+    const cluster = {
+      kind: 'low_cluster',
+      count: lowEvents.length,
+      items: lowEvents,
+      // sentinel fields so any code that defensively reads .h / .ts / .src
+      // on a generic event doesn't NaN. Cluster is excluded from `bins`
+      // and `hourIndexFromEvents` because those use `events`, not riverEvents.
+      h: 23.99,
+      ts: 0,
+      src: 'note',
+      title: '',
+      snippet: '',
+      memoryId: null,
+      provenance: null,
+      sourceRaw: '',
+      entityId: null,
+    };
+    return lowClusterExpanded
+      ? [...mainEvents, cluster, ...lowEvents]
+      : [...mainEvents, cluster];
+  }, [events, rawEvents, activeFilters.priority.low, activeFilters.providers, lowClusterExpanded, getEventPriority]);
+
+  // Batch-summarize items on River load so priority data is ready
   // for filtering. Cached summaries short-circuit on the backend.
+  // Only user-content sources are summarized; high-volume screen captures
+  // (capture_ax, capture_sampler) are explicitly excluded to avoid flooding
+  // the LLM summarization pipeline in production.
   useEffect(() => {
     if (!summaryEnabled || rawEvents.length === 0) return;
     let cancelled = false;
     const connectorItems = rawEvents
       .filter((e) => {
         const r = String(e.sourceRaw || '').toLowerCase();
+        // Hard exclude: screen captures are high-volume and intentionally
+        // not summarized — they are clustered separately by clusterScreenSessions.
+        if (r === 'capture_ax' || r === 'capture_sampler' || r.startsWith('capture_')) return false;
+        // Defensive: handles server-emitted events whose provenance string
+        // differs from deriveLocalProvenance's 'screen' mapping.
+        if (e.provenance === 'screen_capture') return false;
+        // Allowlist of summarizable user-content sources.
         const isSummarizable =
           r === 'gmail' ||
           r === 'google_calendar' ||
           r === 'meetings' ||
           r === 'meeting_note' ||
           r === 'audio_meeting' ||
+          r === 'note' ||
+          r === 'chat' ||
+          r === 'work' ||
           e.provenance === 'connector' ||
           e.provenance === 'meeting';
         return isSummarizable && e.memoryId && !summaryByMemId[e.memoryId];
@@ -2252,10 +2332,10 @@ function ScreenMemory() {
   }, [withSemantic, activeKinds]);
   useEffect(() => {
     setScrubIdx((i) => {
-      if (events.length === 0) return 0;
-      return Math.min(i, events.length - 1);
+      if (riverEvents.length === 0) return 0;
+      return Math.min(i, riverEvents.length - 1);
     });
-  }, [events.length]);
+  }, [riverEvents.length]);
   // Reset day selection when the timeline span changes so the active card
   // always points to the last slot (most-recent day/month) in the new range.
   useEffect(() => {
@@ -2285,8 +2365,8 @@ function ScreenMemory() {
   }, [events]);
   const scrubbed = timelineLoading
     ? { t: '--', h: 12, src: 'note', title: '', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null }
-    : events.length
-      ? events[Math.min(scrubIdx, events.length - 1)]
+    : riverEvents.length
+      ? riverEvents[Math.min(scrubIdx, riverEvents.length - 1)]
       : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null };
   const srcIcon = s => s==='chat'?'chat':s==='meet'?'calendar':s==='note'?'note':s==='mail'?'mail':s==='agent'?'bot':s==='code'?'terminal':'file';
   const srcLabel = s => ({chat:'Conversation',meet:'Meeting',note:'Note',mail:'Email',agent:'Agent run',code:'Code'})[s]||'Event';
@@ -2374,16 +2454,13 @@ function ScreenMemory() {
 
   const hourIndexFromEvents = useMemo(() => {
     const counts = new Array(24).fill(0);
-    const firstIdx = new Array(24).fill(-1);
     const topPriority = new Array(24).fill(null); // best-tier priority found in the hour (or null)
     const priorityRank = (p) => (p === 'high' ? 2 : p === 'medium' ? 1 : 0);
-    events.forEach((e, i) => {
+    events.forEach((e) => {
       const hh = Math.floor(Number(e.h));
       const h = Math.max(0, Math.min(23, Number.isFinite(hh) ? hh : 12));
-      if (firstIdx[h] < 0) firstIdx[h] = i;
       counts[h] += 1;
-      const s = e.memoryId ? summaryByMemId[e.memoryId] : null;
-      const p = s && (s.userPriority || s.priority);
+      const p = getEventPriority(e);
       if (p === 'high' || p === 'medium') {
         if (priorityRank(p) > priorityRank(topPriority[h])) {
           topPriority[h] = p;
@@ -2391,8 +2468,24 @@ function ScreenMemory() {
       }
     });
     const maxC = Math.max(1, ...counts);
-    return { counts, firstIdx, maxC, topPriority };
-  }, [events, summaryByMemId]);
+    return { counts, maxC, topPriority };
+  }, [events, getEventPriority]);
+
+  // Click-target index for the 24-hour bar. Counts/colors stay on
+  // hourIndexFromEvents (so the bar shape doesn't shift when the cluster
+  // expands), but bar clicks need an index into riverEvents (where the
+  // scrubber actually navigates). Bars whose only matching events are
+  // collapsed-LOW resolve to firstIdx = -1 (non-clickable).
+  const hourClickIndex = useMemo(() => {
+    const firstIdx = new Array(24).fill(-1);
+    riverEvents.forEach((e, i) => {
+      if (e && e.kind === 'low_cluster') return; // never click-land on the cluster header
+      const hh = Math.floor(Number(e?.h));
+      const h = Math.max(0, Math.min(23, Number.isFinite(hh) ? hh : 12));
+      if (firstIdx[h] < 0) firstIdx[h] = i;
+    });
+    return { firstIdx };
+  }, [riverEvents]);
 
   const timeSpanLabel = useMemo(() => {
     if (!events.length) return '—';
@@ -2921,7 +3014,7 @@ function ScreenMemory() {
                 </span>
               );
             })()}
-            {events.length > 0 && !timelineLoading && (
+            {riverEvents.length > 0 && !timelineLoading && (
               <div style={{marginLeft:'auto', display:'flex', alignItems:'center', gap:4}}>
                 <button
                   type="button"
@@ -2931,12 +3024,7 @@ function ScreenMemory() {
                   style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx === 0 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx === 0 ? 0.35 : 1}}
                 ><Icon name="chevronLeft" size={11}/></button>
                 <span className="t-mono" style={{fontSize:10, color:'var(--text-dim)', padding:'0 2px'}}>
-                  {Math.min(scrubIdx + 1, events.length)} / {events.length}
-                  {rawEvents.length > events.length && (
-                    <span style={{marginLeft:6, color:'var(--text-mute)'}} title="Low-priority items hidden. Toggle in Filters to show.">
-                      (+{rawEvents.length - events.length})
-                    </span>
-                  )}
+                  {Math.min(scrubIdx + 1, riverEvents.length)} / {riverEvents.length}
                   {batchSummarizing > 0 && (
                     <span style={{marginLeft:8, color:'var(--gold)'}} title={`Summarizing ${batchSummarizing} item(s)…`}>
                       · summarizing {batchSummarizing}
@@ -2946,9 +3034,9 @@ function ScreenMemory() {
                 <button
                   type="button"
                   aria-label="Next memory"
-                  onClick={() => setScrubIdx((i) => Math.min(events.length - 1, i + 1))}
-                  disabled={scrubIdx >= events.length - 1}
-                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx >= events.length - 1 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx >= events.length - 1 ? 0.35 : 1}}
+                  onClick={() => setScrubIdx((i) => Math.min(riverEvents.length - 1, i + 1))}
+                  disabled={scrubIdx >= riverEvents.length - 1}
+                  style={{width:22, height:22, borderRadius:6, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor: scrubIdx >= riverEvents.length - 1 ? 'default' : 'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center', opacity: scrubIdx >= riverEvents.length - 1 ? 0.35 : 1}}
                 ><Icon name="chevronRight" size={11}/></button>
               </div>
             )}
@@ -2969,7 +3057,104 @@ function ScreenMemory() {
               </p>
             </>
           )}
-          {!timelineLoading && (
+          {(() => {
+            // Cluster-position helpers used by the breadcrumb below and by
+            // the Collapse button. Recomputed per render — riverEvents is
+            // already memoized so this is cheap.
+            const clusterIdx = riverEvents.findIndex((e) => e && e.kind === 'low_cluster');
+            const inCluster = lowClusterExpanded
+              && clusterIdx >= 0
+              && scrubIdx > clusterIdx
+              && scrubbed
+              && scrubbed.kind !== 'low_cluster'
+              && getEventPriority(scrubbed) === 'low';
+            const clusterCount = clusterIdx >= 0 ? (riverEvents[clusterIdx].count || 0) : 0;
+            const positionInCluster = inCluster ? (scrubIdx - clusterIdx) : 0; // 1-indexed
+            return inCluster ? (
+              <div style={{
+                display:'flex', alignItems:'center', gap:8,
+                fontSize:11, color:'var(--text-dim)',
+                marginBottom:10, paddingLeft:14,
+                borderLeft:'2px solid var(--border)',
+              }}>
+                <Icon name="arrowUp" size={11}/>
+                <span className="en-only">Inside Other cluster · {positionInCluster}/{clusterCount}</span>
+                <span className="jp">その他クラスタ内 · {positionInCluster}/{clusterCount}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLowClusterExpanded(false);
+                    setScrubIdx(clusterIdx);
+                  }}
+                  style={{
+                    marginLeft:'auto',
+                    padding:'2px 8px', border:'none', background:'transparent',
+                    color:'var(--text-dim)', fontSize:11, cursor:'pointer',
+                    fontFamily:'inherit', textDecoration:'underline',
+                  }}
+                  title="Collapse the Other cluster and return to the cluster header"
+                >
+                  <span className="en-only">Collapse</span>
+                  <span className="jp">畳む</span>
+                </button>
+              </div>
+            ) : null;
+          })()}
+          {!timelineLoading && scrubbed && scrubbed.kind === 'low_cluster' && (
+            <div
+              className="memory-summary-card"
+              role="button"
+              tabIndex={0}
+              aria-expanded={lowClusterExpanded}
+              onClick={toggleCluster}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleCluster();
+                }
+              }}
+              style={{
+                display:'flex', flexDirection:'column', gap:10,
+                marginBottom:14,
+                borderLeft:'2px solid var(--border)',
+                paddingLeft:14,
+                cursor:'pointer',
+                userSelect:'none',
+              }}
+            >
+              <div style={{display:'flex', alignItems:'center', gap:10}}>
+                <span style={{
+                  display:'inline-flex',
+                  transform: lowClusterExpanded ? 'rotate(90deg)' : 'none',
+                  transition: 'transform 120ms',
+                }}>
+                  <Icon name="chevronRight" size={14}/>
+                </span>
+                <div style={{fontSize:18, fontWeight:600, lineHeight:1.3}}>
+                  <span className="en-only">Other · {scrubbed.count} items</span>
+                  <span className="jp">その他 · {scrubbed.count}件</span>
+                </div>
+                <span className="t-mono" style={{marginLeft:'auto', fontSize:9, color:'var(--text-dim)', letterSpacing:'0.12em', padding:'2px 6px', border:'1px solid var(--border)', borderRadius:4}}>
+                  <span className="en-only">LOW</span>
+                  <span className="jp">低優先</span>
+                </span>
+              </div>
+              <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.5}}>
+                {lowClusterExpanded ? (
+                  <>
+                    <span className="en-only">Use → to step through items, or click to collapse.</span>
+                    <span className="jp">→ で順送り、もう一度クリックで畳めます。</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="en-only">Click to expand and step through {scrubbed.count} low-priority items.</span>
+                    <span className="jp">クリックで展開し、{scrubbed.count}件の低優先メモリを順に見ます。</span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && (
             <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
               {scrubbed.memoryId && (
                 <span className="label">index</span>
@@ -2987,7 +3172,7 @@ function ScreenMemory() {
               )}
             </div>
           )}
-          {!timelineLoading && scrubSummary && !showRaw && (() => {
+          {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && scrubSummary && !showRaw && (() => {
             const effPriority = scrubSummary.userPriority || scrubSummary.priority;
             const pinned = !!scrubSummary.userPriority;
             const setPinPriority = async (tier) => {
@@ -3342,7 +3527,7 @@ function ScreenMemory() {
               <span className="jp">要約を生成中…</span>
             </div>
           )}
-          {!timelineLoading && (showRaw || (!scrubSummary && !scrubSummaryLoading)) && (
+          {!timelineLoading && scrubbed && scrubbed.kind !== 'low_cluster' && (showRaw || (!scrubSummary && !scrubSummaryLoading)) && (
             <>
               <h2 style={{margin:'0 0 14px', fontSize:22, fontWeight:600, letterSpacing:'-0.01em', wordBreak:'break-word'}}>
                 {renderHighlighted(scrubbed.titleHighlight || scrubbed.title)}
@@ -3357,7 +3542,7 @@ function ScreenMemory() {
               <div style={{margin:'0 0 16px', fontSize:14, lineHeight:1.6, color:'var(--text)', whiteSpace:'pre-wrap', maxHeight:320, overflowY:'auto', wordBreak:'break-word'}}>
                 {scrubbed.snippetHighlight
                   ? renderHighlighted(scrubbed.snippetHighlight)
-                  : scrubbed.snippet || (events.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')}
+                  : scrubbed.snippet || (riverEvents.length ? 'No snippet text for this entry.' : 'No memories in the index yet.')}
               </div>
               {scrubSummary && (
                 <div style={{marginBottom:16}}>
@@ -3550,7 +3735,7 @@ function ScreenMemory() {
             </span>
           </div>
           <div style={{flex:1, padding:'18px 22px', display:'flex', flexDirection:'column', gap:14, minHeight:280, overflowY:'auto'}}>
-            {scrubbed.memoryId ? (
+            {scrubbed.memoryId && scrubbed.kind !== 'low_cluster' ? (
               <>
                 <div style={{display:'grid', gridTemplateColumns:'110px 1fr', rowGap:10, columnGap:12, fontSize:12}}>
                   <span className="t-mono" style={{color:'var(--text-dim)'}}>Source</span>
@@ -3684,6 +3869,8 @@ function ScreenMemory() {
           <span style={{flex:1}}/>
           <button type="button" onClick={()=>scrollTimeline(-1)} aria-label="Scroll timeline left" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronLeft" size={12}/></button>
           <button type="button" onClick={()=>scrollTimeline(1)} aria-label="Scroll timeline right" style={{width:26, height:26, borderRadius:999, border:'1px solid var(--border)', background:'var(--surface)', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}><Icon name="chevronRight" size={12}/></button>
+          {/* Count uses `events` (not riverEvents) so the displayed total
+              is the real event count, excluding the synthetic cluster row. */}
           <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)'}}>{events.length} events · {timeSpanLabel}</span>
         </div>
         <div
@@ -3705,10 +3892,10 @@ function ScreenMemory() {
             <div style={{position:'absolute', inset:'0 0 26px 0', display:'grid', gridTemplateColumns:'repeat(24, minmax(0, 1fr))', alignItems:'end', gap:3}}>
               {[...Array(24)].map((_,h)=>{
                 const count = hourIndexFromEvents.counts[h] || 0;
-                const firstIdx = hourIndexFromEvents.firstIdx[h];
+                const firstIdxView = hourClickIndex.firstIdx[h];
                 const height = count > 0 ? Math.round((count / hourIndexFromEvents.maxC) * 42) + 6 : 4;
-                const active = firstIdx >= 0 && scrubIdx >= firstIdx && scrubIdx < firstIdx + count;
-                const clickable = firstIdx >= 0;
+                const active = firstIdxView >= 0 && scrubIdx === firstIdxView;
+                const clickable = firstIdxView >= 0;
                 const topTier = hourIndexFromEvents.topPriority[h];
                 // Color the bar by the BEST-tier event in the hour so the eye
                 // tracks "when did important stuff happen today".
@@ -3727,7 +3914,7 @@ function ScreenMemory() {
                     key={h}
                     type="button"
                     disabled={!clickable}
-                    onClick={() => { if (clickable) setScrubIdx(firstIdx); }}
+                    onClick={() => { if (clickable) setScrubIdx(firstIdxView); }}
                     aria-label={`${count} memories at ${String(h).padStart(2,'0')}:00${topTier ? ` (top priority: ${topTier})` : ''}`}
                     style={{
                       height,

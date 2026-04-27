@@ -323,6 +323,21 @@
     });
 
     const mockEdits = _mockEditsMap;
+    // Mock-only: derive a stable LOW/MEDIUM/HIGH from the item id so the
+    // River cluster UI has something to render. Real backend ignores this.
+    const mockPriorityForId = (id) => {
+      if (!id) return 'medium';
+      const s = String(id);
+      const last = s.charCodeAt(s.length - 1);
+      // Uniform-alphabet target: ~25% LOW, ~25% HIGH, ~50% MEDIUM.
+      // Demo seed uses decimal-digit suffixes (demo-m-01..12), so the
+      // realized split is closer to 30/30/40 — enough to populate the
+      // cluster UI with all three tiers.
+      const m = last % 4;
+      if (m === 0) return 'low';
+      if (m === 1) return 'high';
+      return 'medium';
+    };
 
     switch (command) {
       case "app_integration_connect":
@@ -529,7 +544,7 @@
         };
       case "shogun_memory_summary_get": {
         const baseId = String((echo && echo.targetId) || "m_stub");
-        const base = makeSummaryBase(baseId);
+        const base = makeSummaryBase(baseId, { priority: mockPriorityForId(baseId) });
         return {
           summary: applyMockEdits(base, baseId),
           cached: false,
@@ -542,6 +557,7 @@
             const base = makeSummaryBase(id, {
               title: `Stub: ${(it && it.title) || "untitled"}`,
               keyPoints: ["mock point"],
+              priority: mockPriorityForId(id),
             });
             return applyMockEdits(base, id);
           }),
@@ -569,7 +585,7 @@
           schema: 1,
         });
         mockEdits.set(id, list);
-        const base = makeSummaryBase(id);
+        const base = makeSummaryBase(id, { priority: mockPriorityForId(id) });
         return { updated: true, summary: applyMockEdits(base, id) };
       }
       case "shogun_memory_summary_revert": {
@@ -578,7 +594,7 @@
         if (!id || !field) return { updated: false, summary: null };
         const list = (mockEdits.get(id) || []).filter((e) => e.field !== field);
         mockEdits.set(id, list);
-        const base = makeSummaryBase(id);
+        const base = makeSummaryBase(id, { priority: mockPriorityForId(id) });
         return { updated: true, summary: applyMockEdits(base, id) };
       }
       case "shogun_entity_query":
