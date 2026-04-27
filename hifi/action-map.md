@@ -139,6 +139,8 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.summary.batch`
 - `memory.summary.invalidate`
 - `memory.summary.set_priority`
+- `memory.summary.edit`
+- `memory.summary.revert`
 - `memory.summary.acknowledge`
 - `memory.summary.snooze`
 - `memory.rollup.get`
