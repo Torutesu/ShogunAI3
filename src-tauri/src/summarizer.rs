@@ -1296,6 +1296,7 @@ mod tests {
 
   #[test]
   fn gmail_body_mention_of_noreply_is_not_low() {
+    let _lock = HEURISTIC_TEST_LOCK.lock().unwrap();
     // Personal email that mentions a noreply address in the body should NOT be low.
     let item = json!({
       "id": "m_body_mention",
