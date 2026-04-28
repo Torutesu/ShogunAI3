@@ -2319,6 +2319,8 @@ function PaneIntegrations() {
   const [auditRows, setAuditRows] = useStateS([]);
   const [auditFilter, setAuditFilter] = useStateS('all');
   const [auditProviderFilter, setAuditProviderFilter] = useStateS('all');
+  const [oauthBusy, setOauthBusy] = React.useState(null); // null | 'gmail' | 'google_calendar'
+  const [oauthNotConfigured, setOauthNotConfigured] = React.useState(false);
 
   const refreshGoogleCalStatus = React.useCallback(async () => {
     const r = await run('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true });
@@ -2473,8 +2475,56 @@ function PaneIntegrations() {
     }
   }, [auditRows]);
 
+  const handleOauthConnect = async (provider) => {
+    setOauthBusy(provider);
+    try {
+      const res = await runRuntimeActionA('oauth.google.start', { provider }, { silentError: true });
+      if (!res?.ok) {
+        const msg = String(res?.error || '');
+        if (msg.startsWith('oauth_credentials_not_configured')) {
+          setOauthNotConfigured(true);
+        } else {
+          const friendly = mapOauthError(msg);
+          window.SHOGUN_RUNTIME?.pushToast?.(friendly, 'warn');
+        }
+        return;
+      }
+      const label = provider === 'gmail' ? 'Gmail' : 'Google Calendar';
+      window.SHOGUN_RUNTIME?.pushToast?.(`Connected to ${label}`, 'success');
+      // Refresh both statuses (a single OAuth grants both providers).
+      await Promise.all([
+        runRuntimeActionA('integrations.credentials_status', { provider: 'gmail' }, { silentError: true }),
+        runRuntimeActionA('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true }),
+      ]);
+    } finally {
+      setOauthBusy(null);
+    }
+  };
+
+  const mapOauthError = (raw) => {
+    if (raw.startsWith('oauth_token_exchange_failed:')) {
+      const parts = raw.split(':');
+      const status = parts[1] || '?';
+      const code = parts[2] || '?';
+      return `Token exchange failed [${status} ${code}]. Check CLIENT_SECRET.`;
+    }
+    if (raw === 'oauth_user_cancelled') return 'OAuth was cancelled';
+    if (raw === 'oauth_state_mismatch') return 'Security check failed; please try again';
+    if (raw === 'oauth_timeout') return 'OAuth timed out. Try again.';
+    if (raw === 'oauth_port_busy') return 'Already connecting — please wait or restart';
+    if (raw === 'oauth_already_in_progress') return 'Already connecting';
+    if (raw === 'oauth_network_error') return 'Network error during token exchange';
+    if (raw === 'oauth_invalid_provider') return 'Invalid provider';
+    if (raw.startsWith('oauth_internal:')) {
+      // Strip the prefix and "provider error:" if present, leave the rest.
+      const detail = raw.replace(/^oauth_internal:\s*/, '').replace(/^provider error:\s*/, '');
+      return `OAuth flow error: ${detail}`;
+    }
+    return `OAuth failed: ${raw}`;
+  };
+
   return (
-    <Pane title="All Integrations" jp="連携" subtitle="v1: In-app OAuth is not wired. Google Calendar tokens can be imported by an external agent (Keychain); use Refresh / Sync below. Other Connect rows show an honest notice where applicable.">
+    <Pane title="All Integrations" jp="連携" subtitle="In-app OAuth: Click Connect on Gmail / Google Calendar to start the consent flow. CLIENT_ID/SECRET are read from scripts/.env.google-oauth (dev). For other providers, agent-based import is still supported (see legacy notes below).">
       <div className="s-field-hint" style={{marginBottom:14, padding:12, background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
         Workspace Integrations screen has the same agent contract. Preferred path: Tauri invoke <code style={{fontSize:11}}>app_integration_import_credentials</code> with <code style={{fontSize:11}}>provider: &quot;google_calendar&quot;</code> or <code style={{fontSize:11}}>&quot;gmail&quot;</code>, <code style={{fontSize:11}}>accessToken</code>, optional <code style={{fontSize:11}}>refreshToken</code>, <code style={{fontSize:11}}>expiresAt</code>, <code style={{fontSize:11}}>oauthClientId</code> (for automatic token refresh). Deep-link alternative: <code style={{fontSize:11}}>shogun-ai://credentials/import?provider=...</code> — prefer invoke for secrets (URLs leak to logs / history). Gmail needs scope <code style={{fontSize:11}}>gmail.readonly</code> or broader.
       </div>
@@ -2572,7 +2622,24 @@ function PaneIntegrations() {
           ) : null}
           <span className="spacer"/>
           <button className="btn btn-sm btn-secondary" type="button" onClick={() => { void refreshGmailStatus(); }}>Refresh status</button>
-          <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider:'gmail' }, { silentError:true })}>Connect</button>
+          <button
+            className="btn btn-sm btn-secondary"
+            type="button"
+            disabled={oauthBusy}
+            onClick={() => handleOauthConnect('gmail')}
+          >
+            {oauthBusy === 'gmail' ? (
+              <>
+                <span className="en-only">Connecting…</span>
+                <span className="jp">接続中…</span>
+              </>
+            ) : (
+              <>
+                <span className="en-only">Connect</span>
+                <span className="jp">接続</span>
+              </>
+            )}
+          </button>
           <button className="btn btn-sm btn-primary" type="button" onClick={() => run('gmail.sync', { maxResults:20 }, { successMessage:'Gmail synced to Memory' })}>Sync to Memory</button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'edit' }, { silentError:true })}><Icon name="edit" size={12}/></button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'gmail', action:'settings' }, { silentError:true })}><Icon name="settings" size={12}/></button>
@@ -2580,6 +2647,10 @@ function PaneIntegrations() {
         {!gmailCred ? (
           <div style={{borderTop:'1px solid var(--border)', padding:'10px 16px', fontSize:12, color:'var(--text-dim)', lineHeight:1.55}}>
             <div style={{fontWeight:600, marginBottom:6}}>How to import Gmail token</div>
+            <div className="s-field-hint" style={{ marginBottom: 8 }}>
+              <span className="en-only">In-app: click Connect above. This drawer is for the agent-based fallback (production / multi-user, when scripts/.env.google-oauth is unavailable).</span>
+              <span className="jp">アプリ内: 上の Connect を押す。このドロワは agent 経由の代替手順 (本番 / 複数ユーザ、scripts/.env.google-oauth が使えない場合)。</span>
+            </div>
             <div>1) Get OAuth access token (+ optional refresh token / client id) with Gmail scope <code style={{fontSize:10}}>gmail.readonly</code>.</div>
             <div>2) Call <code style={{fontSize:10}}>app_integration_import_credentials</code> with <code style={{fontSize:10}}>provider: "gmail"</code>.</div>
             <div style={{marginTop:8, display:'flex', gap:12, flexWrap:'wrap'}}>
@@ -2625,6 +2696,24 @@ function PaneIntegrations() {
           ) : null}
           <span className="spacer"/>
           <button className="btn btn-sm btn-secondary" type="button" onClick={() => { void refreshGoogleCalStatus(); }}>Refresh status</button>
+          <button
+            className="btn btn-sm btn-secondary"
+            type="button"
+            disabled={oauthBusy}
+            onClick={() => handleOauthConnect('google_calendar')}
+          >
+            {oauthBusy === 'google_calendar' ? (
+              <>
+                <span className="en-only">Connecting…</span>
+                <span className="jp">接続中…</span>
+              </>
+            ) : (
+              <>
+                <span className="en-only">Connect</span>
+                <span className="jp">接続</span>
+              </>
+            )}
+          </button>
           <button className="btn btn-sm btn-primary" type="button" onClick={() => run('calendar.sync', { calendarId:'primary', maxResults:25 }, { successMessage:'Calendar synced to Memory' })}>Sync to Memory</button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'edit' }, { silentError:true })}><Icon name="edit" size={12}/></button>
           <button className="btn btn-sm btn-ghost" type="button" style={{padding:'0 6px'}} onClick={()=>run('integrations.toggle', { provider:'google_calendar', action:'settings' }, { silentError:true })}><Icon name="settings" size={12}/></button>
@@ -2668,6 +2757,66 @@ function PaneIntegrations() {
           </Row>
         </div>
       ))}
+      {oauthNotConfigured && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+          onClick={() => setOauthNotConfigured(false)}
+        >
+          <div
+            style={{
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 8, padding: 24, maxWidth: 520, color: 'var(--text)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 12px', fontSize: 16 }}>
+              <span className="en-only">OAuth credentials not configured</span>
+              <span className="jp">OAuth 認証情報が未設定</span>
+            </h3>
+            <p style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-mute)' }}>
+              <span className="en-only">
+                The file <code>scripts/.env.google-oauth</code> is missing or empty. To enable in-app OAuth:
+              </span>
+              <span className="jp">
+                <code>scripts/.env.google-oauth</code> が見つかりません。アプリ内 OAuth を有効にするには:
+              </span>
+            </p>
+            <pre style={{
+              background: 'var(--surface-mute)', padding: 12, borderRadius: 4,
+              fontSize: 12, fontFamily: 'var(--font-mono)', overflowX: 'auto',
+            }}>
+{`cp scripts/.env.google-oauth.example scripts/.env.google-oauth
+# Then fill CLIENT_ID and CLIENT_SECRET from Google Cloud Console.`}
+            </pre>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn btn-sm btn-secondary"
+                onClick={() => {
+                  navigator.clipboard?.writeText('cp scripts/.env.google-oauth.example scripts/.env.google-oauth');
+                  window.SHOGUN_RUNTIME?.pushToast?.('Command copied', 'success');
+                }}
+              >
+                <span className="en-only">Copy command</span>
+                <span className="jp">コマンドをコピー</span>
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setOauthNotConfigured(false)}
+              >
+                <span className="en-only">Close</span>
+                <span className="jp">閉じる</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Pane>
   );
 }

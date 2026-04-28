@@ -60,6 +60,7 @@ mod secrets;
 mod settings_store;
 mod slack;
 mod notion;
+mod oauth_flow;
 mod github;
 mod zoom;
 
@@ -178,6 +179,7 @@ pub fn run() {
       commands::app_integration_connect,
       commands::app_integration_import_credentials,
       commands::app_integration_credentials_status,
+      commands::shogun_oauth_google_start,
       commands::app_integration_toggle,
       commands::shogun_google_calendar_sync,
       commands::shogun_gmail_sync,

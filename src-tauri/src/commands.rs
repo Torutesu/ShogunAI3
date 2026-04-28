@@ -842,6 +842,72 @@ pub fn app_integration_credentials_status(payload: Value) -> Result<Value, Strin
   }))
 }
 
+/// `shogun_oauth_google_start` — Run the in-app Google OAuth flow and save
+/// tokens for both gmail and google_calendar providers. Replaces the manual
+/// scripts/oauth-google.mjs + DevTools-paste workflow.
+///
+/// payload: { "provider": "gmail" | "google_calendar" }
+///
+/// Returns: {
+///   ok: true,
+///   provider: "<echoed from input>",
+///   scopes: [...],
+///   expiresAt: <epoch_seconds | null>,
+///   refreshTokenPresent: <bool>,
+/// }
+///
+/// Token strings are NEVER returned to the frontend.
+#[tauri::command]
+pub async fn shogun_oauth_google_start(
+  app: AppHandle,
+  payload: Value,
+) -> Result<Value, String> {
+  let provider = payload
+    .get("provider")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "oauth_invalid_provider".to_string())?;
+  if provider != "gmail" && provider != "google_calendar" {
+    return Err("oauth_invalid_provider".into());
+  }
+
+  let tokens = crate::oauth_flow::run(None).await.map_err(String::from)?;
+
+  // Save tokens for BOTH providers — a single Google OAuth grants both
+  // scopes in one consent, matching scripts/oauth-google.mjs's behavior.
+  for save_provider in ["gmail", "google_calendar"] {
+    let mut save_payload = json!({
+      "provider": save_provider,
+      "accessToken": tokens.access_token,
+      "oauthClientId": tokens.client_id,
+      "oauthClientSecret": tokens.client_secret,
+    });
+    if let Some(rt) = &tokens.refresh_token {
+      save_payload["refreshToken"] = json!(rt);
+    }
+    if let Some(exp) = tokens.expires_at {
+      save_payload["expiresAt"] = json!(exp);
+    }
+    if !tokens.scopes.is_empty() {
+      save_payload["scopes"] = json!(tokens.scopes);
+    }
+    persist_integration_credentials_inner(&save_payload).map_err(|e| {
+      format!("oauth_save_failed: {}", e)
+    })?;
+  }
+  let _ = app.emit(
+    "credentials-imported",
+    json!({ "saved": true, "provider": provider, "via": "oauth_in_app" }),
+  );
+
+  Ok(json!({
+    "ok": true,
+    "provider": provider,
+    "scopes": tokens.scopes,
+    "expiresAt": tokens.expires_at,
+    "refreshTokenPresent": tokens.refresh_token.is_some(),
+  }))
+}
+
 #[tauri::command]
 pub async fn shogun_google_calendar_sync(payload: Value) -> Result<Value, String> {
   let cal = payload

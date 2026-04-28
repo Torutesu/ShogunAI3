@@ -39,6 +39,7 @@
     register("dead_letter.retry_one", (payload) => api.deadLetterRetryOne(payload));
     register("dead_letter.delete", (payload) => api.deadLetterDelete(payload));
     register("integrations.connect", (payload) => api.integrationConnect(payload));
+    register("oauth.google.start", (payload) => api.oauthGoogleStart(payload));
     register("integrations.import_credentials", (payload) =>
       api.integrationImportCredentials(payload),
     );

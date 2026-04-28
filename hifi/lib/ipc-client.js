@@ -936,6 +936,21 @@
           echo: echo,
         };
       }
+      case "shogun_oauth_google_start": {
+        // Mock: simulate a successful in-app OAuth flow without the actual
+        // browser round-trip. Real backend launches a localhost server +
+        // system browser; the mock just returns metadata immediately.
+        return {
+          ok: true,
+          provider: (echo && echo.provider) || "gmail",
+          scopes: [
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/calendar.readonly",
+          ],
+          expiresAt: Math.floor(Date.now() / 1000) + 3600,
+          refreshTokenPresent: true,
+        };
+      }
       default:
         return {
           stub: true,

@@ -87,6 +87,7 @@
       llmApiKeyStatus: (input) => call("app_llm_api_key_status", input, READ),
       llmApiKeyClear: (input) => call("app_llm_api_key_clear", input, WRITE),
       integrationConnect: (input) => call("app_integration_connect", input, WRITE),
+      oauthGoogleStart: (input) => call("shogun_oauth_google_start", input, WRITE),
       integrationImportCredentials: (input) =>
         call("app_integration_import_credentials", input, WRITE),
       integrationCredentialsStatus: (input) =>
