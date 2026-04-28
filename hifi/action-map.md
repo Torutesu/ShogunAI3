@@ -152,6 +152,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `lesson.capture.rejection`
 - `lesson.capture.tool_failure`
 - `patterns.run_now`
+- `supersession.run_now`
 - `patterns.list`
 - `patterns.invalidate`
 - `lessons.list`

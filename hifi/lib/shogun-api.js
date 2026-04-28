@@ -39,6 +39,7 @@
       lessonCaptureRejection: (input) => call("shogun_lesson_capture_rejection", input, WRITE),
       lessonCaptureToolFailure: (input) => call("shogun_lesson_capture_tool_failure", input, WRITE),
       patternsRunNow: (input) => call("shogun_patterns_run_now", input, WRITE),
+      supersessionRunNow: (input) => call("shogun_supersession_run_now", input || {}, WRITE),
       patternsList: (input) => call("shogun_patterns_list", input || {}, READ),
       patternsInvalidate: (input) => call("shogun_patterns_invalidate", input, WRITE),
       lessonsList: (input) => call("shogun_lessons_list", input || {}, READ),

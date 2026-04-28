@@ -79,6 +79,7 @@
     register("lesson.capture.rejection", (payload) => api.lessonCaptureRejection(payload));
     register("lesson.capture.tool_failure", (payload) => api.lessonCaptureToolFailure(payload));
     register("patterns.run_now", (payload) => api.patternsRunNow(payload));
+    register("supersession.run_now", (payload) => api.supersessionRunNow(payload));
     register("patterns.list", (payload) => api.patternsList(payload));
     register("patterns.invalidate", (payload) => api.patternsInvalidate(payload));
     register("lessons.list", (payload) => api.lessonsList(payload));
