@@ -63,7 +63,7 @@ fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
   out
 }
 
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
   if a.len() != b.len() || a.is_empty() {
     return 0.0;
   }

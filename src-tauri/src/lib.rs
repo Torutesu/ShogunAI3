@@ -41,6 +41,7 @@ mod kioku_capture;
 mod lessons;
 mod patterns;
 mod patterns_sync;
+mod supersession;
 mod mem_captures;
 mod extraction_jobs;
 mod cost_ledger;
