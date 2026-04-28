@@ -68,7 +68,8 @@ If a test calls `seedSummaries` before `ScreenMemory` mounts, `window.__SHOGUN_T
 ### `window.__SHOGUN_TEST__.seedSummaries(map)`
 
 - **Argument**: `map` — a plain object `{ [memoryId: string]: SummaryObject }`.
-- **Behavior**: synchronously calls `setSummaryByMemId(new Map(Object.entries(map)))`, which fully replaces the screen's summary cache. Next React render reflects the new state.
+- **Behavior**: synchronously calls `setSummaryByMemId(map || {})`, which fully replaces the screen's summary cache with a plain object. Next React render reflects the new state.
+- **Note**: `summaryByMemId` is read with bracket notation (`summaryByMemId[id]`) throughout `ScreenMemory`, so it must be a plain object — a `Map` would silently return `undefined` on bracket access.
 - **Return**: `void`.
 - **Precondition**: `ScreenMemory` is mounted. If not, the function is `undefined`.
 
@@ -104,7 +105,7 @@ If a test calls `seedSummaries` before `ScreenMemory` mounts, `window.__SHOGUN_T
 React.useEffect(() => {
   if (!window.__SHOGUN_TEST__) return;
   window.__SHOGUN_TEST__.seedSummaries = (map) => {
-    setSummaryByMemId(new Map(Object.entries(map)));
+    setSummaryByMemId(map || {});
   };
   return () => {
     if (window.__SHOGUN_TEST__) {
