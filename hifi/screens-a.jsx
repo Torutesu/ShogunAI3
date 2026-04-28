@@ -2199,7 +2199,14 @@ function ScreenMemory() {
           if (s && s.targetId) next[s.targetId] = s;
         }
         if (Object.keys(next).length === 0) return;
-        setSummaryByMemId((prev) => ({ ...prev, ...next }));
+        // Additive-only: don't overwrite entries already present (preserves test seeds and stale-but-valid cached summaries).
+        setSummaryByMemId((prev) => {
+          const out = { ...prev };
+          for (const [k, v] of Object.entries(next)) {
+            if (!(k in prev)) out[k] = v;
+          }
+          return out;
+        });
       } finally {
         if (!cancelled) setBatchSummarizing(0);
       }
