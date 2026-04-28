@@ -9,7 +9,7 @@ const DEMO_SEED_SCRIPT = () => {
   window.SHOGUN_DEMO_SEED = {
     memoryHits: [
       { id: "demo-m-01", title: "Q2 roadmap", snippet: "Beta target.",
-        source: "chat", kinds: ["input"], created_at: ts(-45 * 60 * 1000) },
+        source: "meetings", kinds: ["audio"], created_at: ts(-45 * 60 * 1000) },
       { id: "demo-m-02", title: "Investor update deck",
         snippet: "Three slides.", source: "meetings", kinds: ["audio"],
         created_at: ts(-3 * 60 * 60 * 1000) },
@@ -20,7 +20,7 @@ const DEMO_SEED_SCRIPT = () => {
 
 async function openHiFi(page) {
   await page.addInitScript(DEMO_SEED_SCRIPT);
-  await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
+  await page.goto(HIFI_ENTRY + '?test=1', { waitUntil: "load", timeout: 90000 });
   await page.waitForSelector(".app", { timeout: 90000 });
 }
 
@@ -30,29 +30,38 @@ async function goToMemoryRiver(page) {
   await page.locator('button', { hasText: 'River' }).first().click().catch(() => {});
 }
 
-// Wait for a memory summary card to render in the detail panel.
-async function waitForSummaryPanel(page) {
-  await page.locator('.memory-summary-card').first().waitFor({ state: 'visible', timeout: 30000 });
+async function seedSummariesForDemo(page) {
+  // Demo seed has demo-m-01..12. Mark 04/08/10 as LOW so the cluster appears.
+  await page.evaluate(() => {
+    if (!window.__SHOGUN_TEST__?.seedSummaries) {
+      throw new Error('window.__SHOGUN_TEST__.seedSummaries not available — Memory screen not mounted, or ?test=1 missing');
+    }
+    const isLow = (id) => ['demo-m-04', 'demo-m-08', 'demo-m-10'].includes(id);
+    const map = {};
+    for (let i = 1; i <= 12; i++) {
+      const id = `demo-m-${String(i).padStart(2, '0')}`;
+      map[id] = {
+        targetKind: 'item',
+        targetId: id,
+        title: `Stub: ${id}`,
+        keyPoints: ['mock'],
+        sourceType: 'mail',
+        priority: isLow(id) ? 'low' : 'medium',
+        reason: 'mock',
+        model: 'mock',
+        schemaVersion: 1,
+        generatedAt: 0,
+      };
+    }
+    window.__SHOGUN_TEST__.seedSummaries(map);
+  });
 }
 
-// The five tests below are marked test.fixme due to an inherent race in
-// the mock IPC flow: the .memory-summary-card detail panel only renders
-// after the async batch-summarize useEffect populates summaryByMemId.
-// The mock's memory.summary.batch resolves asynchronously and there's
-// no observable signal from outside React when it completes. This is
-// the same race that blocked the Phase 4 cluster e2e tests in the
-// sibling branch.
-//
-// Resolution path: expose a test-only hook (e.g.
-// window.__SHOGUN_TEST__.seedSummaries(...)) that pre-populates
-// summaryByMemId synchronously before assertions. Once that hook
-// exists, swap each test.fixme back to test.
-
 test.describe('Memory summary inline edit', () => {
-  test.fixme('title click → edit → Enter saves; reload preserves', async ({ page }) => {
+  test('title click → edit → Enter saves; reload preserves', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
-    await waitForSummaryPanel(page);
+    await seedSummariesForDemo(page);
 
     const titleEl = page.getByRole('button', { name: 'Edit title' }).first();
     await titleEl.click();
@@ -70,15 +79,18 @@ test.describe('Memory summary inline edit', () => {
     // the mock (in-memory map persists for the page lifetime).
     await page.evaluate(() => window.SHOGUN_RUNTIME?.setActiveScreen?.('home'));
     await page.evaluate(() => window.SHOGUN_RUNTIME?.setActiveScreen?.('memory'));
-    await waitForSummaryPanel(page);
+    // After navigating back, the mock's stored edits are returned by
+    // memory.summary.get — wait for the summary card to appear naturally
+    // (no re-seed needed; re-seeding would overwrite the edited title).
+    await page.locator('.memory-summary-card').first().waitFor({ state: 'visible', timeout: 30000 });
     await expect(page.getByRole('button', { name: 'Edit title' }).first())
       .toContainText('User edited title');
   });
 
-  test.fixme('Escape during edit discards changes', async ({ page }) => {
+  test('Escape during edit discards changes', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
-    await waitForSummaryPanel(page);
+    await seedSummariesForDemo(page);
 
     const before = await page.getByRole('button', { name: 'Edit title' }).first().textContent();
     await page.getByRole('button', { name: 'Edit title' }).first().click();
@@ -92,10 +104,10 @@ test.describe('Memory summary inline edit', () => {
     await expect(page.locator('text=edited · revert').first()).toHaveCount(0);
   });
 
-  test.fixme('Revert restores AI baseline', async ({ page }) => {
+  test('Revert restores AI baseline', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
-    await waitForSummaryPanel(page);
+    await seedSummariesForDemo(page);
 
     // Edit
     await page.getByRole('button', { name: 'Edit title' }).first().click();
@@ -112,10 +124,10 @@ test.describe('Memory summary inline edit', () => {
       .not.toContainText('Edited then reverted');
   });
 
-  test.fixme('keyPoints click → edit; + Add point appends new editable item', async ({ page }) => {
+  test('keyPoints click → edit; + Add point appends new editable item', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
-    await waitForSummaryPanel(page);
+    await seedSummariesForDemo(page);
 
     const firstKp = page.getByRole('button', { name: /^Edit key point 1$/ }).first();
     await firstKp.click();
@@ -133,10 +145,10 @@ test.describe('Memory summary inline edit', () => {
     await expect(page.locator('li', { hasText: 'Brand new point' })).toBeVisible();
   });
 
-  test.fixme('reason click → edit → save', async ({ page }) => {
+  test('reason click → edit → save', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
-    await waitForSummaryPanel(page);
+    await seedSummariesForDemo(page);
 
     const reason = page.getByRole('button', { name: 'Edit reason' }).first();
     await reason.click();
