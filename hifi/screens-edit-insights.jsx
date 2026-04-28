@@ -4,12 +4,39 @@ function ScreenEditInsights() {
   const [loading, setLoading] = React.useState(false);
   const [showRaw, setShowRaw] = React.useState(false);
 
+  const settledRef = React.useRef({ resolved: false, resolvers: [] });
+
+  // Test hook: when window.__SHOGUN_TEST__ is exposed (?test=1), register
+  // a waitForScreen helper that returns a Promise resolving after the
+  // first IPC settles. Used by edit-insights Playwright tests.
+  // Spec: docs/superpowers/specs/2026-04-28-test-hooks-design.md
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !window.__SHOGUN_TEST__) return;
+    window.__SHOGUN_TEST__.waitForScreen = (id) => {
+      if (id !== 'edit-insights') return Promise.resolve();
+      if (settledRef.current.resolved) return Promise.resolve();
+      return new Promise((resolve) => settledRef.current.resolvers.push(resolve));
+    };
+    return () => {
+      if (typeof window !== 'undefined' && window.__SHOGUN_TEST__) {
+        delete window.__SHOGUN_TEST__.waitForScreen;
+      }
+      settledRef.current = { resolved: false, resolvers: [] };
+    };
+  }, []);
+
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
       const res = await runRuntimeActionA('memory.summary.edit_insights', {}, { silentError: true });
       if (res?.ok) {
         setData(res.data);
+        // Wake up any test waiters now that the screen has rendered with data.
+        const refState = settledRef.current;
+        refState.resolved = true;
+        const pending = refState.resolvers;
+        refState.resolvers = [];
+        pending.forEach((r) => r());
       } else {
         setData(null);
       }
