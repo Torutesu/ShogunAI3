@@ -1703,7 +1703,7 @@ function ScreenMemory() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.__SHOGUN_TEST__) return;
     window.__SHOGUN_TEST__.seedSummaries = (map) => {
-      setSummaryByMemId(new Map(Object.entries(map || {})));
+      setSummaryByMemId(map || {});
     };
     return () => {
       if (typeof window !== 'undefined' && window.__SHOGUN_TEST__) {

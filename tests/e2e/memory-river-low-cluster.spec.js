@@ -42,7 +42,7 @@ const DEMO_SEED_SCRIPT = () => {
 async function openHiFi(page) {
   // Inject the demo seed before any scripts run so readMemoryIndex() has data.
   await page.addInitScript(DEMO_SEED_SCRIPT);
-  await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
+  await page.goto(HIFI_ENTRY + '?test=1', { waitUntil: "load", timeout: 90000 });
   await page.waitForSelector(".app", { timeout: 90000 });
 }
 
@@ -65,26 +65,38 @@ async function advanceToLastEvent(page) {
   }
 }
 
+async function seedSummariesForDemo(page) {
+  // Demo seed has demo-m-01..12. Mark 04/08/10 as LOW so the cluster appears.
+  await page.evaluate(() => {
+    if (!window.__SHOGUN_TEST__?.seedSummaries) {
+      throw new Error('window.__SHOGUN_TEST__.seedSummaries not available — Memory screen not mounted, or ?test=1 missing');
+    }
+    const isLow = (id) => ['demo-m-04', 'demo-m-08', 'demo-m-10'].includes(id);
+    const map = {};
+    for (let i = 1; i <= 12; i++) {
+      const id = `demo-m-${String(i).padStart(2, '0')}`;
+      map[id] = {
+        targetKind: 'item',
+        targetId: id,
+        title: `Stub: ${id}`,
+        keyPoints: ['mock'],
+        sourceType: 'mail',
+        priority: isLow(id) ? 'low' : 'medium',
+        reason: 'mock',
+        model: 'mock',
+        schemaVersion: 1,
+        generatedAt: 0,
+      };
+    }
+    window.__SHOGUN_TEST__.seedSummaries(map);
+  });
+}
+
 test.describe('Memory River — Low-priority cluster', () => {
-  // The five tests below are marked test.fixme due to an inherent race in the
-  // mock IPC flow: the cluster row only appears in `riverEvents` AFTER the
-  // batch-summarize useEffect (hifi/screens-a.jsx ~line 2049) populates
-  // `summaryByMemId` with at least one LOW-priority item. The mock's
-  // `memory.summary.batch` resolves asynchronously and there's no observable
-  // signal from outside React when it completes. Earlier passing runs were
-  // lucky timing.
-  //
-  // Resolution path: expose a test-only hook (e.g. `window.__SHOGUN_TEST__.
-  // seedSummaries(...)`) that pre-populates `summaryByMemId` synchronously
-  // before assertions. Once that hook exists, swap each `test.fixme` back to
-  // `test` and call the seed helper after `goToMemoryRiver`.
-  //
-  // Implementation correctness for these scenarios was verified independently
-  // via subagent code reviews across the 17 commits on this branch and via
-  // manual smoke (npm run dev:desktop) before merge.
-  test.fixme('cluster header appears at end of scrubber stream', async ({ page }) => {
+  test('cluster header appears at end of scrubber stream', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
+    await seedSummariesForDemo(page);
     await advanceToLastEvent(page);
     // Cluster panel uses a chevron + "Other · N items" / "その他 · N件".
     await expect(page.locator('.memory-summary-card[role="button"]').first()).toBeVisible();
@@ -92,9 +104,10 @@ test.describe('Memory River — Low-priority cluster', () => {
       .toContainText(/Other · \d+ items|その他 · \d+件/);
   });
 
-  test.fixme('cluster header click toggles aria-expanded', async ({ page }) => {
+  test('cluster header click toggles aria-expanded', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
+    await seedSummariesForDemo(page);
     await advanceToLastEvent(page);
     const cluster = page.locator('.memory-summary-card[role="button"]').first();
     await expect(cluster).toHaveAttribute('aria-expanded', 'false');
@@ -104,9 +117,10 @@ test.describe('Memory River — Low-priority cluster', () => {
     await expect(cluster).toHaveAttribute('aria-expanded', 'false');
   });
 
-  test.fixme('expanded cluster lets next-arrow step into LOW items with breadcrumb', async ({ page }) => {
+  test('expanded cluster lets next-arrow step into LOW items with breadcrumb', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
+    await seedSummariesForDemo(page);
     await advanceToLastEvent(page);
     const cluster = page.locator('.memory-summary-card[role="button"]').first();
     await cluster.click(); // expand
@@ -115,9 +129,10 @@ test.describe('Memory River — Low-priority cluster', () => {
     await expect(page.locator('text=/Inside Other cluster|その他クラスタ内/').first()).toBeVisible();
   });
 
-  test.fixme('Collapse button snaps back to cluster header', async ({ page }) => {
+  test('Collapse button snaps back to cluster header', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
+    await seedSummariesForDemo(page);
     await advanceToLastEvent(page);
     await page.locator('.memory-summary-card[role="button"]').first().click(); // expand
     await page.locator('[aria-label="Next memory"]').click(); // step into LOW
@@ -128,9 +143,10 @@ test.describe('Memory River — Low-priority cluster', () => {
       .toHaveAttribute('aria-expanded', 'false');
   });
 
-  test.fixme('expand state survives Memory → Home → Memory round trip', async ({ page }) => {
+  test('expand state survives Memory → Home → Memory round trip', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
+    await seedSummariesForDemo(page);
     await advanceToLastEvent(page);
     await page.locator('.memory-summary-card[role="button"]').first().click(); // expand
     await page.evaluate(() => window.SHOGUN_RUNTIME?.setActiveScreen?.('home'));
@@ -189,15 +205,10 @@ test.describe('Memory River — Low-priority cluster', () => {
     await expect(page.locator('.memory-summary-card[role="button"]')).toHaveCount(0);
   });
 
-  // fixme: The cluster header (.memory-summary-card[role="button"]) does not
-  // render in the Playwright environment without a real summarization backend —
-  // same root cause as tests 1–5 (mock IPC never returns priority='low' for
-  // demo-m-04/08/10 so the cluster row is never synthesized). Once the mock
-  // IPC layer is extended to return low priority for those ids, un-fixme this.
-  // Spec reference: Memory Digest Phase 4, § 4 — L-filter toggle.
-  test.fixme('L filter ON interleaves LOW items (no cluster); L filter OFF restores cluster with aria-expanded preserved', async ({ page }) => {
+  test('L filter ON interleaves LOW items (no cluster); L filter OFF restores cluster with aria-expanded preserved', async ({ page }) => {
     await openHiFi(page);
     await goToMemoryRiver(page);
+    await seedSummariesForDemo(page);
     await advanceToLastEvent(page);
 
     // Cluster header must be visible before we touch the filter.
