@@ -1695,6 +1695,22 @@ function ScreenMemory() {
   }, [workspaceAssignments]);
   const [rawEvents, setRawEvents] = useState(() => []);
   const [summaryByMemId, setSummaryByMemId] = useState(() => ({}));
+  // Test hook: when window.__SHOGUN_TEST__ is exposed (?test=1), register
+  // a synchronous seedSummaries helper that replaces the entire summary
+  // cache. Used by cluster + summary-edit Playwright tests to bypass the
+  // async batch-summarize useEffect race.
+  // Spec: docs/superpowers/specs/2026-04-28-test-hooks-design.md
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.__SHOGUN_TEST__) return;
+    window.__SHOGUN_TEST__.seedSummaries = (map) => {
+      setSummaryByMemId(new Map(Object.entries(map || {})));
+    };
+    return () => {
+      if (typeof window !== 'undefined' && window.__SHOGUN_TEST__) {
+        delete window.__SHOGUN_TEST__.seedSummaries;
+      }
+    };
+  }, [setSummaryByMemId]);
   const [batchSummarizing, setBatchSummarizing] = useState(0); // count of items being processed; 0 = idle
   const [weekRollup, setWeekRollup] = useState(null); // { title, keyPoints, reason, generatedAt } or null
   const [weekRollupLoading, setWeekRollupLoading] = useState(false);
