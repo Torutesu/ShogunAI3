@@ -1047,6 +1047,30 @@ function App() {
   const [writeConfirm, setWriteConfirm] = useState({ open:false, actionKey:null, payload:null, title:null, description:null });
   const [writePending, setWritePending] = useState(false);
   const [devGate, setDevGate] = useState({ available: false });
+
+  // Test hook gate. When the page is opened with ?test=1, expose an empty
+  // window.__SHOGUN_TEST__ object that the Memory + Edit Insights screen
+  // components fill in on mount. Spec:
+  // docs/superpowers/specs/2026-04-28-test-hooks-design.md
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let exposed = false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('test') === '1') {
+        window.__SHOGUN_TEST__ = {};
+        exposed = true;
+      }
+    } catch (_) {
+      // location not available in some test contexts; ignore
+    }
+    return () => {
+      if (exposed && typeof window !== 'undefined' && window.__SHOGUN_TEST__) {
+        delete window.__SHOGUN_TEST__;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     let cancel = false;
     (async () => {
