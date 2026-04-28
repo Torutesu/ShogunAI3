@@ -266,6 +266,7 @@ pub fn run() {
       commands::shogun_lesson_capture_rejection,
       commands::shogun_lesson_capture_tool_failure,
       commands::shogun_patterns_run_now,
+      commands::shogun_supersession_run_now,
       commands::shogun_patterns_list,
       commands::shogun_patterns_invalidate,
       commands::shogun_lessons_list,

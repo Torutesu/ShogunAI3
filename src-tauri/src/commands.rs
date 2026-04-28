@@ -2321,6 +2321,14 @@ pub async fn shogun_patterns_run_now(_payload: serde_json::Value) -> Result<serd
   Ok(serde_json::json!({ "emitted": emitted }))
 }
 
+/// Manually trigger Supersession detection (KIOKU Sub-spec D). Useful for
+/// the Memory DBG hooks. 30-day background sync covers production cadence.
+#[tauri::command]
+pub async fn shogun_supersession_run_now(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let marked = crate::supersession::run_supersession().await?;
+  Ok(serde_json::json!({ "marked": marked }))
+}
+
 /// Sub-spec C: list active patterns for the Settings UI.
 #[tauri::command]
 pub fn shogun_patterns_list(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
