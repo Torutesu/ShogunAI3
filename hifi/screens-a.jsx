@@ -1341,6 +1341,20 @@ function ScreenHome() {
               <button key={n} type="button" className="btn btn-sm btn-ghost" style={{ minWidth: 32, height: 28, fontSize: 11 }} onClick={() => submitBriefRating(n)}>{n}</button>
             ))}
           </div>
+          {Array.isArray(morningBrief?.patterns) && morningBrief.patterns.length > 0 && (
+            <div className="card" style={{padding:'var(--space-4) var(--space-5)', marginTop:'var(--space-4)'}}>
+              <div className="t-mono" style={{color:'var(--text-mute)', fontSize:10, marginBottom:'var(--space-2)'}}>
+                YOUR USUAL
+              </div>
+              <div style={{display:'flex', flexDirection:'column', gap:'var(--space-1)'}}>
+                {morningBrief.patterns.slice(0, 4).map((p, i) => (
+                  <div key={i} className="t-sm" style={{color:'var(--text-mute)'}}>
+                    • <span style={{color:'var(--text)'}}>{p.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

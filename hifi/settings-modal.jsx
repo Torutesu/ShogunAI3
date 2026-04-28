@@ -3113,6 +3113,14 @@ function PaneKiokuGraph() {
   // llm.extractionModel
   const [extractionModel, setExtractionModel] = useStateS('claude-haiku-4-5');
 
+  // observability.sliThresholds
+  const [sliBadSuccessLt, setSliBadSuccessLt] = useStateS('95');
+  const [sliBadP95Gt, setSliBadP95Gt] = useStateS('3000');
+  const [sliBadBacklogGt, setSliBadBacklogGt] = useStateS('40');
+  const [sliWarnSuccessLt, setSliWarnSuccessLt] = useStateS('99');
+  const [sliWarnP95Gt, setSliWarnP95Gt] = useStateS('1500');
+  const [sliWarnBacklogGt, setSliWarnBacklogGt] = useStateS('15');
+
   // kioku_rules — text area editing of raw JSON
   const [rulesText, setRulesText] = useStateS('[]');
   const [rulesError, setRulesError] = useStateS('');
@@ -3198,6 +3206,19 @@ function PaneKiokuGraph() {
     const l = sections.llm || {};
     if (typeof l.extractionModel === 'string') setExtractionModel(l.extractionModel);
 
+    const o = sections.observability || {};
+    const t = o.sliThresholds || {};
+    if (t.bad && typeof t.bad === 'object') {
+      if (t.bad.successLt != null) setSliBadSuccessLt(String(t.bad.successLt));
+      if (t.bad.p95Gt != null) setSliBadP95Gt(String(t.bad.p95Gt));
+      if (t.bad.backlogGt != null) setSliBadBacklogGt(String(t.bad.backlogGt));
+    }
+    if (t.warn && typeof t.warn === 'object') {
+      if (t.warn.successLt != null) setSliWarnSuccessLt(String(t.warn.successLt));
+      if (t.warn.p95Gt != null) setSliWarnP95Gt(String(t.warn.p95Gt));
+      if (t.warn.backlogGt != null) setSliWarnBacklogGt(String(t.warn.backlogGt));
+    }
+
     const arr = Array.isArray(sections.kioku_rules) ? sections.kioku_rules : [];
     try {
       setRulesText(JSON.stringify(arr, null, 2));
@@ -3235,6 +3256,27 @@ function PaneKiokuGraph() {
   const persistLLMModel = (val) => run(
     'settings.save',
     { section: 'llm', extractionModel: val },
+    { silentError: true },
+  ).then(() => refreshSections && refreshSections());
+
+  const persistObservability = (patch) => run(
+    'settings.save',
+    {
+      section: 'observability',
+      sliThresholds: {
+        bad: {
+          successLt: Number(sliBadSuccessLt) || 95,
+          p95Gt: Number(sliBadP95Gt) || 3000,
+          backlogGt: Number(sliBadBacklogGt) || 40,
+        },
+        warn: {
+          successLt: Number(sliWarnSuccessLt) || 99,
+          p95Gt: Number(sliWarnP95Gt) || 1500,
+          backlogGt: Number(sliWarnBacklogGt) || 15,
+        },
+      },
+      ...patch,
+    },
     { silentError: true },
   ).then(() => refreshSections && refreshSections());
 
@@ -3355,6 +3397,31 @@ function PaneKiokuGraph() {
             <option value="claude-haiku-4-5">claude-haiku-4-5</option>
             <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
           </select>
+        </Row>
+      </div>
+
+      <div className="s-card" style={{padding:20, marginBottom:16}}>
+        <h3 style={{marginTop:0}}>SLI severity thresholds</h3>
+        <div className="s-field-hint" style={{marginBottom:12}}>
+          Home の SLI バッジ色（good / warn / bad）と Memory Debug の SLI 警戒色に使います。
+        </div>
+        <Row title="Bad: success < (%)" desc="この値を下回る成功率は bad 扱い。">
+          <input className="s-input" type="number" min="1" max="100" value={sliBadSuccessLt} onChange={(e)=>setSliBadSuccessLt(e.target.value)} onBlur={()=>persistObservability({})} style={{width:90}} />
+        </Row>
+        <Row title="Bad: p95 > (ms)" desc="この値を上回る p95 は bad 扱い。">
+          <input className="s-input" type="number" min="1" value={sliBadP95Gt} onChange={(e)=>setSliBadP95Gt(e.target.value)} onBlur={()=>persistObservability({})} style={{width:110}} />
+        </Row>
+        <Row title="Bad: backlog >" desc="この値を上回る backlog は bad 扱い。">
+          <input className="s-input" type="number" min="0" value={sliBadBacklogGt} onChange={(e)=>setSliBadBacklogGt(e.target.value)} onBlur={()=>persistObservability({})} style={{width:90}} />
+        </Row>
+        <Row title="Warn: success < (%)" desc="bad 条件を満たさない場合に warn 判定で使用。">
+          <input className="s-input" type="number" min="1" max="100" value={sliWarnSuccessLt} onChange={(e)=>setSliWarnSuccessLt(e.target.value)} onBlur={()=>persistObservability({})} style={{width:90}} />
+        </Row>
+        <Row title="Warn: p95 > (ms)" desc="bad 条件を満たさない場合に warn 判定で使用。">
+          <input className="s-input" type="number" min="1" value={sliWarnP95Gt} onChange={(e)=>setSliWarnP95Gt(e.target.value)} onBlur={()=>persistObservability({})} style={{width:110}} />
+        </Row>
+        <Row title="Warn: backlog >" desc="bad 条件を満たさない場合に warn 判定で使用。" last>
+          <input className="s-input" type="number" min="0" value={sliWarnBacklogGt} onChange={(e)=>setSliWarnBacklogGt(e.target.value)} onBlur={()=>persistObservability({})} style={{width:90}} />
         </Row>
       </div>
 
