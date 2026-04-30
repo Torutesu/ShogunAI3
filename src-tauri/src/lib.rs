@@ -59,6 +59,7 @@ mod paths;
 mod progress_emitter;
 mod schedule_queue;
 mod secrets;
+mod sensitive_filter;
 mod settings_store;
 mod slack;
 mod notion;
