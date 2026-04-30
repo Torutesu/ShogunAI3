@@ -116,8 +116,133 @@ pub fn default_payment_domains() -> Vec<PaymentDomain> {
 
 // --- Public API stubs (filled in subsequent tasks) ---
 
-pub fn from_settings(_doc: &Value) -> FilterConfig {
-  unimplemented!("Task 2")
+pub fn from_settings(doc: &Value) -> FilterConfig {
+  let priv_sec = doc.pointer("/sections/privacy");
+  let payment = parse_payment(priv_sec);
+  let incognito = parse_incognito(priv_sec);
+  let time_blocks = parse_time_blocks(priv_sec);
+  FilterConfig {
+    payment,
+    incognito,
+    time_blocks,
+  }
+}
+
+fn parse_payment(priv_sec: Option<&Value>) -> PaymentRules {
+  let defaults = PaymentRules {
+    enabled: true,
+    domains: default_payment_domains(),
+    detect_card_pattern: true,
+  };
+  let Some(ps) = priv_sec.and_then(|s| s.get("paymentScreens")) else {
+    return defaults;
+  };
+  let enabled = ps
+    .get("enabled")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let detect_card_pattern = ps
+    .get("detectCardPattern")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let domains = ps
+    .get("domains")
+    .and_then(|v| v.as_array())
+    .map(|arr| {
+      arr
+        .iter()
+        .filter_map(|row| {
+          let host = row
+            .get("host")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty() && s.contains('.'))?;
+          let enabled = row
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+          Some(PaymentDomain { host, enabled })
+        })
+        .collect::<Vec<_>>()
+    })
+    .unwrap_or_else(default_payment_domains);
+  PaymentRules {
+    enabled,
+    domains,
+    detect_card_pattern,
+  }
+}
+
+fn parse_incognito(priv_sec: Option<&Value>) -> IncognitoRules {
+  let defaults = IncognitoRules {
+    enabled: true,
+    safari: true,
+    chrome: true,
+    arc: true,
+    firefox: true,
+    edge: true,
+  };
+  let Some(inc) = priv_sec.and_then(|s| s.get("incognito")) else {
+    return defaults;
+  };
+  let enabled = inc
+    .get("enabled")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let browsers = inc.get("browsers");
+  let read = |key: &str, fallback: bool| -> bool {
+    browsers
+      .and_then(|b| b.get(key))
+      .and_then(|v| v.as_bool())
+      .unwrap_or(fallback)
+  };
+  IncognitoRules {
+    enabled,
+    safari: read("safari", true),
+    chrome: read("chrome", true),
+    arc: read("arc", true),
+    firefox: read("firefox", true),
+    edge: read("edge", true),
+  }
+}
+
+fn parse_time_blocks(priv_sec: Option<&Value>) -> Vec<TimeBlock> {
+  let Some(arr) = priv_sec
+    .and_then(|s| s.get("timeBlocks"))
+    .and_then(|v| v.as_array())
+  else {
+    return Vec::new();
+  };
+  arr
+    .iter()
+    .filter_map(|row| {
+      let start_minute = row.get("startMinute").and_then(|v| v.as_u64())? as u16;
+      let end_minute = row.get("endMinute").and_then(|v| v.as_u64())? as u16;
+      if start_minute > 1439 || end_minute > 1439 {
+        log::warn!(
+          "sensitive_filter: skipping time block with out-of-range minute(s) start={} end={}",
+          start_minute,
+          end_minute
+        );
+        return None;
+      }
+      let days = row
+        .get("days")
+        .and_then(|v| v.as_u64())
+        .map(|d| (d & 0x7F) as u8)
+        .unwrap_or(0);
+      let enabled = row
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+      Some(TimeBlock {
+        start_minute,
+        end_minute,
+        days,
+        enabled,
+      })
+    })
+    .collect()
 }
 
 pub fn is_payment_signal(_rules: &PaymentRules, _ax_text: &str) -> bool {
@@ -148,4 +273,65 @@ pub fn evaluate_capture(
   _now_local_minute_of_week: u16,
 ) -> CaptureDecision {
   unimplemented!("Task 6")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+
+  // ===== from_settings (T18-T20) =====
+
+  #[test]
+  fn from_settings_missing_payment_block_uses_defaults() {
+    let cfg = from_settings(&json!({}));
+    assert!(cfg.payment.enabled);
+    assert!(cfg.payment.detect_card_pattern);
+    assert_eq!(cfg.payment.domains.len(), 8);
+    assert_eq!(cfg.payment.domains[0].host, "stripe.com");
+    assert!(cfg.payment.domains[0].enabled);
+    assert!(cfg.incognito.enabled);
+    assert!(cfg.incognito.safari);
+    assert!(cfg.time_blocks.is_empty());
+  }
+
+  #[test]
+  fn from_settings_partial_overrides_merge() {
+    let doc = json!({
+      "sections": {
+        "privacy": {
+          "paymentScreens": {
+            "enabled": true,
+            "domains": [{ "host": "custom.example", "enabled": true }],
+            "detectCardPattern": false
+          }
+        }
+      }
+    });
+    let cfg = from_settings(&doc);
+    // User-provided list replaces defaults entirely.
+    assert_eq!(cfg.payment.domains.len(), 1);
+    assert_eq!(cfg.payment.domains[0].host, "custom.example");
+    assert!(!cfg.payment.detect_card_pattern);
+    // Other sections still default.
+    assert!(cfg.incognito.enabled);
+  }
+
+  #[test]
+  fn from_settings_invalid_time_block_skipped() {
+    let doc = json!({
+      "sections": {
+        "privacy": {
+          "timeBlocks": [
+            { "startMinute": 1500, "endMinute": 60, "days": 127, "enabled": true },
+            { "startMinute": 60, "endMinute": 120, "days": 127, "enabled": true }
+          ]
+        }
+      }
+    });
+    let cfg = from_settings(&doc);
+    // Invalid (startMinute > 1439) row dropped, valid row kept.
+    assert_eq!(cfg.time_blocks.len(), 1);
+    assert_eq!(cfg.time_blocks[0].start_minute, 60);
+  }
 }
