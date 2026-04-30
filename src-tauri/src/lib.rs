@@ -27,6 +27,8 @@ mod meeting_enhance;
 mod meeting_import;
 mod meeting_mic;
 pub mod meeting_mcp;
+pub mod memory_mcp;
+pub mod kioku_mcp;
 pub mod mcp_server;
 mod meeting_recipes;
 mod meeting_session;

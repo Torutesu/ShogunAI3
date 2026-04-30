@@ -3,7 +3,7 @@
 //!
 //! Stdout is the MCP transport — never println!. All logs go to stderr.
 
-use app_lib::{mcp_server, meeting_mcp};
+use app_lib::{kioku_mcp, mcp_server, meeting_mcp, memory_mcp};
 use rmcp::{
     ServerHandler,
     ErrorData as McpError,
@@ -45,8 +45,16 @@ impl ServerHandler for ShogunService {
         _request: Option<PaginatedRequestParam>,
         _ctx: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let defs: Value = meeting_mcp::tool_definitions();
-        let arr = defs.as_array().cloned().unwrap_or_default();
+        let mut arr: Vec<Value> = Vec::new();
+        for getter in [
+            meeting_mcp::tool_definitions,
+            memory_mcp::tool_definitions,
+            kioku_mcp::tool_definitions,
+        ] {
+            if let Some(items) = getter().as_array() {
+                arr.extend(items.iter().cloned());
+            }
+        }
         let tools: Vec<Tool> = arr
             .into_iter()
             // Skip meeting_recipe_run for this MVP — async + LLM-dependent.
