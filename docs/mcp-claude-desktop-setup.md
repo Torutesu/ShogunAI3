@@ -36,15 +36,25 @@ Desktop. In a new chat, the 🛠 icon should show `shogun.meetings_list`,
 ## What's exposed (and what isn't)
 
 **Available now (read-only):**
+
+Meeting tools:
 - `shogun.meetings_list` — list saved meetings, optional time range
 - `shogun.meeting_get` — meeting metadata + transcript + note blocks
 - `shogun.meeting_transcript` — final transcript segments
 - `shogun.meeting_notes` — note blocks (user / ai / ai_edited)
 - `shogun.meetings_search` — keyword FTS across titles, transcripts, notes
 
+Memory tools:
+- `shogun.memory_search` — lexical search across memory items (notes, decisions, facts)
+- `shogun.memory_fetch` — retrieve full content of memory items by ID
+- `shogun.memory_entities` — search the entity catalog (people, organizations, projects)
+
+Kioku tools:
+- `shogun.kioku_debug_stats` — snapshot of memory subsystem health (queue, cost, graph, flags)
+- `shogun.kioku_related` — find related memory items via graph traversal (give a query or seed_ids)
+
 **Not available:**
 - `shogun.meeting_recipe_run` — async + LLM-dependent, deferred to a follow-up.
-- Memory / kioku tools — separate plan.
 
 ## Auth
 
