@@ -367,24 +367,28 @@ pub fn is_incognito_window(
     return false;
   }
   let app = app_name.trim().to_ascii_lowercase();
-  let title = window_title.to_string();
-  let title_lower = title.to_ascii_lowercase();
+  let title_lower = window_title.to_ascii_lowercase();
   match app.as_str() {
     "safari" | "safari technology preview" => {
       rules.safari
-        && (title.starts_with("Private — ") || title_lower.contains("private browsing"))
+        && (window_title.starts_with("Private — ") || title_lower.contains("private browsing"))
     }
     "google chrome" | "chromium" | "brave browser" | "opera" | "vivaldi" => {
       rules.chrome
         && (title_lower.contains("(incognito)") || title_lower.contains("(private)"))
     }
-    "arc" => rules.arc && title_lower.contains("incognito"),
+    // Arc supports both "incognito" (Chromium roots) and "private" terminology
+    // depending on version; match either.
+    "arc" => {
+      rules.arc && (title_lower.contains("incognito") || title_lower.contains("private"))
+    }
     "firefox" | "firefox developer edition" | "firefox nightly" => {
       rules.firefox
-        && (title.ends_with("(Private Browsing)") || title_lower.contains("private browsing"))
+        && (window_title.ends_with("(Private Browsing)")
+          || title_lower.contains("private browsing"))
     }
     "microsoft edge" => {
-      rules.edge && (title.contains("[InPrivate]") || title_lower.contains("inprivate"))
+      rules.edge && (window_title.contains("[InPrivate]") || title_lower.contains("inprivate"))
     }
     _ => false,
   }
@@ -601,6 +605,13 @@ mod tests {
     assert!(!is_incognito_window(&r, "Notes", "Private — Apple"));
     // Brave is recognized via Chromium fallback.
     assert!(is_incognito_window(&r, "Brave Browser", "Search (Incognito)"));
+  }
+
+  #[test]
+  fn incognito_arc_matches_both_incognito_and_private_terms() {
+    let r = incognito_all_on();
+    assert!(is_incognito_window(&r, "Arc", "Some tab — Incognito"));
+    assert!(is_incognito_window(&r, "Arc", "Private window"));
   }
 
   #[test]
