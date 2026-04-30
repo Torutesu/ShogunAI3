@@ -37,11 +37,25 @@ fn content_text(s: &str) -> Value {
     json!({ "content": [ { "type": "text", "text": s } ] })
 }
 
+fn require_meeting_id(args: &Value) -> Result<String, String> {
+    args.get("meeting_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "meeting_id is required (string)".to_string())
+}
+
+fn handle_meeting_get(args: &Value) -> Result<Value, String> {
+    let id = require_meeting_id(args)?;
+    let detail = meeting_store::get_meeting_detail(&id)?;
+    Ok(content_text(&serde_json::to_string(&detail).map_err(|e| e.to_string())?))
+}
+
 /// Dispatch a tool call by name. Returns the JSON-RPC `result` payload that
 /// `rmcp` will return to the client (i.e. an object with a `content` array).
 pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "shogun.meetings_list" => handle_meetings_list(args),
+        "shogun.meeting_get" => handle_meeting_get(args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
@@ -71,5 +85,17 @@ mod tests {
         assert_eq!(parsed.from_ms, None);
         assert_eq!(parsed.to_ms, None);
         assert_eq!(parsed.limit, 25);
+    }
+
+    #[test]
+    fn meeting_get_requires_meeting_id() {
+        let err = dispatch("shogun.meeting_get", &json!({})).unwrap_err();
+        assert!(err.contains("meeting_id"), "got: {err}");
+    }
+
+    #[test]
+    fn meeting_get_rejects_non_string_meeting_id() {
+        let err = dispatch("shogun.meeting_get", &json!({ "meeting_id": 42 })).unwrap_err();
+        assert!(err.contains("meeting_id"), "got: {err}");
     }
 }
