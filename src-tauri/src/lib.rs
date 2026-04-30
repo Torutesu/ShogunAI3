@@ -39,6 +39,7 @@ mod kioku_eval;
 mod decay;
 mod kioku_capture;
 mod lessons;
+mod lessons_verifier;
 mod patterns;
 mod patterns_sync;
 mod supersession;
