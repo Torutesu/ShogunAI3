@@ -58,10 +58,38 @@ fn judge_tool() -> Value {
 async fn judge_contradiction(older_rule: &str, newer_rule: &str) -> Option<bool> {
   let user_msg = format!("OLDER: {}\nNEWER: {}", older_rule, newer_rule);
   let tool = judge_tool();
-  match crate::llm::anthropic_tool_complete(JUDGE_SYSTEM_PROMPT, &user_msg, &tool, MODEL).await {
-    Ok(input) => input
-      .get("contradicts")
-      .and_then(|v| v.as_bool()),
+  match crate::llm::anthropic_tool_complete_with_usage(JUDGE_SYSTEM_PROMPT, &user_msg, &tool, MODEL).await {
+    Ok(result) => {
+      // Sub-spec H: record cost (best-effort, never fails this op)
+      if let Ok(conn) = crate::memory_store::open_conn() {
+        let cost = crate::cost_ledger::calc_cost_with_cache(
+          &result.resolved_model,
+          result.input_tokens,
+          result.cache_creation_input_tokens,
+          result.cache_read_input_tokens,
+          result.output_tokens,
+        )
+        .unwrap_or(0.0);
+        let now_ms = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .map(|d| d.as_millis() as i64)
+          .unwrap_or(0);
+        let entry = crate::cost_ledger::LedgerEntry {
+          recorded_at_ms: now_ms,
+          model: result.resolved_model.clone(),
+          purpose: crate::cost_ledger::PURPOSE_LESSON_SUPERSESSION.to_string(),
+          input_tokens: result.input_tokens,
+          output_tokens: result.output_tokens,
+          cost_usd: cost,
+          job_id: None,
+          meta_json: None,
+        };
+        let _ = crate::cost_ledger::record(&entry, &conn);
+      }
+      result.input
+        .get("contradicts")
+        .and_then(|v| v.as_bool())
+    }
     Err(e) => {
       log::warn!("supersession judge failed: {}", e);
       None
