@@ -42,6 +42,7 @@ mod lessons;
 mod lessons_verifier;
 mod patterns;
 mod patterns_sync;
+mod spatial;
 mod supersession;
 mod supersession_sync;
 mod mem_captures;
