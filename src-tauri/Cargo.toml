@@ -34,13 +34,14 @@ dotenvy = "0.15"
 urlencoding = "2"
 url = "2"
 open = "5"
-tokio = { version = "1", features = ["time", "rt", "sync"] }
+tokio = { version = "1", features = ["time", "rt", "sync", "macros"] }
 futures = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 cpal = "0.15.3"
 base64 = "0.22"
 rmcp = { version = "0.8", features = ["server", "transport-io", "macros"] }
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 anyhow = "1"
 

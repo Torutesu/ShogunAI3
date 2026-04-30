@@ -91,6 +91,12 @@ impl ServerHandler for ShogunService {
                     .into_iter()
                     .filter_map(|t| t.get("text").and_then(|x| x.as_str()).map(|s| Content::text(s.to_string())))
                     .collect();
+                if content.is_empty() {
+                    tracing::warn!(
+                        tool = %request.name,
+                        "dispatch returned Ok but content extraction produced no items; check content_text shape",
+                    );
+                }
                 Ok(CallToolResult::success(content))
             }
             Err(msg) => Ok(CallToolResult::error(vec![Content::text(msg)])),
