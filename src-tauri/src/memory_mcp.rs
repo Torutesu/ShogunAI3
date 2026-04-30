@@ -28,6 +28,17 @@ pub fn tool_definitions() -> Value {
                 },
                 "required": ["ids"]
             }
+        },
+        {
+            "name": "shogun.memory_entities",
+            "description": "Search the entity catalog (people, organizations, projects extracted across memories). Returns matched entities with their occurrence counts.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "q": { "type": "string", "description": "Entity name or partial query" }
+                },
+                "required": ["q"]
+            }
         }
     ])
 }

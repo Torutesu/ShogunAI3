@@ -29,6 +29,12 @@ pub(super) fn handle_search(args: &Value) -> Result<Value, String> {
     Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
 }
 
+pub(super) fn handle_entities(args: &Value) -> Result<Value, String> {
+    let _ = require_string_field(args, "q")?;
+    let result = memory_store::entities_from_catalog(args)?;
+    Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::dispatch;
@@ -62,5 +68,11 @@ mod tests {
     fn memory_fetch_rejects_non_array_ids() {
         let err = dispatch("shogun.memory_fetch", &json!({"ids": "abc"})).unwrap_err();
         assert!(err.contains("ids"), "got: {err}");
+    }
+
+    #[test]
+    fn memory_entities_requires_q() {
+        let err = dispatch("shogun.memory_entities", &json!({})).unwrap_err();
+        assert!(err.contains("q is required"), "got: {err}");
     }
 }
