@@ -31,6 +31,7 @@
     register("kioku.backup_db", (payload) => api.kiokuBackupDb(payload));
     register("kioku.edge_type_proposals", (payload) => api.kiokuEdgeTypeProposals(payload));
     register("kioku.edge_type_review", (payload) => api.kiokuEdgeTypeReview(payload));
+    register("kioku.cost_summary", (payload) => api.kiokuCostSummary(payload));
     register("settings.export", (payload) => api.settingsExport(payload));
     register("settings.import", (payload) => api.settingsImport(payload));
     register("dead_letter.list", (payload) => api.deadLetterList(payload));

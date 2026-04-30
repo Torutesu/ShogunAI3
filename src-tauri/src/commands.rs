@@ -2435,6 +2435,50 @@ pub fn shogun_lessons_archive(payload: serde_json::Value) -> Result<serde_json::
   Ok(serde_json::json!({ "ok": true }))
 }
 
+/// Sub-spec H: monthly cost breakdown for the KIOKU Graph settings panel.
+/// Returns total + per-purpose USD spent in the current UTC calendar month,
+/// plus configured cap.
+#[tauri::command]
+pub fn shogun_kioku_cost_summary(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let conn = crate::memory_store::open_conn()?;
+  let now_ms = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis() as i64)
+    .unwrap_or(0);
+  let month_start = crate::cost_ledger::month_start_ms_utc(now_ms);
+
+  let total = crate::cost_ledger::sum_cost_in_window(&conn, month_start, now_ms)?;
+  let by_purpose =
+    crate::cost_ledger::sum_cost_in_window_by_purpose(&conn, month_start, now_ms)?;
+
+  let (cap_usd, cap_action) = match crate::settings_store::load() {
+    Ok(doc) => {
+      let cap = doc
+        .pointer("/sections/kioku_cost/monthly_cap_usd")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(crate::cost_ledger::DEFAULT_MONTHLY_CAP_USD);
+      let action = doc
+        .pointer("/sections/kioku_cost/cap_action")
+        .and_then(|v| v.as_str())
+        .unwrap_or(crate::cost_ledger::CAP_ACTION_PAUSE_EXTRACTION)
+        .to_string();
+      (cap, action)
+    }
+    Err(_) => (
+      crate::cost_ledger::DEFAULT_MONTHLY_CAP_USD,
+      crate::cost_ledger::CAP_ACTION_PAUSE_EXTRACTION.to_string(),
+    ),
+  };
+
+  Ok(serde_json::json!({
+    "month_start_ms": month_start,
+    "total_usd": total,
+    "by_purpose": by_purpose,
+    "cap_usd": cap_usd,
+    "cap_action": cap_action,
+  }))
+}
+
 /// Sub-spec C: cumulative stats for the Lessons header.
 /// Returns total active lessons + cumulative applies_n sum.
 #[tauri::command]

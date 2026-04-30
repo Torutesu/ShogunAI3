@@ -274,6 +274,7 @@ pub fn run() {
       commands::shogun_patterns_invalidate,
       commands::shogun_lessons_list,
       commands::shogun_lessons_archive,
+      commands::shogun_kioku_cost_summary,
       commands::shogun_lessons_stats,
       commands::shogun_memory_summary_set_priority,
     ])

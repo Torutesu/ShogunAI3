@@ -161,6 +161,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `kioku.backup_db`
 - `kioku.edge_type_proposals`
 - `kioku.edge_type_review`
+- `kioku.cost_summary`
 - `settings.export`
 - `settings.import`
 - `dead_letter.list`

@@ -66,6 +66,7 @@
       kiokuBriefSignals: (input) =>
         call("shogun_kioku_brief_signals", input || {}, READ),
       kiokuDebugStats: () => call("shogun_kioku_debug_stats", {}, READ),
+      kiokuCostSummary: (input) => call("shogun_kioku_cost_summary", input || {}, READ),
       kiokuBackupDb: (input) =>
         call("shogun_kioku_backup_db", input || {}, WRITE),
       kiokuEdgeTypeProposals: (input) =>
