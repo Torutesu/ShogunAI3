@@ -3681,7 +3681,7 @@ function PaneKiokuPatterns() {
 function PaneKiokuLessons() {
   const { run, toast } = useRuntimeActions();
   const [items, setItems] = useStateS([]);
-  const [stats, setStats] = useStateS({ total_active: 0, applied_total: 0 });
+  const [stats, setStats] = useStateS({ total_active: 0, applied_total: 0, prevented_total: 0 });
   const [statsLoaded, setStatsLoaded] = useStateS(false);
   const [loaded, setLoaded] = useStateS(false);
   const [busyId, setBusyId] = useStateS(null);
@@ -3692,6 +3692,7 @@ function PaneKiokuLessons() {
       setStats({
         total_active: Number(r.data.total_active || 0),
         applied_total: Number(r.data.applied_total || 0),
+        prevented_total: Number(r.data.prevented_total || 0),
       });
     }
     setStatsLoaded(true);
@@ -3715,7 +3716,11 @@ function PaneKiokuLessons() {
     const prev = items;
     const prevStats = stats;
     setItems(items.filter((l) => l.id !== id));
-    setStats({ ...stats, total_active: Math.max(0, stats.total_active - 1) });
+    setStats({
+      total_active: Math.max(0, stats.total_active - 1),
+      applied_total: stats.applied_total,
+      prevented_total: stats.prevented_total,
+    });
     const r = await run('lessons.archive', { id }, { silentError: true });
     setBusyId(null);
     if (!r.ok) {
@@ -3740,6 +3745,11 @@ function PaneKiokuLessons() {
         <div className="t-sm" style={{color:'var(--text-mute)', marginTop:'var(--space-1)'}}>
           {statsLoaded ? `Applied ${stats.applied_total} times total` : 'Applied — times total'}
         </div>
+        {statsLoaded && stats.prevented_total > 0 && (
+          <div className="t-sm" style={{color:'var(--text-mute)', marginTop:'var(--space-1)'}}>
+            Prevented {stats.prevented_total} failures
+          </div>
+        )}
       </div>
       <div className="card" style={{padding:'var(--space-4) var(--space-5)'}}>
         {!loaded ? (
