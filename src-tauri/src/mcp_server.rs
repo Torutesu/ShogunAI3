@@ -50,12 +50,26 @@ fn handle_meeting_get(args: &Value) -> Result<Value, String> {
     Ok(content_text(&serde_json::to_string(&detail).map_err(|e| e.to_string())?))
 }
 
+fn handle_meeting_transcript(args: &Value) -> Result<Value, String> {
+    let id = require_meeting_id(args)?;
+    let segments = meeting_store::list_transcript_final(&id)?;
+    Ok(content_text(&serde_json::to_string(&segments).map_err(|e| e.to_string())?))
+}
+
+fn handle_meeting_notes(args: &Value) -> Result<Value, String> {
+    let id = require_meeting_id(args)?;
+    let blocks = meeting_store::list_note_blocks(&id)?;
+    Ok(content_text(&serde_json::to_string(&blocks).map_err(|e| e.to_string())?))
+}
+
 /// Dispatch a tool call by name. Returns the JSON-RPC `result` payload that
 /// `rmcp` will return to the client (i.e. an object with a `content` array).
 pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "shogun.meetings_list" => handle_meetings_list(args),
         "shogun.meeting_get" => handle_meeting_get(args),
+        "shogun.meeting_transcript" => handle_meeting_transcript(args),
+        "shogun.meeting_notes" => handle_meeting_notes(args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
@@ -96,6 +110,18 @@ mod tests {
     #[test]
     fn meeting_get_rejects_non_string_meeting_id() {
         let err = dispatch("shogun.meeting_get", &json!({ "meeting_id": 42 })).unwrap_err();
+        assert!(err.contains("meeting_id"), "got: {err}");
+    }
+
+    #[test]
+    fn meeting_transcript_requires_meeting_id() {
+        let err = dispatch("shogun.meeting_transcript", &json!({})).unwrap_err();
+        assert!(err.contains("meeting_id"), "got: {err}");
+    }
+
+    #[test]
+    fn meeting_notes_requires_meeting_id() {
+        let err = dispatch("shogun.meeting_notes", &json!({})).unwrap_err();
         assert!(err.contains("meeting_id"), "got: {err}");
     }
 }
