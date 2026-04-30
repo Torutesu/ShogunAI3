@@ -394,8 +394,30 @@ pub fn is_incognito_window(
   }
 }
 
-pub fn is_inside_time_block(_blocks: &[TimeBlock], _now_local_minute_of_week: u16) -> bool {
-  unimplemented!("Task 5")
+pub fn is_inside_time_block(blocks: &[TimeBlock], now_local_minute_of_week: u16) -> bool {
+  let day = (now_local_minute_of_week / 1440) as u8;
+  let minute = now_local_minute_of_week % 1440;
+  let yesterday = (day + 6) % 7;
+  for block in blocks.iter().filter(|b| b.enabled) {
+    let today_bit = 1u8 << day;
+    let yesterday_bit = 1u8 << yesterday;
+    if block.start_minute <= block.end_minute {
+      if (block.days & today_bit) != 0
+        && minute >= block.start_minute
+        && minute < block.end_minute
+      {
+        return true;
+      }
+    } else {
+      let in_today_tail = (block.days & today_bit) != 0 && minute >= block.start_minute;
+      let in_yesterday_morning =
+        (block.days & yesterday_bit) != 0 && minute < block.end_minute;
+      if in_today_tail || in_yesterday_morning {
+        return true;
+      }
+    }
+  }
+  false
 }
 
 pub fn extract_window_title(ax_text: &str) -> Option<&str> {
@@ -612,6 +634,95 @@ mod tests {
     let r = incognito_all_on();
     assert!(is_incognito_window(&r, "Arc", "Some tab — Incognito"));
     assert!(is_incognito_window(&r, "Arc", "Private window"));
+  }
+
+  // ===== is_inside_time_block (T11-T15) =====
+
+  // Day bitmask helpers: sun=1, mon=2, tue=4, wed=8, thu=16, fri=32, sat=64.
+  const SUN: u8 = 1;
+  const MON: u8 = 2;
+  const TUE: u8 = 4;
+  const WED: u8 = 8;
+  const THU: u8 = 16;
+  const FRI: u8 = 32;
+  const SAT: u8 = 64;
+
+  fn minute_of_week(day: u16, hour: u16, minute: u16) -> u16 {
+    day * 1440 + hour * 60 + minute
+  }
+
+  #[test]
+  fn time_block_simple_range_fires() {
+    let blocks = vec![TimeBlock {
+      start_minute: 600,
+      end_minute: 660,
+      days: MON,
+      enabled: true,
+    }];
+    // Mon 10:30 → inside [10:00, 11:00) on Monday.
+    assert!(is_inside_time_block(&blocks, minute_of_week(1, 10, 30)));
+    // Mon 09:59 → outside.
+    assert!(!is_inside_time_block(&blocks, minute_of_week(1, 9, 59)));
+    // Mon 11:00 → outside (half-open).
+    assert!(!is_inside_time_block(&blocks, minute_of_week(1, 11, 0)));
+  }
+
+  #[test]
+  fn time_block_wrap_midnight_fires_in_tail() {
+    // 22:00–07:00 active Mon–Fri.
+    let blocks = vec![TimeBlock {
+      start_minute: 22 * 60,
+      end_minute: 7 * 60,
+      days: MON | TUE | WED | THU | FRI,
+      enabled: true,
+    }];
+    // Tue 23:30 → today's tail (today=Tue, in MON|TUE|...).
+    assert!(is_inside_time_block(&blocks, minute_of_week(2, 23, 30)));
+  }
+
+  #[test]
+  fn time_block_wrap_midnight_fires_in_morning_when_yesterday_selected() {
+    let blocks = vec![TimeBlock {
+      start_minute: 22 * 60,
+      end_minute: 7 * 60,
+      days: MON | TUE | WED | THU | FRI,
+      enabled: true,
+    }];
+    // Tue 02:00 → yesterday=Mon, which IS in the bitmask.
+    assert!(is_inside_time_block(&blocks, minute_of_week(2, 2, 0)));
+  }
+
+  #[test]
+  fn time_block_wrap_midnight_does_not_fire_when_yesterday_unselected() {
+    // 22:00–07:00 active Tue–Fri only.
+    let blocks = vec![TimeBlock {
+      start_minute: 22 * 60,
+      end_minute: 7 * 60,
+      days: TUE | WED | THU | FRI,
+      enabled: true,
+    }];
+    // Tue 02:00 → yesterday=Mon, not in mask → must not fire.
+    assert!(!is_inside_time_block(&blocks, minute_of_week(2, 2, 0)));
+    // Tue 23:30 → today=Tue, in mask → fires.
+    assert!(is_inside_time_block(&blocks, minute_of_week(2, 23, 30)));
+  }
+
+  #[test]
+  fn time_block_disabled_rows_skipped() {
+    let blocks = vec![TimeBlock {
+      start_minute: 600,
+      end_minute: 660,
+      days: MON,
+      enabled: false,
+    }];
+    // Mon 10:30 → would match if enabled, but it's not.
+    assert!(!is_inside_time_block(&blocks, minute_of_week(1, 10, 30)));
+  }
+
+  // Force-use SUN|SAT constants so they're not flagged as dead code in this test module.
+  #[test]
+  fn weekend_constants_are_distinct() {
+    assert_ne!(SUN, SAT);
   }
 
   #[test]
