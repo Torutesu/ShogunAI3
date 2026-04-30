@@ -191,6 +191,22 @@ pub fn increment_applies(conn: &Connection, ids: &[String]) -> Result<(), String
   Ok(())
 }
 
+pub fn increment_prevented(conn: &Connection, ids: &[String]) -> Result<(), String> {
+  if ids.is_empty() {
+    return Ok(());
+  }
+  let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(", ");
+  let sql = format!(
+    "UPDATE lessons SET prevented_n = prevented_n + 1 WHERE status = 'active' AND id IN ({})",
+    placeholders
+  );
+  let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+  conn
+    .execute(&sql, &params[..])
+    .map_err(|e| format!("lessons::increment_prevented: {}", e))?;
+  Ok(())
+}
+
 pub fn list_active(conn: &Connection, limit: usize) -> Result<Vec<Lesson>, String> {
   let mut stmt = conn
     .prepare(
