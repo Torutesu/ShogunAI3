@@ -6,6 +6,7 @@
 use serde_json::{json, Value};
 
 mod meeting;
+mod memory;
 
 /// Dispatch a tool call by name. Returns the JSON-RPC `result` payload that
 /// `rmcp` will return to the client (i.e. an object with a `content` array).
@@ -16,6 +17,7 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
         "shogun.meeting_transcript" => meeting::handle_meeting_transcript(args),
         "shogun.meeting_notes" => meeting::handle_meeting_notes(args),
         "shogun.meetings_search" => meeting::handle_meetings_search(args),
+        "shogun.memory_search" => memory::handle_search(args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
