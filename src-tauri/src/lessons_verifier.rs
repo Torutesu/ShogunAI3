@@ -107,7 +107,7 @@ async fn call_judge(
   let user_content = build_user_prompt(user_msg, assistant_msg, lessons);
   let tool = judge_tool();
 
-  match crate::llm::anthropic_tool_complete(
+  match crate::llm::anthropic_tool_complete_with_usage(
     JUDGE_SYSTEM_PROMPT,
     &user_content,
     &tool,
@@ -115,8 +115,34 @@ async fn call_judge(
   )
   .await
   {
-    Ok(input) => {
-      let judgments = match input.get("judgments").and_then(|v| v.as_array()) {
+    Ok(result) => {
+      // Sub-spec H: record cost (best-effort, never fails this op)
+      if let Ok(conn) = crate::memory_store::open_conn() {
+        let cost = crate::cost_ledger::calc_cost_with_cache(
+          &result.resolved_model,
+          result.input_tokens,
+          result.cache_creation_input_tokens,
+          result.cache_read_input_tokens,
+          result.output_tokens,
+        )
+        .unwrap_or(0.0);
+        let now_ms = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .map(|d| d.as_millis() as i64)
+          .unwrap_or(0);
+        let entry = crate::cost_ledger::LedgerEntry {
+          recorded_at_ms: now_ms,
+          model: result.resolved_model.clone(),
+          purpose: crate::cost_ledger::PURPOSE_LESSON_VERIFIER.to_string(),
+          input_tokens: result.input_tokens,
+          output_tokens: result.output_tokens,
+          cost_usd: cost,
+          job_id: None,
+          meta_json: None,
+        };
+        let _ = crate::cost_ledger::record(&entry, &conn);
+      }
+      let judgments = match result.input.get("judgments").and_then(|v| v.as_array()) {
         Some(arr) => arr,
         None => {
           log::warn!("verifier: judgments missing in tool output");
