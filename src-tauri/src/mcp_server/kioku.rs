@@ -38,7 +38,8 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
         .get("limit")
         .and_then(|v| v.as_u64())
         .map(|n| n as usize)
-        .unwrap_or(10);
+        .unwrap_or(10)
+        .max(1);
     let max_depth_raw = args
         .get("max_depth")
         .and_then(|v| v.as_u64())
@@ -80,7 +81,10 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
         return Ok(content_text(&serde_json::to_string(&json!({"hits": []})).map_err(|e| e.to_string())?));
     }
 
-    // Traverse.
+    // Traverse using the full canonical edge taxonomy (vs `DEFAULT_EDGE_TYPES`,
+    // which omits `derives_from`/`supersedes`). Surfacing those is intentional
+    // for an external "related items" query — Claude Desktop can decide what
+    // to do with structural relations.
     let nodes = kioku_graph_traversal::traverse_subgraph(
         &conn,
         &entry_ids,
