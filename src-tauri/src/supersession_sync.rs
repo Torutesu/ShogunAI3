@@ -48,7 +48,7 @@ fn should_run() -> bool {
 }
 
 pub fn spawn_background_supersession_sync() {
-  tokio::spawn(async move {
+  tauri::async_runtime::spawn(async move {
     // Cold-start delay so app boot isn't competing with detection.
     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     loop {
