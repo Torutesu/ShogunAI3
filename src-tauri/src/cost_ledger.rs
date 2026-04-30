@@ -31,6 +31,9 @@ pub const CACHE_READ_MULTIPLIER: f64 = 0.10;
 pub const PURPOSE_EXTRACTION: &str = "extraction";
 pub const PURPOSE_SUMMARIZE: &str = "summarize";
 pub const PURPOSE_EMBED: &str = "embed";
+pub const PURPOSE_LESSON_GENERATION: &str = "lesson_generation";
+pub const PURPOSE_LESSON_SUPERSESSION: &str = "lesson_supersession";
+pub const PURPOSE_LESSON_VERIFIER: &str = "lesson_verifier";
 
 /// `settings.sections.kioku_cost.cap_action` enum.
 pub const CAP_ACTION_PAUSE_CAPTURE: &str = "pause_capture";
@@ -201,6 +204,35 @@ pub fn sum_cost_in_window(
     )
     .map_err(|e| format!("cost_ledger::sum_cost_in_window: {}", e))?;
   Ok(v)
+}
+
+/// Sum `cost_usd` per purpose for rows in `[since_ms, until_ms)`. Used by
+/// the KIOKU Graph cost summary view to render a per-category breakdown.
+pub fn sum_cost_in_window_by_purpose(
+  conn: &Connection,
+  since_ms: i64,
+  until_ms: i64,
+) -> Result<std::collections::HashMap<String, f64>, String> {
+  let mut stmt = conn
+    .prepare(
+      "SELECT purpose, COALESCE(SUM(cost_usd), 0.0)
+       FROM cost_ledger
+       WHERE recorded_at >= ?1 AND recorded_at < ?2
+       GROUP BY purpose",
+    )
+    .map_err(|e| format!("cost_ledger::sum_cost_in_window_by_purpose prepare: {}", e))?;
+  let rows = stmt
+    .query_map(rusqlite::params![since_ms, until_ms], |row| {
+      Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+    })
+    .map_err(|e| format!("cost_ledger::sum_cost_in_window_by_purpose query: {}", e))?;
+  let mut out: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+  for r in rows {
+    let (purpose, sum) =
+      r.map_err(|e| format!("cost_ledger::sum_cost_in_window_by_purpose row: {}", e))?;
+    out.insert(purpose, sum);
+  }
+  Ok(out)
 }
 
 #[cfg(test)]
