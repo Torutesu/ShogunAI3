@@ -7,6 +7,16 @@
 
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
+/// Pixel-coordinate frame of the focused window. Read via AXPosition + AXSize.
+/// Coordinates are in macOS global display space (multi-monitor aware).
+#[derive(Debug, Clone)]
+pub struct WindowGeometry {
+  pub x: f64,
+  pub y: f64,
+  pub w: f64,
+  pub h: f64,
+}
+
 /// Raw strings copied from the focused AX element. All fields are owned so
 /// the formatter stays pure and testable on any platform.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -97,7 +107,17 @@ mod imp {
     fn CFStringGetTypeID() -> usize;
     /// Returns whether this process is trusted for accessibility (System Settings).
     fn AXIsProcessTrusted() -> u8;
+    /// AXValue is an opaque container for CGPoint / CGSize / etc.
+    fn AXValueGetValue(
+      value: CFTypeRef,
+      type_: i32,
+      valuePtr: *mut std::ffi::c_void,
+    ) -> u8;
+    fn AXValueGetTypeID() -> usize;
   }
+
+  const K_AX_VALUE_CG_POINT_TYPE: i32 = 1;
+  const K_AX_VALUE_CG_SIZE_TYPE: i32 = 2;
 
   pub fn accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
@@ -133,6 +153,48 @@ mod imp {
     unsafe {
       let cf = copy_attr(element, key)?;
       string_from_cf(cf)
+    }
+  }
+
+  unsafe fn read_point(element: AXUIElementRef, key: &str) -> Option<(f64, f64)> {
+    let cf = copy_attr(element, key)?;
+    if CFGetTypeID(cf) != AXValueGetTypeID() {
+      CFRelease(cf);
+      return None;
+    }
+    #[repr(C)]
+    struct CGPoint {
+      x: f64,
+      y: f64,
+    }
+    let mut pt = CGPoint { x: 0.0, y: 0.0 };
+    let ok = AXValueGetValue(cf, K_AX_VALUE_CG_POINT_TYPE, &mut pt as *mut _ as *mut _);
+    CFRelease(cf);
+    if ok != 0 {
+      Some((pt.x, pt.y))
+    } else {
+      None
+    }
+  }
+
+  unsafe fn read_size(element: AXUIElementRef, key: &str) -> Option<(f64, f64)> {
+    let cf = copy_attr(element, key)?;
+    if CFGetTypeID(cf) != AXValueGetTypeID() {
+      CFRelease(cf);
+      return None;
+    }
+    #[repr(C)]
+    struct CGSize {
+      w: f64,
+      h: f64,
+    }
+    let mut sz = CGSize { w: 0.0, h: 0.0 };
+    let ok = AXValueGetValue(cf, K_AX_VALUE_CG_SIZE_TYPE, &mut sz as *mut _ as *mut _);
+    CFRelease(cf);
+    if ok != 0 {
+      Some((sz.w, sz.h))
+    } else {
+      None
     }
   }
 
@@ -187,10 +249,42 @@ mod imp {
       out
     }
   }
+
+  pub fn focused_window_geometry() -> Option<super::WindowGeometry> {
+    unsafe {
+      let system = AXUIElementCreateSystemWide();
+      if system.is_null() {
+        return None;
+      }
+      let focused_app = match copy_attr(system, "AXFocusedApplication") {
+        Some(v) => v,
+        None => return None,
+      };
+      let win = copy_attr(focused_app as AXUIElementRef, "AXFocusedWindow");
+      let geom = match win {
+        Some(w) => {
+          let pos = read_point(w as AXUIElementRef, "AXPosition");
+          let size = read_size(w as AXUIElementRef, "AXSize");
+          CFRelease(w);
+          match (pos, size) {
+            (Some((x, y)), Some((w, h))) => Some(super::WindowGeometry { x, y, w, h }),
+            _ => None,
+          }
+        }
+        None => None,
+      };
+      CFRelease(focused_app);
+      CFRelease(system as CFTypeRef);
+      geom
+    }
+  }
 }
 
 #[cfg(target_os = "macos")]
 pub use imp::focused_ax_snapshot;
+
+#[cfg(target_os = "macos")]
+pub use imp::focused_window_geometry;
 
 /// `Some(true/false)` on macOS (whether this app is allowed in Accessibility settings). `None` on other platforms.
 #[cfg(target_os = "macos")]
@@ -200,6 +294,11 @@ pub fn accessibility_trust_status() -> Option<bool> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn focused_ax_snapshot() -> Option<String> {
+  None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focused_window_geometry() -> Option<WindowGeometry> {
   None
 }
 
