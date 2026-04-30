@@ -257,8 +257,87 @@ fn parse_time_blocks(priv_sec: Option<&Value>) -> Vec<TimeBlock> {
     .collect()
 }
 
-pub fn is_payment_signal(_rules: &PaymentRules, _ax_text: &str) -> bool {
-  unimplemented!("Task 3")
+pub fn is_payment_signal(rules: &PaymentRules, ax_text: &str) -> bool {
+  if !rules.enabled || ax_text.is_empty() {
+    return false;
+  }
+  if payment_domain_in_text(rules, ax_text) {
+    return true;
+  }
+  if rules.detect_card_pattern && card_and_cvv_co_occur(ax_text) {
+    return true;
+  }
+  false
+}
+
+fn payment_domain_in_text(rules: &PaymentRules, ax_text: &str) -> bool {
+  let hosts: Vec<&str> = rules
+    .domains
+    .iter()
+    .filter(|d| d.enabled)
+    .map(|d| d.host.as_str())
+    .filter(|h| h.contains('.'))
+    .collect();
+  if hosts.is_empty() {
+    return false;
+  }
+  let lower = ax_text.to_ascii_lowercase();
+  for tok in lower.split_whitespace() {
+    if !tok.contains("://") {
+      continue;
+    }
+    // The token may be prefixed with non-URL text (e.g. "value=https://...").
+    // Find where the scheme starts by scanning back from "://" for ASCII alpha chars.
+    let url_start = tok
+      .find("://")
+      .map(|sep| {
+        let prefix = &tok[..sep];
+        let scheme_start = prefix
+          .rfind(|c: char| !c.is_ascii_alphabetic())
+          .map(|i| i + 1)
+          .unwrap_or(0);
+        scheme_start
+      })
+      .unwrap_or(0);
+    let raw = &tok[url_start..];
+    let clean = raw.trim_end_matches(|c: char| {
+      matches!(c, '.' | ',' | ';' | ')' | ']' | '>' | '"' | '\'' | '!' | '?')
+    });
+    if let Ok(url) = url::Url::parse(clean) {
+      if let Some(h) = url.host_str() {
+        if hosts.iter().any(|ex| host_suffix_match(h, ex)) {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+fn host_suffix_match(actual: &str, excluded: &str) -> bool {
+  if actual == excluded {
+    return true;
+  }
+  actual.len() > excluded.len()
+    && actual.as_bytes()[actual.len() - excluded.len() - 1] == b'.'
+    && actual.ends_with(excluded)
+}
+
+fn card_and_cvv_co_occur(ax_text: &str) -> bool {
+  use std::sync::OnceLock;
+  static CARD_RE: OnceLock<regex::Regex> = OnceLock::new();
+  static CVV_RE: OnceLock<regex::Regex> = OnceLock::new();
+  let card = CARD_RE.get_or_init(|| {
+    // 13–19 digits with optional space/hyphen separators between digits,
+    // bounded by non-digit (or string start/end). The bound is enforced via
+    // (?:^|\D) and (?:\D|$) — Rust `regex` does not support `\b` against
+    // arbitrary character classes the way we want for digit-grouped runs.
+    regex::Regex::new(r"(?:^|\D)(?:\d[ \-]?){12,18}\d(?:\D|$)").unwrap()
+  });
+  let cvv = CVV_RE.get_or_init(|| {
+    regex::Regex::new(r"(?i)\b(?:cvv|cvc|cid|security[ ]?code)\b").unwrap()
+  });
+  card.is_match(ax_text) && cvv.is_match(ax_text)
 }
 
 pub fn is_incognito_window(
@@ -345,5 +424,74 @@ mod tests {
     // Invalid (startMinute > 1439) row dropped, valid row kept.
     assert_eq!(cfg.time_blocks.len(), 1);
     assert_eq!(cfg.time_blocks[0].start_minute, 60);
+  }
+
+  // ===== is_payment_signal (T1-T5) =====
+
+  fn payment_rules_with(domains: Vec<&str>, detect_card: bool) -> PaymentRules {
+    PaymentRules {
+      enabled: true,
+      domains: domains
+        .into_iter()
+        .map(|h| PaymentDomain {
+          host: h.to_string(),
+          enabled: true,
+        })
+        .collect(),
+      detect_card_pattern: detect_card,
+    }
+  }
+
+  #[test]
+  fn payment_domain_match_fires() {
+    let r = payment_rules_with(vec!["stripe.com"], false);
+    assert!(is_payment_signal(
+      &r,
+      "role=AXTextField\nvalue=https://checkout.stripe.com/pay/cs_xyz\nwindow=Checkout"
+    ));
+  }
+
+  #[test]
+  fn payment_domain_disabled_row_does_not_fire() {
+    let r = PaymentRules {
+      enabled: true,
+      domains: vec![PaymentDomain {
+        host: "stripe.com".to_string(),
+        enabled: false,
+      }],
+      detect_card_pattern: false,
+    };
+    assert!(!is_payment_signal(
+      &r,
+      "value=https://checkout.stripe.com/pay/cs_xyz"
+    ));
+  }
+
+  #[test]
+  fn card_pattern_alone_does_not_fire() {
+    // 16-digit run without CVV keyword — could be any long number.
+    let r = payment_rules_with(vec![], true);
+    assert!(!is_payment_signal(
+      &r,
+      "value=Order #4111 1111 1111 1111 confirmed"
+    ));
+  }
+
+  #[test]
+  fn card_pattern_with_cvv_keyword_fires() {
+    let r = payment_rules_with(vec![], true);
+    assert!(is_payment_signal(
+      &r,
+      "value=Card 4111 1111 1111 1111\nlabel=CVV"
+    ));
+  }
+
+  #[test]
+  fn card_pattern_disabled_globally_skips_regex() {
+    let r = payment_rules_with(vec![], false);
+    assert!(!is_payment_signal(
+      &r,
+      "value=Card 4111 1111 1111 1111\nlabel=CVV"
+    ));
   }
 }
