@@ -62,6 +62,22 @@ fn handle_meeting_notes(args: &Value) -> Result<Value, String> {
     Ok(content_text(&serde_json::to_string(&blocks).map_err(|e| e.to_string())?))
 }
 
+fn handle_meetings_search(args: &Value) -> Result<Value, String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "query is required (non-empty string)".to_string())?;
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(25);
+    let hits = meeting_store::search_meetings_fts(query, limit)?;
+    Ok(content_text(&serde_json::to_string(&hits).map_err(|e| e.to_string())?))
+}
+
 /// Dispatch a tool call by name. Returns the JSON-RPC `result` payload that
 /// `rmcp` will return to the client (i.e. an object with a `content` array).
 pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
@@ -70,6 +86,7 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
         "shogun.meeting_get" => handle_meeting_get(args),
         "shogun.meeting_transcript" => handle_meeting_transcript(args),
         "shogun.meeting_notes" => handle_meeting_notes(args),
+        "shogun.meetings_search" => handle_meetings_search(args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
@@ -123,5 +140,17 @@ mod tests {
     fn meeting_notes_requires_meeting_id() {
         let err = dispatch("shogun.meeting_notes", &json!({})).unwrap_err();
         assert!(err.contains("meeting_id"), "got: {err}");
+    }
+
+    #[test]
+    fn meetings_search_requires_query() {
+        let err = dispatch("shogun.meetings_search", &json!({})).unwrap_err();
+        assert!(err.contains("query"), "got: {err}");
+    }
+
+    #[test]
+    fn meetings_search_rejects_empty_query() {
+        let err = dispatch("shogun.meetings_search", &json!({ "query": "" })).unwrap_err();
+        assert!(err.contains("query"), "got: {err}");
     }
 }
