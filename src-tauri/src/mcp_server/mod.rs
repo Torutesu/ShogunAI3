@@ -22,6 +22,7 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
         "shogun.memory_fetch" => memory::handle_fetch(args),
         "shogun.memory_entities" => memory::handle_entities(args),
         "shogun.kioku_debug_stats" => kioku::handle_debug_stats(args),
+        "shogun.kioku_related" => kioku::handle_related(args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
