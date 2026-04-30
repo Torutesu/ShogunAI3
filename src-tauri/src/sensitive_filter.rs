@@ -430,13 +430,34 @@ pub fn extract_window_title(ax_text: &str) -> Option<&str> {
 }
 
 pub fn evaluate_capture(
-  _filter: &FilterConfig,
-  _app_name: &str,
-  _window_title: &str,
-  _ax_text: &str,
-  _now_local_minute_of_week: u16,
+  filter: &FilterConfig,
+  app_name: &str,
+  window_title: &str,
+  ax_text: &str,
+  now_local_minute_of_week: u16,
 ) -> CaptureDecision {
-  unimplemented!("Task 6")
+  if is_payment_signal(&filter.payment, ax_text) {
+    return CaptureDecision {
+      should_ingest: false,
+      reason: Some(ExclusionReason::PaymentScreen),
+    };
+  }
+  if is_incognito_window(&filter.incognito, app_name, window_title) {
+    return CaptureDecision {
+      should_ingest: false,
+      reason: Some(ExclusionReason::IncognitoWindow),
+    };
+  }
+  if is_inside_time_block(&filter.time_blocks, now_local_minute_of_week) {
+    return CaptureDecision {
+      should_ingest: false,
+      reason: Some(ExclusionReason::TimeBlock),
+    };
+  }
+  CaptureDecision {
+    should_ingest: true,
+    reason: None,
+  }
 }
 
 #[cfg(test)]
@@ -723,6 +744,58 @@ mod tests {
   #[test]
   fn weekend_constants_are_distinct() {
     assert_ne!(SUN, SAT);
+  }
+
+  // ===== evaluate_capture (T16-T17) =====
+
+  #[test]
+  fn evaluate_capture_payment_short_circuits() {
+    let mut cfg = FilterConfig::default();
+    // Add a time-block that would fire if checked — payment must short-circuit before it.
+    cfg.time_blocks = vec![TimeBlock {
+      start_minute: 0,
+      end_minute: 1440,
+      days: 0x7F,
+      enabled: true,
+    }];
+    let decision = evaluate_capture(
+      &cfg,
+      "Safari",
+      "Stripe Checkout",
+      "value=https://checkout.stripe.com/pay/cs_xyz\nwindow=Stripe Checkout",
+      minute_of_week(2, 10, 30),
+    );
+    assert!(!decision.should_ingest);
+    assert_eq!(decision.reason, Some(ExclusionReason::PaymentScreen));
+  }
+
+  #[test]
+  fn evaluate_capture_pass_through() {
+    let cfg = FilterConfig {
+      payment: PaymentRules {
+        enabled: false,
+        domains: vec![],
+        detect_card_pattern: false,
+      },
+      incognito: IncognitoRules {
+        enabled: false,
+        safari: false,
+        chrome: false,
+        arc: false,
+        firefox: false,
+        edge: false,
+      },
+      time_blocks: vec![],
+    };
+    let decision = evaluate_capture(
+      &cfg,
+      "Safari",
+      "GitHub",
+      "value=https://github.com/foo/bar",
+      minute_of_week(1, 14, 0),
+    );
+    assert!(decision.should_ingest);
+    assert_eq!(decision.reason, None);
   }
 
   #[test]
