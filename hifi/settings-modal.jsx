@@ -182,6 +182,17 @@ const PRIVACY_DEFAULT_SITES = [
   { id: 'site-ex2', host: 'pay.vendor.example', label: 'Vendor payments (example)', enabled: false },
 ];
 
+const DEFAULT_PAYMENT_DOMAINS = [
+  { id: 'pd-stripe',     host: 'stripe.com',            label: 'Stripe',           enabled: true },
+  { id: 'pd-paypal',     host: 'paypal.com',            label: 'PayPal',           enabled: true },
+  { id: 'pd-amazonpay',  host: 'pay.amazon.com',        label: 'Amazon Pay',       enabled: true },
+  { id: 'pd-googlepay',  host: 'pay.google.com',        label: 'Google Pay',       enabled: true },
+  { id: 'pd-shopify',    host: 'checkout.shopify.com',  label: 'Shopify Checkout', enabled: true },
+  { id: 'pd-itunes',     host: 'buy.itunes.apple.com',  label: 'iTunes Store',     enabled: true },
+  { id: 'pd-applepay',   host: 'applepay.apple.com',    label: 'Apple Pay',        enabled: true },
+  { id: 'pd-billing',    host: 'billing.stripe.com',    label: 'Stripe Billing',   enabled: true },
+];
+
 function normalizePrivacyFromSettings(sec) {
   let apps = sec && Array.isArray(sec.excludedApps) ? sec.excludedApps : null;
   let sites = sec && Array.isArray(sec.excludedSites) ? sec.excludedSites : null;
@@ -190,6 +201,24 @@ function normalizePrivacyFromSettings(sec) {
   }
   if (!apps) apps = PRIVACY_DEFAULT_APPS.map((r) => ({ ...r }));
   if (!sites) sites = PRIVACY_DEFAULT_SITES.map((r) => ({ ...r }));
+  const ps = sec && sec.paymentScreens && typeof sec.paymentScreens === 'object'
+    ? sec.paymentScreens
+    : null;
+  const paymentScreens = {
+    enabled: ps && typeof ps.enabled === 'boolean' ? ps.enabled : true,
+    detectCardPattern:
+      ps && typeof ps.detectCardPattern === 'boolean' ? ps.detectCardPattern : true,
+    domains: Array.isArray(ps && ps.domains)
+      ? ps.domains
+          .filter((r) => r && typeof r.host === 'string')
+          .map((r, i) => ({
+            id: String(r.id || `pd-${i}`),
+            host: String(r.host).toLowerCase(),
+            label: r.label != null ? String(r.label) : String(r.host),
+            enabled: r.enabled !== false,
+          }))
+      : DEFAULT_PAYMENT_DOMAINS.map((d) => ({ ...d })),
+  };
   return {
     excludedApps: apps.map((r) => ({
       id: String(r.id || r.name || 'app'),
@@ -204,6 +233,7 @@ function normalizePrivacyFromSettings(sec) {
       label: r.label != null ? String(r.label) : String(r.host || ''),
       enabled: !!r.enabled,
     })),
+    paymentScreens,
   };
 }
 
@@ -840,6 +870,12 @@ function PanePrivacy() {
   const [tab, setTab] = useStateS('apps');
   const [apps, setApps] = useStateS(() => PRIVACY_DEFAULT_APPS.map((r) => ({ ...r })));
   const [sites, setSites] = useStateS(() => PRIVACY_DEFAULT_SITES.map((r) => ({ ...r })));
+  const [paymentEnabled, setPaymentEnabled] = useStateS(true);
+  const [paymentDetectCard, setPaymentDetectCard] = useStateS(true);
+  const [paymentDomains, setPaymentDomains] = useStateS(() =>
+    DEFAULT_PAYMENT_DOMAINS.map((d) => ({ ...d })),
+  );
+  const [paymentDraft, setPaymentDraft] = useStateS('');
   const [appSearch, setAppSearch] = useStateS('');
   const [siteSearch, setSiteSearch] = useStateS('');
   const [appFilter, setAppFilter] = useStateS('all');
@@ -853,7 +889,8 @@ function PanePrivacy() {
   const [bioStatus, setBioStatus] = useStateS(null);
 
   const persistPrivacy = React.useCallback(
-    async (nextApps, nextSites) => {
+    async (nextApps, nextSites, overrides) => {
+      const o = overrides || {};
       const r = await run(
         'settings.save',
         {
@@ -861,6 +898,12 @@ function PanePrivacy() {
           excludedApps: nextApps,
           excludedSites: nextSites,
           allowChatServerMemoryAssembly: allowServerMemoryAssembly,
+          paymentScreens: {
+            enabled: 'paymentEnabled' in o ? o.paymentEnabled : paymentEnabled,
+            detectCardPattern:
+              'paymentDetectCard' in o ? o.paymentDetectCard : paymentDetectCard,
+            domains: 'paymentDomains' in o ? o.paymentDomains : paymentDomains,
+          },
         },
         { silentError: true },
       );
@@ -868,15 +911,18 @@ function PanePrivacy() {
       if (r && r.ok) notifyPrivacySettingsChanged({ allowChatServerMemoryAssembly: allowServerMemoryAssembly });
       return r;
     },
-    [run, refreshSections, allowServerMemoryAssembly],
+    [run, refreshSections, allowServerMemoryAssembly, paymentEnabled, paymentDetectCard, paymentDomains],
   );
 
   const privacyKey = JSON.stringify(privacySec);
   React.useEffect(() => {
-    const { excludedApps, excludedSites } = normalizePrivacyFromSettings(privacySec);
+    const { excludedApps, excludedSites, paymentScreens } = normalizePrivacyFromSettings(privacySec);
     setApps(excludedApps);
     setSites(excludedSites);
     setAllowServerMemoryAssembly(privacySec.allowChatServerMemoryAssembly !== false);
+    setPaymentEnabled(paymentScreens.enabled);
+    setPaymentDetectCard(paymentScreens.detectCardPattern);
+    setPaymentDomains(paymentScreens.domains);
   }, [privacyKey]);
 
   React.useEffect(() => {
@@ -1165,6 +1211,133 @@ function PanePrivacy() {
         <span className="jp" style={{ display: 'block', marginTop: 4 }}>
           アプリ・サイトの除外はローカルに保存されます。macOS ではキャプチャ取り込みが、除外アプリが最前面のとき、または AX テキスト／URL が除外サイトに該当するときにスキップされます。
         </span>
+      </div>
+      <div className="s-card" style={{ marginBottom: 14 }}>
+        <Row
+          title="Payment screens"
+          desc="Skip captures when the screen looks like a payment page (URL or card-shaped digits next to a CVV label)."
+        >
+          <Toggle
+            on={paymentEnabled}
+            onClick={async () => {
+              const next = !paymentEnabled;
+              setPaymentEnabled(next);
+              await persistPrivacy(apps, sites, { paymentEnabled: next });
+            }}
+          />
+        </Row>
+        <Row
+          title="Also detect card-number patterns"
+          desc="Heuristic: 13–19 digit runs co-occurring with a CVV/CVC label. Disable if you see false positives."
+          last
+        >
+          <Toggle
+            on={paymentDetectCard}
+            onClick={async () => {
+              const next = !paymentDetectCard;
+              setPaymentDetectCard(next);
+              await persistPrivacy(apps, sites, { paymentDetectCard: next });
+            }}
+          />
+        </Row>
+        <div style={{ padding: '0 16px 14px' }}>
+          <div className="s-field-hint" style={{ marginBottom: 8, fontSize: 11 }}>
+            Payment domains (suffix-matched, e.g. <code>stripe.com</code> also covers <code>checkout.stripe.com</code>):
+          </div>
+          {paymentDomains.length === 0 ? (
+            <div className="s-field-hint" style={{ padding: 8 }}>No domains.</div>
+          ) : (
+            <div className="s-card" style={{ marginBottom: 8 }}>
+              {paymentDomains.map((d, i, arr) => (
+                <div key={d.id} className={'s-row' + (i === arr.length - 1 ? ' last' : '')}>
+                  <div style={{ flex: 1, fontSize: 13 }}>
+                    <div style={{ fontWeight: 500 }}>{d.host}</div>
+                    {d.label && d.label !== d.host ? (
+                      <div className="s-field-hint" style={{ fontSize: 11 }}>{d.label}</div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    style={{ marginRight: 8 }}
+                    title="Remove from list"
+                    onClick={async () => {
+                      const next = paymentDomains.filter((x) => x.id !== d.id);
+                      setPaymentDomains(next);
+                      await persistPrivacy(apps, sites, { paymentDomains: next });
+                    }}
+                  >
+                    ×
+                  </button>
+                  <Toggle
+                    on={d.enabled}
+                    onClick={async () => {
+                      const next = paymentDomains.map((x) =>
+                        x.id === d.id ? { ...x, enabled: !x.enabled } : x,
+                      );
+                      setPaymentDomains(next);
+                      await persistPrivacy(apps, sites, { paymentDomains: next });
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              className="s-input"
+              style={{ flex: 1 }}
+              placeholder="e.g. checkout.example.com"
+              value={paymentDraft}
+              onChange={(e) => setPaymentDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void (async () => {
+                    let host = paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0].trim();
+                    if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
+                      toast('有効なホスト名を入力してください', 'warn');
+                      return;
+                    }
+                    if (paymentDomains.some((x) => x.host === host)) {
+                      toast('そのドメインは既にあります', 'info');
+                      return;
+                    }
+                    const next = paymentDomains.concat([
+                      { id: `pd-${host}`, host, label: host, enabled: true },
+                    ]);
+                    setPaymentDomains(next);
+                    setPaymentDraft('');
+                    await persistPrivacy(apps, sites, { paymentDomains: next });
+                  })();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={async () => {
+                let host = paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0].trim();
+                if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
+                  toast('有効なホスト名を入力してください', 'warn');
+                  return;
+                }
+                if (paymentDomains.some((x) => x.host === host)) {
+                  toast('そのドメインは既にあります', 'info');
+                  return;
+                }
+                const next = paymentDomains.concat([
+                  { id: `pd-${host}`, host, label: host, enabled: true },
+                ]);
+                setPaymentDomains(next);
+                setPaymentDraft('');
+                await persistPrivacy(apps, sites, { paymentDomains: next });
+              }}
+            >
+              Add domain
+            </button>
+          </div>
+        </div>
       </div>
       <div className="row" style={{gap:4, background:'var(--surface)', border:'1px solid var(--border)', padding:3, borderRadius:'var(--radius-md)', width:'fit-content', marginBottom:14}}>
         <button
