@@ -270,6 +270,18 @@ pub fn is_payment_signal(rules: &PaymentRules, ax_text: &str) -> bool {
   false
 }
 
+// Intentional duplication of `capture_sampler::ax_text_excluded`'s URL-parsing
+// loop (per design spec § 4.1 — this module stays self-contained). Differences
+// from the cousin: (1) adds a scheme-recovery preamble for AX tokens like
+// `value=https://...` (no whitespace before the scheme); (2) does NOT scan for
+// bare hostnames — payment screens are recognized via URLs, not body text.
+//
+// Known limitations of the rfind(non-alphabetic) scheme recovery:
+//  - False positive: `badhttps://stripe.com` parses successfully as a URL with
+//    scheme=`badhttps` and host=`stripe.com`. Acceptable; an alpha word glued
+//    directly to a real URL is not a real-world AX text shape.
+//  - False negative: schemes containing `+`/`-`/`.` (e.g. `coap+tcp://host`)
+//    will be truncated. Not a concern for HTTPS payment sites.
 fn payment_domain_in_text(rules: &PaymentRules, ax_text: &str) -> bool {
   let hosts: Vec<&str> = rules
     .domains
@@ -335,9 +347,15 @@ fn card_and_cvv_co_occur(ax_text: &str) -> bool {
     regex::Regex::new(r"(?:^|\D)(?:\d[ \-]?){12,18}\d(?:\D|$)").unwrap()
   });
   let cvv = CVV_RE.get_or_init(|| {
-    regex::Regex::new(r"(?i)\b(?:cvv|cvc|cid|security[ ]?code)\b").unwrap()
+    // English variants use \b (word boundary). Japanese alternatives are
+    // bare matches because Unicode word boundaries are unreliable for CJK.
+    regex::Regex::new(
+      r"(?i)\b(?:cvv|cvc|cid|security[ ]?code|card[ ]?verification[ ]?value)\b|セキュリティコード|セキュリティ番号"
+    )
+    .unwrap()
   });
-  card.is_match(ax_text) && cvv.is_match(ax_text)
+  // Run CVV first: shorter alternation, fails fast on the common no-payment case.
+  cvv.is_match(ax_text) && card.is_match(ax_text)
 }
 
 pub fn is_incognito_window(
@@ -492,6 +510,19 @@ mod tests {
     assert!(!is_payment_signal(
       &r,
       "value=Card 4111 1111 1111 1111\nlabel=CVV"
+    ));
+  }
+
+  #[test]
+  fn card_pattern_with_jp_security_code_keyword_fires() {
+    let r = payment_rules_with(vec![], true);
+    assert!(is_payment_signal(
+      &r,
+      "value=4111 1111 1111 1111\nlabel=セキュリティコード"
+    ));
+    assert!(is_payment_signal(
+      &r,
+      "value=4111 1111 1111 1111\nlabel=セキュリティ番号"
     ));
   }
 }
