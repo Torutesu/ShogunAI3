@@ -193,6 +193,34 @@ const DEFAULT_PAYMENT_DOMAINS = [
   { id: 'pd-billing',    host: 'billing.stripe.com',    label: 'Stripe Billing',   enabled: true },
 ];
 
+const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+function timeBlockMinutesToHHMM(m) {
+  const mm = Math.max(0, Math.min(1439, Number(m) || 0));
+  const h = Math.floor(mm / 60);
+  const min = mm % 60;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+function hhmmToMinutes(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim());
+  if (!m) return 0;
+  const h = Math.max(0, Math.min(23, parseInt(m[1], 10)));
+  const min = Math.max(0, Math.min(59, parseInt(m[2], 10)));
+  return h * 60 + min;
+}
+
+function newQuietBlock() {
+  return {
+    id: `tb-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    label: '',
+    startMinute: 22 * 60,
+    endMinute: 7 * 60,
+    days: 0x7F,
+    enabled: true,
+  };
+}
+
 function normalizePrivacyFromSettings(sec) {
   let apps = sec && Array.isArray(sec.excludedApps) ? sec.excludedApps : null;
   let sites = sec && Array.isArray(sec.excludedSites) ? sec.excludedSites : null;
@@ -232,6 +260,22 @@ function normalizePrivacyFromSettings(sec) {
       edge: readBool(incBrowsers.edge, true),
     },
   };
+  const rawBlocks = Array.isArray(sec && sec.timeBlocks) ? sec.timeBlocks : [];
+  const timeBlocks = rawBlocks
+    .filter((r) => r && typeof r === 'object')
+    .map((r, i) => {
+      const sm = Math.max(0, Math.min(1439, Number(r.startMinute) || 0));
+      const em = Math.max(0, Math.min(1439, Number(r.endMinute) || 0));
+      const days = (Number(r.days) || 0) & 0x7F;
+      return {
+        id: String(r.id || `tb-${i}`),
+        label: r.label != null ? String(r.label) : '',
+        startMinute: sm,
+        endMinute: em,
+        days,
+        enabled: r.enabled !== false,
+      };
+    });
   return {
     excludedApps: apps.map((r) => ({
       id: String(r.id || r.name || 'app'),
@@ -248,6 +292,7 @@ function normalizePrivacyFromSettings(sec) {
     })),
     paymentScreens,
     incognito,
+    timeBlocks,
   };
 }
 
@@ -894,6 +939,7 @@ function PanePrivacy() {
   const [incognitoBrowsers, setIncognitoBrowsers] = useStateS({
     safari: true, chrome: true, arc: true, firefox: true, edge: true,
   });
+  const [timeBlocks, setTimeBlocks] = useStateS([]);
   const [appSearch, setAppSearch] = useStateS('');
   const [siteSearch, setSiteSearch] = useStateS('');
   const [appFilter, setAppFilter] = useStateS('all');
@@ -926,6 +972,7 @@ function PanePrivacy() {
             enabled: 'incognitoEnabled' in o ? o.incognitoEnabled : incognitoEnabled,
             browsers: 'incognitoBrowsers' in o ? o.incognitoBrowsers : incognitoBrowsers,
           },
+          timeBlocks: 'timeBlocks' in o ? o.timeBlocks : timeBlocks,
         },
         { silentError: true },
       );
@@ -942,12 +989,13 @@ function PanePrivacy() {
       paymentDomains,
       incognitoEnabled,
       incognitoBrowsers,
+      timeBlocks,
     ],
   );
 
   const privacyKey = JSON.stringify(privacySec);
   React.useEffect(() => {
-    const { excludedApps, excludedSites, paymentScreens, incognito } = normalizePrivacyFromSettings(privacySec);
+    const { excludedApps, excludedSites, paymentScreens, incognito, timeBlocks: tb } = normalizePrivacyFromSettings(privacySec);
     setApps(excludedApps);
     setSites(excludedSites);
     setAllowServerMemoryAssembly(privacySec.allowChatServerMemoryAssembly !== false);
@@ -956,6 +1004,7 @@ function PanePrivacy() {
     setPaymentDomains(paymentScreens.domains);
     setIncognitoEnabled(incognito.enabled);
     setIncognitoBrowsers(incognito.browsers);
+    setTimeBlocks(tb);
   }, [privacyKey]);
 
   React.useEffect(() => {
@@ -1409,6 +1458,115 @@ function PanePrivacy() {
             />
           </Row>
         ))}
+      </div>
+      <div className="s-card" style={{ marginBottom: 14, padding: '12px 16px 14px' }}>
+        <div className="row" style={{ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>Quiet hours</div>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={async () => {
+              const next = timeBlocks.concat([newQuietBlock()]);
+              setTimeBlocks(next);
+              await persistPrivacy(apps, sites, { timeBlocks: next });
+            }}
+          >
+            + Add quiet block
+          </button>
+        </div>
+        <div className="s-field-hint" style={{ marginBottom: 10, fontSize: 11 }}>
+          Captures are skipped during these windows. Cross-midnight ranges (e.g. 22:00–07:00) are supported and applied based on the selected days.
+        </div>
+        {timeBlocks.length === 0 ? (
+          <div className="s-field-hint" style={{ padding: 8 }}>No quiet blocks configured.</div>
+        ) : (
+          <div className="s-card">
+            {timeBlocks.map((tb, i, arr) => (
+              <div key={tb.id} className={'s-row' + (i === arr.length - 1 ? ' last' : '')} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  <input
+                    className="s-input"
+                    style={{ flex: 1 }}
+                    placeholder="Label (optional)"
+                    value={tb.label}
+                    onChange={(e) => {
+                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, label: e.target.value } : x);
+                      setTimeBlocks(next);
+                    }}
+                    onBlur={async () => {
+                      await persistPrivacy(apps, sites, { timeBlocks });
+                    }}
+                  />
+                  <input
+                    type="time"
+                    className="s-input"
+                    style={{ width: 110 }}
+                    value={timeBlockMinutesToHHMM(tb.startMinute)}
+                    onChange={async (e) => {
+                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, startMinute: hhmmToMinutes(e.target.value) } : x);
+                      setTimeBlocks(next);
+                      await persistPrivacy(apps, sites, { timeBlocks: next });
+                    }}
+                  />
+                  <span style={{ color: 'var(--text-dim)' }}>–</span>
+                  <input
+                    type="time"
+                    className="s-input"
+                    style={{ width: 110 }}
+                    value={timeBlockMinutesToHHMM(tb.endMinute)}
+                    onChange={async (e) => {
+                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, endMinute: hhmmToMinutes(e.target.value) } : x);
+                      setTimeBlocks(next);
+                      await persistPrivacy(apps, sites, { timeBlocks: next });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    title="Remove quiet block"
+                    onClick={async () => {
+                      const next = timeBlocks.filter((x) => x.id !== tb.id);
+                      setTimeBlocks(next);
+                      await persistPrivacy(apps, sites, { timeBlocks: next });
+                    }}
+                  >
+                    ×
+                  </button>
+                  <Toggle
+                    on={tb.enabled}
+                    onClick={async () => {
+                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, enabled: !x.enabled } : x);
+                      setTimeBlocks(next);
+                      await persistPrivacy(apps, sites, { timeBlocks: next });
+                    }}
+                  />
+                </div>
+                <div className="row" style={{ gap: 4, marginTop: 8 }}>
+                  {DAY_LABELS.map((lbl, dayIdx) => {
+                    const bit = 1 << dayIdx;
+                    const on = (tb.days & bit) !== 0;
+                    return (
+                      <button
+                        key={dayIdx}
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ width: 28, padding: 0, background: on ? 'var(--accent)' : 'var(--surface-2)', color: on ? 'var(--on-accent)' : 'inherit' }}
+                        onClick={async () => {
+                          const nextDays = on ? tb.days & ~bit : tb.days | bit;
+                          const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, days: nextDays & 0x7F } : x);
+                          setTimeBlocks(next);
+                          await persistPrivacy(apps, sites, { timeBlocks: next });
+                        }}
+                      >
+                        {lbl}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="row" style={{gap:4, background:'var(--surface)', border:'1px solid var(--border)', padding:3, borderRadius:'var(--radius-md)', width:'fit-content', marginBottom:14}}>
         <button
