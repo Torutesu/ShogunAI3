@@ -71,6 +71,12 @@ mod tests {
     }
 
     #[test]
+    fn memory_fetch_rejects_mixed_type_ids() {
+        let err = dispatch("shogun.memory_fetch", &json!({"ids": ["abc", 42]})).unwrap_err();
+        assert!(err.contains("ids"), "got: {err}");
+    }
+
+    #[test]
     fn memory_entities_requires_q() {
         let err = dispatch("shogun.memory_entities", &json!({})).unwrap_err();
         assert!(err.contains("q is required"), "got: {err}");

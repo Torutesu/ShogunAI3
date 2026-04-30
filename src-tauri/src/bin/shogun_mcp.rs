@@ -34,7 +34,7 @@ impl ServerHandler for ShogunService {
                 website_url: None,
             },
             instructions: Some(
-                "ShogunAI3 meeting tools. All tools are read-only against the local SQLite DB."
+                "ShogunAI3 tools: meetings, memory items, and the kioku knowledge graph. All tools are read-only against the local SQLite DB."
                     .to_string(),
             ),
         }

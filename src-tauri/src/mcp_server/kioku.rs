@@ -62,7 +62,9 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
         seed_ids
     } else {
         // Lexical-search-as-entry-pick (sync; avoids the embedding requirement
-        // of `kioku_graph_traversal::pick_entry_nodes`).
+        // of `kioku_graph_traversal::pick_entry_nodes`). Note: `memory_store::search`
+        // opens its own SQLite connection internally — this is intentional; the
+        // graph-traversal connection above is reused only for the kioku primitives.
         let q = query.expect("checked above");
         let search_args = json!({"query": q, "limit": 5});
         let search_result = memory_store::search(&search_args)?;
@@ -125,6 +127,7 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
     }
 
     // Inline bodies. memory_store::fetch takes a payload {"ids": [...]}.
+    // Note: like `memory_store::search` above, `fetch` opens its own connection.
     let fetch_args = json!({"ids": top_ids});
     let fetch_result = memory_store::fetch(&fetch_args)?;
     let items = fetch_result
