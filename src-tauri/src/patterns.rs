@@ -61,7 +61,7 @@ const FRIENDLY_APP_NAMES: &[(&str, &str)] = &[
   ("com.spotify.client", "Spotify"),
 ];
 
-fn friendly_app_name(bundle: &str) -> String {
+pub(crate) fn friendly_app_name(bundle: &str) -> String {
   for (k, v) in FRIENDLY_APP_NAMES {
     if *k == bundle {
       return v.to_string();
