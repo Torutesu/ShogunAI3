@@ -304,11 +304,10 @@ fn payment_domain_in_text(rules: &PaymentRules, ax_text: &str) -> bool {
       .find("://")
       .map(|sep| {
         let prefix = &tok[..sep];
-        let scheme_start = prefix
+        prefix
           .rfind(|c: char| !c.is_ascii_alphabetic())
           .map(|i| i + 1)
-          .unwrap_or(0);
-        scheme_start
+          .unwrap_or(0)
       })
       .unwrap_or(0);
     let raw = &tok[url_start..];
@@ -750,14 +749,16 @@ mod tests {
 
   #[test]
   fn evaluate_capture_payment_short_circuits() {
-    let mut cfg = FilterConfig::default();
     // Add a time-block that would fire if checked — payment must short-circuit before it.
-    cfg.time_blocks = vec![TimeBlock {
-      start_minute: 0,
-      end_minute: 1440,
-      days: 0x7F,
-      enabled: true,
-    }];
+    let cfg = FilterConfig {
+      time_blocks: vec![TimeBlock {
+        start_minute: 0,
+        end_minute: 1440,
+        days: 0x7F,
+        enabled: true,
+      }],
+      ..FilterConfig::default()
+    };
     let decision = evaluate_capture(
       &cfg,
       "Safari",
