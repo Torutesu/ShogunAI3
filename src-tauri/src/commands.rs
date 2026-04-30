@@ -2309,13 +2309,41 @@ pub async fn shogun_lesson_capture_tool_failure(payload: serde_json::Value) -> R
     }
   });
 
-  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, "claude-haiku-4-5-20251001").await {
-    Ok(input) => input
-      .get("rule")
-      .and_then(|v| v.as_str())
-      .map(|s| s.trim().to_string())
-      .filter(|s| !s.is_empty())
-      .unwrap_or_else(|| format!("{} failed with: {} — verify preconditions", action, error_message)),
+  let rule = match crate::llm::anthropic_tool_complete_with_usage(system, &user_content, &tool, "claude-haiku-4-5-20251001").await {
+    Ok(result) => {
+      // Sub-spec H: record cost (best-effort, never fails this op)
+      if let Ok(conn) = crate::memory_store::open_conn() {
+        let cost = crate::cost_ledger::calc_cost_with_cache(
+          &result.resolved_model,
+          result.input_tokens,
+          result.cache_creation_input_tokens,
+          result.cache_read_input_tokens,
+          result.output_tokens,
+        )
+        .unwrap_or(0.0);
+        let now_ms = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .map(|d| d.as_millis() as i64)
+          .unwrap_or(0);
+        let entry = crate::cost_ledger::LedgerEntry {
+          recorded_at_ms: now_ms,
+          model: result.resolved_model.clone(),
+          purpose: crate::cost_ledger::PURPOSE_LESSON_GENERATION.to_string(),
+          input_tokens: result.input_tokens,
+          output_tokens: result.output_tokens,
+          cost_usd: cost,
+          job_id: None,
+          meta_json: None,
+        };
+        let _ = crate::cost_ledger::record(&entry, &conn);
+      }
+      result.input
+        .get("rule")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("{} failed with: {} — verify preconditions", action, error_message))
+    }
     Err(e) => {
       log::warn!("lesson tool_failure rule LLM error: {}", e);
       format!("{} failed with: {} — verify preconditions", action, error_message)
