@@ -40,6 +40,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 cpal = "0.15.3"
 base64 = "0.22"
+rmcp = { version = "0.8", features = ["server", "transport-io", "macros"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 
 [dev-dependencies]
 mockito = "1"
@@ -56,3 +58,7 @@ block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-local-authentication = "0.3.2"
+
+[[bin]]
+name = "shogun-mcp"
+path = "src/bin/shogun_mcp.rs"
