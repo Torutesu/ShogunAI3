@@ -5,6 +5,7 @@
 
 use serde_json::{json, Value};
 
+mod kioku;
 mod meeting;
 mod memory;
 
@@ -20,6 +21,7 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
         "shogun.memory_search" => memory::handle_search(args),
         "shogun.memory_fetch" => memory::handle_fetch(args),
         "shogun.memory_entities" => memory::handle_entities(args),
+        "shogun.kioku_debug_stats" => kioku::handle_debug_stats(args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
