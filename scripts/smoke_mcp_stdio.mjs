@@ -4,6 +4,7 @@
  *
  * Usage:
  *   node scripts/smoke_mcp_stdio.mjs [--meeting-id <id>]
+ *   SHOGUN_MCP_BIN=/path/to/shogun-mcp node scripts/smoke_mcp_stdio.mjs
  *
  * The script spawns the shogun-mcp binary, sends JSON-RPC frames over stdin
  * (newline-delimited, as used by rmcp's AsyncRwTransport), reads responses,
@@ -20,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BINARY = resolve(
+const BINARY = process.env.SHOGUN_MCP_BIN ?? resolve(
   __dirname,
   "../src-tauri/target/debug/shogun-mcp"
 );
@@ -138,6 +139,18 @@ function send(frame) {
   proc.stdin.write(JSON.stringify(frame) + "\n");
 }
 
+let _callId = 100;
+async function sendCall(toolName, args) {
+  const id = _callId++;
+  send({
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: { name: toolName, arguments: args },
+  });
+  return nextResponse();
+}
+
 // ── run frames ────────────────────────────────────────────────────────────────
 
 async function run() {
@@ -213,8 +226,8 @@ async function run() {
     `got: ${typeof tools}`
   );
   assert(
-    "tools/list: exactly 5 tools",
-    tools.length === 5,
+    "tools/list: exactly 10 tools",
+    tools.length === 10,
     `got ${tools.length}: ${tools.map((t) => t.name).join(", ")}`
   );
 
@@ -225,6 +238,11 @@ async function run() {
     "shogun.meeting_transcript",
     "shogun.meeting_notes",
     "shogun.meetings_search",
+    "shogun.memory_search",
+    "shogun.memory_fetch",
+    "shogun.memory_entities",
+    "shogun.kioku_debug_stats",
+    "shogun.kioku_related",
   ];
   for (const name of EXPECTED_TOOLS) {
     assert(`tools/list: includes ${name}`, toolNames.includes(name));
@@ -384,6 +402,204 @@ async function run() {
       `text snippet: ${String(realText).slice(0, 80)}`
     );
   }
+
+  // ── Frame 7: shogun.memory_search — happy path ────────────────────────────
+  console.log("\nFrame 7: tools/call shogun.memory_search (query='x', limit=3)");
+  let r7;
+  try {
+    r7 = await sendCall("shogun.memory_search", { query: "x", limit: 3 });
+  } catch (e) {
+    assert("memory_search: received response", false, e.message);
+    return;
+  }
+  assert(
+    "memory_search: no top-level error",
+    !r7.error,
+    r7.error ? JSON.stringify(r7.error) : ""
+  );
+  const msIsError = r7.result?.isError ?? r7.result?.is_error ?? false;
+  assert(
+    "memory_search: isError is false or absent",
+    !msIsError,
+    `isError: ${msIsError}`
+  );
+  const msText = r7.result?.content?.[0]?.text ?? "";
+  assert(
+    "memory_search: content[0].text is JSON with `hits` array",
+    (() => {
+      try {
+        const parsed = JSON.parse(msText);
+        return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.hits);
+      } catch {
+        return false;
+      }
+    })(),
+    `text snippet: ${String(msText).slice(0, 120)}`
+  );
+
+  // ── Frame 8: shogun.memory_fetch — empty ids (error path) ────────────────
+  console.log("\nFrame 8: tools/call shogun.memory_fetch (empty ids — expect error)");
+  let r8;
+  try {
+    r8 = await sendCall("shogun.memory_fetch", { ids: [] });
+  } catch (e) {
+    assert("memory_fetch/empty-ids: received response", false, e.message);
+    return;
+  }
+  assert(
+    "memory_fetch/empty-ids: no top-level error",
+    !r8.error,
+    r8.error ? JSON.stringify(r8.error) : ""
+  );
+  const mfIsError = r8.result?.isError ?? r8.result?.is_error;
+  assert(
+    "memory_fetch/empty-ids: isError == true",
+    mfIsError === true,
+    `isError: ${mfIsError}`
+  );
+  const mfText = r8.result?.content?.[0]?.text ?? "";
+  assert(
+    "memory_fetch/empty-ids: content[0].text contains 'ids'",
+    mfText.includes("ids"),
+    `text: ${mfText}`
+  );
+
+  // ── Frame 9: shogun.memory_entities — happy path ──────────────────────────
+  console.log("\nFrame 9: tools/call shogun.memory_entities (q='test')");
+  let r9;
+  try {
+    r9 = await sendCall("shogun.memory_entities", { q: "test" });
+  } catch (e) {
+    assert("memory_entities: received response", false, e.message);
+    return;
+  }
+  assert(
+    "memory_entities: no top-level error",
+    !r9.error,
+    r9.error ? JSON.stringify(r9.error) : ""
+  );
+  const meIsError = r9.result?.isError ?? r9.result?.is_error ?? false;
+  assert(
+    "memory_entities: isError is false or absent",
+    !meIsError,
+    `isError: ${meIsError}`
+  );
+  const meText = r9.result?.content?.[0]?.text ?? "";
+  assert(
+    "memory_entities: content[0].text is JSON with `entities` array",
+    (() => {
+      try {
+        const parsed = JSON.parse(meText);
+        return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.entities);
+      } catch {
+        return false;
+      }
+    })(),
+    `text snippet: ${String(meText).slice(0, 120)}`
+  );
+
+  // ── Frame 10: shogun.kioku_debug_stats — no args ──────────────────────────
+  console.log("\nFrame 10: tools/call shogun.kioku_debug_stats (no args)");
+  let r10;
+  try {
+    r10 = await sendCall("shogun.kioku_debug_stats", {});
+  } catch (e) {
+    assert("kioku_debug_stats: received response", false, e.message);
+    return;
+  }
+  assert(
+    "kioku_debug_stats: no top-level error",
+    !r10.error,
+    r10.error ? JSON.stringify(r10.error) : ""
+  );
+  const kdsIsError = r10.result?.isError ?? r10.result?.is_error ?? false;
+  assert(
+    "kioku_debug_stats: isError is false or absent",
+    !kdsIsError,
+    `isError: ${kdsIsError}`
+  );
+  const kdsText = r10.result?.content?.[0]?.text ?? "";
+  assert(
+    "kioku_debug_stats: content[0].text is JSON with queue/cost/graph/flags/now_ms keys",
+    (() => {
+      try {
+        const parsed = JSON.parse(kdsText);
+        return (
+          parsed !== null &&
+          typeof parsed === "object" &&
+          "queue" in parsed &&
+          "cost" in parsed &&
+          "graph" in parsed &&
+          "flags" in parsed &&
+          "now_ms" in parsed
+        );
+      } catch {
+        return false;
+      }
+    })(),
+    `text snippet: ${String(kdsText).slice(0, 160)}`
+  );
+
+  // ── Frame 11: shogun.kioku_related — missing args (error path) ───────────
+  console.log("\nFrame 11: tools/call shogun.kioku_related (no args — expect error)");
+  let r11;
+  try {
+    r11 = await sendCall("shogun.kioku_related", {});
+  } catch (e) {
+    assert("kioku_related/no-args: received response", false, e.message);
+    return;
+  }
+  assert(
+    "kioku_related/no-args: no top-level error",
+    !r11.error,
+    r11.error ? JSON.stringify(r11.error) : ""
+  );
+  const kr1IsError = r11.result?.isError ?? r11.result?.is_error;
+  assert(
+    "kioku_related/no-args: isError == true",
+    kr1IsError === true,
+    `isError: ${kr1IsError}`
+  );
+  const kr1Text = r11.result?.content?.[0]?.text ?? "";
+  assert(
+    "kioku_related/no-args: content[0].text contains 'query' and 'seed_ids'",
+    kr1Text.includes("query") && kr1Text.includes("seed_ids"),
+    `text: ${kr1Text}`
+  );
+
+  // ── Frame 12: shogun.kioku_related — query='x' (happy path) ──────────────
+  console.log("\nFrame 12: tools/call shogun.kioku_related (query='x')");
+  let r12;
+  try {
+    r12 = await sendCall("shogun.kioku_related", { query: "x" });
+  } catch (e) {
+    assert("kioku_related/query: received response", false, e.message);
+    return;
+  }
+  assert(
+    "kioku_related/query: no top-level error",
+    !r12.error,
+    r12.error ? JSON.stringify(r12.error) : ""
+  );
+  const kr2IsError = r12.result?.isError ?? r12.result?.is_error ?? false;
+  assert(
+    "kioku_related/query: isError is false or absent",
+    !kr2IsError,
+    `isError: ${kr2IsError}`
+  );
+  const kr2Text = r12.result?.content?.[0]?.text ?? "";
+  assert(
+    "kioku_related/query: content[0].text is JSON with `hits` array",
+    (() => {
+      try {
+        const parsed = JSON.parse(kr2Text);
+        return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.hits);
+      } catch {
+        return false;
+      }
+    })(),
+    `text snippet: ${String(kr2Text).slice(0, 120)}`
+  );
 }
 
 // ── teardown & summary ────────────────────────────────────────────────────────
