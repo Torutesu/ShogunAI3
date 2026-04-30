@@ -359,19 +359,48 @@ fn card_and_cvv_co_occur(ax_text: &str) -> bool {
 }
 
 pub fn is_incognito_window(
-  _rules: &IncognitoRules,
-  _app_name: &str,
-  _window_title: &str,
+  rules: &IncognitoRules,
+  app_name: &str,
+  window_title: &str,
 ) -> bool {
-  unimplemented!("Task 4")
+  if !rules.enabled {
+    return false;
+  }
+  let app = app_name.trim().to_ascii_lowercase();
+  let title = window_title.to_string();
+  let title_lower = title.to_ascii_lowercase();
+  match app.as_str() {
+    "safari" | "safari technology preview" => {
+      rules.safari
+        && (title.starts_with("Private — ") || title_lower.contains("private browsing"))
+    }
+    "google chrome" | "chromium" | "brave browser" | "opera" | "vivaldi" => {
+      rules.chrome
+        && (title_lower.contains("(incognito)") || title_lower.contains("(private)"))
+    }
+    "arc" => rules.arc && title_lower.contains("incognito"),
+    "firefox" | "firefox developer edition" | "firefox nightly" => {
+      rules.firefox
+        && (title.ends_with("(Private Browsing)") || title_lower.contains("private browsing"))
+    }
+    "microsoft edge" => {
+      rules.edge && (title.contains("[InPrivate]") || title_lower.contains("inprivate"))
+    }
+    _ => false,
+  }
 }
 
 pub fn is_inside_time_block(_blocks: &[TimeBlock], _now_local_minute_of_week: u16) -> bool {
   unimplemented!("Task 5")
 }
 
-pub fn extract_window_title(_ax_text: &str) -> Option<&str> {
-  unimplemented!("Task 4")
+pub fn extract_window_title(ax_text: &str) -> Option<&str> {
+  for line in ax_text.lines() {
+    if let Some(rest) = line.strip_prefix("window=") {
+      return Some(rest);
+    }
+  }
+  None
 }
 
 pub fn evaluate_capture(
@@ -524,5 +553,74 @@ mod tests {
       &r,
       "value=4111 1111 1111 1111\nlabel=セキュリティ番号"
     ));
+  }
+
+  // ===== is_incognito_window (T6-T10) =====
+
+  fn incognito_all_on() -> IncognitoRules {
+    IncognitoRules {
+      enabled: true,
+      safari: true,
+      chrome: true,
+      arc: true,
+      firefox: true,
+      edge: true,
+    }
+  }
+
+  #[test]
+  fn incognito_safari_em_dash_title_fires() {
+    let r = incognito_all_on();
+    assert!(is_incognito_window(&r, "Safari", "Private — Apple"));
+  }
+
+  #[test]
+  fn incognito_chrome_paren_title_fires() {
+    let r = incognito_all_on();
+    assert!(is_incognito_window(
+      &r,
+      "Google Chrome",
+      "Some Page (Incognito)"
+    ));
+  }
+
+  #[test]
+  fn incognito_firefox_suffix_fires() {
+    let r = incognito_all_on();
+    assert!(is_incognito_window(
+      &r,
+      "Firefox",
+      "Mozilla — News (Private Browsing)"
+    ));
+  }
+
+  #[test]
+  fn incognito_unsupported_browser_returns_false() {
+    let r = incognito_all_on();
+    // "Notes" is not a browser — even an Incognito-looking title shouldn't fire.
+    assert!(!is_incognito_window(&r, "Notes", "Private — Apple"));
+    // Brave is recognized via Chromium fallback.
+    assert!(is_incognito_window(&r, "Brave Browser", "Search (Incognito)"));
+  }
+
+  #[test]
+  fn incognito_browser_disabled_in_settings_does_not_fire() {
+    let mut r = incognito_all_on();
+    r.chrome = false;
+    assert!(!is_incognito_window(&r, "Google Chrome", "Page (Incognito)"));
+    // Chromium fallback also disabled — same family.
+    assert!(!is_incognito_window(&r, "Brave Browser", "Page (Incognito)"));
+  }
+
+  #[test]
+  fn extract_window_title_pulls_window_line() {
+    let ax = "role=AXTextField\nvalue=Hello\nwindow=My Doc — App";
+    assert_eq!(extract_window_title(ax), Some("My Doc — App"));
+  }
+
+  #[test]
+  fn extract_window_title_returns_none_when_absent() {
+    let ax = "role=AXTextField\nvalue=Hello";
+    assert_eq!(extract_window_title(ax), None);
   }
 }
