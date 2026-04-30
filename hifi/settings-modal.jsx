@@ -194,6 +194,7 @@ const DEFAULT_PAYMENT_DOMAINS = [
 ];
 
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const FULL_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function timeBlockMinutesToHHMM(m) {
   const mm = Math.max(0, Math.min(1439, Number(m) || 0));
@@ -935,11 +936,29 @@ function PanePrivacy() {
     DEFAULT_PAYMENT_DOMAINS.map((d) => ({ ...d })),
   );
   const [paymentDraft, setPaymentDraft] = useStateS('');
+  const addPaymentDomain = React.useCallback(async () => {
+    let host = paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0].trim();
+    if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
+      toast('有効なホスト名を入力してください', 'warn');
+      return;
+    }
+    if (paymentDomains.some((x) => x.host === host)) {
+      toast('そのドメインは既にあります', 'info');
+      return;
+    }
+    const next = paymentDomains.concat([
+      { id: `pd-${host}`, host, label: host, enabled: true },
+    ]);
+    setPaymentDomains(next);
+    setPaymentDraft('');
+    await persistPrivacy(apps, sites, { paymentDomains: next });
+  }, [apps, sites, paymentDraft, paymentDomains, persistPrivacy, toast]);
   const [incognitoEnabled, setIncognitoEnabled] = useStateS(true);
   const [incognitoBrowsers, setIncognitoBrowsers] = useStateS({
     safari: true, chrome: true, arc: true, firefox: true, edge: true,
   });
   const [timeBlocks, setTimeBlocks] = useStateS([]);
+  const pendingTimeBlocksSaveRef = React.useRef(null);
   const [appSearch, setAppSearch] = useStateS('');
   const [siteSearch, setSiteSearch] = useStateS('');
   const [appFilter, setAppFilter] = useStateS('all');
@@ -1375,46 +1394,14 @@ function PanePrivacy() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  void (async () => {
-                    let host = paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0].trim();
-                    if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
-                      toast('有効なホスト名を入力してください', 'warn');
-                      return;
-                    }
-                    if (paymentDomains.some((x) => x.host === host)) {
-                      toast('そのドメインは既にあります', 'info');
-                      return;
-                    }
-                    const next = paymentDomains.concat([
-                      { id: `pd-${host}`, host, label: host, enabled: true },
-                    ]);
-                    setPaymentDomains(next);
-                    setPaymentDraft('');
-                    await persistPrivacy(apps, sites, { paymentDomains: next });
-                  })();
+                  void addPaymentDomain();
                 }
               }}
             />
             <button
               type="button"
               className="btn btn-sm btn-secondary"
-              onClick={async () => {
-                let host = paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0].trim();
-                if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
-                  toast('有効なホスト名を入力してください', 'warn');
-                  return;
-                }
-                if (paymentDomains.some((x) => x.host === host)) {
-                  toast('そのドメインは既にあります', 'info');
-                  return;
-                }
-                const next = paymentDomains.concat([
-                  { id: `pd-${host}`, host, label: host, enabled: true },
-                ]);
-                setPaymentDomains(next);
-                setPaymentDraft('');
-                await persistPrivacy(apps, sites, { paymentDomains: next });
-              }}
+              onClick={() => void addPaymentDomain()}
             >
               Add domain
             </button>
@@ -1492,9 +1479,12 @@ function PanePrivacy() {
                     onChange={(e) => {
                       const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, label: e.target.value } : x);
                       setTimeBlocks(next);
+                      pendingTimeBlocksSaveRef.current = next;
                     }}
                     onBlur={async () => {
-                      await persistPrivacy(apps, sites, { timeBlocks });
+                      const next = pendingTimeBlocksSaveRef.current ?? timeBlocks;
+                      pendingTimeBlocksSaveRef.current = null;
+                      await persistPrivacy(apps, sites, { timeBlocks: next });
                     }}
                   />
                   <input
@@ -1550,7 +1540,9 @@ function PanePrivacy() {
                         key={dayIdx}
                         type="button"
                         className="btn btn-sm"
-                        style={{ width: 28, padding: 0, background: on ? 'var(--accent)' : 'var(--surface-2)', color: on ? 'var(--on-accent)' : 'inherit' }}
+                        aria-label={FULL_DAY_NAMES[dayIdx]}
+                        aria-pressed={on}
+                        style={{ minWidth: 28, height: 28, padding: 0, background: on ? 'var(--accent)' : 'var(--surface-2)', color: on ? 'var(--on-accent)' : 'inherit' }}
                         onClick={async () => {
                           const nextDays = on ? tb.days & ~bit : tb.days | bit;
                           const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, days: nextDays & 0x7F } : x);
