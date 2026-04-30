@@ -93,6 +93,16 @@ function TermsNoticeAnchor({ children }) {
 /** Stable fallback so `sections.security` missing does not allocate a new `{}` every render. */
 const EMPTY_SETTINGS_SECURITY = {};
 
+// Sub-spec H: PURPOSE → label for KIOKU cost breakdown
+const KIOKU_COST_PURPOSE_LABELS = {
+  extraction: 'Extraction',
+  summarize: 'Summarize',
+  embed: 'Embed',
+  lesson_generation: 'Lesson generation',
+  lesson_supersession: 'Lesson supersession',
+  lesson_verifier: 'Lesson verifier',
+};
+
 function Toggle({on, onClick}) {
   return (
     <div onClick={onClick} className="s-toggle" data-on={on?'1':'0'}>
@@ -3135,6 +3145,9 @@ function PaneKiokuGraph() {
   const [reviewBusy, setReviewBusy] = useStateS(null);  // edge_type currently being reviewed
   const [showAllProposals, setShowAllProposals] = useStateS(false);
 
+  // Sub-spec H: monthly cost summary
+  const [costSummary, setCostSummary] = useStateS(null);
+
   const refreshProposals = React.useCallback(async () => {
     setProposalsBusy(true);
     setProposalsErr(null);
@@ -3152,6 +3165,17 @@ function PaneKiokuGraph() {
   }, [run, showAllProposals]);
 
   React.useEffect(() => { void refreshProposals(); }, [refreshProposals]);
+
+  const refreshCostSummary = React.useCallback(async () => {
+    const r = await run('kioku.cost_summary', {}, { silentError: true });
+    if (r.ok && r.data && typeof r.data === 'object') {
+      setCostSummary(r.data);
+    }
+  }, [run]);
+
+  React.useEffect(() => {
+    void refreshCostSummary();
+  }, [refreshCostSummary]);
 
   const reviewProposal = async (edge_type, status) => {
     setReviewBusy(edge_type);
@@ -3400,6 +3424,33 @@ function PaneKiokuGraph() {
             <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
           </select>
         </Row>
+        {costSummary && (
+          <div className="card" style={{padding:'var(--space-4) var(--space-5)', marginTop:'var(--space-3)'}}>
+            <div className="t-mono" style={{color:'var(--text-mute)', fontSize:10, marginBottom:'var(--space-2)'}}>
+              COST THIS MONTH
+            </div>
+            <div className="t-sm" style={{color:'var(--text)', marginBottom:'var(--space-2)'}}>
+              Total: ${(Number(costSummary.total_usd) || 0).toFixed(2)}
+              {Number(costSummary.cap_usd) > 0 && (
+                <span style={{color:'var(--text-mute)', marginLeft:'var(--space-2)'}}>
+                  / cap ${Number(costSummary.cap_usd).toFixed(2)}
+                </span>
+              )}
+            </div>
+            {costSummary.by_purpose && Object.keys(costSummary.by_purpose).length > 0 && (
+              <div style={{display:'flex', flexDirection:'column', gap:'var(--space-1)'}}>
+                {Object.entries(costSummary.by_purpose).map(([purpose, usd]) => {
+                  const label = KIOKU_COST_PURPOSE_LABELS[purpose] || purpose;
+                  return (
+                    <div key={purpose} className="t-sm" style={{color:'var(--text-mute)'}}>
+                      · {label}: ${(Number(usd) || 0).toFixed(2)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="s-card" style={{padding:20, marginBottom:16}}>
