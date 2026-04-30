@@ -17,6 +17,17 @@ pub fn tool_definitions() -> Value {
                 },
                 "required": ["query"]
             }
+        },
+        {
+            "name": "shogun.memory_fetch",
+            "description": "Retrieve full content of memory items by ID. Typically called after `shogun.memory_search` returns hits.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "ids": { "type": "array", "items": { "type": "string" }, "description": "Memory item IDs" }
+                },
+                "required": ["ids"]
+            }
         }
     ])
 }

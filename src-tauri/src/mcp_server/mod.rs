@@ -18,6 +18,7 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
         "shogun.meeting_notes" => meeting::handle_meeting_notes(args),
         "shogun.meetings_search" => meeting::handle_meetings_search(args),
         "shogun.memory_search" => memory::handle_search(args),
+        "shogun.memory_fetch" => memory::handle_fetch(args),
         _ => Err(format!("unknown tool: {name}")),
     }
 }
