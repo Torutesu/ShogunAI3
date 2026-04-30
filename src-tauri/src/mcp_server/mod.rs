@@ -27,6 +27,15 @@ fn require_meeting_id(args: &Value) -> Result<String, String> {
         .ok_or_else(|| "meeting_id is required (string)".to_string())
 }
 
+fn require_string_field(args: &Value, field: &str) -> Result<String, String> {
+    args.get(field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("{field} is required (non-empty string)"))
+}
+
 /// Wrap a string payload in the MCP `content` shape.
 fn content_text(s: &str) -> Value {
     json!({ "content": [ { "type": "text", "text": s } ] })
@@ -40,5 +49,41 @@ mod tests {
     fn unknown_tool_name_returns_error() {
         let err = dispatch("shogun.does_not_exist", &json!({})).unwrap_err();
         assert!(err.contains("unknown tool"), "got: {err}");
+    }
+
+    #[test]
+    fn require_string_field_returns_value_when_present() {
+        let v = require_string_field(&json!({"q": "hello"}), "q").unwrap();
+        assert_eq!(v, "hello");
+    }
+
+    #[test]
+    fn require_string_field_trims_whitespace() {
+        let v = require_string_field(&json!({"q": "  hello  "}), "q").unwrap();
+        assert_eq!(v, "hello");
+    }
+
+    #[test]
+    fn require_string_field_rejects_missing() {
+        let err = require_string_field(&json!({}), "q").unwrap_err();
+        assert!(err.contains("q is required"), "got: {err}");
+    }
+
+    #[test]
+    fn require_string_field_rejects_empty() {
+        let err = require_string_field(&json!({"q": ""}), "q").unwrap_err();
+        assert!(err.contains("q is required"), "got: {err}");
+    }
+
+    #[test]
+    fn require_string_field_rejects_whitespace_only() {
+        let err = require_string_field(&json!({"q": "   "}), "q").unwrap_err();
+        assert!(err.contains("q is required"), "got: {err}");
+    }
+
+    #[test]
+    fn require_string_field_rejects_non_string() {
+        let err = require_string_field(&json!({"q": 42}), "q").unwrap_err();
+        assert!(err.contains("q is required"), "got: {err}");
     }
 }
