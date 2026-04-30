@@ -2332,7 +2332,7 @@ pub async fn shogun_supersession_run_now(_payload: serde_json::Value) -> Result<
 /// Sub-spec C: list active patterns for the Settings UI.
 #[tauri::command]
 pub fn shogun_patterns_list(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
-  let items = crate::patterns::list_for_brief(50)?;
+  let items = crate::patterns::list_for_brief(50, true)?;
   Ok(serde_json::json!({ "items": items }))
 }
 
