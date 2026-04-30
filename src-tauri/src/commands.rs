@@ -2397,8 +2397,19 @@ pub fn shogun_lessons_stats(_payload: serde_json::Value) -> Result<serde_json::V
       [],
       |r| r.get(0),
     )
-    .map_err(|e| format!("lessons_stats sum: {}", e))?;
-  Ok(serde_json::json!({ "total_active": total, "applied_total": applied }))
+    .map_err(|e| format!("lessons_stats sum applies: {}", e))?;
+  let prevented: i64 = conn
+    .query_row(
+      "SELECT COALESCE(SUM(prevented_n), 0) FROM lessons WHERE status='active'",
+      [],
+      |r| r.get(0),
+    )
+    .map_err(|e| format!("lessons_stats sum prevented: {}", e))?;
+  Ok(serde_json::json!({
+    "total_active": total,
+    "applied_total": applied,
+    "prevented_total": prevented,
+  }))
 }
 
 /// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW
