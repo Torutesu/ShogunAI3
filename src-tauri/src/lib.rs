@@ -26,7 +26,7 @@ mod meeting_commands;
 mod meeting_enhance;
 mod meeting_import;
 mod meeting_mic;
-mod meeting_mcp;
+pub mod meeting_mcp;
 pub mod mcp_server;
 mod meeting_recipes;
 mod meeting_session;
