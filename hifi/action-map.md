@@ -117,6 +117,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `integrations.import_credentials`
 - `integrations.credentials_status`
 - `integrations.toggle`
+- `oauth.google.start`
 - `calendar.sync`
 - `gmail.sync`
 - `capture.pause`
