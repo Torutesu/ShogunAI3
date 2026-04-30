@@ -219,6 +219,19 @@ function normalizePrivacyFromSettings(sec) {
           }))
       : DEFAULT_PAYMENT_DOMAINS.map((d) => ({ ...d })),
   };
+  const inc = sec && sec.incognito && typeof sec.incognito === 'object' ? sec.incognito : null;
+  const incBrowsers = inc && inc.browsers && typeof inc.browsers === 'object' ? inc.browsers : {};
+  const readBool = (v, fb) => (typeof v === 'boolean' ? v : fb);
+  const incognito = {
+    enabled: inc && typeof inc.enabled === 'boolean' ? inc.enabled : true,
+    browsers: {
+      safari: readBool(incBrowsers.safari, true),
+      chrome: readBool(incBrowsers.chrome, true),
+      arc: readBool(incBrowsers.arc, true),
+      firefox: readBool(incBrowsers.firefox, true),
+      edge: readBool(incBrowsers.edge, true),
+    },
+  };
   return {
     excludedApps: apps.map((r) => ({
       id: String(r.id || r.name || 'app'),
@@ -234,6 +247,7 @@ function normalizePrivacyFromSettings(sec) {
       enabled: !!r.enabled,
     })),
     paymentScreens,
+    incognito,
   };
 }
 
@@ -876,6 +890,10 @@ function PanePrivacy() {
     DEFAULT_PAYMENT_DOMAINS.map((d) => ({ ...d })),
   );
   const [paymentDraft, setPaymentDraft] = useStateS('');
+  const [incognitoEnabled, setIncognitoEnabled] = useStateS(true);
+  const [incognitoBrowsers, setIncognitoBrowsers] = useStateS({
+    safari: true, chrome: true, arc: true, firefox: true, edge: true,
+  });
   const [appSearch, setAppSearch] = useStateS('');
   const [siteSearch, setSiteSearch] = useStateS('');
   const [appFilter, setAppFilter] = useStateS('all');
@@ -904,6 +922,10 @@ function PanePrivacy() {
               'paymentDetectCard' in o ? o.paymentDetectCard : paymentDetectCard,
             domains: 'paymentDomains' in o ? o.paymentDomains : paymentDomains,
           },
+          incognito: {
+            enabled: 'incognitoEnabled' in o ? o.incognitoEnabled : incognitoEnabled,
+            browsers: 'incognitoBrowsers' in o ? o.incognitoBrowsers : incognitoBrowsers,
+          },
         },
         { silentError: true },
       );
@@ -911,18 +933,29 @@ function PanePrivacy() {
       if (r && r.ok) notifyPrivacySettingsChanged({ allowChatServerMemoryAssembly: allowServerMemoryAssembly });
       return r;
     },
-    [run, refreshSections, allowServerMemoryAssembly, paymentEnabled, paymentDetectCard, paymentDomains],
+    [
+      run,
+      refreshSections,
+      allowServerMemoryAssembly,
+      paymentEnabled,
+      paymentDetectCard,
+      paymentDomains,
+      incognitoEnabled,
+      incognitoBrowsers,
+    ],
   );
 
   const privacyKey = JSON.stringify(privacySec);
   React.useEffect(() => {
-    const { excludedApps, excludedSites, paymentScreens } = normalizePrivacyFromSettings(privacySec);
+    const { excludedApps, excludedSites, paymentScreens, incognito } = normalizePrivacyFromSettings(privacySec);
     setApps(excludedApps);
     setSites(excludedSites);
     setAllowServerMemoryAssembly(privacySec.allowChatServerMemoryAssembly !== false);
     setPaymentEnabled(paymentScreens.enabled);
     setPaymentDetectCard(paymentScreens.detectCardPattern);
     setPaymentDomains(paymentScreens.domains);
+    setIncognitoEnabled(incognito.enabled);
+    setIncognitoBrowsers(incognito.browsers);
   }, [privacyKey]);
 
   React.useEffect(() => {
@@ -1338,6 +1371,44 @@ function PanePrivacy() {
             </button>
           </div>
         </div>
+      </div>
+      <div className="s-card" style={{ marginBottom: 14 }}>
+        <Row
+          title="Private browsing"
+          desc="Skip captures when a supported browser's window is in incognito / private mode (detected from the window title)."
+        >
+          <Toggle
+            on={incognitoEnabled}
+            onClick={async () => {
+              const next = !incognitoEnabled;
+              setIncognitoEnabled(next);
+              await persistPrivacy(apps, sites, { incognitoEnabled: next });
+            }}
+          />
+        </Row>
+        {[
+          { key: 'safari',  label: 'Safari (and Technology Preview)' },
+          { key: 'chrome',  label: 'Chrome / Chromium / Brave / Opera / Vivaldi' },
+          { key: 'arc',     label: 'Arc' },
+          { key: 'firefox', label: 'Firefox (and Developer / Nightly)' },
+          { key: 'edge',    label: 'Microsoft Edge' },
+        ].map((row, i, arr) => (
+          <Row
+            key={row.key}
+            title={row.label}
+            desc={`Match incognito titles for ${row.label}.`}
+            last={i === arr.length - 1}
+          >
+            <Toggle
+              on={!!incognitoBrowsers[row.key]}
+              onClick={async () => {
+                const next = { ...incognitoBrowsers, [row.key]: !incognitoBrowsers[row.key] };
+                setIncognitoBrowsers(next);
+                await persistPrivacy(apps, sites, { incognitoBrowsers: next });
+              }}
+            />
+          </Row>
+        ))}
       </div>
       <div className="row" style={{gap:4, background:'var(--surface)', border:'1px solid var(--border)', padding:3, borderRadius:'var(--radius-md)', width:'fit-content', marginBottom:14}}>
         <button
