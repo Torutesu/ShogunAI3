@@ -215,16 +215,28 @@ fn parse_time_blocks(priv_sec: Option<&Value>) -> Vec<TimeBlock> {
   };
   arr
     .iter()
-    .filter_map(|row| {
-      let start_minute = row.get("startMinute").and_then(|v| v.as_u64())? as u16;
-      let end_minute = row.get("endMinute").and_then(|v| v.as_u64())? as u16;
-      if start_minute > 1439 || end_minute > 1439 {
+    .enumerate()
+    .filter_map(|(i, row)| {
+      let id = row.get("id").and_then(|v| v.as_str()).unwrap_or("");
+      let label = row.get("label").and_then(|v| v.as_str()).unwrap_or("");
+      let drop = |reason: &str| -> Option<TimeBlock> {
         log::warn!(
-          "sensitive_filter: skipping time block with out-of-range minute(s) start={} end={}",
-          start_minute,
-          end_minute
+          "sensitive_filter: skipping time block row index={} id={:?} label={:?} reason={}",
+          i, id, label, reason
         );
-        return None;
+        None
+      };
+      let Some(start_minute) = row.get("startMinute").and_then(|v| v.as_u64()) else {
+        return drop("missing or non-integer startMinute");
+      };
+      let Some(end_minute) = row.get("endMinute").and_then(|v| v.as_u64()) else {
+        return drop("missing or non-integer endMinute");
+      };
+      if start_minute > 1439 || end_minute > 1439 {
+        return drop(&format!(
+          "out-of-range minute(s) start={} end={}",
+          start_minute, end_minute
+        ));
       }
       let days = row
         .get("days")
@@ -236,8 +248,8 @@ fn parse_time_blocks(priv_sec: Option<&Value>) -> Vec<TimeBlock> {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
       Some(TimeBlock {
-        start_minute,
-        end_minute,
+        start_minute: start_minute as u16,
+        end_minute: end_minute as u16,
         days,
         enabled,
       })
