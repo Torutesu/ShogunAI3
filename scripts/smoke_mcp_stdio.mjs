@@ -226,8 +226,8 @@ async function run() {
     `got: ${typeof tools}`
   );
   assert(
-    "tools/list: exactly 10 tools",
-    tools.length === 10,
+    "tools/list: exactly 11 tools",
+    tools.length === 11,
     `got ${tools.length}: ${tools.map((t) => t.name).join(", ")}`
   );
 
@@ -243,14 +243,11 @@ async function run() {
     "shogun.memory_entities",
     "shogun.kioku_debug_stats",
     "shogun.kioku_related",
+    "shogun.meeting_recipe_run",
   ];
   for (const name of EXPECTED_TOOLS) {
     assert(`tools/list: includes ${name}`, toolNames.includes(name));
   }
-  assert(
-    "tools/list: does NOT include shogun.meeting_recipe_run",
-    !toolNames.includes("shogun.meeting_recipe_run")
-  );
 
   // Check schema field name (inputSchema vs input_schema)
   const firstTool = tools[0];
@@ -599,6 +596,87 @@ async function run() {
       }
     })(),
     `text snippet: ${String(kr2Text).slice(0, 120)}`
+  );
+
+  // ── Frame 13: meeting_recipe_run — missing meeting_id (error path) ─────────
+  console.log("\nFrame 13: tools/call shogun.meeting_recipe_run (missing meeting_id — expect error)");
+  let r13;
+  try {
+    r13 = await sendCall("shogun.meeting_recipe_run", { recipe_id: "rec-coach-me" });
+  } catch (e) {
+    assert("meeting_recipe_run/missing-meeting-id: received response", false, e.message);
+    return;
+  }
+  assert(
+    "meeting_recipe_run/missing-meeting-id: no top-level error",
+    !r13.error,
+    r13.error ? JSON.stringify(r13.error) : ""
+  );
+  const mrr1IsError = r13.result?.isError ?? r13.result?.is_error;
+  assert(
+    "meeting_recipe_run/missing-meeting-id: isError == true",
+    mrr1IsError === true,
+    `isError: ${mrr1IsError}`
+  );
+  const mrr1Text = r13.result?.content?.[0]?.text ?? "";
+  assert(
+    "meeting_recipe_run/missing-meeting-id: content[0].text contains 'meeting_id'",
+    mrr1Text.includes("meeting_id"),
+    `text: ${mrr1Text}`
+  );
+
+  // ── Frame 14: meeting_recipe_run — unknown recipe_id (error path) ──────────
+  console.log("\nFrame 14: tools/call shogun.meeting_recipe_run (unknown recipe_id — expect error)");
+  let r14;
+  try {
+    r14 = await sendCall("shogun.meeting_recipe_run", { recipe_id: "nonexistent", meeting_id: "x" });
+  } catch (e) {
+    assert("meeting_recipe_run/unknown-recipe-id: received response", false, e.message);
+    return;
+  }
+  assert(
+    "meeting_recipe_run/unknown-recipe-id: no top-level error",
+    !r14.error,
+    r14.error ? JSON.stringify(r14.error) : ""
+  );
+  const mrr2IsError = r14.result?.isError ?? r14.result?.is_error;
+  assert(
+    "meeting_recipe_run/unknown-recipe-id: isError == true",
+    mrr2IsError === true,
+    `isError: ${mrr2IsError}`
+  );
+  const mrr2Text = r14.result?.content?.[0]?.text ?? "";
+  assert(
+    "meeting_recipe_run/unknown-recipe-id: content[0].text contains 'unknown recipe_id'",
+    mrr2Text.includes("unknown recipe_id"),
+    `text: ${mrr2Text}`
+  );
+
+  // ── Frame 15: meeting_recipe_run — empty args (error path) ────────────────
+  console.log("\nFrame 15: tools/call shogun.meeting_recipe_run (empty args — expect error)");
+  let r15;
+  try {
+    r15 = await sendCall("shogun.meeting_recipe_run", {});
+  } catch (e) {
+    assert("meeting_recipe_run/empty-args: received response", false, e.message);
+    return;
+  }
+  assert(
+    "meeting_recipe_run/empty-args: no top-level error",
+    !r15.error,
+    r15.error ? JSON.stringify(r15.error) : ""
+  );
+  const mrr3IsError = r15.result?.isError ?? r15.result?.is_error;
+  assert(
+    "meeting_recipe_run/empty-args: isError == true",
+    mrr3IsError === true,
+    `isError: ${mrr3IsError}`
+  );
+  const mrr3Text = r15.result?.content?.[0]?.text ?? "";
+  assert(
+    "meeting_recipe_run/empty-args: content[0].text contains 'recipe_id' or 'meeting_id'",
+    mrr3Text.includes("recipe_id") || mrr3Text.includes("meeting_id"),
+    `text: ${mrr3Text}`
   );
 }
 

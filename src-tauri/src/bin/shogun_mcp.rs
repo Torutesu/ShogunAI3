@@ -3,7 +3,7 @@
 //!
 //! Stdout is the MCP transport — never println!. All logs go to stderr.
 
-use app_lib::{kioku_mcp, mcp_server, meeting_mcp, memory_mcp};
+use app_lib::{kioku_mcp, mcp_server, meeting_mcp, meeting_recipes, memory_mcp};
 use rmcp::{
     ServerHandler,
     ErrorData as McpError,
@@ -57,8 +57,6 @@ impl ServerHandler for ShogunService {
         }
         let tools: Vec<Tool> = arr
             .into_iter()
-            // Skip meeting_recipe_run for this MVP — async + LLM-dependent.
-            .filter(|t: &Value| t.get("name").and_then(|n| n.as_str()) != Some("shogun.meeting_recipe_run"))
             .filter_map(|t: Value| {
                 let name = t.get("name")?.as_str()?.to_string();
                 let description = t.get("description")?.as_str()?.to_string();
@@ -87,6 +85,17 @@ impl ServerHandler for ShogunService {
             .arguments
             .map(Value::Object)
             .unwrap_or(Value::Object(Default::default()));
+        // Async branch: meeting_recipe_run runs an LLM, must be awaited.
+        if request.name == "shogun.meeting_recipe_run" {
+            return Ok(match meeting_recipes::run_recipe(&args).await {
+                Ok(payload) => CallToolResult::success(vec![Content::text(
+                    serde_json::to_string(&payload)
+                        .unwrap_or_else(|e| format!("serialize error: {e}")),
+                )]),
+                Err(msg) => CallToolResult::error(vec![Content::text(msg)]),
+            });
+        }
+
         match mcp_server::dispatch(&request.name, &args) {
             Ok(payload) => {
                 // dispatch returns { "content": [ { "type":"text", "text":"..." } ] }

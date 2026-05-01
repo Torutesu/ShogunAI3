@@ -30,7 +30,7 @@ pub mod meeting_mcp;
 pub mod memory_mcp;
 pub mod kioku_mcp;
 pub mod mcp_server;
-mod meeting_recipes;
+pub mod meeting_recipes;
 mod meeting_session;
 mod meeting_store;
 mod meeting_stt;

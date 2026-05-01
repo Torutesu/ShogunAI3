@@ -35,7 +35,7 @@ Desktop. In a new chat, the 🛠 icon should show `shogun.meetings_list`,
 
 ## What's exposed (and what isn't)
 
-**Available now (read-only):**
+**Available now:**
 
 Meeting tools:
 - `shogun.meetings_list` — list saved meetings, optional time range
@@ -43,6 +43,7 @@ Meeting tools:
 - `shogun.meeting_transcript` — final transcript segments
 - `shogun.meeting_notes` — note blocks (user / ai / ai_edited)
 - `shogun.meetings_search` — keyword FTS across titles, transcripts, notes
+- `shogun.meeting_recipe_run` — run a builtin LLM recipe on a meeting (coach-me, follow-up-email, action-items, feature-digest, prd-draft, decision-log). **Calls a remote LLM — costs API budget + adds several seconds of latency per call.**
 
 Memory tools:
 - `shogun.memory_search` — lexical search across memory items (notes, decisions, facts)
@@ -54,7 +55,6 @@ Kioku tools:
 - `shogun.kioku_related` — find related memory items via graph traversal (give a query or seed_ids)
 
 **Not available:**
-- `shogun.meeting_recipe_run` — async + LLM-dependent, deferred to a follow-up.
 
 ## Auth
 
