@@ -27,13 +27,6 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
     }
 }
 
-fn require_meeting_id(args: &Value) -> Result<String, String> {
-    args.get("meeting_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "meeting_id is required (string)".to_string())
-}
-
 fn require_string_field(args: &Value, field: &str) -> Result<String, String> {
     args.get(field)
         .and_then(|v| v.as_str())

@@ -1,7 +1,7 @@
 //! Meeting tool handlers (5 tools). Moved verbatim from the prior single-file
 //! `mcp_server.rs`. No behavior change.
 
-use super::{content_text, require_meeting_id};
+use super::{content_text, require_string_field};
 use crate::meeting_store;
 use serde_json::Value;
 
@@ -31,19 +31,19 @@ pub(super) fn handle_meetings_list(args: &Value) -> Result<Value, String> {
 }
 
 pub(super) fn handle_meeting_get(args: &Value) -> Result<Value, String> {
-    let id = require_meeting_id(args)?;
+    let id = require_string_field(args, "meeting_id")?;
     let detail = meeting_store::get_meeting_detail(&id)?;
     Ok(content_text(&serde_json::to_string(&detail).map_err(|e| e.to_string())?))
 }
 
 pub(super) fn handle_meeting_transcript(args: &Value) -> Result<Value, String> {
-    let id = require_meeting_id(args)?;
+    let id = require_string_field(args, "meeting_id")?;
     let segments = meeting_store::list_transcript_final(&id)?;
     Ok(content_text(&serde_json::to_string(&segments).map_err(|e| e.to_string())?))
 }
 
 pub(super) fn handle_meeting_notes(args: &Value) -> Result<Value, String> {
-    let id = require_meeting_id(args)?;
+    let id = require_string_field(args, "meeting_id")?;
     let blocks = meeting_store::list_note_blocks(&id)?;
     Ok(content_text(&serde_json::to_string(&blocks).map_err(|e| e.to_string())?))
 }
