@@ -42,8 +42,13 @@ mod kioku_eval;
 mod decay;
 mod kioku_capture;
 mod lessons;
+mod lessons_verifier;
 mod patterns;
 mod patterns_sync;
+mod spatial;
+mod spatial_patterns;
+mod supersession;
+mod supersession_sync;
 mod mem_captures;
 mod extraction_jobs;
 mod cost_ledger;
@@ -140,6 +145,7 @@ pub fn run() {
       connector_sync::spawn_background_connector_sync();
       rollup_sync::spawn_background_rollup_sync();
       patterns_sync::spawn_background_patterns_sync();
+      supersession_sync::spawn_background_supersession_sync();
       // KIOKU extraction worker (Phase 2 Stage 2). The thread runs from
       // boot but each tick checks `kioku_graph.worker_enabled` so it stays
       // idle until the user (or settings migration) flips the flag.
@@ -266,6 +272,12 @@ pub fn run() {
       commands::shogun_lesson_capture_rejection,
       commands::shogun_lesson_capture_tool_failure,
       commands::shogun_patterns_run_now,
+      commands::shogun_supersession_run_now,
+      commands::shogun_patterns_list,
+      commands::shogun_patterns_invalidate,
+      commands::shogun_lessons_list,
+      commands::shogun_lessons_archive,
+      commands::shogun_lessons_stats,
       commands::shogun_memory_summary_set_priority,
     ])
     .run(tauri::generate_context!())

@@ -2321,6 +2321,97 @@ pub async fn shogun_patterns_run_now(_payload: serde_json::Value) -> Result<serd
   Ok(serde_json::json!({ "emitted": emitted }))
 }
 
+/// Manually trigger Supersession detection (KIOKU Sub-spec D). Useful for
+/// the Memory DBG hooks. 30-day background sync covers production cadence.
+#[tauri::command]
+pub async fn shogun_supersession_run_now(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let marked = crate::supersession::run_supersession().await?;
+  Ok(serde_json::json!({ "marked": marked }))
+}
+
+/// Sub-spec C: list active patterns for the Settings UI.
+#[tauri::command]
+pub fn shogun_patterns_list(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let items = crate::patterns::list_for_brief(50, true)?;
+  Ok(serde_json::json!({ "items": items }))
+}
+
+/// Sub-spec C: invalidate a pattern (`これ違う`). Sets status='stale'.
+#[tauri::command]
+pub fn shogun_patterns_invalidate(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let id = payload
+    .get("id")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "id required".to_string())?;
+  crate::patterns::invalidate(id)?;
+  Ok(serde_json::json!({ "ok": true }))
+}
+
+/// Sub-spec C: list active lessons for the Settings UI.
+#[tauri::command]
+pub fn shogun_lessons_list(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let conn = crate::memory_store::open_conn()?;
+  let items = crate::lessons::list_active(&conn, 50)?;
+  let trimmed: Vec<serde_json::Value> = items
+    .iter()
+    .map(|l| {
+      serde_json::json!({
+        "id": l.id,
+        "rule": l.rule,
+        "category": l.category,
+        "applies_n": l.applies_n,
+        "created_at": l.created_at,
+      })
+    })
+    .collect();
+  Ok(serde_json::json!({ "items": trimmed }))
+}
+
+/// Sub-spec C: archive a lesson (`忘れて`). Sets status='archived'.
+#[tauri::command]
+pub fn shogun_lessons_archive(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let id = payload
+    .get("id")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "id required".to_string())?;
+  let conn = crate::memory_store::open_conn()?;
+  crate::lessons::archive(&conn, id)?;
+  Ok(serde_json::json!({ "ok": true }))
+}
+
+/// Sub-spec C: cumulative stats for the Lessons header.
+/// Returns total active lessons + cumulative applies_n sum.
+#[tauri::command]
+pub fn shogun_lessons_stats(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
+  let conn = crate::memory_store::open_conn()?;
+  let total: i64 = conn
+    .query_row(
+      "SELECT COUNT(*) FROM lessons WHERE status='active'",
+      [],
+      |r| r.get(0),
+    )
+    .map_err(|e| format!("lessons_stats count: {}", e))?;
+  let applied: i64 = conn
+    .query_row(
+      "SELECT COALESCE(SUM(applies_n), 0) FROM lessons WHERE status='active'",
+      [],
+      |r| r.get(0),
+    )
+    .map_err(|e| format!("lessons_stats sum applies: {}", e))?;
+  let prevented: i64 = conn
+    .query_row(
+      "SELECT COALESCE(SUM(prevented_n), 0) FROM lessons WHERE status='active'",
+      [],
+      |r| r.get(0),
+    )
+    .map_err(|e| format!("lessons_stats sum prevented: {}", e))?;
+  Ok(serde_json::json!({
+    "total_active": total,
+    "applied_total": applied,
+    "prevented_total": prevented,
+  }))
+}
+
 /// Manual priority override. Lets the user pin a summary as HIGH / MED / LOW
 /// even when the LLM classified it differently, or clear the override back to
 /// the LLM assignment. `priority: null` clears the override.
