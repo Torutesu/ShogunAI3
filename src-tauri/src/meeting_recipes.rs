@@ -166,3 +166,46 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
     "echo": payload,
   }))
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn assert_resolves_to(raw: &str, expected_slug: &str) {
+    let id = resolve_recipe_id(raw)
+      .unwrap_or_else(|| panic!("expected resolve for {raw:?}"));
+    assert_eq!(id.slug(), expected_slug, "raw={raw:?}");
+  }
+
+  #[test]
+  fn canonical_ids_resolve_to_themselves() {
+    assert_resolves_to("rec-coach-me", "rec-coach-me");
+    assert_resolves_to("rec-follow-up-email", "rec-follow-up-email");
+    assert_resolves_to("rec-action-items", "rec-action-items");
+    assert_resolves_to("rec-feature-digest", "rec-feature-digest");
+    assert_resolves_to("rec-prd-draft", "rec-prd-draft");
+    assert_resolves_to("rec-decision-log", "rec-decision-log");
+  }
+
+  #[test]
+  fn aliases_resolve_to_canonical_slugs() {
+    assert_resolves_to("coach", "rec-coach-me");
+    assert_resolves_to("Coach Me", "rec-coach-me");
+    assert_resolves_to("follow_up", "rec-follow-up-email");
+    assert_resolves_to("actions", "rec-action-items");
+    assert_resolves_to("features", "rec-feature-digest");
+    assert_resolves_to("prd", "rec-prd-draft");
+    assert_resolves_to("decisions", "rec-decision-log");
+  }
+
+  #[test]
+  fn unknown_id_returns_none() {
+    assert!(resolve_recipe_id("rec-nonexistent").is_none());
+    assert!(resolve_recipe_id("not-a-recipe").is_none());
+  }
+
+  #[test]
+  fn empty_string_returns_none() {
+    assert!(resolve_recipe_id("").is_none());
+  }
+}
