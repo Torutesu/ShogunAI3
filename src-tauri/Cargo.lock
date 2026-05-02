@@ -141,6 +141,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tempfile",
  "testing_logger",
  "thiserror 1.0.69",
  "tiny_http",

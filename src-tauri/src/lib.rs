@@ -43,6 +43,7 @@ mod decay;
 mod kioku_capture;
 mod lessons;
 mod lessons_verifier;
+mod legal_docs;
 mod patterns;
 mod patterns_sync;
 mod spatial;
