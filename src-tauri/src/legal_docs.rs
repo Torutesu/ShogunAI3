@@ -8,24 +8,23 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 #[derive(Debug)]
-struct DocPaths<'a> {
+struct DocPaths {
     terms: std::path::PathBuf,
     privacy: std::path::PathBuf,
-    _marker: std::marker::PhantomData<&'a ()>,
 }
 
-fn doc_paths(dir: &Path, lang: &str) -> DocPaths<'static> {
+// Naming asymmetry is intentional: docs/TERMS_OF_SERVICE.md is the JA original
+// and PRIVACY.md sits at the repo root for historical reasons.
+fn doc_paths(dir: &Path, lang: &str) -> DocPaths {
     if lang == "ja" {
         DocPaths {
             terms: dir.join("docs/TERMS_OF_SERVICE.md"),
             privacy: dir.join("docs/PRIVACY.ja.md"),
-            _marker: std::marker::PhantomData,
         }
     } else {
         DocPaths {
             terms: dir.join("docs/TERMS_OF_SERVICE_EN.md"),
             privacy: dir.join("PRIVACY.md"),
-            _marker: std::marker::PhantomData,
         }
     }
 }
