@@ -1,4 +1,4 @@
-/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts */
+/* global Icon, Kamon, React, ReactDOM, ScreenHome, ScreenMemory, ScreenChat, ScreenAgents, ScreenWork, ScreenMeetings, ScreenMemoryDebug, SettingsModal, ConfirmWriteModal, ConsentModal, ShogunIpcClient, ShogunAPI, ShogunActionRegistry, ShogunKeyboardShortcuts, shogunMarkdownMini */
 const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -1055,6 +1055,125 @@ function applySavedAppearance(sections) {
 }
 
 function App() {
+  // ───────── Consent gate (TOS / Privacy) ─────────
+  const [legalGate, setLegalGate] = useState({ status: "loading" });
+
+  useEffect(function loadConsentState() {
+    let cancelled = false;
+    const versions = window.SHOGUN_LEGAL_VERSIONS || {};
+    const expectedTerms = versions.TERMS_VERSION || "";
+    const expectedPrivacy = versions.PRIVACY_VERSION || "";
+    const lang = (navigator.language || "en").toLowerCase().startsWith("ja") ? "ja" : "en";
+
+    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
+    if (!ipc) {
+      // Browser preview without Tauri — bypass the gate so the wireframe page still loads.
+      setLegalGate({ status: "ok" });
+      return;
+    }
+
+    ipc
+      .invoke("app_settings_load", {})
+      .then(function (res) {
+        if (cancelled) return;
+        const sec = (res && res.settings && res.settings.sections && res.settings.sections.legal) || null;
+        const ok =
+          sec &&
+          sec.termsAcceptedVersion === expectedTerms &&
+          sec.privacyAcceptedVersion === expectedPrivacy;
+        if (ok) {
+          setLegalGate({ status: "ok" });
+        } else {
+          setLegalGate({ status: "consent_needed", lang: lang });
+        }
+      })
+      .catch(function (e) {
+        if (cancelled) return;
+        setLegalGate({
+          status: "error",
+          message: String(e && e.message ? e.message : e),
+        });
+      });
+    return function () {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleConsentAccept = useCallback(function (payload) {
+    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
+    if (!ipc) return Promise.resolve();
+    return ipc
+      .invoke("app_settings_save", {
+        section: "legal",
+        termsAcceptedVersion: payload.termsVersion,
+        privacyAcceptedVersion: payload.privacyVersion,
+        telemetryOptIn: payload.telemetryOptIn,
+        acceptedAt: new Date().toISOString(),
+      })
+      .then(function () {
+        setLegalGate({ status: "ok" });
+      });
+  }, []);
+
+  const handleConsentDecline = useCallback(function () {
+    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
+    if (!ipc) return;
+    ipc.invoke("app_quit").catch(function () {
+      try { window.close(); } catch (_) {}
+    });
+  }, []);
+
+  const loadConsentDocs = useCallback(function (lang) {
+    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
+    if (!ipc) {
+      return Promise.resolve({ terms: "# Preview mode\nNo documents loaded.", privacy: "" });
+    }
+    return ipc.invoke("legal_docs_load", { lang: lang });
+  }, []);
+
+  if (legalGate.status === "loading") {
+    return (
+      <div style={{ padding: 32, color: "var(--text-dim)", fontSize: 13 }}>Loading…</div>
+    );
+  }
+  if (legalGate.status === "error") {
+    return (
+      <div style={{ padding: 32, fontSize: 13 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Failed to load settings</div>
+        <div style={{ color: "var(--text-dim)" }}>
+          {legalGate.message}. Please restart the app.
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={function () {
+              const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
+              if (ipc) ipc.invoke("app_quit").catch(function () {});
+            }}
+          >
+            Quit
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (legalGate.status === "consent_needed") {
+    const versions = window.SHOGUN_LEGAL_VERSIONS || {};
+    return (
+      <ConsentModal
+        initialLang={legalGate.lang}
+        termsVersion={versions.TERMS_VERSION || ""}
+        privacyVersion={versions.PRIVACY_VERSION || ""}
+        onAccept={handleConsentAccept}
+        onDecline={handleConsentDecline}
+        loadDocs={loadConsentDocs}
+        renderMarkdown={window.shogunMarkdownMini}
+      />
+    );
+  }
+  // ───────── End consent gate; main app continues below. ─────────
+
   ensureRuntimeDeps();
   const WriteModal = ConfirmWriteModal || function FallbackWriteModal(props) {
     if (!props.open) return null;
