@@ -1,6 +1,6 @@
-/* global React, Icon */
+/* global React */
 (function initConsentModal(global) {
-  const { useState, useEffect } = React;
+  const { useState, useEffect, useRef } = React;
 
   function ConsentModal(props) {
     const initialLang = props.initialLang === "ja" ? "ja" : "en";
@@ -19,6 +19,14 @@
     const [saveError, setSaveError] = useState(null);
     const [saving, setSaving] = useState(false);
     const [decliningUntil, setDecliningUntil] = useState(null);
+    const agreeRef = useRef(null);
+
+    useEffect(() => {
+      // Move keyboard focus into the modal on first mount so Tab/Space work.
+      // No focus trap — the gate replaces App entirely so there is no
+      // background DOM to escape into.
+      if (agreeRef.current) agreeRef.current.focus();
+    }, []);
 
     useEffect(() => {
       let cancelled = false;
@@ -84,7 +92,7 @@
         >
           {declining ? (
             <div className="swm-body" style={{ textAlign: "center", padding: 32 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+              <div id="consent-modal-title" style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
                 Goodbye.
               </div>
               <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
@@ -159,6 +167,7 @@
                 ) : null}
                 <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
                   <input
+                    ref={agreeRef}
                     type="checkbox"
                     checked={agreed}
                     disabled={docs == null || saving}
@@ -201,6 +210,37 @@
             </>
           )}
         </div>
+        <style>{`
+          .swm-backdrop {
+            position: fixed; inset: 0; z-index: 1150;
+            background: rgba(10, 9, 8, 0.55);
+          }
+          .swm-modal {
+            position: fixed; z-index: 1151;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            box-sizing: border-box;
+            width: min(560px, calc(100vw - 32px));
+            max-width: calc(100vw - 32px);
+            max-height: calc(100vh - 32px);
+            max-height: calc(100dvh - 32px);
+            overflow: auto;
+            background: var(--surface); border: 1px solid var(--border-hi);
+            border-radius: var(--radius-lg);
+            box-shadow: 0 24px 48px -12px rgba(0,0,0,0.6);
+          }
+          .swm-modal--consent { width: min(680px, calc(100vw - 32px)); }
+          .swm-header { padding: 16px 18px; border-bottom: 1px solid var(--border); }
+          .swm-body { padding: 16px 18px; }
+          .swm-body--consent { padding: 16px 18px; line-height: 1.5; }
+          .swm-body--consent h2 { font-size: 14px; margin: 16px 0 6px; }
+          .swm-body--consent h3 { font-size: 13px; margin: 12px 0 4px; }
+          .swm-body--consent p, .swm-body--consent li { font-size: 12px; margin: 4px 0; }
+          .swm-body--consent ul { padding-left: 20px; margin: 4px 0; }
+          .swm-footer {
+            padding: 12px 18px 16px; border-top: 1px solid var(--border);
+            display: flex; justify-content: flex-end; gap: 8px;
+          }
+        `}</style>
       </>
     );
   }
