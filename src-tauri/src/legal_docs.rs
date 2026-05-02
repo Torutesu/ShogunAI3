@@ -29,12 +29,30 @@ fn doc_paths(dir: &Path, lang: &str) -> DocPaths {
     }
 }
 
+// Tauri 2 packaged builds copy resources declared with `..` paths into
+// `<Resources>/_up_/...`. `app.path().resource_dir()` returns the plain
+// `<Resources>/` path, so we try the direct join first (which works in
+// dev where resource_dir is the project root) and fall back to `_up_/`
+// (which works in packaged builds). This keeps dev and prod on a single
+// code path and lets the existing unit tests continue to drive
+// `load_from_dir` against a flat fixture directory.
+fn read_doc(dir: &Path, rel: &Path) -> Result<String, String> {
+    let primary = dir.join(rel);
+    if primary.exists() {
+        return std::fs::read_to_string(&primary)
+            .map_err(|e| format!("{}: {}", primary.display(), e));
+    }
+    let with_up = dir.join("_up_").join(rel);
+    std::fs::read_to_string(&with_up)
+        .map_err(|e| format!("{}: {}", with_up.display(), e))
+}
+
 pub fn load_from_dir(dir: &Path, lang: &str) -> Result<Value, String> {
     let paths = doc_paths(dir, lang);
-    let terms = std::fs::read_to_string(&paths.terms)
-        .map_err(|e| format!("terms ({}): {}", paths.terms.display(), e))?;
-    let privacy = std::fs::read_to_string(&paths.privacy)
-        .map_err(|e| format!("privacy ({}): {}", paths.privacy.display(), e))?;
+    let terms_rel = paths.terms.strip_prefix(dir).unwrap_or(&paths.terms);
+    let privacy_rel = paths.privacy.strip_prefix(dir).unwrap_or(&paths.privacy);
+    let terms = read_doc(dir, terms_rel).map_err(|e| format!("terms ({})", e))?;
+    let privacy = read_doc(dir, privacy_rel).map_err(|e| format!("privacy ({})", e))?;
     Ok(json!({ "terms": terms, "privacy": privacy }))
 }
 
@@ -92,5 +110,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = load_from_dir(dir.path(), "en").unwrap_err();
         assert!(err.contains("terms"), "expected error to mention 'terms', got: {}", err);
+    }
+
+    /// Tauri-2 packaged builds copy `..`-prefixed bundle resources under
+    /// `<Resources>/_up_/...`. Simulate that layout: the only files live
+    /// under `_up_/`, and `load_from_dir` must still find them.
+    #[test]
+    fn falls_back_to_up_segment_for_packaged_layout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let up = dir.path().join("_up_");
+        fs::create_dir_all(up.join("docs")).unwrap();
+        fs::write(up.join("docs/TERMS_OF_SERVICE_EN.md"), "# Terms (packaged)\n").unwrap();
+        fs::write(up.join("PRIVACY.md"), "# Privacy (packaged)\n").unwrap();
+        let v = load_from_dir(dir.path(), "en").expect("ok");
+        assert_eq!(v["terms"], "# Terms (packaged)\n");
+        assert_eq!(v["privacy"], "# Privacy (packaged)\n");
     }
 }
