@@ -1056,7 +1056,17 @@ function applySavedAppearance(sections) {
 
 function App() {
   // ───────── Consent gate (TOS / Privacy) ─────────
+  // All IPC goes through ShogunIpcClient so the payload is wrapped as
+  // `{ payload: ... }` (Rust commands take `payload: Value`) and the
+  // Tauri v2 `__TAURI_INTERNALS__.invoke` path is preferred over the v1
+  // `__TAURI__.core.invoke` fallback. The client's invoke returns
+  // `{ ok, data, error }` instead of throwing.
   const [legalGate, setLegalGate] = useState({ status: "loading" });
+
+  const consentClient = React.useMemo(function () {
+    if (!window.ShogunIpcClient || !window.ShogunIpcClient.createIpcClient) return null;
+    return window.ShogunIpcClient.createIpcClient();
+  }, []);
 
   useEffect(function loadConsentState() {
     let cancelled = false;
@@ -1065,44 +1075,40 @@ function App() {
     const expectedPrivacy = versions.PRIVACY_VERSION || "";
     const lang = (navigator.language || "en").toLowerCase().startsWith("ja") ? "ja" : "en";
 
-    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
-    if (!ipc) {
-      // Browser preview without Tauri — bypass the gate so the wireframe page still loads.
+    if (!consentClient) {
+      // Browser preview without ShogunIpcClient — bypass the gate so the wireframe page still loads.
       setLegalGate({ status: "ok" });
-      return;
+      return function () {};
     }
 
-    ipc
+    consentClient
       .invoke("app_settings_load", {})
       .then(function (res) {
         if (cancelled) return;
-        const sec = (res && res.settings && res.settings.sections && res.settings.sections.legal) || null;
+        if (!res.ok) {
+          setLegalGate({
+            status: "error",
+            message: String((res.error && res.error.message) || "settings load failed"),
+          });
+          return;
+        }
+        const sec =
+          (res.data && res.data.settings && res.data.settings.sections && res.data.settings.sections.legal) ||
+          null;
         const ok =
           sec &&
           sec.termsAcceptedVersion === expectedTerms &&
           sec.privacyAcceptedVersion === expectedPrivacy;
-        if (ok) {
-          setLegalGate({ status: "ok" });
-        } else {
-          setLegalGate({ status: "consent_needed", lang: lang });
-        }
-      })
-      .catch(function (e) {
-        if (cancelled) return;
-        setLegalGate({
-          status: "error",
-          message: String(e && e.message ? e.message : e),
-        });
+        setLegalGate(ok ? { status: "ok" } : { status: "consent_needed", lang: lang });
       });
     return function () {
       cancelled = true;
     };
-  }, []);
+  }, [consentClient]);
 
   const handleConsentAccept = useCallback(function (payload) {
-    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
-    if (!ipc) return Promise.resolve();
-    return ipc
+    if (!consentClient) return Promise.resolve();
+    return consentClient
       .invoke("app_settings_save", {
         section: "legal",
         termsAcceptedVersion: payload.termsVersion,
@@ -1110,26 +1116,32 @@ function App() {
         telemetryOptIn: payload.telemetryOptIn,
         acceptedAt: new Date().toISOString(),
       })
-      .then(function () {
+      .then(function (res) {
+        if (!res.ok) {
+          throw new Error(String((res.error && res.error.message) || "save failed"));
+        }
         setLegalGate({ status: "ok" });
       });
-  }, []);
+  }, [consentClient]);
 
   const handleConsentDecline = useCallback(function () {
-    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
-    if (!ipc) return;
-    ipc.invoke("app_quit").catch(function () {
+    if (!consentClient) return;
+    consentClient.invoke("app_quit", {}).catch(function () {
       try { window.close(); } catch (_) {}
     });
-  }, []);
+  }, [consentClient]);
 
   const loadConsentDocs = useCallback(function (lang) {
-    const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
-    if (!ipc) {
+    if (!consentClient) {
       return Promise.resolve({ terms: "# Preview mode\nNo documents loaded.", privacy: "" });
     }
-    return ipc.invoke("legal_docs_load", { lang: lang });
-  }, []);
+    return consentClient.invoke("legal_docs_load", { lang: lang }).then(function (res) {
+      if (!res.ok) {
+        throw new Error(String((res.error && res.error.message) || "legal docs load failed"));
+      }
+      return res.data;
+    });
+  }, [consentClient]);
 
   if (legalGate.status === "loading") {
     return (
@@ -1148,8 +1160,7 @@ function App() {
             type="button"
             className="btn btn-sm btn-ghost"
             onClick={function () {
-              const ipc = window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null;
-              if (ipc) ipc.invoke("app_quit").catch(function () {});
+              if (consentClient) consentClient.invoke("app_quit", {}).catch(function () {});
             }}
           >
             Quit
