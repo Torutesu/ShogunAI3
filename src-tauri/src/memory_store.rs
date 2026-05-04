@@ -27,7 +27,34 @@ pub fn derive_provenance(source: &str) -> &'static str {
 }
 
 pub(crate) fn db_path() -> Result<std::path::PathBuf, String> {
+  #[cfg(test)]
+  {
+    if let Some(p) = test_db_path_override() {
+      return Ok(p);
+    }
+  }
   Ok(paths::app_data_dir()?.join(MEMORY_DB))
+}
+
+#[cfg(test)]
+thread_local! {
+  static TEST_DB_PATH: std::cell::RefCell<Option<std::path::PathBuf>> =
+    const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_db_path_override() -> Option<std::path::PathBuf> {
+  TEST_DB_PATH.with(|c| c.borrow().clone())
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_db_path(p: std::path::PathBuf) {
+  TEST_DB_PATH.with(|c| *c.borrow_mut() = Some(p));
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_db_path() {
+  TEST_DB_PATH.with(|c| *c.borrow_mut() = None);
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -2026,6 +2053,77 @@ mod tests {
     rows.into_iter().find(|(name, _, _)| name == col)
   }
 
+  /// RAII guard that points `db_path()` at a fresh temp file for the lifetime
+  /// of the test, then removes the file and clears the override on drop. Lets
+  /// tests exercise the public `ingest()` / `fetch()` paths without polluting
+  /// the user's real app-data directory. Pattern mirrors `kioku_backup`'s
+  /// `tmp_path` helper so we don't pull in a new dependency.
+  ///
+  /// Pre-seeds the table with all phase-1 columns (`embedding`, `provenance`,
+  /// `entity_id`, `confidence`, `redaction`) so that `init_schema`'s dedupe
+  /// DELETE — which references `entity_id` — does not fail on a brand-new DB.
+  /// In production these columns get added by `ensure_context_layer_columns`
+  /// (which runs after `init_schema`); pre-seeding mirrors the post-migration
+  /// state that real user DBs reach on first launch.
+  struct TempDbGuard {
+    path: std::path::PathBuf,
+  }
+  impl TempDbGuard {
+    fn new(name: &str) -> Self {
+      use std::sync::atomic::{AtomicU64, Ordering};
+      static UNIQ: AtomicU64 = AtomicU64::new(0);
+      let n = UNIQ.fetch_add(1, Ordering::Relaxed);
+      let mut p = std::env::temp_dir();
+      p.push(format!(
+        "shogun-mem-test-{}-{}-{}-memory.db",
+        std::process::id(),
+        n,
+        name
+      ));
+      // Best-effort cleanup of any leftover from a prior crashed test run.
+      let _ = std::fs::remove_file(&p);
+      let _ = std::fs::remove_file(format!("{}-wal", p.display()));
+      let _ = std::fs::remove_file(format!("{}-shm", p.display()));
+
+      // Pre-seed the schema so init_schema's column-dependent statements
+      // work on a brand-new file. We create the table with the Phase 1
+      // column set; `init_schema`'s `CREATE TABLE IF NOT EXISTS` is a
+      // no-op against this, and `migrate_sync_status_columns` will add
+      // the new sync columns under test.
+      {
+        let conn = rusqlite::Connection::open(&p).expect("open seed conn");
+        conn
+          .execute_batch(
+            "CREATE TABLE IF NOT EXISTS mem_items (
+               id TEXT PRIMARY KEY NOT NULL,
+               title TEXT NOT NULL,
+               snippet TEXT NOT NULL,
+               source TEXT NOT NULL,
+               kinds_json TEXT NOT NULL,
+               created_at INTEGER NOT NULL,
+               embedding BLOB,
+               provenance TEXT,
+               entity_id TEXT,
+               confidence REAL,
+               redaction TEXT
+             );",
+          )
+          .expect("seed mem_items");
+      }
+
+      super::set_test_db_path(p.clone());
+      TempDbGuard { path: p }
+    }
+  }
+  impl Drop for TempDbGuard {
+    fn drop(&mut self) {
+      super::clear_test_db_path();
+      let _ = std::fs::remove_file(&self.path);
+      let _ = std::fs::remove_file(format!("{}-wal", self.path.display()));
+      let _ = std::fs::remove_file(format!("{}-shm", self.path.display()));
+    }
+  }
+
   /// T1: Fresh DB has both sync columns with correct constraints.
   #[test]
   fn t1_fresh_db_has_sync_status_columns() {
@@ -2057,8 +2155,8 @@ mod tests {
   fn t2_legacy_db_migration_adds_columns_and_preserves_rows() {
     let conn = make_mem_items_legacy();
 
-    // Insert 3 legacy rows without sync columns.
-    for i in 1..=3i64 {
+    // Insert 5 legacy rows without sync columns (per spec § 6 T2).
+    for i in 1..=5i64 {
       conn.execute(
         "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at)
          VALUES (?1, ?2, '', 'capture', '[]', ?3)",
@@ -2074,11 +2172,11 @@ mod tests {
     assert!(names.contains(&"sync_status".to_string()), "sync_status missing after migration");
     assert!(names.contains(&"sync_excluded_reason".to_string()), "sync_excluded_reason missing after migration");
 
-    // All 3 rows must survive.
+    // All 5 rows must survive.
     let count: i64 = conn
       .query_row("SELECT COUNT(*) FROM mem_items", [], |r| r.get(0))
       .expect("count");
-    assert_eq!(count, 3, "row count should be 3 after migration");
+    assert_eq!(count, 5, "row count should be 5 after migration");
 
     // All pre-existing rows must have sync_status='local_only', sync_excluded_reason IS NULL.
     let mismatch: i64 = conn
@@ -2146,52 +2244,54 @@ mod tests {
     assert_eq!(status, "local_only");
   }
 
-  /// T4: ingest() path — row_to_item with default sync_status emits 'local_only'.
-  /// We simulate the ingest INSERT and verify via row_to_item (the shared read helper).
+  /// T4: public `ingest()` writes `sync_status='local_only'` to the DB row.
+  /// Uses a tempdir-backed DB so the public path runs end-to-end. Source is
+  /// `capture_sampler` to skip the embedding spawn (which would need a runtime).
   #[test]
   fn t4_ingest_writes_sync_status_default() {
-    let conn = make_mem_items_fresh();
+    let _guard = TempDbGuard::new("t4");
 
-    // Insert the way ingest() does (with explicit sync_status='local_only').
-    conn.execute(
-      "INSERT INTO mem_items
-         (id, title, snippet, source, kinds_json, created_at, sync_status)
-       VALUES ('m_t4', 'T4 Title', 'T4 Snippet', 'capture', '[\"screen\"]', 1000, 'local_only')",
-      [],
-    ).expect("insert");
+    let payload = json!({
+      "title": "T4 Title",
+      "snippet": "T4 Snippet",
+      "source": "capture_sampler",
+      "kinds": ["screen"],
+    });
+    let out = super::ingest(&payload).expect("ingest");
+    let id = out["item"]["id"].as_str().expect("ingest returned id").to_string();
 
-    // Read it back and verify via raw SQL.
+    // Verify via raw SQL on the same DB the public ingest() wrote to.
+    let conn = super::open_conn().expect("open_conn");
     let (status, reason): (String, Option<String>) = conn
       .query_row(
-        "SELECT sync_status, sync_excluded_reason FROM mem_items WHERE id = 'm_t4'",
-        [],
+        "SELECT sync_status, sync_excluded_reason FROM mem_items WHERE id = ?1",
+        rusqlite::params![id],
         |r| Ok((r.get(0)?, r.get(1)?)),
       )
       .expect("select");
-
     assert_eq!(status, "local_only");
     assert!(reason.is_none());
   }
 
-  /// T5: fetch() round-trip — row_to_item with sync_status='local_only' emits
-  /// syncStatus in JSON and omits syncExcludedReason key.
+  /// T5: public `ingest()` then public `fetch()` returns JSON with
+  /// `syncStatus: "local_only"` and no `syncExcludedReason` key.
   #[test]
   fn t5_fetch_roundtrip_with_default_sync_status() {
-    // row_to_item is the shared helper used by fetch(), search_fts(), etc.
-    let item = row_to_item(
-      "m_t5".into(),
-      "Fetch Title".into(),
-      "Fetch Snippet".into(),
-      "capture".into(),
-      "[\"screen\"]".into(),
-      2000,
-      Some("user".into()),
-      None,
-      None,
-      None,
-      Some("local_only".into()),
-      None, // sync_excluded_reason is None
-    );
+    let _guard = TempDbGuard::new("t5");
+
+    let payload = json!({
+      "title": "T5 Title",
+      "snippet": "T5 Snippet",
+      "source": "capture_sampler",
+      "kinds": ["screen"],
+    });
+    let out = super::ingest(&payload).expect("ingest");
+    let id = out["item"]["id"].as_str().expect("ingest returned id").to_string();
+
+    let fetched = super::fetch(&json!({ "id": id })).expect("fetch");
+    let items = fetched["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "fetch should return exactly one item");
+    let item = &items[0];
 
     assert_eq!(
       item.get("syncStatus").and_then(|v| v.as_str()),
@@ -2204,48 +2304,32 @@ mod tests {
     );
   }
 
-  /// T6: fetch() round-trip with excluded value — row_to_item emits both fields.
+  /// T6: direct INSERT of an excluded row, then public `fetch()` returns
+  /// JSON with both `syncStatus` and `syncExcludedReason`. No production
+  /// code writes 'excluded' yet, so we seed via raw SQL on the same DB
+  /// `fetch()` will read.
   #[test]
   fn t6_fetch_roundtrip_with_excluded_sync_status() {
-    let conn = make_mem_items_fresh();
+    let _guard = TempDbGuard::new("t6");
+
+    // Open the test DB; this also runs init_schema + migrations.
+    let conn = super::open_conn().expect("open_conn");
 
     // Direct INSERT simulating a future "store-but-mark-excluded" write.
     conn.execute(
       "INSERT INTO mem_items
          (id, title, snippet, source, kinds_json, created_at,
           sync_status, sync_excluded_reason)
-       VALUES ('m_t6', 'Excluded Title', '', 'capture', '[]', 3000,
+       VALUES ('m_t6', 'Excluded Title', '', 'capture_sampler', '[]', 3000,
                'excluded', 'payment_screen')",
       [],
     ).expect("insert excluded row");
+    drop(conn);
 
-    // Read back via SQL and confirm values.
-    let (status, reason): (String, Option<String>) = conn
-      .query_row(
-        "SELECT sync_status, sync_excluded_reason FROM mem_items WHERE id = 'm_t6'",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-      )
-      .expect("select");
-
-    assert_eq!(status, "excluded");
-    assert_eq!(reason.as_deref(), Some("payment_screen"));
-
-    // Verify JSON output via row_to_item.
-    let item = row_to_item(
-      "m_t6".into(),
-      "Excluded Title".into(),
-      "".into(),
-      "capture".into(),
-      "[]".into(),
-      3000,
-      Some("user".into()),
-      None,
-      None,
-      None,
-      Some(status),
-      reason,
-    );
+    let fetched = super::fetch(&json!({ "id": "m_t6" })).expect("fetch");
+    let items = fetched["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "fetch should return the excluded row");
+    let item = &items[0];
 
     assert_eq!(
       item.get("syncStatus").and_then(|v| v.as_str()),
