@@ -18,6 +18,7 @@
 //     ShogunIpcClient.createIpcClient intercept installed with addInitScript.
 
 const { test, expect } = require("@playwright/test");
+const { pinLegalVersions, MOCK_SETTINGS_LS } = require("./_helpers/preseed-consent");
 
 const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
 
@@ -36,23 +37,6 @@ async function openHiFi(page) {
   );
 }
 
-/** Clear mock settings so the gate treats this as a fresh launch. */
-function clearConsentState() {
-  return {
-    // addInitScript callback — runs before the page script, clearing the LS key.
-    script: () => {
-      Object.defineProperty(window, "_e2eClearConsent", { value: true });
-      const origSetItem = Storage.prototype.setItem;
-      // Clear the mock-settings key on first access so the gate always fires.
-      try {
-        localStorage.removeItem("shogun.hifi.mock.settings.sections.v1");
-      } catch (_) {
-        /* ignore in environments without localStorage */
-      }
-    },
-  };
-}
-
 test.describe("Consent modal", () => {
   test.beforeEach(async ({ page }) => {
     // addInitScript runs on every navigation (including reloads). Use
@@ -60,16 +44,16 @@ test.describe("Consent modal", () => {
     // on the first page load — subsequent reloads keep whatever the test
     // wrote (e.g. the "relaunch after accept" test relies on the legal
     // section persisting across reload).
-    await page.addInitScript(() => {
+    await page.addInitScript((lsKey) => {
       try {
         if (!sessionStorage.getItem("__e2e_consent_init")) {
           sessionStorage.setItem("__e2e_consent_init", "1");
-          localStorage.removeItem("shogun.hifi.mock.settings.sections.v1");
+          localStorage.removeItem(lsKey);
         }
       } catch (_) {
         /* ignore */
       }
-    });
+    }, MOCK_SETTINGS_LS);
   });
 
   test("first launch shows modal and hides main UI", async ({ page }) => {
@@ -138,37 +122,12 @@ test.describe("Consent modal", () => {
     await page.getByRole("button", { name: /Accept & Continue/i }).click();
     await expect(page.locator(".swm-modal--consent")).toHaveCount(0);
 
-    // Bump legal version constants in the window before reload.
-    await page.evaluate(() => {
-      window.SHOGUN_LEGAL_VERSIONS = Object.freeze({
-        TERMS_VERSION: "2099-01-01",
-        PRIVACY_VERSION: "2099-01-01",
-      });
-    });
-
-    await page.reload({ waitUntil: "load" });
-    // After reload, window.SHOGUN_LEGAL_VERSIONS comes from the bundle (2026-04-19),
-    // but settings already have that version accepted, so gate stays closed.
-    // We need to override via addInitScript for the next navigation to persist.
-    //
-    // NOTE: page.evaluate() only affects the current page execution context;
-    // after reload the bundle restores the original version constants.
-    // To make the version-bump test work we must inject the override BEFORE
-    // the page scripts run, which requires a fresh addInitScript + reload cycle.
-    await page.addInitScript(() => {
-      // Override legal versions so they no longer match what was accepted.
-      // legal-versions.js runs after this and tries to reassign — make the
-      // property non-writable so the reassignment silently fails (the file
-      // isn't in strict mode, so it doesn't throw).
-      Object.defineProperty(window, "SHOGUN_LEGAL_VERSIONS", {
-        configurable: false,
-        writable: false,
-        value: Object.freeze({
-          TERMS_VERSION: "2099-01-01",
-          PRIVACY_VERSION: "2099-01-01",
-        }),
-      });
-    });
+    // Pin the bundle's legal versions to a future date so the seeded
+    // settings (recorded with today's bundled version) no longer match.
+    // The helper uses an accessor with a no-op setter, which works in
+    // both strict and sloppy mode regardless of how legal-versions.js
+    // is loaded in the future.
+    await pinLegalVersions(page, "2099-01-01", "2099-01-01");
     await page.reload({ waitUntil: "load" });
     await page.waitForFunction(
       () =>
@@ -217,6 +176,9 @@ test.describe("Consent modal", () => {
                 }
                 return origInvoke(cmd, args);
               };
+              // Marker so the test can confirm the trap actually wrapped
+              // this client (and wasn't bypassed by a later defineProperty).
+              client.__e2e_wrapped = true;
               return client;
             };
           }
@@ -227,6 +189,19 @@ test.describe("Consent modal", () => {
 
     await openHiFi(page);
     await expect(page.locator(".swm-modal--consent")).toBeVisible();
+
+    // Sanity check: the setter trap is bypassable if anything later does
+    // `Object.defineProperty(window, "ShogunIpcClient", { value })`, since
+    // the trap only fires for plain assignment. Verify a freshly created
+    // client carries the wrapper marker so a future regression that
+    // reinstalls the namespace via defineProperty fails loudly here rather
+    // than silently missing the app_quit call below.
+    const wrapped = await page.evaluate(
+      () => !!window.ShogunIpcClient.createIpcClient().__e2e_wrapped,
+    );
+    expect(wrapped, "decline test relies on the createIpcClient wrapper").toBe(
+      true,
+    );
 
     await page.getByRole("button", { name: /Decline & Quit/i }).click();
     await expect(page.getByText("Goodbye.")).toBeVisible();

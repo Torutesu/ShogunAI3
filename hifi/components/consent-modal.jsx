@@ -20,13 +20,21 @@
     const [saving, setSaving] = useState(false);
     const [decliningUntil, setDecliningUntil] = useState(null);
     const agreeRef = useRef(null);
+    const focusedOnceRef = useRef(false);
 
     useEffect(() => {
-      // Move keyboard focus into the modal on first mount so Tab/Space work.
+      // Move keyboard focus into the modal the first time the I-agree
+      // checkbox becomes focusable (it's `disabled={docs == null || saving}`).
+      // Focusing a disabled element is a no-op, so we wait until docs load.
+      // The `focusedOnceRef` guard prevents re-stealing focus later if
+      // `saving` flips back to false after a save error.
       // No focus trap — the gate replaces App entirely so there is no
       // background DOM to escape into.
-      if (agreeRef.current) agreeRef.current.focus();
-    }, []);
+      if (docs != null && !saving && !focusedOnceRef.current && agreeRef.current) {
+        focusedOnceRef.current = true;
+        agreeRef.current.focus();
+      }
+    }, [docs, saving]);
 
     useEffect(() => {
       let cancelled = false;
@@ -60,6 +68,10 @@
     function handleAccept() {
       setSaving(true);
       setSaveError(null);
+      // On success the gate flips to "ok" and unmounts this component,
+      // so we deliberately don't call setSaving(false) in a .then —
+      // doing so would fire after unmount and warn. Only the failure
+      // path needs to release the disabled state for retry.
       Promise.resolve(
         onAccept({
           termsVersion: termsVersion,

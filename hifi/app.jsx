@@ -1100,6 +1100,16 @@ function App() {
           sec.termsAcceptedVersion === expectedTerms &&
           sec.privacyAcceptedVersion === expectedPrivacy;
         setLegalGate(ok ? { status: "ok" } : { status: "consent_needed", lang: lang });
+      })
+      .catch(function (err) {
+        // ShogunIpcClient.invoke is supposed to return {ok:false} rather
+        // than throw, but defend against unexpected sync throws (e.g. from
+        // withTimeout) so the gate doesn't get stuck on "loading".
+        if (cancelled) return;
+        setLegalGate({
+          status: "error",
+          message: String((err && err.message) || err || "settings load failed"),
+        });
       });
     return function () {
       cancelled = true;
@@ -1184,13 +1194,17 @@ function App() {
     );
   }
   // ───────── End consent gate; main app continues below. ─────────
-  // MainApp is split out so its hooks only mount once gate.status === "ok".
-  // Keeping the body inside App() would change the hook count between renders
-  // (gate hooks only vs. gate hooks + body hooks), violating the Rules of
-  // Hooks the moment the user accepts consent.
   return <MainApp />;
 }
 
+/** Renders only after `legalGate.status === "ok"`. Do NOT mount this
+ *  component directly — it must come through `App` so the consent gate
+ *  invariant holds. The body lives in its own component (rather than
+ *  inline below the gate's early returns) so that React sees a stable
+ *  hook count for App across renders: App always calls the gate hooks,
+ *  MainApp always calls the body hooks. Inlining would grow the hook
+ *  count from ~6 to 100+ on the gate→ok transition and trigger
+ *  "Rendered more hooks than during the previous render." */
 function MainApp() {
   ensureRuntimeDeps();
   const WriteModal = ConfirmWriteModal || function FallbackWriteModal(props) {

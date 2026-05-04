@@ -1,4 +1,5 @@
 const { test, expect } = require("@playwright/test");
+const { preacceptConsent } = require("./_helpers/preseed-consent");
 
 /** Served by playwright webServer from repo root (see playwright.config.js). */
 const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
@@ -30,27 +31,12 @@ async function goToChat(page) {
 }
 
 test.describe("SHOGUN Hi-Fi UI", () => {
-  // The consent gate blocks `.app` from rendering on first launch. Pre-seed
-  // the mock settings with an accepted legal section matching the bundled
-  // SHOGUN_LEGAL_VERSIONS so these non-consent tests skip the gate.
+  // The consent gate blocks `.app` from rendering on first launch. The
+  // helper installs an accessor that observes legal-versions.js's
+  // assignment and seeds mock settings with whatever the bundle ships,
+  // so version bumps don't silently break this suite.
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        localStorage.setItem(
-          "shogun.hifi.mock.settings.sections.v1",
-          JSON.stringify({
-            legal: {
-              termsAcceptedVersion: "2026-04-19",
-              privacyAcceptedVersion: "2026-04-19",
-              telemetryOptIn: false,
-              acceptedAt: "2026-01-01T00:00:00.000Z",
-            },
-          }),
-        );
-      } catch (_) {
-        /* ignore */
-      }
-    });
+    await preacceptConsent(page);
   });
 
   test("mounts app and exposes SHOGUN_RUNTIME", async ({ page }) => {
