@@ -37,7 +37,7 @@ After 2.0b lands, a follow-up (2.0c or 2.1.x) can flip selected exclusion reason
 - SQLite migration: `ALTER TABLE mem_items ADD COLUMN sync_status …` + `ALTER TABLE mem_items ADD COLUMN sync_excluded_reason …`. Idempotent — guard against re-running on schemas that already have the column.
 - `init_schema` (`memory_store.rs`) updated so fresh DBs include both columns from the `CREATE TABLE` form.
 - `ingest()` writes `sync_status='local_only'` for the normal path. No filter integration — that stays in `capture_sampler.rs`'s drop-entirely flow.
-- `kinds_json`-style readback: `mem_items` rows returned by `search()` / `fetch()` / `entities_from_catalog()` include `sync_status` (plus `sync_excluded_reason` when non-null) in the JSON output, so future UI / Mirror code can read it without schema queries.
+- `kinds_json`-style readback: `mem_items` rows returned by `search()` / `fetch()` (mem_items rows only; `entities_from_catalog()` returns a `GROUP BY source` rollup and is intentionally excluded — `sync_status` would be ambiguous across grouped rows) include `sync_status` (plus `sync_excluded_reason` when non-null) in the JSON output, so future UI / Mirror code can read it without schema queries.
 - Unit tests for migration on (a) fresh DB, (b) pre-existing DB without the columns, (c) DB that already has the columns (re-run idempotency).
 
 **Out of scope (deferred):**

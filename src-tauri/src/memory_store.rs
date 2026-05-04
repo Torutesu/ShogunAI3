@@ -708,7 +708,7 @@ fn row_to_item(
     if let Some(r) = redaction.filter(|s| !s.is_empty()) {
       map.insert("redaction".to_string(), json!(r));
     }
-    if let Some(reason) = sync_excluded_reason {
+    if let Some(reason) = sync_excluded_reason.filter(|s| !s.is_empty()) {
       map.insert("syncExcludedReason".to_string(), json!(reason));
     }
   }
@@ -1037,6 +1037,10 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
   item_map.insert("source".to_string(), json!(source));
   item_map.insert("created_at".to_string(), json!(created as u64));
   item_map.insert("provenance".to_string(), json!(provenance));
+  // Phase 2.0b: surface sync_status in the synchronous ingest response so
+  // frontends that re-use it (without a follow-up fetch) see the field.
+  // sync_excluded_reason is always None on the ingest path; omitted.
+  item_map.insert("syncStatus".to_string(), json!("local_only"));
   if let Some(ref e) = entity_id {
     item_map.insert("entity_id".to_string(), json!(e));
   }
@@ -1604,6 +1608,9 @@ pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
     .trim()
     .to_lowercase();
 
+  // Output is a GROUP BY rollup of (source, count), not individual mem_items
+  // rows — sync_status would be ambiguous, so we deliberately omit it. See
+  // spec 2026-05-04-sync-status-column-design.md § 3.
   let mut stmt = conn
     .prepare("SELECT source, COUNT(*) FROM mem_items GROUP BY source")
     .map_err(|e| e.to_string())?;
@@ -2259,6 +2266,18 @@ mod tests {
     });
     let out = super::ingest(&payload).expect("ingest");
     let id = out["item"]["id"].as_str().expect("ingest returned id").to_string();
+
+    // Synchronous response payload must surface syncStatus (Fix I-1) so
+    // frontends that reuse it without a follow-up fetch see the field.
+    assert_eq!(
+      out["item"].get("syncStatus").and_then(|v| v.as_str()),
+      Some("local_only"),
+      "ingest response should include syncStatus='local_only'"
+    );
+    assert!(
+      out["item"].get("syncExcludedReason").is_none(),
+      "ingest response should not include syncExcludedReason on the normal path"
+    );
 
     // Verify via raw SQL on the same DB the public ingest() wrote to.
     let conn = super::open_conn().expect("open_conn");
