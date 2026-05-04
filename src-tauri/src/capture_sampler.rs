@@ -337,7 +337,7 @@ fn host_suffix_match(actual: &str, excluded: &str) -> bool {
     && actual.ends_with(excluded)
 }
 
-fn maybe_ingest_focus(app: &str) {
+fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
   let sig = fnv_hash(app);
   if let Ok(mut last) = LAST_SIG.lock() {
     if *last == Some(sig) {
@@ -360,6 +360,7 @@ fn maybe_ingest_focus(app: &str) {
       window_title: Some(app.to_string()),
       url: None,
       captured_at_ms: now_ms() as i64,
+      spatial_context_json,
       ..Default::default()
     };
     match memory_store::open_conn() {
@@ -386,7 +387,7 @@ fn maybe_ingest_focus(app: &str) {
   }
 }
 
-fn maybe_ingest_ax(text: &str) {
+fn maybe_ingest_ax(text: &str, spatial_context_json: Option<String>) {
   let sig = fnv_hash(text);
   if let Ok(last_sig) = LAST_AX_SIG.lock() {
     if *last_sig == Some(sig) {
@@ -425,6 +426,7 @@ fn maybe_ingest_ax(text: &str) {
       window_title: None,
       url: None,
       captured_at_ms: now_ms() as i64,
+      spatial_context_json,
       ..Default::default()
     };
     match memory_store::open_conn() {
@@ -475,6 +477,11 @@ pub fn start_background_sampler(app: AppHandle) {
           continue;
         }
       }
+      let spatial_for_ingest = if ax_rich_capture_enabled() {
+        crate::spatial::capture_spatial_context()
+      } else {
+        None
+      };
       if ax_rich_capture_enabled() {
         if macos_ax::accessibility_trust_status() == Some(false) {
           maybe_warn_ax_not_trusted(&app);
@@ -502,7 +509,7 @@ pub fn start_background_sampler(app: AppHandle) {
                 }
                 continue;
               }
-              maybe_ingest_ax(t);
+              maybe_ingest_ax(t, spatial_for_ingest.clone());
               continue;
             }
             maybe_log_ax_snapshot_empty();
@@ -511,7 +518,7 @@ pub fn start_background_sampler(app: AppHandle) {
         }
       }
       if let Some(name) = frontmost {
-        maybe_ingest_focus(&name);
+        maybe_ingest_focus(&name, spatial_for_ingest);
       }
     }
     #[cfg(not(target_os = "macos"))]

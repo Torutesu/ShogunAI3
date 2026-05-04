@@ -58,12 +58,19 @@ pub fn tool_definitions() -> Value {
     },
     {
       "name": "shogun.meeting_recipe_run",
-      "description": "Run a builtin recipe (LLM) on a meeting.",
+      "description": "Run a builtin LLM recipe on a meeting and return the rendered output. Recipes operate over the meeting's transcript ± notes ± related memory hits depending on the recipe. Calls a remote LLM (uses configured API keys; costs billed to the user). Latency typically several seconds.",
       "input_schema": {
         "type": "object",
         "properties": {
-          "recipe_id": { "type": "string" },
-          "meeting_id": { "type": "string" }
+          "recipe_id": {
+            "type": "string",
+            "enum": ["rec-coach-me", "rec-follow-up-email", "rec-action-items", "rec-feature-digest", "rec-prd-draft", "rec-decision-log"],
+            "description": "Which recipe to run. coach-me: 1:1 coaching feedback. follow-up-email: drafts a recap email. action-items: extracts TODOs with owners + due dates. feature-digest: pulls product implications. prd-draft: drafts a PRD section. decision-log: records decisions + rationale."
+          },
+          "meeting_id": {
+            "type": "string",
+            "description": "Meeting ID (from shogun.meetings_list or shogun.meetings_search)."
+          }
         },
         "required": ["recipe_id", "meeting_id"]
       }

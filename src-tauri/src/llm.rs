@@ -263,6 +263,20 @@ pub async fn chat_complete(
         log::warn!("lessons::increment_applies failed: {}", e);
       }
     }
+
+    // Sub-spec E: async verifier — fire-and-forget. Increments prevented_n
+    // for lessons the assistant reply respected. Does not block this response.
+    let applied_ids_for_verify = applied_lesson_ids.clone();
+    let user_msg_for_verify = latest_user_text.clone();
+    let assistant_msg_for_verify = content.clone();
+    tauri::async_runtime::spawn(async move {
+      crate::lessons_verifier::verify_and_increment(
+        applied_ids_for_verify,
+        user_msg_for_verify,
+        assistant_msg_for_verify,
+      )
+      .await;
+    });
   }
   Ok(json!({
     "message": content,

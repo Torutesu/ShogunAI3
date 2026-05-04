@@ -63,7 +63,7 @@ fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
   out
 }
 
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
   if a.len() != b.len() || a.is_empty() {
     return 0.0;
   }
@@ -188,6 +188,22 @@ pub fn increment_applies(conn: &Connection, ids: &[String]) -> Result<(), String
   conn
     .execute(&sql, &params[..])
     .map_err(|e| format!("lessons::increment_applies: {}", e))?;
+  Ok(())
+}
+
+pub fn increment_prevented(conn: &Connection, ids: &[String]) -> Result<(), String> {
+  if ids.is_empty() {
+    return Ok(());
+  }
+  let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(", ");
+  let sql = format!(
+    "UPDATE lessons SET prevented_n = prevented_n + 1 WHERE status = 'active' AND id IN ({})",
+    placeholders
+  );
+  let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+  conn
+    .execute(&sql, &params[..])
+    .map_err(|e| format!("lessons::increment_prevented: {}", e))?;
   Ok(())
 }
 

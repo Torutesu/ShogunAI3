@@ -61,7 +61,7 @@ const FRIENDLY_APP_NAMES: &[(&str, &str)] = &[
   ("com.spotify.client", "Spotify"),
 ];
 
-fn friendly_app_name(bundle: &str) -> String {
+pub(crate) fn friendly_app_name(bundle: &str) -> String {
   for (k, v) in FRIENDLY_APP_NAMES {
     if *k == bundle {
       return v.to_string();
@@ -95,13 +95,14 @@ fn format_sequential_label(prev_label: &str, action_label: &str) -> String {
 struct CaptureRow {
   app_bundle_id: String,
   captured_at: i64,
+  spatial_context: Option<String>,
 }
 
 fn fetch_recent_captures(conn: &Connection, since_ms: i64) -> Result<Vec<CaptureRow>, String> {
   let mut stmt = conn
     .prepare(
       r#"
-      SELECT app_bundle_id, captured_at
+      SELECT app_bundle_id, captured_at, spatial_context
       FROM mem_captures
       WHERE captured_at >= ?1 AND app_bundle_id IS NOT NULL
       ORDER BY captured_at ASC
@@ -110,7 +111,11 @@ fn fetch_recent_captures(conn: &Connection, since_ms: i64) -> Result<Vec<Capture
     .map_err(|e| format!("patterns::fetch_recent_captures prepare: {}", e))?;
   let rows = stmt
     .query_map(params![since_ms], |row| {
-      Ok(CaptureRow { app_bundle_id: row.get::<_, String>(0)?, captured_at: row.get::<_, i64>(1)? })
+      Ok(CaptureRow {
+        app_bundle_id: row.get::<_, String>(0)?,
+        captured_at: row.get::<_, i64>(1)?,
+        spatial_context: row.get::<_, Option<String>>(2)?,
+      })
     })
     .map_err(|e| format!("patterns::fetch_recent_captures query: {}", e))?;
   let mut out = Vec::new();
@@ -292,24 +297,44 @@ pub async fn run_detection() -> Result<usize, String> {
   }
 
   mark_stale_sweep(&conn)?;
+
+  // ---- Spatial pass (Sub-spec F) ----
+  let spatial_rows: Vec<crate::spatial_patterns::SpatialCaptureRow> = captures
+    .iter()
+    .filter_map(|cap| {
+      let raw = cap.spatial_context.as_deref()?;
+      let ctx: Value = serde_json::from_str(raw).ok()?;
+      Some(crate::spatial_patterns::SpatialCaptureRow {
+        app_bundle_id: cap.app_bundle_id.clone(),
+        captured_at: cap.captured_at,
+        spatial_context: ctx,
+      })
+    })
+    .collect();
+  emitted += crate::spatial_patterns::detect_spatial(&conn, &spatial_rows)?;
+
   Ok(emitted)
 }
 
-pub fn list_for_brief(top_n: usize) -> Result<Vec<Value>, String> {
+pub fn list_for_brief(top_n: usize, include_spatial: bool) -> Result<Vec<Value>, String> {
   let conn = crate::memory_store::open_conn()?;
   let mut stmt = conn
     .prepare(
-      "SELECT kind, trigger_json, action_json, confidence, observed_n FROM patterns WHERE status = 'active' ORDER BY confidence DESC, observed_n DESC LIMIT ?1",
+      if include_spatial {
+        "SELECT id, kind, trigger_json, action_json, confidence, observed_n FROM patterns WHERE status = 'active' ORDER BY confidence DESC, observed_n DESC LIMIT ?1"
+      } else {
+        "SELECT id, kind, trigger_json, action_json, confidence, observed_n FROM patterns WHERE status = 'active' AND kind != 'spatial' ORDER BY confidence DESC, observed_n DESC LIMIT ?1"
+      },
     )
     .map_err(|e| format!("patterns::list_for_brief prepare: {}", e))?;
   let rows = stmt
     .query_map(params![top_n as i64], |row| {
-      Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, f32>(3)?, row.get::<_, i64>(4)?))
+      Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, f32>(4)?, row.get::<_, i64>(5)?))
     })
     .map_err(|e| format!("patterns::list_for_brief query: {}", e))?;
   let mut out = Vec::new();
   for r in rows {
-    let (kind, trigger_str, action_str, confidence, observed_n) = r.map_err(|e| format!("patterns::list_for_brief row: {}", e))?;
+    let (id, kind, trigger_str, action_str, confidence, observed_n) = r.map_err(|e| format!("patterns::list_for_brief row: {}", e))?;
     let trigger: Value = serde_json::from_str(&trigger_str).unwrap_or(Value::Null);
     let action: Value = serde_json::from_str(&action_str).unwrap_or(Value::Null);
     let label = match kind.as_str() {
@@ -324,10 +349,28 @@ pub fn list_for_brief(top_n: usize) -> Result<Vec<Value>, String> {
         let action_label = action.get("label").and_then(|v| v.as_str()).unwrap_or("another app");
         format_sequential_label(prev_label, action_label)
       }
+      "spatial" => {
+        let display_label = trigger
+          .get("display_label")
+          .and_then(|v| v.as_str())
+          .unwrap_or("a display");
+        let quadrant = trigger
+          .get("quadrant")
+          .and_then(|v| v.as_str())
+          .unwrap_or("");
+        let app_label = action
+          .get("label")
+          .and_then(|v| v.as_str())
+          .unwrap_or("an app");
+        format!(
+          "You usually keep {} in the {} quadrant of {}.",
+          app_label, quadrant, display_label
+        )
+      }
       _ => "Unknown pattern.".to_string(),
     };
     out.push(json!({
-      "kind": kind, "label": label, "trigger": trigger, "action": action,
+      "id": id, "kind": kind, "label": label, "trigger": trigger, "action": action,
       "confidence": confidence, "observed_n": observed_n,
     }));
   }
