@@ -18,6 +18,27 @@ async function openIntegrationsPane(page) {
 }
 
 test.describe('OAuth Tauri integration (Settings → Integrations)', () => {
+  // Pre-accept consent so the gate doesn't block `.app` from mounting.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem(
+          "shogun.hifi.mock.settings.sections.v1",
+          JSON.stringify({
+            legal: {
+              termsAcceptedVersion: "2026-04-19",
+              privacyAcceptedVersion: "2026-04-19",
+              telemetryOptIn: false,
+              acceptedAt: "2026-01-01T00:00:00.000Z",
+            },
+          }),
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  });
+
   test('Gmail Connect → mock IPC → success toast', async ({ page }) => {
     await openHiFi(page);
     await openIntegrationsPane(page);

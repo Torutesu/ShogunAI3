@@ -1184,7 +1184,14 @@ function App() {
     );
   }
   // ───────── End consent gate; main app continues below. ─────────
+  // MainApp is split out so its hooks only mount once gate.status === "ok".
+  // Keeping the body inside App() would change the hook count between renders
+  // (gate hooks only vs. gate hooks + body hooks), violating the Rules of
+  // Hooks the moment the user accepts consent.
+  return <MainApp />;
+}
 
+function MainApp() {
   ensureRuntimeDeps();
   const WriteModal = ConfirmWriteModal || function FallbackWriteModal(props) {
     if (!props.open) return null;
