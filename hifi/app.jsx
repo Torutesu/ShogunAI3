@@ -255,6 +255,21 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'legal_docs_load':
+      // Mirrors the case in ipc-client.js so the two mock IPC paths stay
+      // in sync (enforced by check:ipc-mock).
+      return {
+        ok: true,
+        data: {
+          terms:
+            '# Terms of Service\n\nMock terms for browser preview and tests.\n',
+          privacy:
+            '# Privacy Policy\n\nMock privacy policy for browser preview and tests.\n',
+          lang: (echo && echo.lang) || 'en',
+          stub: true,
+          echo,
+        },
+      };
     case 'app_settings_save': {
       if (echo && echo.section) {
         const section = echo.section;
