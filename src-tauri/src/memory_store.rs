@@ -112,6 +112,41 @@ fn ensure_context_layer_columns(conn: &Connection) -> Result<(), String> {
   if needs_provenance {
     backfill_provenance_from_source(conn)?;
   }
+
+  // Partial UNIQUE index to dedupe historical-sync ingestion keyed by
+  // (source, entity_id). Skipped for rows without an entity_id (e.g. screen
+  // captures, free-form notes) so those remain append-only.
+  //
+  // Lives here rather than in `init_schema` because it references
+  // `entity_id`, which is created above. Putting it in `init_schema` would
+  // crash any fresh DB whose `CREATE TABLE IF NOT EXISTS` ran before the
+  // column was added by ALTER.
+  //
+  // Pre-existing databases may already contain duplicates from prior
+  // calendar / gmail re-runs, so compress dupes (keep the oldest rowid per
+  // (source, entity_id)) before the index creation, otherwise the unique
+  // index would abort on duplicate keys.
+  conn
+    .execute(
+      "DELETE FROM mem_items \
+       WHERE entity_id IS NOT NULL AND entity_id != '' \
+         AND rowid NOT IN ( \
+           SELECT MIN(rowid) FROM mem_items \
+           WHERE entity_id IS NOT NULL AND entity_id != '' \
+           GROUP BY source, entity_id \
+         )",
+      [],
+    )
+    .map_err(|e| format!("mem_items dedupe pre-index: {}", e))?;
+  conn
+    .execute(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_items_entity_unique \
+       ON mem_items(source, entity_id) \
+       WHERE entity_id IS NOT NULL AND entity_id != ''",
+      [],
+    )
+    .map_err(|e| format!("mem_items entity unique index: {}", e))?;
+
   Ok(())
 }
 
@@ -477,35 +512,6 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     ).map_err(|e| format!("mem_summaries add snooze_until: {}", e))?;
   }
 
-
-
-  // Partial UNIQUE index to dedupe historical-sync ingestion keyed by
-  // (source, entity_id). Skipped for rows without an entity_id (e.g. screen
-  // captures, free-form notes) so those remain append-only.
-  //
-  // Because pre-existing databases may already contain duplicates from prior
-  // calendar / gmail re-runs, compress dupes first (keep the oldest rowid per
-  // (source, entity_id)) so the index creation doesn't abort.
-  conn
-    .execute(
-      "DELETE FROM mem_items \
-       WHERE entity_id IS NOT NULL AND entity_id != '' \
-         AND rowid NOT IN ( \
-           SELECT MIN(rowid) FROM mem_items \
-           WHERE entity_id IS NOT NULL AND entity_id != '' \
-           GROUP BY source, entity_id \
-         )",
-      [],
-    )
-    .map_err(|e| format!("mem_items dedupe pre-index: {}", e))?;
-  conn
-    .execute(
-      "CREATE UNIQUE INDEX IF NOT EXISTS idx_mem_items_entity_unique \
-       ON mem_items(source, entity_id) \
-       WHERE entity_id IS NOT NULL AND entity_id != ''",
-      [],
-    )
-    .map_err(|e| format!("mem_items entity unique index: {}", e))?;
 
   crate::meeting_store::ensure_meeting_schema(conn)?;
   Ok(())
@@ -1573,6 +1579,22 @@ mod tests {
     truncate_api_error, HL_END, HL_START,
   };
   use serde_json::json;
+
+  #[test]
+  fn init_schema_succeeds_on_fresh_db_without_entity_id_column() {
+    // Regression: init_schema used to issue
+    //   DELETE FROM mem_items WHERE entity_id IS NOT NULL ...
+    //   CREATE UNIQUE INDEX ... ON mem_items(source, entity_id) ...
+    // before `ensure_context_layer_columns` had added the `entity_id`
+    // column. Real users were unaffected only because their DBs had been
+    // seeded by older code that included the column inline; a fresh
+    // install (or any first-run dev / E2E DB) crashed with
+    // `no such column: entity_id`. This test exercises the boundary
+    // condition by calling `init_schema` against an empty in-memory DB
+    // and asserting it returns Ok.
+    let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+    super::init_schema(&conn).expect("init_schema must succeed on a fresh DB");
+  }
 
   #[test]
   fn derive_provenance_covers_spec_table() {
