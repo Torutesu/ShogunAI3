@@ -4,6 +4,7 @@ mod brief;
 mod brief_actions;
 mod calendar_sync;
 mod capture_sampler;
+mod capture_tray;
 mod connector_sync;
 mod context_assembly;
 mod dead_letter;
@@ -141,6 +142,13 @@ pub fn run() {
         }
       }
       capture_sampler::start_background_sampler(app.handle().clone());
+      #[cfg(target_os = "macos")]
+      {
+        let handle = app.handle().clone();
+        if let Err(err) = capture_tray::install(&handle) {
+          log::warn!("capture_tray install failed: {}", err);
+        }
+      }
       calendar_sync::spawn_background_calendar_sync();
       connector_sync::spawn_background_connector_sync();
       rollup_sync::spawn_background_rollup_sync();

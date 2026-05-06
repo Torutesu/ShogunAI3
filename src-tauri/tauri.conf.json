@@ -10,6 +10,10 @@
     "beforeBuildCommand": "npm run build:web-dist && npx tauri icon hifi/assets/app-icon-mac-1024.png"
   },
   "app": {
+    "trayIcon": {
+      "iconPath": "icons/tray-active.png",
+      "iconAsTemplate": true
+    },
     "windows": [
       {
         "title": "Shogun AI",
@@ -44,6 +48,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "icons/tray-active.png",
+      "icons/tray-paused.png"
     ]
   }
 }
