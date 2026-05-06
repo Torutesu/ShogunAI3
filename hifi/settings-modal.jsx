@@ -4363,6 +4363,13 @@ function SettingsModal({pane, setPane, close}) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [close]);
+  /** Re-hydrate all settings panes when the macOS tray toggles capture state.
+   *  ipc-client.js dispatches shogun-settings-refresh on shogun-capture-state-changed. */
+  React.useEffect(() => {
+    const onRefresh = () => { void refreshSections(); };
+    window.addEventListener('shogun-settings-refresh', onRefresh);
+    return () => window.removeEventListener('shogun-settings-refresh', onRefresh);
+  }, [refreshSections]);
   const hydrationCtxValue = React.useMemo(
     () => ({ sections: hydratedSections, refreshSections, setPane }),
     [hydratedSections, refreshSections, setPane],

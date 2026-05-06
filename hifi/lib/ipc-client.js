@@ -1044,5 +1044,22 @@
     };
   }
 
+  // Desktop Tauri runtime: listen for tray-driven capture state changes and
+  // dispatch a custom DOM event so any open Settings UI can re-read the toggle.
+  // In mock / browser mode __TAURI_INTERNALS__ is absent so this is a no-op.
+  if (global.__TAURI_INTERNALS__) {
+    import("@tauri-apps/api/event").then(function (mod) {
+      mod.listen("shogun-capture-state-changed", function () {
+        try {
+          global.dispatchEvent(new CustomEvent("shogun-settings-refresh"));
+        } catch (_) {
+          /* ignore */
+        }
+      });
+    }).catch(function () {
+      /* ignore — Tauri APIs may not be available in all build targets */
+    });
+  }
+
   global.ShogunIpcClient = { createIpcClient: createIpcClient };
 })(window);

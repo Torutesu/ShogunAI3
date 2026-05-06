@@ -1674,6 +1674,29 @@ function MainApp() {
     };
   }, [setActive]);
 
+  /** Tray-driven capture toggle: ipc-client.js dispatches shogun-settings-refresh when the
+   *  macOS tray menu changes sections.capture.paused. Re-load and re-apply settings so any
+   *  open Settings pane or capture-status UI reflects the new state without a page reload.
+   *  No-op in mock mode because the event is never dispatched there.
+   *  Routed through executeActionRef so the closure stays valid across re-renders without
+   *  having to re-subscribe on every render or list non-stable dependencies. */
+  useEffect(() => {
+    const onRefresh = () => {
+      (async () => {
+        try {
+          const r = await executeActionRef.current('settings.load', {}, { silentError: true });
+          if (r.ok && r.data?.settings?.sections) {
+            applySavedAppearance(r.data.settings.sections);
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      })();
+    };
+    window.addEventListener('shogun-settings-refresh', onRefresh);
+    return () => window.removeEventListener('shogun-settings-refresh', onRefresh);
+  }, []);
+
   /** Desktop: Rust emits when axRichCapture is on but macOS Accessibility trust is missing. Backend rate-limits to once per 120s. */
   useEffect(() => {
     let unlisten;
