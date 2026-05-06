@@ -58,6 +58,21 @@ const SCHEMA_COLUMNS: &[&str] = &[
 // Pure helpers — testable on any platform.
 // --------------------------------------------------------------------------
 
+/// Validate the import IPC payload — require an explicit `confirm: "REPLACE"`
+/// field. The replace-mode import is destructive (it wipes all `mem_items`),
+/// so the caller must opt in by typing the literal string. Lives here so the
+/// check is unit-testable without spinning up the Tauri command surface.
+pub fn validate_import_payload(payload: &Value) -> Result<(), String> {
+  let confirm = payload
+    .get("confirm")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  if confirm != "REPLACE" {
+    return Err("import requires explicit REPLACE confirmation".into());
+  }
+  Ok(())
+}
+
 /// Parse the first line of a SHOGUN memory export and validate it.
 pub fn validate_header(line: &str) -> Result<ExportHeader, String> {
   let h: ExportHeader = serde_json::from_str(line.trim())
@@ -274,8 +289,13 @@ pub fn import_from_reader<R: BufRead>(
 
   let count = parsed_rows.len() as u64;
   for row in &parsed_rows {
+    // Plain INSERT (not OR REPLACE) so duplicate `id` values within the file
+    // surface as a transactional error rather than silently overwriting. The
+    // table was already cleared by the DELETE above, so only intra-file
+    // collisions can fire this path — those are export bugs and should abort
+    // the import so the user keeps their original data.
     tx.execute(
-      "INSERT OR REPLACE INTO mem_items \
+      "INSERT INTO mem_items \
        (id, title, snippet, source, kinds_json, created_at, embedding, \
         provenance, entity_id, confidence, redaction, sync_status, sync_excluded_reason) \
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -312,51 +332,22 @@ mod tests {
   use rusqlite::Connection;
 
   /// Create a fully-initialized in-memory DB with all 13 mem_items columns.
-  /// We build the schema directly here rather than going through `open_conn`
-  /// (which requires a real file path) so that the tests are platform-agnostic.
+  /// Mirrors the canonical sequence in `memory_store::open_conn`:
+  ///   1. `init_schema` — base table (sync_status / sync_excluded_reason
+  ///      inline + migrate_sync_status_columns) + FTS + triggers.
+  ///   2. `ensure_embedding_column` — adds `embedding` BLOB.
+  ///   3. `ensure_context_layer_columns` — adds `provenance`, `entity_id`,
+  ///      `confidence`, `redaction` and the entity unique index.
+  /// We skip `ensure_redaction_nullable` (rebuild path) and the kioku schema
+  /// since they're not exercised by the export/import surface. Stays in sync
+  /// automatically with future schema changes that flow through the same
+  /// migration helpers.
   fn fresh_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory");
-    conn
-      .execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS mem_items (
-          id TEXT PRIMARY KEY NOT NULL,
-          title TEXT NOT NULL,
-          snippet TEXT NOT NULL,
-          source TEXT NOT NULL,
-          kinds_json TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          embedding BLOB,
-          provenance TEXT,
-          entity_id TEXT,
-          confidence REAL,
-          redaction TEXT,
-          sync_status TEXT NOT NULL DEFAULT 'local_only',
-          sync_excluded_reason TEXT
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS mem_items_fts USING fts5(
-          title, snippet, source,
-          tokenize = 'unicode61',
-          content='mem_items',
-          content_rowid='rowid'
-        );
-        CREATE TRIGGER IF NOT EXISTS mem_items_ai AFTER INSERT ON mem_items BEGIN
-          INSERT INTO mem_items_fts(rowid, title, snippet, source)
-          VALUES (new.rowid, new.title, new.snippet, new.source);
-        END;
-        CREATE TRIGGER IF NOT EXISTS mem_items_ad AFTER DELETE ON mem_items BEGIN
-          INSERT INTO mem_items_fts(mem_items_fts, rowid, title, snippet, source)
-          VALUES('delete', old.rowid, old.title, old.snippet, old.source);
-        END;
-        CREATE TRIGGER IF NOT EXISTS mem_items_au AFTER UPDATE ON mem_items BEGIN
-          INSERT INTO mem_items_fts(mem_items_fts, rowid, title, snippet, source)
-          VALUES('delete', old.rowid, old.title, old.snippet, old.source);
-          INSERT INTO mem_items_fts(rowid, title, snippet, source)
-          VALUES (new.rowid, new.title, new.snippet, new.source);
-        END;
-        "#,
-      )
-      .expect("create schema");
+    crate::memory_store::init_schema(&conn).expect("init_schema");
+    crate::memory_store::ensure_embedding_column(&conn).expect("ensure_embedding_column");
+    crate::memory_store::ensure_context_layer_columns(&conn)
+      .expect("ensure_context_layer_columns");
     conn
   }
 
@@ -546,16 +537,82 @@ mod tests {
     );
   }
 
-  // --- T6: Malformed row rolls back transaction ---
+  // --- T6: Insert failure mid-transaction rolls back (spec § 6) ---
+  // Forces an INSERT failure by feeding two rows with the same `id` (mem_items
+  // has `id TEXT PRIMARY KEY`). The transaction has already executed
+  // `DELETE FROM mem_items` and the first INSERT before the second INSERT
+  // fails — exercising the rollback path that restores the original 3 rows.
   #[test]
   fn t6_malformed_row_rolls_back() {
+    let conn = fresh_conn();
+    for i in 0..3 {
+      insert_row(&conn, &make_row(&format!("pre-{}", i)));
+    }
+    assert_eq!(count_rows(&conn), 3);
+
+    let header = json!({
+      "format": "shogun-memory-export",
+      "version": 1,
+      "exported_at": "2026-01-01T00:00:00Z",
+      "row_count": 2,
+      "schema_columns": SCHEMA_COLUMNS,
+    });
+    let row1 = json!({
+      "id": "dup", "title": "row 1", "snippet": "first", "source": "test",
+      "kinds_json": "[]", "created_at": 1_700_000_000i64,
+      "embedding": serde_json::Value::Null, "provenance": "user",
+      "entity_id": serde_json::Value::Null, "confidence": serde_json::Value::Null,
+      "redaction": serde_json::Value::Null, "sync_status": "local_only",
+      "sync_excluded_reason": serde_json::Value::Null,
+    });
+    let row2 = json!({
+      "id": "dup", "title": "row 2", "snippet": "duplicate id", "source": "test",
+      "kinds_json": "[]", "created_at": 1_700_000_001i64,
+      "embedding": serde_json::Value::Null, "provenance": "user",
+      "entity_id": serde_json::Value::Null, "confidence": serde_json::Value::Null,
+      "redaction": serde_json::Value::Null, "sync_status": "local_only",
+      "sync_excluded_reason": serde_json::Value::Null,
+    });
+    let payload = format!(
+      "{}\n{}\n{}\n",
+      serde_json::to_string(&header).unwrap(),
+      serde_json::to_string(&row1).unwrap(),
+      serde_json::to_string(&row2).unwrap(),
+    );
+
+    let result = import_from_reader(&conn, std::io::BufReader::new(payload.as_bytes()));
+    assert!(
+      result.is_err(),
+      "duplicate id within import file should fail mid-transaction"
+    );
+
+    // Pre-existing rows are restored by rollback.
+    assert_eq!(
+      count_rows(&conn),
+      3,
+      "original rows must be restored after rollback"
+    );
+    let dup_count: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM mem_items WHERE id = 'dup'",
+        [],
+        |r| r.get(0),
+      )
+      .expect("count");
+    assert_eq!(dup_count, 0, "no 'dup' row should be left behind");
+  }
+
+  // --- T6b: Malformed JSON in a data line aborts before touching the DB ---
+  // Complementary to T6: the parse-phase error path. We collect rows eagerly
+  // before opening the transaction, so a parse error never deletes anything.
+  #[test]
+  fn t6b_malformed_header_does_not_touch_db() {
     let conn = fresh_conn();
     for i in 0..3 {
       insert_row(&conn, &make_row(&format!("orig-{}", i)));
     }
     assert_eq!(count_rows(&conn), 3);
 
-    // Build a valid header + one good row + one malformed row
     let good_header = r#"{"format":"shogun-memory-export","version":1,"exported_at":"2026-01-01T00:00:00Z","row_count":2,"schema_columns":["id"]}"#;
     let good_row = r#"{"id":"x1","title":"T","snippet":"S","source":"test","kinds_json":"[]","created_at":1700000000,"sync_status":"local_only"}"#;
     let bad_row = "{not-valid-json}";
@@ -564,18 +621,37 @@ mod tests {
     let result = import_from_reader(&conn, std::io::BufReader::new(payload.as_bytes()));
     assert!(result.is_err(), "should have returned an error");
 
-    // Original 3 rows must still be present (rollback)
+    // Original 3 rows must still be present (rollback / no-op)
     assert_eq!(count_rows(&conn), 3);
   }
 
-  // --- T7: Import function works without a confirm (confirm is IPC-layer concern) ---
+  // --- T7: Import requires explicit REPLACE confirmation (spec § 6) ---
+  // Validates the IPC-layer guard in `validate_import_payload`, which the
+  // Tauri command wrapper (`shogun_memory_import`) calls before any file I/O.
   #[test]
-  fn t7_import_function_does_not_require_confirm() {
-    // The `import_from_reader` pure function does NOT check for a confirm string;
-    // that guard lives in the Tauri command wrapper (`shogun_memory_import`).
-    // This test verifies the public function succeeds on valid input without a
-    // confirm parameter — the IPC wrapper test for REPLACE is in T7 of the spec
-    // (covered at the command layer).
+  fn t7_import_requires_replace_confirm() {
+    use serde_json::json;
+    // Missing confirm field → error
+    let err = validate_import_payload(&json!({})).unwrap_err();
+    assert!(
+      err.contains("REPLACE"),
+      "error should mention REPLACE; got: {}",
+      err
+    );
+    // Wrong confirm value → error
+    assert!(validate_import_payload(&json!({ "confirm": "yes" })).is_err());
+    assert!(validate_import_payload(&json!({ "confirm": "replace" })).is_err());
+    assert!(validate_import_payload(&json!({ "confirm": "" })).is_err());
+    // Correct confirm value → ok
+    assert!(validate_import_payload(&json!({ "confirm": "REPLACE" })).is_ok());
+  }
+
+  // --- T7b: pure import_from_reader does not check for confirm ---
+  // The REPLACE guard is intentionally at the IPC layer (T7), so the pure
+  // function accepts any well-formed input and leaves authorization to its
+  // caller. This test pins that behavior.
+  #[test]
+  fn t7b_pure_import_fn_no_confirm_required() {
     let conn = fresh_conn();
     let good_header = r#"{"format":"shogun-memory-export","version":1,"exported_at":"2026-01-01T00:00:00Z","row_count":0,"schema_columns":[]}"#;
     let n = import_from_reader(&conn, std::io::BufReader::new(good_header.as_bytes()))

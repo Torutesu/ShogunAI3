@@ -128,13 +128,7 @@ pub fn shogun_memory_export(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn shogun_memory_import(payload: Value) -> Result<Value, String> {
-  let confirm = payload
-    .get("confirm")
-    .and_then(|v| v.as_str())
-    .unwrap_or("");
-  if confirm != "REPLACE" {
-    return Err("import requires explicit REPLACE confirmation".to_string());
-  }
+  memory_export::validate_import_payload(&payload)?;
   #[cfg(target_os = "macos")]
   {
     let Some(path) = rfd::FileDialog::new()

@@ -83,7 +83,7 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
   Ok(conn)
 }
 
-fn ensure_embedding_column(conn: &Connection) -> Result<(), String> {
+pub(crate) fn ensure_embedding_column(conn: &Connection) -> Result<(), String> {
   let mut stmt = conn
     .prepare("PRAGMA table_info(mem_items)")
     .map_err(|e| e.to_string())?;
@@ -103,7 +103,7 @@ fn ensure_embedding_column(conn: &Connection) -> Result<(), String> {
 /// Phase-1 columns from `docs/context-layer-phase-0-1.md` §1. Added via ALTER
 /// TABLE on first run; `provenance` is backfilled from `source` once so that
 /// downstream code can rely on it being populated.
-fn ensure_context_layer_columns(conn: &Connection) -> Result<(), String> {
+pub(crate) fn ensure_context_layer_columns(conn: &Connection) -> Result<(), String> {
   let mut stmt = conn
     .prepare("PRAGMA table_info(mem_items)")
     .map_err(|e| e.to_string())?;
