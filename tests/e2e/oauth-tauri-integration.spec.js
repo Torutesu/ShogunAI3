@@ -1,4 +1,5 @@
 const { test, expect } = require("@playwright/test");
+const { preacceptConsent } = require("./_helpers/preseed-consent");
 
 const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
 
@@ -18,6 +19,11 @@ async function openIntegrationsPane(page) {
 }
 
 test.describe('OAuth Tauri integration (Settings → Integrations)', () => {
+  // Pre-accept consent so the gate doesn't block `.app` from mounting.
+  test.beforeEach(async ({ page }) => {
+    await preacceptConsent(page);
+  });
+
   test('Gmail Connect → mock IPC → success toast', async ({ page }) => {
     await openHiFi(page);
     await openIntegrationsPane(page);

@@ -774,6 +774,18 @@
           echo: echo,
           stub: false,
         };
+      case "legal_docs_load":
+        // Stub markdown so the consent modal renders in browser/E2E mode.
+        // The Tauri build reads real bundled docs in src-tauri/legal_docs.rs.
+        return {
+          terms:
+            "# Terms of Service\n\nMock terms for browser preview and tests.\n",
+          privacy:
+            "# Privacy Policy\n\nMock privacy policy for browser preview and tests.\n",
+          lang: (echo && echo.lang) || "en",
+          stub: true,
+          echo: echo,
+        };
       case "app_settings_save": {
         if (echo && echo.section) {
           const section = echo.section;
