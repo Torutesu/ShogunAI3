@@ -33,6 +33,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../docs/TERMS_OF_SERVICE.md",
+      "../docs/TERMS_OF_SERVICE_EN.md",
+      "../docs/PRIVACY.ja.md",
+      "../PRIVACY.md"
+    ],
     "macOS": {
       "hardenedRuntime": true,
       "entitlements": "Entitlements.plist",

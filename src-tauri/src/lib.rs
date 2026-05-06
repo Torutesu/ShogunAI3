@@ -43,6 +43,7 @@ mod decay;
 mod kioku_capture;
 mod lessons;
 mod lessons_verifier;
+mod legal_docs;
 mod patterns;
 mod patterns_sync;
 mod spatial;
@@ -67,6 +68,7 @@ mod paths;
 mod progress_emitter;
 mod schedule_queue;
 mod secrets;
+mod sensitive_filter;
 mod settings_store;
 mod slack;
 mod notion;
@@ -214,6 +216,7 @@ pub fn run() {
       commands::app_frontend_error_report,
       commands::app_updates_check,
       commands::app_updates_download_install,
+      commands::app_quit,
       commands::app_delete_data_range,
       commands::app_delete_all_data,
       commands::app_delete_account,
@@ -279,6 +282,7 @@ pub fn run() {
       commands::shogun_lessons_archive,
       commands::shogun_lessons_stats,
       commands::shogun_memory_summary_set_priority,
+      legal_docs::legal_docs_load,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

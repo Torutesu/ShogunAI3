@@ -1427,6 +1427,12 @@ pub async fn app_updates_download_install(app: AppHandle) -> Result<(), String> 
 }
 
 #[tauri::command]
+pub fn app_quit(app: AppHandle) -> Result<(), String> {
+  app.exit(0);
+  Ok(())
+}
+
+#[tauri::command]
 pub fn app_delete_data_range(payload: Value) -> Result<Value, String> {
   let range = payload
     .get("range")
