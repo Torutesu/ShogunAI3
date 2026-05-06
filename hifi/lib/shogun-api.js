@@ -52,6 +52,8 @@
       memoryEntityRollupGet: (input) => call("shogun_memory_entity_rollup_get", input, READ),
       memorySummarySnooze: (input) => call("shogun_memory_summary_snooze", input, WRITE),
       memoryDelete: (input) => call("shogun_memory_delete", input, WRITE),
+      memoryExport: (input) => call("shogun_memory_export", input, WRITE),
+      memoryImport: (input) => call("shogun_memory_import", input, WRITE),
       memoryEmbedBackfill: (input) =>
         call("shogun_memory_embed_backfill", input, WRITE, { timeoutMs: 600000 }),
       memoryEmbedBackfillCancel: (input) =>
@@ -157,4 +159,9 @@
   }
 
   global.ShogunAPI = { createApi: createApi, READ: READ, WRITE: WRITE };
+
+  // Memory export/import constants — kept in lockstep with the Rust side
+  // (`src-tauri/src/memory_export.rs::CONFIRM_TOKEN`). Update both if you
+  // ever change the literal.
+  global.ShogunMemoryExport = { CONFIRM_TOKEN: "REPLACE" };
 })(window);

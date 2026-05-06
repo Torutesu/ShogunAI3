@@ -8,6 +8,7 @@ mod connector_sync;
 mod context_assembly;
 mod dead_letter;
 mod commands;
+mod memory_export;
 mod deep_link_credentials;
 mod embed_backfill;
 mod embeddings;
@@ -165,6 +166,8 @@ pub fn run() {
       commands::shogun_memory_delete,
       commands::shogun_memory_embed_backfill,
       commands::shogun_memory_embed_backfill_cancel,
+      commands::shogun_memory_export,
+      commands::shogun_memory_import,
       commands::shogun_entity_query,
       commands::shogun_brief_get,
       commands::shogun_open_pack,

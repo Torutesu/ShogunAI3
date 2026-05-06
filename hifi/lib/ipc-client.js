@@ -963,6 +963,19 @@
           refreshTokenPresent: true,
         };
       }
+      case "shogun_memory_export":
+        return { exported: 0, path: "/mock/memory.shogun-memory.jsonl", stub: true, echo };
+      case "shogun_memory_import": {
+        // Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`.
+        const confirmToken = (global.ShogunMemoryExport && global.ShogunMemoryExport.CONFIRM_TOKEN) || "REPLACE";
+        if ((echo && echo.confirm) !== confirmToken) {
+          throw createError(
+            "INVALID_INPUT",
+            `import requires explicit ${confirmToken} confirmation`,
+          );
+        }
+        return { imported: 0, path: "/mock/memory.shogun-memory.jsonl", stub: true, echo };
+      }
       default:
         return {
           stub: true,

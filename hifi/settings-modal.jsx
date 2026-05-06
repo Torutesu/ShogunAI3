@@ -93,6 +93,15 @@ function TermsNoticeAnchor({ children }) {
 /** Stable fallback so `sections.security` missing does not allocate a new `{}` every render. */
 const EMPTY_SETTINGS_SECURITY = {};
 
+// Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`. Sourced from
+// `window.ShogunMemoryExport.CONFIRM_TOKEN` when available so a future change
+// in `shogun-api.js` automatically flows here; falls back to the literal so
+// the component still renders if the API global isn't loaded yet (e.g.
+// component-level unit tests).
+const IMPORT_CONFIRM_TOKEN =
+  (typeof window !== 'undefined' && window.ShogunMemoryExport && window.ShogunMemoryExport.CONFIRM_TOKEN)
+    || 'REPLACE';
+
 function Toggle({on, onClick}) {
   return (
     <div onClick={onClick} className="s-toggle" data-on={on?'1':'0'}>
@@ -1073,6 +1082,49 @@ function PanePrivacy() {
   const filteredApps = filterPrivacyRows(apps, appSearch, appFilter, (r) => `${r.name} ${r.icon || ''}`);
   const filteredSites = filterPrivacyRows(sites, siteSearch, siteFilter, (r) => `${r.host} ${r.label || ''}`);
 
+  // --- Memory data export / import state ---
+  const [busyExport, setBusyExport] = useStateS(false);
+  const [busyImport, setBusyImport] = useStateS(false);
+  const [importConfirmOpen, setImportConfirmOpen] = useStateS(false);
+  const [importConfirmText, setImportConfirmText] = useStateS('');
+
+  const handleExport = React.useCallback(async () => {
+    setBusyExport(true);
+    try {
+      const r = await run('memory.export', {}, { silentError: true });
+      const d = r && r.data;
+      if (r && r.ok && d && d.cancelled) {
+        toast('Export cancelled', 'info');
+      } else if (r && r.ok && d != null) {
+        const filename = d.path ? String(d.path).split('/').pop() : 'memory.shogun-memory.jsonl';
+        toast(`Exported ${d.exported} memories to ${filename}`, 'success');
+      } else {
+        toast((r && r.error && r.error.message) || 'Export failed', 'error');
+      }
+    } finally {
+      setBusyExport(false);
+    }
+  }, [run, toast]);
+
+  const handleImportConfirm = React.useCallback(async () => {
+    setImportConfirmOpen(false);
+    setImportConfirmText('');
+    setBusyImport(true);
+    try {
+      const r = await run('memory.import', { confirm: IMPORT_CONFIRM_TOKEN }, { silentError: true });
+      const d = r && r.data;
+      if (r && r.ok && d && d.cancelled) {
+        toast('Import cancelled', 'info');
+      } else if (r && r.ok && d != null) {
+        toast(`Imported ${d.imported} memories`, 'success');
+      } else {
+        toast((r && r.error && r.error.message) || 'Import failed', 'error');
+      }
+    } finally {
+      setBusyImport(false);
+    }
+  }, [run, toast]);
+
   const learnMore = React.useCallback(async () => {
     if (PRODUCT.privacyUrl) {
       window.open(PRODUCT.privacyUrl, '_blank', 'noopener,noreferrer');
@@ -1698,6 +1750,106 @@ function PanePrivacy() {
           <span className="jp" style={{ display: 'block', fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>
             macOS アプリではフォルダから .app を選べます（ブラウザではキャンセル扱い）。
           </span>
+        </div>
+      ) : null}
+
+      {/* Memory data export / import */}
+      <div className="s-card" style={{ marginTop: 14 }}>
+        <div className="row" style={{ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>Memory data</div>
+        </div>
+        <div className="s-field-hint" style={{ marginBottom: 10, fontSize: 12 }}>
+          Export your memories to a file you control, or import a previously-exported file.
+          <span className="jp" style={{ display: 'block', fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+            Memory データをファイルにエクスポート、または以前のエクスポートをインポートできます。
+          </span>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleExport}
+            disabled={busyExport}
+          >
+            {busyExport ? 'Exporting…' : 'Export memory…'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => { setImportConfirmOpen(true); setImportConfirmText(''); }}
+            disabled={busyImport}
+          >
+            {busyImport ? 'Importing…' : 'Import memory…'}
+          </button>
+        </div>
+      </div>
+
+      {/* Import REPLACE confirmation overlay */}
+      {importConfirmOpen ? (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1200,
+            background: 'rgba(10,9,8,0.65)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) { setImportConfirmOpen(false); setImportConfirmText(''); } }}
+        >
+          <div
+            style={{
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-md)', padding: 24, maxWidth: 400, width: '90%',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>Import memory — confirm</div>
+            <div className="s-field-hint" style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.55 }}>
+              This will <strong>delete all existing memories</strong> and replace them with the contents of the selected file.
+              This action cannot be undone.
+            </div>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>
+              Type <code>{IMPORT_CONFIRM_TOKEN}</code> to confirm:
+            </div>
+            <input
+              className="s-input"
+              style={{ width: '100%', marginBottom: 14, boxSizing: 'border-box' }}
+              placeholder={IMPORT_CONFIRM_TOKEN}
+              value={importConfirmText}
+              onChange={(e) => setImportConfirmText(e.target.value)}
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              aria-label={`Type ${IMPORT_CONFIRM_TOKEN} to confirm`}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && importConfirmText === IMPORT_CONFIRM_TOKEN) {
+                  void handleImportConfirm();
+                }
+                if (e.key === 'Escape') {
+                  setImportConfirmOpen(false);
+                  setImportConfirmText('');
+                }
+              }}
+            />
+            <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => { setImportConfirmOpen(false); setImportConfirmText(''); }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger-ghost"
+                disabled={importConfirmText !== IMPORT_CONFIRM_TOKEN}
+                onClick={() => void handleImportConfirm()}
+              >
+                Replace memories
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </Pane>

@@ -843,6 +843,27 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'shogun_memory_export':
+      return {
+        ok: true,
+        data: { exported: 0, path: '/mock/memory.shogun-memory.jsonl', stub: true, echo },
+      };
+    case 'shogun_memory_import': {
+      // Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`.
+      const confirmToken =
+        (typeof window !== 'undefined' && window.ShogunMemoryExport && window.ShogunMemoryExport.CONFIRM_TOKEN)
+        || 'REPLACE';
+      if ((echo && echo.confirm) !== confirmToken) {
+        return {
+          ok: false,
+          error: { code: 'INVALID_INPUT', message: `import requires explicit ${confirmToken} confirmation` },
+        };
+      }
+      return {
+        ok: true,
+        data: { imported: 0, path: '/mock/memory.shogun-memory.jsonl', stub: true, echo },
+      };
+    }
     default:
       return { ok: true, data: { command, payload: echo, mock: true } };
   }
