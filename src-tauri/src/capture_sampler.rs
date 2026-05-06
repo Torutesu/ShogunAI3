@@ -33,6 +33,7 @@ static LAST_AX_EMPTY_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 #[cfg(target_os = "macos")]
 static LAST_AX_NOT_TRUSTED_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_INGEST_ERROR_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
+static LAST_FILTER_DROP_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -87,6 +88,13 @@ fn maybe_log_ingest_error(source: &str, err: &str) {
     return;
   }
   log::warn!("capture: memory ingest failed (source={}): {}", source, err);
+}
+
+fn maybe_log_filter_drop(reason: &str) {
+  if !should_trigger_now(&LAST_FILTER_DROP_LOG_MS, now_ms(), RATE_LIMIT_MS) {
+    return;
+  }
+  log::info!("capture: dropped by sensitive_filter (reason={})", reason);
 }
 
 fn fnv_hash(s: &str) -> u64 {
@@ -231,6 +239,22 @@ fn load_privacy_filters() -> PrivacyFilters {
     .as_ref()
     .map(filters_from_settings)
     .unwrap_or_default()
+}
+
+fn load_filter_config() -> crate::sensitive_filter::FilterConfig {
+  settings_store::load()
+    .ok()
+    .as_ref()
+    .map(crate::sensitive_filter::from_settings)
+    .unwrap_or_default()
+}
+
+fn current_local_minute_of_week() -> u16 {
+  use chrono::{Datelike, Local, Timelike};
+  let now = Local::now();
+  let day = now.weekday().num_days_from_sunday() as u16; // 0=Sun..6=Sat
+  let minute = (now.hour() * 60 + now.minute()) as u16;
+  day * 1440 + minute
 }
 
 pub fn app_excluded(filters: &PrivacyFilters, app_name: &str) -> bool {
@@ -439,6 +463,12 @@ pub fn start_background_sampler(app: AppHandle) {
       continue;
     }
     let filters = load_privacy_filters();
+    let filter_cfg = load_filter_config();
+    let now_minute_of_week = current_local_minute_of_week();
+    if crate::sensitive_filter::is_inside_time_block(&filter_cfg.time_blocks, now_minute_of_week) {
+      maybe_log_filter_drop(crate::sensitive_filter::ExclusionReason::TimeBlock.as_log_str());
+      continue;
+    }
     #[cfg(target_os = "macos")]
     {
       let frontmost = frontmost_app_name();
@@ -463,6 +493,22 @@ pub fn start_background_sampler(app: AppHandle) {
               if ax_text_excluded(&filters, t) {
                 continue;
               }
+              let app_name = frontmost.as_deref().unwrap_or("");
+              let window_title =
+                crate::sensitive_filter::extract_window_title(t).unwrap_or("");
+              let decision = crate::sensitive_filter::evaluate_capture(
+                &filter_cfg,
+                app_name,
+                window_title,
+                t,
+                now_minute_of_week,
+              );
+              if !decision.should_ingest {
+                if let Some(reason) = decision.reason {
+                  maybe_log_filter_drop(reason.as_log_str());
+                }
+                continue;
+              }
               maybe_ingest_ax(t, spatial_for_ingest.clone());
               continue;
             }
@@ -477,7 +523,7 @@ pub fn start_background_sampler(app: AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     {
-      let _ = (&filters, &app);
+      let _ = (&filters, &filter_cfg, &now_minute_of_week, &app);
     }
   });
 }
