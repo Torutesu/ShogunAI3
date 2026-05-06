@@ -69,6 +69,8 @@
     register("memory.fetch", (payload) => api.memoryFetch(payload));
     register("memory.ingest", (payload) => api.memoryIngest(payload));
     register("memory.delete", (payload) => api.memoryDelete(payload));
+    register("memory.export", (payload) => api.memoryExport(payload));
+    register("memory.import", (payload) => api.memoryImport(payload));
     register("memory.embed_backfill", (payload) => api.memoryEmbedBackfill(payload));
     register("memory.embed_backfill_cancel", () => api.memoryEmbedBackfillCancel({}));
     register("memory.summary.get", (payload) => api.memorySummaryGet(payload));

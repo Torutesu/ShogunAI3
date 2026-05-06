@@ -843,6 +843,23 @@ function mockIpcInvoke(command, payload) {
           echo,
         },
       };
+    case 'shogun_memory_export':
+      return {
+        ok: true,
+        data: { exported: 0, path: '/mock/memory.shogun-memory.jsonl', stub: true, echo },
+      };
+    case 'shogun_memory_import': {
+      if ((echo && echo.confirm) !== 'REPLACE') {
+        return {
+          ok: false,
+          error: { code: 'INVALID_INPUT', message: 'import requires explicit REPLACE confirmation' },
+        };
+      }
+      return {
+        ok: true,
+        data: { imported: 0, path: '/mock/memory.shogun-memory.jsonl', stub: true, echo },
+      };
+    }
     default:
       return { ok: true, data: { command, payload: echo, mock: true } };
   }

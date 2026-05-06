@@ -3,7 +3,7 @@
 use crate::{
   auth, biometric, brief, brief_actions, dead_letter, embed_backfill, github, gmail,
   google_calendar, google_drive, integration_secrets, integrations, linear, llm, macos_ax,
-  memory_store, notion, secrets, settings_store, slack, zoom,
+  memory_export, memory_store, notion, secrets, settings_store, slack, zoom,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -96,6 +96,67 @@ pub fn shogun_memory_embed_backfill_cancel(
 ) -> Result<Value, String> {
   state.request_cancel();
   Ok(json!({ "requested": true }))
+}
+
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn shogun_memory_export(payload: Value) -> Result<Value, String> {
+  #[cfg(target_os = "macos")]
+  {
+    let Some(path) = rfd::FileDialog::new()
+      .set_file_name("memory.shogun-memory.jsonl")
+      .add_filter("SHOGUN Memory Export", &["jsonl"])
+      .save_file()
+    else {
+      return Ok(json!({ "cancelled": true, "echo": payload }));
+    };
+    let conn = memory_store::open_conn()?;
+    let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    let n = memory_export::export_to_writer(&conn, &mut file)?;
+    Ok(json!({
+      "exported": n,
+      "path": path.to_string_lossy(),
+      "echo": payload,
+    }))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("Memory export is only available on macOS.".to_string())
+  }
+}
+
+#[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn shogun_memory_import(payload: Value) -> Result<Value, String> {
+  let confirm = payload
+    .get("confirm")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  if confirm != "REPLACE" {
+    return Err("import requires explicit REPLACE confirmation".to_string());
+  }
+  #[cfg(target_os = "macos")]
+  {
+    let Some(path) = rfd::FileDialog::new()
+      .add_filter("SHOGUN Memory Export", &["jsonl"])
+      .pick_file()
+    else {
+      return Ok(json!({ "cancelled": true, "echo": payload }));
+    };
+    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let reader = std::io::BufReader::new(file);
+    let conn = memory_store::open_conn()?;
+    let n = memory_export::import_from_reader(&conn, reader)?;
+    Ok(json!({
+      "imported": n,
+      "path": path.to_string_lossy(),
+      "echo": payload,
+    }))
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    Err("Memory import is only available on macOS.".to_string())
+  }
 }
 
 #[tauri::command]

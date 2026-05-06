@@ -963,6 +963,13 @@
           refreshTokenPresent: true,
         };
       }
+      case "shogun_memory_export":
+        return { exported: 0, path: "/mock/memory.shogun-memory.jsonl", stub: true, echo };
+      case "shogun_memory_import":
+        if ((echo && echo.confirm) !== "REPLACE") {
+          throw createError("INVALID_INPUT", "import requires explicit REPLACE confirmation");
+        }
+        return { imported: 0, path: "/mock/memory.shogun-memory.jsonl", stub: true, echo };
       default:
         return {
           stub: true,

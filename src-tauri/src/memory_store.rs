@@ -447,7 +447,7 @@ fn migrate_sync_status_columns(conn: &Connection) -> Result<(), String> {
   Ok(())
 }
 
-fn init_schema(conn: &Connection) -> Result<(), String> {
+pub(crate) fn init_schema(conn: &Connection) -> Result<(), String> {
   conn
     .execute_batch(
       r#"

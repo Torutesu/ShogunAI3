@@ -133,6 +133,8 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `memory.search`
 - `memory.ingest`
 - `memory.delete`
+- `memory.export`
+- `memory.import`
 - `memory.embed_backfill`
 - `memory.embed_backfill_cancel`
 - `memory.fetch`
