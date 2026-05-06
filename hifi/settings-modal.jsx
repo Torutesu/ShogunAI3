@@ -93,6 +93,15 @@ function TermsNoticeAnchor({ children }) {
 /** Stable fallback so `sections.security` missing does not allocate a new `{}` every render. */
 const EMPTY_SETTINGS_SECURITY = {};
 
+// Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`. Sourced from
+// `window.ShogunMemoryExport.CONFIRM_TOKEN` when available so a future change
+// in `shogun-api.js` automatically flows here; falls back to the literal so
+// the component still renders if the API global isn't loaded yet (e.g.
+// component-level unit tests).
+const IMPORT_CONFIRM_TOKEN =
+  (typeof window !== 'undefined' && window.ShogunMemoryExport && window.ShogunMemoryExport.CONFIRM_TOKEN)
+    || 'REPLACE';
+
 function Toggle({on, onClick}) {
   return (
     <div onClick={onClick} className="s-toggle" data-on={on?'1':'0'}>
@@ -1102,7 +1111,7 @@ function PanePrivacy() {
     setImportConfirmText('');
     setBusyImport(true);
     try {
-      const r = await run('memory.import', { confirm: 'REPLACE' }, { silentError: true });
+      const r = await run('memory.import', { confirm: IMPORT_CONFIRM_TOKEN }, { silentError: true });
       const d = r && r.data;
       if (r && r.ok && d && d.cancelled) {
         toast('Import cancelled', 'info');
@@ -1799,17 +1808,22 @@ function PanePrivacy() {
               This action cannot be undone.
             </div>
             <div style={{ fontSize: 12, marginBottom: 8 }}>
-              Type <code>REPLACE</code> to confirm:
+              Type <code>{IMPORT_CONFIRM_TOKEN}</code> to confirm:
             </div>
             <input
               className="s-input"
               style={{ width: '100%', marginBottom: 14, boxSizing: 'border-box' }}
-              placeholder="REPLACE"
+              placeholder={IMPORT_CONFIRM_TOKEN}
               value={importConfirmText}
               onChange={(e) => setImportConfirmText(e.target.value)}
               autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              aria-label={`Type ${IMPORT_CONFIRM_TOKEN} to confirm`}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && importConfirmText === 'REPLACE') {
+                if (e.key === 'Enter' && importConfirmText === IMPORT_CONFIRM_TOKEN) {
                   void handleImportConfirm();
                 }
                 if (e.key === 'Escape') {
@@ -1828,8 +1842,8 @@ function PanePrivacy() {
               </button>
               <button
                 type="button"
-                className="btn btn-danger"
-                disabled={importConfirmText !== 'REPLACE'}
+                className="btn btn-danger-ghost"
+                disabled={importConfirmText !== IMPORT_CONFIRM_TOKEN}
                 onClick={() => void handleImportConfirm()}
               >
                 Replace memories

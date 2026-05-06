@@ -12,6 +12,11 @@ use std::io::{BufRead, Write};
 pub const FORMAT: &str = "shogun-memory-export";
 pub const VERSION: u32 = 1;
 
+/// Literal string the user must place in `payload.confirm` for the import IPC
+/// to proceed. Mirrored on the JS side as `ShogunMemoryExport.CONFIRM_TOKEN`
+/// (see `hifi/lib/shogun-api.js`); update both if you ever change it.
+pub const CONFIRM_TOKEN: &str = "REPLACE";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportHeader {
   pub format: String,
@@ -67,8 +72,11 @@ pub fn validate_import_payload(payload: &Value) -> Result<(), String> {
     .get("confirm")
     .and_then(|v| v.as_str())
     .unwrap_or("");
-  if confirm != "REPLACE" {
-    return Err("import requires explicit REPLACE confirmation".into());
+  if confirm != CONFIRM_TOKEN {
+    return Err(format!(
+      "import requires explicit {} confirmation",
+      CONFIRM_TOKEN
+    ));
   }
   Ok(())
 }
@@ -258,7 +266,12 @@ pub fn import_from_reader<R: BufRead>(
     .next()
     .ok_or_else(|| "empty file: no header line".to_string())?
     .map_err(|e| format!("read header line: {}", e))?;
-  let _header = validate_header(&first)?;
+  // Strip an optional UTF-8 BOM that some text editors prepend (Windows
+  // Notepad, a few legacy macOS editors). Without this, a user round-tripping
+  // their export through such an editor sees an opaque "expected value at
+  // line 1 column 1" error.
+  let first_trimmed = first.trim_start_matches('\u{FEFF}');
+  let header = validate_header(first_trimmed)?;
 
   // --- Collect remaining lines (do NOT touch DB until we have them all) ---
   // We parse eagerly so a malformed file is rejected before we delete anything.
@@ -273,6 +286,16 @@ pub fn import_from_reader<R: BufRead>(
       serde_json::from_str(trimmed).map_err(|e| format!("row parse: {}", e))?;
     let row = json_to_row(&v)?;
     parsed_rows.push(row);
+  }
+
+  // --- Sanity-check the header's row_count against what we actually parsed ---
+  // Catches truncated or padded files cheaply, before we touch the DB.
+  let parsed_count = parsed_rows.len() as u64;
+  if parsed_count != header.row_count {
+    return Err(format!(
+      "row count mismatch: header says {} but file has {}",
+      header.row_count, parsed_count
+    ));
   }
 
   // --- Transactional replace ---
@@ -656,6 +679,74 @@ mod tests {
     let good_header = r#"{"format":"shogun-memory-export","version":1,"exported_at":"2026-01-01T00:00:00Z","row_count":0,"schema_columns":[]}"#;
     let n = import_from_reader(&conn, std::io::BufReader::new(good_header.as_bytes()))
       .expect("import should succeed without confirm param");
+    assert_eq!(n, 0);
+  }
+
+  // --- T7c: row_count mismatch is caught (truncated file detection) ---
+  // Header claims 5 rows but only 3 are present → error before transaction.
+  #[test]
+  fn t7c_row_count_mismatch_rejected() {
+    let conn = fresh_conn();
+    // Pre-populate so we can verify the DB is untouched.
+    insert_row(&conn, &make_row("untouched"));
+
+    let header = json!({
+      "format": "shogun-memory-export",
+      "version": 1,
+      "exported_at": "2026-01-01T00:00:00Z",
+      "row_count": 5, // claim 5
+      "schema_columns": SCHEMA_COLUMNS,
+    });
+    let mut payload = serde_json::to_string(&header).unwrap();
+    payload.push('\n');
+    // Provide only 3 rows.
+    for i in 0..3 {
+      let r = make_row(&format!("trunc-{}", i));
+      payload.push_str(&serde_json::to_string(&row_to_json(&r)).unwrap());
+      payload.push('\n');
+    }
+
+    let result = import_from_reader(&conn, std::io::BufReader::new(payload.as_bytes()));
+    let err = result.expect_err("row_count mismatch should error");
+    assert!(
+      err.contains("row count mismatch"),
+      "error should mention row count mismatch; got: {}",
+      err
+    );
+
+    // DB untouched.
+    assert_eq!(count_rows(&conn), 1);
+    let preserved: i64 = conn
+      .query_row(
+        "SELECT COUNT(*) FROM mem_items WHERE id = 'untouched'",
+        [],
+        |r| r.get(0),
+      )
+      .expect("count");
+    assert_eq!(preserved, 1);
+  }
+
+  // --- T7d: UTF-8 BOM on the header line is tolerated ---
+  // Some text editors (Windows Notepad, a few macOS editors) prepend EF BB BF
+  // when saving. Without explicit handling, the header parse fails with an
+  // opaque "expected value at line 1 column 1" error.
+  #[test]
+  fn t7d_utf8_bom_on_header_is_tolerated() {
+    let conn = fresh_conn();
+    let header = json!({
+      "format": "shogun-memory-export",
+      "version": 1,
+      "exported_at": "2026-01-01T00:00:00Z",
+      "row_count": 0,
+      "schema_columns": SCHEMA_COLUMNS,
+    });
+    let mut payload: Vec<u8> = Vec::new();
+    payload.extend_from_slice(b"\xEF\xBB\xBF"); // UTF-8 BOM
+    payload.extend_from_slice(serde_json::to_string(&header).unwrap().as_bytes());
+    payload.push(b'\n');
+
+    let n = import_from_reader(&conn, std::io::BufReader::new(payload.as_slice()))
+      .expect("BOM-prefixed export should import cleanly");
     assert_eq!(n, 0);
   }
 

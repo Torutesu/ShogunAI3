@@ -159,4 +159,9 @@
   }
 
   global.ShogunAPI = { createApi: createApi, READ: READ, WRITE: WRITE };
+
+  // Memory export/import constants — kept in lockstep with the Rust side
+  // (`src-tauri/src/memory_export.rs::CONFIRM_TOKEN`). Update both if you
+  // ever change the literal.
+  global.ShogunMemoryExport = { CONFIRM_TOKEN: "REPLACE" };
 })(window);
