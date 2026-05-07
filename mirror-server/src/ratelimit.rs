@@ -79,12 +79,21 @@ impl Bucket {
     }
 }
 
-// ── Per-device, per-endpoint bucket key ─────────────────────────────────────
+// ── Per-device, per-endpoint, per-window bucket key ──────────────────────────
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+/// Window kind. Some endpoints (PostBlob) have multiple windows enforced
+/// simultaneously (per-minute AND per-day per RFC § 8.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Window {
+    Minute,
+    Day,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BucketKey {
     device_id: String,
     endpoint: Endpoint,
+    window: Window,
 }
 
 // ── RateLimiter ───────────────────────────────────────────────────────────────
@@ -103,22 +112,64 @@ impl RateLimiter {
     }
 
     /// Try to acquire a slot for the given device + endpoint.
+    /// For `PostBlob`, BOTH the per-minute and per-day buckets must allow the
+    /// request; the longer retry-after is returned on failure.
     /// Returns `Ok(())` or `Err(retry_after)`.
     pub fn try_acquire(&self, device_id: &str, endpoint: Endpoint) -> Result<(), Duration> {
-        let (capacity, window_secs) = match endpoint {
-            Endpoint::PostBlob => (self.config.post_blobs_per_minute, 60),
-            Endpoint::GetBlobList => (self.config.get_list_per_minute, 60),
-            Endpoint::GetBlob => (self.config.get_blob_per_minute, 60),
+        // Build the (capacity, window_secs, window_kind) tuples to enforce.
+        let checks: Vec<(u32, u64, Window)> = match endpoint {
+            Endpoint::PostBlob => vec![
+                (self.config.post_blobs_per_minute, 60, Window::Minute),
+                (self.config.post_blobs_per_day, 86400, Window::Day),
+            ],
+            Endpoint::GetBlobList => vec![(self.config.get_list_per_minute, 60, Window::Minute)],
+            Endpoint::GetBlob => vec![(self.config.get_blob_per_minute, 60, Window::Minute)],
         };
-        let key = BucketKey {
-            device_id: device_id.to_string(),
-            endpoint,
-        };
+
         let mut guard = self.buckets.lock();
-        let bucket = guard
-            .entry(key)
-            .or_insert_with(|| Bucket::new(capacity, window_secs));
-        bucket.try_consume()
+
+        // First pass: peek every bucket without consuming. If any would deny,
+        // return the longest retry-after and consume nothing.
+        let mut peeks: Vec<(BucketKey, u32, u64)> = Vec::with_capacity(checks.len());
+        let mut deny: Option<Duration> = None;
+        for (capacity, window_secs, window) in checks.into_iter() {
+            let key = BucketKey {
+                device_id: device_id.to_string(),
+                endpoint,
+                window,
+            };
+            let bucket = guard
+                .entry(key.clone())
+                .or_insert_with(|| Bucket::new(capacity, window_secs));
+            // refill timeline-only check (don't consume yet)
+            let now = Instant::now();
+            let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
+            let projected = (bucket.tokens + elapsed * bucket.refill_rate).min(bucket.capacity);
+            if projected < 1.0 {
+                let wait = (1.0 - projected) / bucket.refill_rate;
+                let wait = Duration::from_secs_f64(wait);
+                deny = Some(match deny {
+                    Some(prev) if prev >= wait => prev,
+                    _ => wait,
+                });
+            }
+            peeks.push((key, capacity, window_secs));
+        }
+
+        if let Some(retry) = deny {
+            return Err(retry);
+        }
+
+        // Second pass: actually consume from every bucket.
+        for (key, capacity, window_secs) in peeks {
+            let bucket = guard
+                .entry(key)
+                .or_insert_with(|| Bucket::new(capacity, window_secs));
+            // Should always succeed since the peek pass said so.
+            let _ = bucket.try_consume();
+        }
+
+        Ok(())
     }
 }
 
@@ -199,5 +250,81 @@ mod tests {
         let err = rl.try_acquire("dev6", Endpoint::PostBlob).unwrap_err();
         assert!(err.as_secs_f64() > 0.0);
         assert!(err.as_secs_f64() <= 60.0);
+    }
+
+    #[test]
+    fn test_per_day_limit_enforced() {
+        // Per-minute is generous, per-day is tight: only the per-day cap applies.
+        let cfg = RateLimitConfig {
+            post_blobs_per_minute: 100,
+            post_blobs_per_day: 5,
+            ..Default::default()
+        };
+        let rl = RateLimiter::new(cfg);
+        for _ in 0..5 {
+            rl.try_acquire("dayDev", Endpoint::PostBlob).unwrap();
+        }
+        let err = rl.try_acquire("dayDev", Endpoint::PostBlob);
+        assert!(err.is_err(), "6th acquire should hit the per-day cap");
+        let retry = err.unwrap_err();
+        // The day-bucket retry should be much longer than the minute window.
+        // With 5/day refill rate, a single token takes 86400/5 = 17280s to refill.
+        assert!(
+            retry.as_secs_f64() > 60.0,
+            "retry-after should be > 60s when day cap is hit; got {}s",
+            retry.as_secs_f64()
+        );
+    }
+
+    #[test]
+    fn test_per_minute_atomic_with_per_day() {
+        // Per-minute hits first; the day bucket should NOT have been consumed
+        // when the minute peek denies the request (atomic, no partial consume).
+        let cfg = RateLimitConfig {
+            post_blobs_per_minute: 2,
+            post_blobs_per_day: 100,
+            ..Default::default()
+        };
+        let rl = RateLimiter::new(cfg);
+        rl.try_acquire("atomDev", Endpoint::PostBlob).unwrap();
+        rl.try_acquire("atomDev", Endpoint::PostBlob).unwrap();
+        // 3rd request hits per-minute cap.
+        let err = rl.try_acquire("atomDev", Endpoint::PostBlob);
+        assert!(err.is_err());
+        // The day-bucket should still have ~98 tokens left (no partial consume).
+        // We can't directly inspect, but we can verify by making the day cap
+        // very small and ensuring the minute denial does not consume the day token.
+    }
+
+    #[test]
+    fn test_per_day_not_consumed_on_minute_denial() {
+        // Set day cap = 3 so we can detect leakage.
+        let cfg = RateLimitConfig {
+            post_blobs_per_minute: 1,
+            post_blobs_per_day: 3,
+            ..Default::default()
+        };
+        let rl = RateLimiter::new(cfg);
+
+        // First request: both buckets consume → day=2, min=0.
+        rl.try_acquire("leakDev", Endpoint::PostBlob).unwrap();
+        // Two more attempts immediately fail on per-minute; day must NOT decrement.
+        for _ in 0..5 {
+            assert!(rl.try_acquire("leakDev", Endpoint::PostBlob).is_err());
+        }
+        // Force the per-minute bucket to refill enough by manually replenishing —
+        // we sidestep clock waiting by directly consuming day=2 still has 2 left.
+        // After 5 denials, peek again: if day was incorrectly drained, this final
+        // path would also fail with a long retry; we just assert the same minute-
+        // bound retry-after pattern persists.
+        let err = rl.try_acquire("leakDev", Endpoint::PostBlob).unwrap_err();
+        // If per-minute is the bottleneck (1/min), retry < 60s. If day was leaked
+        // and is now 0, retry would be > 60s.
+        assert!(
+            err.as_secs_f64() < 60.0,
+            "expected minute-cap retry <60s; got {}s — day bucket was likely \
+             consumed on a denied attempt",
+            err.as_secs_f64()
+        );
     }
 }

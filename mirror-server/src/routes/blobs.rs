@@ -62,7 +62,7 @@ pub async fn upload(
     }
 
     let envelope: BlobEnvelope = serde_json::from_slice(&body)
-        .map_err(|e| ServerError::BadRequest(format!("invalid envelope: {e}")))?;
+        .map_err(|e| ServerError::InvalidEnvelope(format!("invalid envelope: {e}")))?;
 
     // Validate fields.
     validate_envelope(&envelope)?;
@@ -198,30 +198,28 @@ pub async fn tombstone(
 
 fn validate_envelope(env: &BlobEnvelope) -> Result<(), ServerError> {
     if !SUPPORTED_VERSIONS.contains(&env.version) {
-        return Err(ServerError::BadRequest(format!(
-            "unsupported version: {}",
-            env.version
-        )));
+        return Err(ServerError::UnsupportedVersion(env.version));
     }
     if !KNOWN_SCHEMAS.contains(&env.schema.as_str()) {
-        return Err(ServerError::BadRequest(format!(
-            "unknown schema: {}",
-            env.schema
-        )));
+        return Err(ServerError::UnknownSchema(env.schema.clone()));
     }
     if env.blob_id.is_empty() {
-        return Err(ServerError::BadRequest("blob_id is required".to_string()));
+        return Err(ServerError::InvalidEnvelope(
+            "blob_id is required".to_string(),
+        ));
     }
     if env.device_id.is_empty() {
-        return Err(ServerError::BadRequest("device_id is required".to_string()));
+        return Err(ServerError::InvalidEnvelope(
+            "device_id is required".to_string(),
+        ));
     }
     if env.ciphertext.nonce.is_empty() {
-        return Err(ServerError::BadRequest(
+        return Err(ServerError::InvalidEnvelope(
             "ciphertext.nonce is required".to_string(),
         ));
     }
     if env.ciphertext.data.is_empty() {
-        return Err(ServerError::BadRequest(
+        return Err(ServerError::InvalidEnvelope(
             "ciphertext.data is required".to_string(),
         ));
     }

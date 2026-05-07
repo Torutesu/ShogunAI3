@@ -64,14 +64,19 @@ pub struct BlobEnvelope {
 }
 
 /// Lightweight entry returned in list responses (no ciphertext).
+///
+/// Per RFC § 5.3, the `metadata` field is **always** present and is `null` for
+/// tombstoned blobs (so clients can distinguish tombstones from missing entries).
+/// The `tombstoned_at` field is `null` (or omitted on serialization) for live
+/// blobs and is set to the deletion timestamp for tombstones.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobListEntry {
     pub blob_id: String,
     pub device_id: String,
     pub stored_at: DateTime<Utc>,
-    /// `None` when tombstoned.
+    /// Explicitly `null` (not omitted) when tombstoned, per RFC § 5.3.
     pub metadata: Option<BlobMetadata>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Always emitted (null for live, timestamp for tombstoned).
     pub tombstoned_at: Option<DateTime<Utc>>,
 }
 
@@ -163,4 +168,47 @@ pub fn encode_cursor(payload: &CursorPayload) -> String {
 pub fn decode_cursor(cursor: &str) -> Option<CursorPayload> {
     let bytes = URL_SAFE_NO_PAD.decode(cursor).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    #[test]
+    fn list_entry_emits_metadata_null_when_tombstoned() {
+        let entry = BlobListEntry {
+            blob_id: "b1".to_string(),
+            device_id: "d1".to_string(),
+            stored_at: chrono::Utc::now(),
+            metadata: None,
+            tombstoned_at: Some(chrono::Utc::now()),
+        };
+        let json: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        // metadata MUST be present and null per RFC § 5.3.
+        assert!(json.get("metadata").is_some(), "metadata field missing");
+        assert!(json["metadata"].is_null(), "metadata should be null");
+        // tombstoned_at MUST be a timestamp string.
+        assert!(json["tombstoned_at"].is_string());
+    }
+
+    #[test]
+    fn list_entry_emits_tombstoned_at_null_when_live() {
+        let entry = BlobListEntry {
+            blob_id: "b2".to_string(),
+            device_id: "d2".to_string(),
+            stored_at: chrono::Utc::now(),
+            metadata: Some(BlobMetadata {
+                kinds: vec!["screen".to_string()],
+                provenance: "screen".to_string(),
+                captured_at_minute: 1,
+            }),
+            tombstoned_at: None,
+        };
+        let json: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        // metadata is the BlobMetadata object.
+        assert!(json["metadata"].is_object());
+        // tombstoned_at field present and null (we removed skip_serializing_if).
+        assert!(json.get("tombstoned_at").is_some());
+        assert!(json["tombstoned_at"].is_null());
+    }
 }

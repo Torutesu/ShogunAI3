@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
+use tower_http::trace::TraceLayer;
 
 use crate::{auth::require_device_token, AppState};
 
@@ -37,5 +38,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/devices", post(devices::register))
         .route("/v1/health", get(health::health));
 
-    Router::new().merge(authed).merge(public).with_state(state)
+    Router::new()
+        .merge(authed)
+        .merge(public)
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }

@@ -1,4 +1,4 @@
-//! `/metrics` — Prometheus-style counters on a separate port. No auth.
+//! `/metrics` — Prometheus-style counters + gauges on a separate port. No auth.
 
 use axum::{response::IntoResponse, routing::get, Router};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,6 +9,8 @@ pub static BLOBS_UPLOADED: AtomicU64 = AtomicU64::new(0);
 pub static BLOBS_FETCHED: AtomicU64 = AtomicU64::new(0);
 pub static TOMBSTONES_CREATED: AtomicU64 = AtomicU64::new(0);
 pub static RATE_LIMITED: AtomicU64 = AtomicU64::new(0);
+/// Gauge: number of registered devices on this server.
+pub static ACTIVE_DEVICES: AtomicU64 = AtomicU64::new(0);
 
 pub fn inc_uploaded() {
     BLOBS_UPLOADED.fetch_add(1, Ordering::Relaxed);
@@ -21,6 +23,26 @@ pub fn inc_tombstoned() {
 }
 pub fn inc_rate_limited() {
     RATE_LIMITED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Initialize the active-devices gauge from a startup count.
+pub fn set_active_devices(n: u64) {
+    ACTIVE_DEVICES.store(n, Ordering::Relaxed);
+}
+pub fn inc_active_devices() {
+    ACTIVE_DEVICES.fetch_add(1, Ordering::Relaxed);
+}
+pub fn dec_active_devices() {
+    // Saturating subtract; never go negative.
+    let mut cur = ACTIVE_DEVICES.load(Ordering::Relaxed);
+    loop {
+        let next = cur.saturating_sub(1);
+        match ACTIVE_DEVICES.compare_exchange_weak(cur, next, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => break,
+            Err(observed) => cur = observed,
+        }
+    }
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -38,11 +60,15 @@ async fn metrics_handler() -> impl IntoResponse {
          shogun_mirror_tombstones_total {}\n\
          # HELP shogun_mirror_rate_limited_total Total rate-limited requests\n\
          # TYPE shogun_mirror_rate_limited_total counter\n\
-         shogun_mirror_rate_limited_total {}\n",
+         shogun_mirror_rate_limited_total {}\n\
+         # HELP shogun_mirror_active_devices Number of registered devices on this server.\n\
+         # TYPE shogun_mirror_active_devices gauge\n\
+         shogun_mirror_active_devices {}\n",
         BLOBS_UPLOADED.load(Ordering::Relaxed),
         BLOBS_FETCHED.load(Ordering::Relaxed),
         TOMBSTONES_CREATED.load(Ordering::Relaxed),
         RATE_LIMITED.load(Ordering::Relaxed),
+        ACTIVE_DEVICES.load(Ordering::Relaxed),
     );
     (
         [(

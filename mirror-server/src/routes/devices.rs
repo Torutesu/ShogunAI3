@@ -17,6 +17,7 @@ use ulid::Ulid;
 use crate::{
     auth::{generate_device_token, hash_token},
     error::ServerError,
+    routes::metrics,
     storage::DeviceRecord,
     AppState,
 };
@@ -84,6 +85,7 @@ pub async fn register(
     };
 
     state.store.save_device(&record).await?;
+    metrics::inc_active_devices();
 
     Ok((
         StatusCode::CREATED,
@@ -110,7 +112,7 @@ pub async fn rename(
 
     // Only the same account can rename.
     if target.account_id != caller.account_id {
-        return Err(ServerError::Forbidden);
+        return Err(ServerError::Unauthorized);
     }
 
     validate_device_name(&req.device_name)?;
@@ -142,7 +144,7 @@ pub async fn delete(
 
     // Only same account.
     if target.account_id != caller.account_id {
-        return Err(ServerError::Forbidden);
+        return Err(ServerError::Unauthorized);
     }
 
     // Tombstone all blobs.
@@ -150,6 +152,7 @@ pub async fn delete(
 
     // Delete device record.
     state.store.delete_device(&device_id).await?;
+    metrics::dec_active_devices();
 
     Ok(Json(DeleteResponse {
         device_id,

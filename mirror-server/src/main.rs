@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Init tracing.
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    fmt().with_env_filter(filter).init();
+    fmt().json().with_env_filter(filter).init();
 
     tracing::info!(
         "shogun-mirror-server v{} starting",
@@ -45,6 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Record start time for health endpoint uptime.
     health::init_start_time();
+
+    // Initialize active-devices gauge from existing device records.
+    if let Ok(devices) = store.list_devices().await {
+        metrics::set_active_devices(devices.len() as u64);
+    }
 
     // Spawn reaper.
     tokio::spawn(reaper::run_reaper(store.clone(), config.reaper.clone()));
