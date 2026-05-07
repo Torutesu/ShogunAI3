@@ -2088,12 +2088,13 @@ mod tests {
   /// the user's real app-data directory. Pattern mirrors `kioku_backup`'s
   /// `tmp_path` helper so we don't pull in a new dependency.
   ///
-  /// Pre-seeds the table with all phase-1 columns (`embedding`, `provenance`,
-  /// `entity_id`, `confidence`, `redaction`) so that `init_schema`'s dedupe
-  /// DELETE — which references `entity_id` — does not fail on a brand-new DB.
-  /// In production these columns get added by `ensure_context_layer_columns`
-  /// (which runs after `init_schema`); pre-seeding mirrors the post-migration
-  /// state that real user DBs reach on first launch.
+  /// Used to pre-seed the schema with the phase-1 column set as a workaround
+  /// for an `init_schema` ordering bug that referenced `entity_id` before
+  /// `ensure_context_layer_columns` had added it. That bug is fixed in main
+  /// (commit `a5b1fe5`, PR #37): the dedupe DELETE + UNIQUE INDEX moved into
+  /// `ensure_context_layer_columns` itself, so a fresh DB now goes through
+  /// the canonical migration sequence cleanly. The guard is now just file
+  /// naming + cleanup + the test-path override.
   struct TempDbGuard {
     path: std::path::PathBuf,
   }
@@ -2113,32 +2114,6 @@ mod tests {
       let _ = std::fs::remove_file(&p);
       let _ = std::fs::remove_file(format!("{}-wal", p.display()));
       let _ = std::fs::remove_file(format!("{}-shm", p.display()));
-
-      // Pre-seed the schema so init_schema's column-dependent statements
-      // work on a brand-new file. We create the table with the Phase 1
-      // column set; `init_schema`'s `CREATE TABLE IF NOT EXISTS` is a
-      // no-op against this, and `migrate_sync_status_columns` will add
-      // the new sync columns under test.
-      {
-        let conn = rusqlite::Connection::open(&p).expect("open seed conn");
-        conn
-          .execute_batch(
-            "CREATE TABLE IF NOT EXISTS mem_items (
-               id TEXT PRIMARY KEY NOT NULL,
-               title TEXT NOT NULL,
-               snippet TEXT NOT NULL,
-               source TEXT NOT NULL,
-               kinds_json TEXT NOT NULL,
-               created_at INTEGER NOT NULL,
-               embedding BLOB,
-               provenance TEXT,
-               entity_id TEXT,
-               confidence REAL,
-               redaction TEXT
-             );",
-          )
-          .expect("seed mem_items");
-      }
 
       super::set_test_db_path(p.clone());
       TempDbGuard { path: p }
