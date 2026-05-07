@@ -1,4 +1,14 @@
 //! Server configuration — loaded from `mirror-server.toml` + `SHOGUN_MIRROR_*` env vars.
+//!
+//! ## TLS
+//!
+//! This server speaks **plain HTTP only** on its bind address. TLS termination
+//! is the operator's responsibility via a reverse proxy (Caddy / nginx /
+//! Cloudflare). See README "Production deployment" for the recommended setup.
+//!
+//! Operators MUST bind only to a loopback or private interface; never expose
+//! this server's port to the public internet without TLS in front. The startup
+//! sequence emits a WARN log if it detects a non-loopback `listen_addr`.
 
 use std::path::PathBuf;
 
@@ -53,6 +63,15 @@ pub struct AuthConfig {
     pub registration_code: String,
     /// Stable per-instance account identifier.
     pub account_id: String,
+    /// Per-IP rate limit on the unauthenticated `POST /v1/devices` endpoint.
+    /// Default: 10 attempts per IP per hour. (Note: this is informational only;
+    /// the actual rate limiter uses `RateLimitConfig::register_per_ip_per_hour`.)
+    #[serde(default = "default_register_per_ip_per_hour")]
+    pub register_per_ip_per_hour: u32,
+}
+
+fn default_register_per_ip_per_hour() -> u32 {
+    10
 }
 
 impl Default for AuthConfig {
@@ -60,14 +79,9 @@ impl Default for AuthConfig {
         AuthConfig {
             registration_code: "dev-secret".to_string(),
             account_id: "default-account".to_string(),
+            register_per_ip_per_hour: 10,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TlsConfig {
-    pub cert_path: PathBuf,
-    pub key_path: PathBuf,
 }
 
 // ── Root Config ───────────────────────────────────────────────────────────────
@@ -84,12 +98,12 @@ pub struct Config {
     pub ratelimit: RateLimitConfig,
     #[serde(default)]
     pub reaper: ReaperConfig,
-    pub tls: Option<TlsConfig>,
 }
 
 impl Config {
     /// Load from `mirror-server.toml` (optional) + `SHOGUN_MIRROR_*` env vars.
-    /// Falls back to defaults for any missing fields.
+    /// Returns the parsed config or a `ConfigError`. Caller is expected to
+    /// log the error and fall back to defaults.
     pub fn load() -> Result<Self, config::ConfigError> {
         config::Config::builder()
             .add_source(config::File::with_name("mirror-server").required(false))
@@ -100,6 +114,5 @@ impl Config {
             )
             .build()?
             .try_deserialize()
-            .or_else(|_| Ok(Config::default()))
     }
 }

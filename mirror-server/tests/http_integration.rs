@@ -26,16 +26,20 @@ struct TestFixture {
 async fn make_fixture() -> TestFixture {
     let dir = TempDir::new().unwrap();
     let store: Arc<dyn BlobStore> = Arc::new(LocalDiskStore::new(dir.path()).await.unwrap());
-    let rate_limiter = Arc::new(RateLimiter::new(RateLimitConfig {
+    let rl_cfg = RateLimitConfig {
         post_blobs_per_minute: 10000,
         post_blobs_per_day: 1000000,
         get_list_per_minute: 10000,
         get_blob_per_minute: 100000,
-    }));
+        register_per_ip_per_hour: 10000,
+    };
+    let rate_limiter = Arc::new(RateLimiter::new(rl_cfg.clone()));
+    let register_limiter = Arc::new(RateLimiter::new(rl_cfg));
     let config = Config {
         auth: AuthConfig {
             registration_code: "test-secret".to_string(),
             account_id: "account1".to_string(),
+            register_per_ip_per_hour: 10000,
         },
         storage: StorageConfig {
             backend: StorageBackend::LocalDisk,
@@ -46,10 +50,15 @@ async fn make_fixture() -> TestFixture {
     let app_state = AppState {
         store: store.clone(),
         rate_limiter,
+        register_limiter,
         config,
     };
     let router = build_router(app_state);
-    let server = TestServer::new(router).unwrap();
+    // We need ConnectInfo<SocketAddr> for the per-IP register rate limit.
+    // `into_make_service_with_connect_info` triggers axum_test to use a real
+    // TCP transport which populates ConnectInfo per RFC.
+    let service = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
+    let server = TestServer::new(service).unwrap();
     TestFixture {
         server,
         store,
@@ -494,6 +503,109 @@ async fn i13_invalid_registration_code() {
         }))
         .await;
     assert_eq!(resp.status_code().as_u16(), 400);
+}
+
+// ── Fix #7: per-IP register rate limit ───────────────────────────────────────
+
+/// Build a fixture with a TIGHT per-IP register cap so we can verify the
+/// rate limiter triggers without waiting for an hour.
+async fn make_fixture_with_tight_register_limit(cap: u32) -> TestFixture {
+    let dir = TempDir::new().unwrap();
+    let store: Arc<dyn BlobStore> = Arc::new(LocalDiskStore::new(dir.path()).await.unwrap());
+    let rl_cfg = RateLimitConfig {
+        post_blobs_per_minute: 10000,
+        post_blobs_per_day: 1000000,
+        get_list_per_minute: 10000,
+        get_blob_per_minute: 100000,
+        register_per_ip_per_hour: cap,
+    };
+    let rate_limiter = Arc::new(RateLimiter::new(rl_cfg.clone()));
+    let register_limiter = Arc::new(RateLimiter::new(rl_cfg));
+    let config = Config {
+        auth: AuthConfig {
+            registration_code: "test-secret".to_string(),
+            account_id: "account1".to_string(),
+            register_per_ip_per_hour: cap,
+        },
+        storage: StorageConfig {
+            backend: StorageBackend::LocalDisk,
+            data_dir: dir.path().to_path_buf(),
+        },
+        ..Config::default()
+    };
+    let app_state = AppState {
+        store: store.clone(),
+        rate_limiter,
+        register_limiter,
+        config,
+    };
+    let router = build_router(app_state);
+    let service = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
+    let server = TestServer::new(service).unwrap();
+    TestFixture {
+        server,
+        store,
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn i15_register_rate_limited_per_ip() {
+    let fix = make_fixture_with_tight_register_limit(3).await;
+
+    // 3 successful registrations exhausts the per-IP bucket.
+    for i in 0..3 {
+        let resp = fix
+            .server
+            .post("/v1/devices")
+            .json(&json!({
+                "registration_code": "test-secret",
+                "device_name": format!("RL Mac {i}")
+            }))
+            .await;
+        resp.assert_status_success();
+    }
+
+    // 4th attempt from the same IP must be rate-limited (429).
+    let resp = fix
+        .server
+        .post("/v1/devices")
+        .json(&json!({
+            "registration_code": "test-secret",
+            "device_name": "Sneaky Mac"
+        }))
+        .await;
+    assert_eq!(resp.status_code().as_u16(), 429);
+}
+
+#[tokio::test]
+async fn i15_register_rate_limit_applies_before_code_check() {
+    // Even with a wrong registration_code, the per-IP limit should burn down.
+    let fix = make_fixture_with_tight_register_limit(2).await;
+
+    for _ in 0..2 {
+        let resp = fix
+            .server
+            .post("/v1/devices")
+            .json(&json!({
+                "registration_code": "wrong-code",
+                "device_name": "Brute"
+            }))
+            .await;
+        // 400 invalid registration code, but bucket consumed.
+        assert_eq!(resp.status_code().as_u16(), 400);
+    }
+
+    // 3rd attempt: even with the right code, should be 429.
+    let resp = fix
+        .server
+        .post("/v1/devices")
+        .json(&json!({
+            "registration_code": "test-secret",
+            "device_name": "Late"
+        }))
+        .await;
+    assert_eq!(resp.status_code().as_u16(), 429);
 }
 
 // ── Idempotent upload ─────────────────────────────────────────────────────────

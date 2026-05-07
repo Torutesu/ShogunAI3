@@ -20,6 +20,9 @@ use crate::{config::Config, ratelimit::RateLimiter, storage::BlobStore};
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn BlobStore>,
+    /// Per-device rate limiter for authenticated endpoints.
     pub rate_limiter: Arc<RateLimiter>,
+    /// Per-IP rate limiter for the unauthenticated `POST /v1/devices` route.
+    pub register_limiter: Arc<RateLimiter>,
     pub config: Config,
 }

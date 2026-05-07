@@ -24,7 +24,7 @@ cargo install --path mirror-server
 
 ```bash
 cp mirror-server/mirror-server.example.toml mirror-server/mirror-server.toml
-# Edit: registration_code, data_dir, optional TLS paths
+# Edit: registration_code, data_dir
 ```
 
 Minimal config to get started:
@@ -71,9 +71,15 @@ In SHOGUN AI on macOS:
 3. Enter the **registration code** from your config
 4. Click **Enable Mirror** — the client registers and starts syncing
 
-## Production setup (reverse proxy)
+## Production deployment
 
-For production, put nginx/Caddy/Cloudflare in front and let them handle TLS:
+**The server speaks plain HTTP only.** TLS termination is handled by your
+reverse proxy (Caddy / nginx / Cloudflare). The server has no built-in TLS
+support — bind only to a localhost or private interface, and **never expose
+this server's port to the public internet without TLS in front**. The startup
+sequence emits a `WARN` log if `listen_addr` is non-loopback as a guardrail.
+
+### nginx example
 
 ```nginx
 server {
@@ -87,21 +93,21 @@ server {
         proxy_pass http://127.0.0.1:8443;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 ```
 
-Then set `listen_addr = "127.0.0.1:8443"` in your config (private listen only).
+### Caddy example
 
-## Direct TLS (LAN / homelab)
-
-Set the `[tls]` section in `mirror-server.toml` to enable rustls direct mode:
-
-```toml
-[tls]
-cert_path = "/path/to/cert.pem"
-key_path  = "/path/to/key.pem"
+```caddy
+mirror.example.com {
+    reverse_proxy 127.0.0.1:8443
+}
 ```
+
+In your `mirror-server.toml` keep `listen_addr = "127.0.0.1:8443"` (loopback
+only).
 
 ## Monitoring
 
@@ -112,11 +118,12 @@ it private/internal):
 curl http://127.0.0.1:9090/metrics
 ```
 
-Counters exposed:
-- `shogun_mirror_blobs_uploaded_total`
-- `shogun_mirror_blobs_fetched_total`
-- `shogun_mirror_tombstones_total`
-- `shogun_mirror_rate_limited_total`
+Counters / gauges exposed:
+- `shogun_mirror_blobs_uploaded_total` (counter)
+- `shogun_mirror_blobs_fetched_total` (counter)
+- `shogun_mirror_tombstones_total` (counter)
+- `shogun_mirror_rate_limited_total` (counter)
+- `shogun_mirror_active_devices` (gauge)
 
 ## Architecture
 

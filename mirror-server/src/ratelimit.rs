@@ -14,6 +14,15 @@ pub struct RateLimitConfig {
     pub post_blobs_per_day: u32,
     pub get_list_per_minute: u32,
     pub get_blob_per_minute: u32,
+    /// Per-IP cap on `POST /v1/devices` (registration) per hour.
+    /// Defaulted via serde so that older config files / partial env-var sets
+    /// continue to load cleanly.
+    #[serde(default = "default_register_per_ip_per_hour")]
+    pub register_per_ip_per_hour: u32,
+}
+
+fn default_register_per_ip_per_hour() -> u32 {
+    10
 }
 
 impl Default for RateLimitConfig {
@@ -23,6 +32,7 @@ impl Default for RateLimitConfig {
             post_blobs_per_day: 10000,
             get_list_per_minute: 60,
             get_blob_per_minute: 600,
+            register_per_ip_per_hour: 10,
         }
     }
 }
@@ -34,6 +44,8 @@ pub enum Endpoint {
     PostBlob,
     GetBlobList,
     GetBlob,
+    /// `POST /v1/devices` keyed by client IP (not device_id).
+    RegisterByIp,
 }
 
 // ── Token bucket ────────────────────────────────────────────────────────────
@@ -91,7 +103,9 @@ enum Window {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BucketKey {
-    device_id: String,
+    /// The principal key — either a `device_id` (authenticated endpoints) or
+    /// a client IP string (the unauthenticated register endpoint).
+    principal: String,
     endpoint: Endpoint,
     window: Window,
 }
@@ -111,11 +125,14 @@ impl RateLimiter {
         }
     }
 
-    /// Try to acquire a slot for the given device + endpoint.
+    /// Try to acquire a slot for the given principal + endpoint.
+    /// `principal` is either a `device_id` (authenticated endpoints) or a
+    /// client IP string for `Endpoint::RegisterByIp`.
+    ///
     /// For `PostBlob`, BOTH the per-minute and per-day buckets must allow the
     /// request; the longer retry-after is returned on failure.
     /// Returns `Ok(())` or `Err(retry_after)`.
-    pub fn try_acquire(&self, device_id: &str, endpoint: Endpoint) -> Result<(), Duration> {
+    pub fn try_acquire(&self, principal: &str, endpoint: Endpoint) -> Result<(), Duration> {
         // Build the (capacity, window_secs, window_kind) tuples to enforce.
         let checks: Vec<(u32, u64, Window)> = match endpoint {
             Endpoint::PostBlob => vec![
@@ -124,6 +141,10 @@ impl RateLimiter {
             ],
             Endpoint::GetBlobList => vec![(self.config.get_list_per_minute, 60, Window::Minute)],
             Endpoint::GetBlob => vec![(self.config.get_blob_per_minute, 60, Window::Minute)],
+            Endpoint::RegisterByIp => {
+                // 1-hour window, configurable cap.
+                vec![(self.config.register_per_ip_per_hour, 3600, Window::Day)]
+            }
         };
 
         let mut guard = self.buckets.lock();
@@ -134,7 +155,7 @@ impl RateLimiter {
         let mut deny: Option<Duration> = None;
         for (capacity, window_secs, window) in checks.into_iter() {
             let key = BucketKey {
-                device_id: device_id.to_string(),
+                principal: principal.to_string(),
                 endpoint,
                 window,
             };
@@ -294,6 +315,25 @@ mod tests {
         // The day-bucket should still have ~98 tokens left (no partial consume).
         // We can't directly inspect, but we can verify by making the day cap
         // very small and ensuring the minute denial does not consume the day token.
+    }
+
+    #[test]
+    fn test_register_by_ip_limit() {
+        let cfg = RateLimitConfig {
+            register_per_ip_per_hour: 3,
+            ..Default::default()
+        };
+        let rl = RateLimiter::new(cfg);
+        for _ in 0..3 {
+            rl.try_acquire("1.2.3.4", Endpoint::RegisterByIp).unwrap();
+        }
+        // 4th attempt from same IP must be denied.
+        let err = rl
+            .try_acquire("1.2.3.4", Endpoint::RegisterByIp)
+            .unwrap_err();
+        assert!(err.as_secs_f64() > 0.0);
+        // Different IP is fresh.
+        assert!(rl.try_acquire("5.6.7.8", Endpoint::RegisterByIp).is_ok());
     }
 
     #[test]

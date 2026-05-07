@@ -4,8 +4,10 @@
 //! - `PUT /v1/devices/<id>`   — bearer auth
 //! - `DELETE /v1/devices/<id>`— bearer auth
 
+use std::net::SocketAddr;
+
 use axum::{
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -17,6 +19,7 @@ use ulid::Ulid;
 use crate::{
     auth::{generate_device_token, hash_token},
     error::ServerError,
+    ratelimit::Endpoint,
     routes::metrics,
     storage::DeviceRecord,
     AppState,
@@ -57,10 +60,27 @@ pub struct DeleteResponse {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 /// `POST /v1/devices` — register a new device.
+///
+/// Rate limit: per client IP (default 10 per hour) — applied BEFORE checking
+/// the registration code so an attacker can't burn through it via brute force.
 pub async fn register(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, ServerError> {
+    // Per-IP rate limit (Fix #7) — applied first so a brute-force attacker
+    // is throttled before the registration_code check.
+    let ip_key = addr.ip().to_string();
+    if let Err(retry) = state
+        .register_limiter
+        .try_acquire(&ip_key, Endpoint::RegisterByIp)
+    {
+        metrics::inc_rate_limited();
+        return Err(ServerError::RateLimited {
+            retry_after_secs: retry.as_secs().max(1),
+        });
+    }
+
     // Validate registration code.
     if req.registration_code != state.config.auth.registration_code {
         return Err(ServerError::BadRequest(
@@ -72,9 +92,9 @@ pub async fn register(
     validate_device_name(&req.device_name)?;
 
     let device_id = Ulid::new().to_string();
-    let token = generate_device_token();
+    let (token, random) = generate_device_token(&device_id);
     let token_hash =
-        hash_token(&token).map_err(|e| ServerError::Internal(format!("hash error: {e}")))?;
+        hash_token(&random).map_err(|e| ServerError::Internal(format!("hash error: {e}")))?;
 
     let record = DeviceRecord {
         device_id: device_id.clone(),

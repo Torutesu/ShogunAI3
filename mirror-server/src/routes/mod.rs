@@ -10,7 +10,8 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 use crate::{auth::require_device_token, AppState};
 
@@ -38,9 +39,21 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/devices", post(devices::register))
         .route("/v1/health", get(health::health));
 
+    // TraceLayer with explicit `include_headers(false)` so the
+    // `Authorization: Bearer <token>` header NEVER appears in tracing output,
+    // even at debug level. Per master spec § 7.2.
+    let trace = TraceLayer::new_for_http()
+        .make_span_with(
+            DefaultMakeSpan::new()
+                .level(Level::INFO)
+                .include_headers(false),
+        )
+        .on_request(DefaultOnRequest::new().level(Level::INFO))
+        .on_response(DefaultOnResponse::new().level(Level::INFO));
+
     Router::new()
         .merge(authed)
         .merge(public)
-        .layer(TraceLayer::new_for_http())
+        .layer(trace)
         .with_state(state)
 }

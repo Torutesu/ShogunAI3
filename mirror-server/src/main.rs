@@ -1,5 +1,6 @@
 //! Entry point: load config, start tokio runtime, mount axum router.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tracing_subscriber::{fmt, EnvFilter};
@@ -15,8 +16,15 @@ use shogun_mirror_server::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load configuration (file + env vars; falls back to defaults).
-    let config = Config::load().unwrap_or_default();
+    // Load configuration (file + env vars). Log loudly to stderr if it fails.
+    // We can't use `tracing` here yet — the subscriber isn't initialized.
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("WARN: failed to parse config file/env ({e}); falling back to defaults");
+            Config::default()
+        }
+    };
 
     // Init tracing.
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -28,6 +36,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env!("CARGO_PKG_VERSION")
     );
 
+    // Warn loudly if binding to a non-loopback address. The server speaks
+    // plain HTTP only; operators must run a reverse proxy in front.
+    warn_if_non_loopback(&config.server.listen_addr);
+
     // Build storage.
     let store: Arc<dyn BlobStore> = match config.storage.backend {
         shogun_mirror_server::config::StorageBackend::LocalDisk => {
@@ -37,9 +49,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build shared state.
     let rate_limiter = Arc::new(RateLimiter::new(config.ratelimit.clone()));
+    let register_limiter = Arc::new(RateLimiter::new(config.ratelimit.clone()));
     let app_state = AppState {
         store: store.clone(),
         rate_limiter,
+        register_limiter,
         config: config.clone(),
     };
 
@@ -65,7 +79,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
     tracing::info!("listening on http://{}", listen_addr);
 
-    axum::serve(listener, app).await?;
+    // `into_make_service_with_connect_info` exposes the client `SocketAddr`
+    // to handlers via `ConnectInfo` (used by the per-IP register rate limit).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
+}
+
+/// Emit a WARN log if `listen_addr`'s host is non-loopback. The check is
+/// best-effort: we parse the address and inspect the IP. Hostnames that
+/// resolve later are skipped with a generic warning.
+fn warn_if_non_loopback(listen_addr: &str) {
+    match listen_addr.parse::<SocketAddr>() {
+        Ok(addr) => {
+            if !addr.ip().is_loopback() {
+                tracing::warn!(
+                    addr = %listen_addr,
+                    "binding to non-loopback address without local TLS; \
+                     ensure a reverse proxy terminates HTTPS in front of \
+                     this server, and never expose this port directly to \
+                     the public internet"
+                );
+            }
+        }
+        Err(_) => {
+            tracing::warn!(
+                addr = %listen_addr,
+                "listen_addr is not a parseable SocketAddr; if it resolves \
+                 to a non-loopback IP, ensure a reverse proxy terminates \
+                 HTTPS in front of this server"
+            );
+        }
+    }
 }

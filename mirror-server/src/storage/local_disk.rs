@@ -1,21 +1,51 @@
 //! `LocalDiskStore` — file-per-blob + JSONL index per device.
 //!
-//! Layout:
+//! ## Layout
 //! ```text
 //! data_dir/
 //! ├── devices/<device_id>.json          DeviceRecord
-//! ├── blobs/<device_id>/<blob_id>.json  BlobEnvelope (no ciphertext when tombstoned)
-//! └── index/<device_id>.jsonl           IndexEntry lines (seq, blob_id, stored_at, tombstoned_at)
+//! ├── blobs/<device_id>/<blob_id>.json  BlobEnvelope (deleted when tombstoned)
+//! ├── blobs/<device_id>/<blob_id>.tombstone   marker file (presence ⇒ Gone)
+//! └── index/<device_id>.jsonl           IndexEntry lines per blob
 //! ```
+//!
+//! ## Concurrency model
+//!
+//! All mutation paths (put / tombstone / purge / tombstone_device) acquire a
+//! per-device async mutex via [`device_lock`]. Reads (get / list) do not lock —
+//! they tolerate the small inconsistency window that arises mid-write because
+//! every mutation writes durably before declaring success and we use atomic
+//! tmp+rename for index rewrites.
+//!
+//! ## Crash-recovery model
+//!
+//! `tombstone()` performs three steps in this order:
+//!   1. Write the `.tombstone` marker (`atomic_write` ⇒ durable signal).
+//!   2. Rewrite the index with `tombstoned_at` set.
+//!   3. Remove the blob file (cleanup).
+//!
+//! A crash between any two steps leaves a recoverable state:
+//!   - Crash after (1): marker exists, index unchanged. Next startup's
+//!     [`recover_orphans`] removes any orphan blob file (because the marker
+//!     authoritatively says "tombstoned").
+//!   - Crash after (2): blob file may still exist; cleanup runs at recovery.
+//!
+//! `purge_tombstones_before` rewrites the index FIRST, then removes marker
+//! files. A crash mid-purge leaves orphan markers that are harmless (next
+//! tombstone of the same blob_id is a no-op idempotent call) and will be
+//! cleaned up next time the same blob_id flows through.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex as AsyncMutex;
 
 use super::{
     decode_cursor, encode_cursor, BlobEnvelope, BlobListEntry, BlobStore, CursorPayload,
@@ -40,6 +70,11 @@ pub struct LocalDiskStore {
     data_dir: PathBuf,
     /// Global monotonic sequence counter (per store instance).
     next_seq: AtomicU64,
+    /// Per-device async mutexes. Acquired by every mutation that touches a
+    /// device's index or blob directory. The outer mutex protects the map of
+    /// per-device locks; once we get an `Arc<Mutex<()>>` we drop the outer
+    /// guard and lock the per-device async mutex.
+    device_locks: std::sync::Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 
 impl LocalDiskStore {
@@ -51,10 +86,25 @@ impl LocalDiskStore {
         // Recover the next_seq from existing indices so we never reuse a seq after restart.
         let max_seq = Self::scan_max_seq(data_dir).await?;
 
-        Ok(Self {
+        let store = Self {
             data_dir: data_dir.to_owned(),
             next_seq: AtomicU64::new(max_seq + 1),
-        })
+            device_locks: std::sync::Mutex::new(HashMap::new()),
+        };
+
+        // Crash-recovery: remove orphan blob files where a `.tombstone` marker
+        // exists for the same blob_id. See module docs.
+        store.recover_orphans().await?;
+
+        Ok(store)
+    }
+
+    /// Get (or create) the per-device async lock.
+    fn device_lock(&self, device_id: &str) -> Arc<AsyncMutex<()>> {
+        let mut map = self.device_locks.lock().expect("device_locks poisoned");
+        map.entry(device_id.to_string())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone()
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -99,8 +149,7 @@ impl LocalDiskStore {
         Ok(())
     }
 
-    /// Append a line to the JSONL index.
-    /// Uses a std::sync::Mutex to serialize appends without holding the guard across awaits.
+    /// Append a line to the JSONL index. Caller must hold the per-device lock.
     async fn append_index(&self, device_id: &str, entry: &IndexEntry) -> Result<(), StoreError> {
         let mut line = serde_json::to_string(entry)?;
         line.push('\n');
@@ -108,14 +157,11 @@ impl LocalDiskStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        // Open the file — this is async but we don't hold the lock here.
         let mut f = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
             .await?;
-        // Serialize the actual write with the lock, but the write itself is synchronous bytes.
-        // We call write_all outside the lock (the fd is ours alone after open).
         f.write_all(line.as_bytes()).await?;
         Ok(())
     }
@@ -140,7 +186,8 @@ impl LocalDiskStore {
         }
     }
 
-    /// Rewrite the JSONL index for a device atomically.
+    /// Rewrite the JSONL index for a device atomically. Caller must hold the
+    /// per-device lock.
     async fn rewrite_index(
         &self,
         device_id: &str,
@@ -209,6 +256,51 @@ impl LocalDiskStore {
         }
         Ok(all)
     }
+
+    /// Crash-recovery: walk every `<device>/<blob>.tombstone` marker; if there
+    /// is also a `<device>/<blob>.json` blob file, delete the blob file. This
+    /// handles the case where the server crashed AFTER writing the marker
+    /// (step 1 of `tombstone()`) but BEFORE removing the blob (step 3).
+    async fn recover_orphans(&self) -> Result<(), StoreError> {
+        let blobs_dir = self.data_dir.join("blobs");
+        let mut device_rd = match fs::read_dir(&blobs_dir).await {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+
+        while let Some(device_entry) = device_rd.next_entry().await? {
+            if !device_entry.file_type().await?.is_dir() {
+                continue;
+            }
+            let device_dir = device_entry.path();
+            let mut file_rd = match fs::read_dir(&device_dir).await {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+            while let Some(file_entry) = file_rd.next_entry().await? {
+                let p = file_entry.path();
+                if p.extension().and_then(|e| e.to_str()) != Some("tombstone") {
+                    continue;
+                }
+                // Found a marker. If sibling .json exists, remove it.
+                let blob_json = p.with_extension("json");
+                if blob_json.exists() {
+                    if let Err(e) = fs::remove_file(&blob_json).await {
+                        tracing::warn!(
+                            "recover_orphans: failed to remove orphan {:?}: {}",
+                            blob_json,
+                            e
+                        );
+                    } else {
+                        tracing::info!("recover_orphans: removed orphan blob {:?}", blob_json);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // ── BlobStore impl ────────────────────────────────────────────────────────────
@@ -216,6 +308,9 @@ impl LocalDiskStore {
 #[async_trait]
 impl BlobStore for LocalDiskStore {
     async fn put(&self, env: &BlobEnvelope) -> Result<(), StoreError> {
+        let lock = self.device_lock(&env.device_id);
+        let _guard = lock.lock().await;
+
         let blob_dir = self.data_dir.join("blobs").join(&env.device_id);
         fs::create_dir_all(&blob_dir).await?;
 
@@ -394,7 +489,8 @@ impl BlobStore for LocalDiskStore {
     }
 
     async fn tombstone(&self, blob_id: &str) -> Result<(), StoreError> {
-        // Find the blob.
+        // Find the device. We don't hold the per-device lock during this
+        // search because we don't know which device the blob belongs to yet.
         let blobs_dir = self.data_dir.join("blobs");
         let mut rd = match fs::read_dir(&blobs_dir).await {
             Ok(rd) => rd,
@@ -422,18 +518,23 @@ impl BlobStore for LocalDiskStore {
         }
 
         let device_id = found_device.ok_or(StoreError::NotFound)?;
+        let lock = self.device_lock(&device_id);
+        let _guard = lock.lock().await;
+
+        // Re-check tombstone after acquiring the lock (could have been set by
+        // a concurrent tombstone of the same blob).
+        let ts_path = self.tombstone_marker_path(&device_id, blob_id);
+        if ts_path.exists() {
+            return Ok(());
+        }
+
         let tombstoned_at = Utc::now();
 
-        // Remove the blob file.
-        let path = self.blob_path(&device_id, blob_id);
-        fs::remove_file(&path).await?;
-
-        // Write tombstone marker.
-        let ts_path = self.tombstone_marker_path(&device_id, blob_id);
+        // Step 1: write the marker first (durable signal of intent).
         let ts_data = serde_json::to_vec(&serde_json::json!({ "tombstoned_at": tombstoned_at }))?;
         Self::atomic_write(&ts_path, &ts_data).await?;
 
-        // Update the JSONL index entry.
+        // Step 2: rewrite the index entry (visible to list).
         let mut entries = self.read_index(&device_id).await?;
         let mut updated = false;
         for entry in &mut entries {
@@ -450,6 +551,15 @@ impl BlobStore for LocalDiskStore {
         }
         self.rewrite_index(&device_id, &entries).await?;
 
+        // Step 3: cleanup the blob file. Best-effort: even if this fails, the
+        // recovery path handles orphans on next startup.
+        let path = self.blob_path(&device_id, blob_id);
+        if let Err(e) = fs::remove_file(&path).await {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("tombstone cleanup failed for {blob_id}: {e}");
+            }
+        }
+
         Ok(())
     }
 
@@ -461,34 +571,48 @@ impl BlobStore for LocalDiskStore {
             Err(e) => return Err(e.into()),
         };
 
-        let mut total_purged = 0u64;
+        // Collect device IDs first; rewrite each device's index under its
+        // per-device lock (otherwise we'd hold a borrow across awaits).
+        let mut device_ids: Vec<String> = Vec::new();
         while let Some(entry) = rd.next_entry().await? {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            let device_id = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
+            if let Some(device_id) = path.file_stem().and_then(|s| s.to_str()) {
+                device_ids.push(device_id.to_string());
+            }
+        }
+
+        let mut total_purged = 0u64;
+        for device_id in device_ids {
+            let lock = self.device_lock(&device_id);
+            let _guard = lock.lock().await;
 
             let mut entries = self.read_index(&device_id).await?;
-            let mut purged = 0u64;
+            // Collect the (device_id, blob_id) of every record being purged so
+            // we can also delete the corresponding marker file.
+            let mut to_purge: Vec<String> = Vec::new();
             entries.retain(|e| {
                 if let Some(ts) = e.tombstoned_at {
                     if ts < before {
-                        purged += 1;
+                        to_purge.push(e.blob_id.clone());
                         return false;
                     }
                 }
                 true
             });
 
-            if purged > 0 {
+            if !to_purge.is_empty() {
+                // Rewrite the index FIRST (so a crash leaves orphan markers,
+                // not orphan index rows).
                 self.rewrite_index(&device_id, &entries).await?;
-                // Also remove tombstone marker files.
-                total_purged += purged;
+                // Then remove each marker file (best-effort).
+                for blob_id in &to_purge {
+                    let marker = self.tombstone_marker_path(&device_id, blob_id);
+                    let _ = fs::remove_file(&marker).await;
+                }
+                total_purged += to_purge.len() as u64;
             }
         }
 
@@ -496,21 +620,40 @@ impl BlobStore for LocalDiskStore {
     }
 
     async fn tombstone_device(&self, device_id: &str) -> Result<u64, StoreError> {
-        let entries = self.read_index(device_id).await?;
-        let mut count = 0u64;
+        let lock = self.device_lock(device_id);
+        let _guard = lock.lock().await;
 
-        for entry in &entries {
+        // Read the index once; mutate in memory; rewrite once.
+        let mut entries = self.read_index(device_id).await?;
+        let now = Utc::now();
+        let mut affected: Vec<String> = Vec::new();
+        for entry in entries.iter_mut() {
             if entry.tombstoned_at.is_none() {
-                // Use our own tombstone method.
-                match self.tombstone(&entry.blob_id).await {
-                    Ok(()) => count += 1,
-                    Err(StoreError::NotFound) => {} // already gone
-                    Err(e) => return Err(e),
-                }
+                entry.tombstoned_at = Some(now);
+                affected.push(entry.blob_id.clone());
             }
         }
+        if affected.is_empty() {
+            return Ok(0);
+        }
 
-        Ok(count)
+        // Step 1: write all markers (durable signal) before rewriting index.
+        for blob_id in &affected {
+            let marker = self.tombstone_marker_path(device_id, blob_id);
+            let ts_data = serde_json::to_vec(&serde_json::json!({ "tombstoned_at": now }))?;
+            Self::atomic_write(&marker, &ts_data).await?;
+        }
+
+        // Step 2: single index rewrite for ALL affected blobs.
+        self.rewrite_index(device_id, &entries).await?;
+
+        // Step 3: cleanup blob files (best-effort).
+        for blob_id in &affected {
+            let path = self.blob_path(device_id, blob_id);
+            let _ = fs::remove_file(&path).await;
+        }
+
+        Ok(affected.len() as u64)
     }
 
     async fn save_device(&self, record: &DeviceRecord) -> Result<(), StoreError> {
@@ -634,7 +777,6 @@ mod tests {
         let env = make_envelope("01HVXXX002", "01HVDDD001");
         store.put(&env).await.unwrap();
         store.put(&env).await.unwrap(); // should not error
-                                        // List should have only 1 entry.
         let result = store
             .list(&ListQuery {
                 device_id: Some("01HVDDD001".to_string()),
@@ -662,7 +804,6 @@ mod tests {
     #[tokio::test]
     async fn test_list_ordering() {
         let (store, _dir) = make_store().await;
-        // Insert 10 blobs; verify they come back in seq order.
         for i in 0..10u32 {
             let env = make_envelope(&format!("blob{i:03}"), "dev001");
             store.put(&env).await.unwrap();
@@ -678,7 +819,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.blobs.len(), 10);
-        // Verify ordering is consistent (by stored_at, then seq).
         let seqs_ascending = result
             .blobs
             .windows(2)
@@ -693,7 +833,6 @@ mod tests {
             let env = make_envelope(&format!("cpblob{i:03}"), "devpag");
             store.put(&env).await.unwrap();
         }
-        // Page 1: limit=4
         let r1 = store
             .list(&ListQuery {
                 device_id: Some("devpag".to_string()),
@@ -707,7 +846,6 @@ mod tests {
         assert_eq!(r1.blobs.len(), 4);
         assert!(r1.next_cursor.is_some());
 
-        // Page 2
         let r2 = store
             .list(&ListQuery {
                 device_id: Some("devpag".to_string()),
@@ -721,7 +859,6 @@ mod tests {
         assert_eq!(r2.blobs.len(), 4);
         assert!(r2.next_cursor.is_some());
 
-        // Page 3 — remainder
         let r3 = store
             .list(&ListQuery {
                 device_id: Some("devpag".to_string()),
@@ -743,11 +880,9 @@ mod tests {
         store.put(&env).await.unwrap();
         store.tombstone("tbblob001").await.unwrap();
 
-        // GET should return Gone.
         let err = store.get("tbblob001").await.unwrap_err();
         assert!(matches!(err, StoreError::Gone));
 
-        // List should include the tombstone entry.
         let result = store
             .list(&ListQuery {
                 device_id: Some("dev002".to_string()),
@@ -772,12 +907,10 @@ mod tests {
             store.tombstone(&format!("purgeblob{i:03}")).await.unwrap();
         }
 
-        // Purge everything tombstoned before "now + 1 second".
         let cutoff = Utc::now() + chrono::Duration::seconds(1);
         let purged = store.purge_tombstones_before(cutoff).await.unwrap();
         assert_eq!(purged, 5);
 
-        // Index should now be empty.
         let result = store
             .list(&ListQuery {
                 device_id: Some("dev003".to_string()),
@@ -800,10 +933,44 @@ mod tests {
             store.tombstone(&format!("cutoffblob{i:03}")).await.unwrap();
         }
 
-        // Purge only entries older than "now - 1 hour" (none should be purged).
         let cutoff = Utc::now() - chrono::Duration::hours(1);
         let purged = store.purge_tombstones_before(cutoff).await.unwrap();
         assert_eq!(purged, 0);
+    }
+
+    /// Fix #2: After purge, the .tombstone marker is removed and re-uploading
+    /// the same `blob_id` succeeds (no longer returns 410 Gone).
+    #[tokio::test]
+    async fn test_purge_removes_marker_and_allows_reupload() {
+        let (store, _dir) = make_store().await;
+        let blob_id = "purgemarker001";
+        let device_id = "dev_purge_marker";
+        let env = make_envelope(blob_id, device_id);
+
+        store.put(&env).await.unwrap();
+        store.tombstone(blob_id).await.unwrap();
+
+        let marker_path = store.tombstone_marker_path(device_id, blob_id);
+        assert!(marker_path.exists(), "marker should exist after tombstone");
+
+        let cutoff = Utc::now() + chrono::Duration::seconds(1);
+        let purged = store.purge_tombstones_before(cutoff).await.unwrap();
+        assert_eq!(purged, 1);
+
+        // Marker file MUST be gone now.
+        assert!(
+            !marker_path.exists(),
+            "marker should be removed after purge_tombstones_before"
+        );
+
+        // Re-uploading the same blob_id should succeed (no Gone).
+        let env2 = make_envelope(blob_id, device_id);
+        store
+            .put(&env2)
+            .await
+            .expect("re-upload after purge should succeed");
+        let fetched = store.get(blob_id).await.unwrap();
+        assert!(fetched.is_some(), "re-uploaded blob should be readable");
     }
 
     #[tokio::test]
@@ -827,6 +994,40 @@ mod tests {
             .await
             .unwrap();
         assert!(result.blobs.iter().all(|b| b.tombstoned_at.is_some()));
+    }
+
+    /// Fix #6: tombstone_device runs O(N) — single index rewrite for all blobs.
+    /// Verify correctness on a larger batch.
+    #[tokio::test]
+    async fn test_tombstone_device_batch_50() {
+        let (store, _dir) = make_store().await;
+        let device_id = "devbatch";
+        for i in 0..50u32 {
+            let env = make_envelope(&format!("batch{i:04}"), device_id);
+            store.put(&env).await.unwrap();
+        }
+        let count = store.tombstone_device(device_id).await.unwrap();
+        assert_eq!(count, 50);
+
+        let result = store
+            .list(&ListQuery {
+                device_id: Some(device_id.to_string()),
+                since: None,
+                until: None,
+                cursor: None,
+                limit: 100,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.blobs.len(), 50);
+        assert!(result.blobs.iter().all(|b| b.tombstoned_at.is_some()));
+
+        // All marker files must exist.
+        for i in 0..50u32 {
+            let blob_id = format!("batch{i:04}");
+            let marker = store.tombstone_marker_path(device_id, &blob_id);
+            assert!(marker.exists(), "missing marker for {blob_id}");
+        }
     }
 
     #[tokio::test]
@@ -873,7 +1074,6 @@ mod tests {
                 store.put(&env).await.unwrap();
             }
         }
-        // Re-open store — seq should resume from after 4.
         let store2 = LocalDiskStore::new(dir.path()).await.unwrap();
         let env = make_envelope("restart999", "devR");
         store2.put(&env).await.unwrap();
@@ -887,7 +1087,94 @@ mod tests {
             })
             .await
             .unwrap();
-        // seq of the 6th blob should be > 4
         assert_eq!(result.blobs.len(), 6);
+    }
+
+    /// Fix #3: simulate a crash mid-tombstone (marker exists + blob file
+    /// exists). On restart, recover_orphans should remove the orphan blob.
+    #[tokio::test]
+    async fn test_recovery_removes_orphan_blob() {
+        let dir = TempDir::new().unwrap();
+        let device_id = "devOrphan";
+        let blob_id = "orphan001";
+        {
+            let store = LocalDiskStore::new(dir.path()).await.unwrap();
+            let env = make_envelope(blob_id, device_id);
+            store.put(&env).await.unwrap();
+        }
+
+        // Simulate the post-step-1 / pre-step-3 crash state: write marker
+        // BUT leave the blob file in place.
+        let blob_dir = dir.path().join("blobs").join(device_id);
+        let marker = blob_dir.join(format!("{blob_id}.tombstone"));
+        let blob_file = blob_dir.join(format!("{blob_id}.json"));
+        assert!(blob_file.exists(), "blob file should exist after put");
+        std::fs::write(&marker, b"{}").unwrap();
+        assert!(marker.exists(), "marker placed");
+        assert!(blob_file.exists(), "blob still there before recovery");
+
+        // Re-open store — recover_orphans runs in `new`.
+        let _store2 = LocalDiskStore::new(dir.path()).await.unwrap();
+        assert!(
+            !blob_file.exists(),
+            "orphan blob should be removed by recover_orphans"
+        );
+        assert!(marker.exists(), "marker preserved (authoritative)");
+    }
+
+    /// Fix #4: per-device locking — concurrent `put` and
+    /// `purge_tombstones_before` on the same device must not lose writes.
+    /// Spawn several tasks doing both ops on the same device simultaneously.
+    #[tokio::test]
+    async fn test_concurrent_put_and_purge_no_lost_writes() {
+        use std::sync::Arc;
+
+        let dir = TempDir::new().unwrap();
+        let store: Arc<LocalDiskStore> = Arc::new(LocalDiskStore::new(dir.path()).await.unwrap());
+        let device_id = "devConcurrent".to_string();
+
+        // 4 putters × 25 puts each = 100 unique blobs.
+        let mut handles = Vec::new();
+        for putter in 0..4u32 {
+            let s = store.clone();
+            let dev = device_id.clone();
+            handles.push(tokio::spawn(async move {
+                for i in 0..25u32 {
+                    let env = make_envelope(&format!("p{putter}_b{i:03}"), &dev);
+                    s.put(&env).await.unwrap();
+                }
+            }));
+        }
+        // 4 purger tasks running concurrently with the putters.
+        for _ in 0..4u32 {
+            let s = store.clone();
+            handles.push(tokio::spawn(async move {
+                for _ in 0..10 {
+                    let cutoff = Utc::now() - chrono::Duration::hours(1);
+                    let _ = s.purge_tombstones_before(cutoff).await;
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let result = store
+            .list(&ListQuery {
+                device_id: Some(device_id),
+                since: None,
+                until: None,
+                cursor: None,
+                limit: 1000,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            result.blobs.len(),
+            100,
+            "all 100 puts should be visible; got {}",
+            result.blobs.len()
+        );
     }
 }
