@@ -196,6 +196,39 @@ Errors:
 
 The `registration_code` is acquired out-of-band (user pastes it from a "set up another device" page in their account UI). For the MVP self-hosted server, a single static admin-provisioned code is acceptable; SaaS Phase 2.1.5+ will improve the flow.
 
+#### `PUT /v1/devices/<device_id>`
+
+Rename a device. Per Q3 resolution, `device_name` is user-visible metadata (Phase 2.1.4 Settings → Devices list).
+
+Request:
+```json
+{ "device_name": "Toru's Laptop" }
+```
+
+Response (200): the updated device record.
+
+Errors:
+- `400` invalid name (empty, > 64 chars, control chars)
+- `401` token doesn't belong to this device's account
+- `404` device_id not found
+
+#### `DELETE /v1/devices/<device_id>`
+
+Remove a device. Per Q2 resolution, this hard-purges (tombstones) every blob whose envelope had this `device_id`. Tombstones follow § 8.1 retention (30 days then hard-purge).
+
+Auth: caller must be authenticated as the device's account. A device can self-revoke (caller token == this device's token).
+
+Response (200):
+```json
+{ "device_id": "01HVDDD...", "tombstoned_blobs": 1234 }
+```
+
+`tombstoned_blobs` is the count of blobs marked for purge. The actual purge happens server-side asynchronously; clients should treat the response as "the request was accepted" not "all blobs are gone right now".
+
+Errors:
+- `401` unauthorized (token doesn't belong to this device's account)
+- `404` device_id not found
+
 #### `POST /v1/blobs`
 
 Upload a blob.
@@ -216,9 +249,14 @@ Errors:
 
 **Idempotency**: Re-POSTing the same `blob_id` with the same `ciphertext.data` returns 201 with the original `stored_at`. Different `ciphertext.data` for the same `blob_id` is a 409 (`error: "blob_id collision with different content"`).
 
-#### `GET /v1/blobs?since=<RFC3339>&until=<RFC3339>&device_id=<id>`
+#### `GET /v1/blobs?cursor=<opaque>&device_id=<id>` (delta sync — preferred)
 
-List blob IDs in a time range. Returns metadata only (no ciphertext) — the client uses this to decide which blobs to fetch.
+List blob IDs that arrived strictly **after** the given cursor. Returns metadata only (no ciphertext) — the client uses this to decide which blobs to fetch. This is the canonical delta-sync entry point per Q1 resolution.
+
+Query params:
+- `cursor` (optional, opaque): server-issued cursor from a prior call. Omit on first call.
+- `device_id` (optional): filter to one device. Omit for all devices in the account.
+- `limit` (optional, default 100, max 1000)
 
 Response (200):
 ```json
@@ -231,11 +269,15 @@ Response (200):
       "metadata": { "kinds": ["screen"], "provenance": "screen", "captured_at_minute": 28872034 }
     }
   ],
-  "next_cursor": null
+  "next_cursor": "BASE64..."
 }
 ```
 
-Pagination: `limit` query param (default 100, max 1000). Response includes `next_cursor` (opaque) when more results exist; client passes it as `cursor=...` in the next request.
+`next_cursor` is `null` when caught up. Cursors order by `(stored_at, blob_id)` lexicographically — server guarantees consistent ordering even under concurrent writes. Tombstoned blobs appear in the list with `tombstoned_at` and `metadata: null` (clients use this to drop their local copy).
+
+#### `GET /v1/blobs?since=<RFC3339>&until=<RFC3339>&device_id=<id>` (time-range — historical)
+
+Same response shape as the cursor variant. Used for "show memories from a specific time range" (e.g., last week's notes view in 2.1.4 search UI). Pagination via `cursor` is also accepted on this endpoint.
 
 `device_id` filter is optional. Without it, returns all devices for the authenticated user. The user's account is implied by the auth token.
 
@@ -349,14 +391,21 @@ May log:
 - error codes (not error messages — those may contain raw input)
 - aggregate metrics (blobs uploaded per hour)
 
-## 9. Open questions for reviewer
+## 9. Open questions — RESOLVED 2026-05-07
 
-These don't block 2.1.1 review but feed 2.1.2 / 2.1.3 design:
+These were the open questions; their resolutions feed into 2.1.2 / 2.1.3 design.
 
-- **Q1**: How does a 2nd device discover blobs the 1st device already uploaded? `GET /v1/blobs` with no time range, paginated, until exhausted? Or do we add a "since-cursor" mechanism that's more efficient than time-range?
-- **Q2**: What's the behavior when a user removes a device — purge all that device's blobs, or leave them visible to other devices in the same account? Spec § 7.5 implies "user owns the data, can wipe whenever" — let's confirm.
-- **Q3**: Is `device_name` in registration meant to be user-visible elsewhere (Settings → Devices list)? If yes, scope of name change endpoint?
-- **Q4**: Health endpoint includes `version` — is the server version visible to clients useful, or does it leak attack surface (e.g., "this server is running an outdated build")? Defaulting to **expose**, since the user can self-host and this is the only way they see what's running.
+- **Q1 — RESOLVED: Since-cursor mechanism for delta sync.** Add `cursor` query param to `GET /v1/blobs` that returns blobs strictly after that cursor in `(stored_at, blob_id)` lexicographic order. The cursor is opaque (server-generated, base64); the client stores the last-seen cursor in local state and passes it on next sync. This gives O(new-blobs) server-side work instead of O(time-range). Time-range query (`since`/`until`) is preserved for the *historical* use case — e.g. "show me memories from last week" — but is not the primary delta-sync mechanism.
+
+  **Wire change**: `GET /v1/blobs?cursor=<opaque>` becomes the canonical delta-sync request. `since` / `until` remain optional for time-range queries. The cursor is null-terminating: a response with no `next_cursor` means caught up.
+
+- **Q2 — RESOLVED: Device removal purges all blobs from that device.** Privacy-first: removing a device means the user no longer trusts it (or doesn't own it anymore). Soft-keep would leave residue across the account. Implementation: `DELETE /v1/devices/<device_id>` (admin or self-revoke endpoint) tombstones every `blob_id` whose envelope had that device_id. Other devices in the same account that still have those blobs cached locally retain them — the cloud copy is gone, but the user's local data is unaffected on devices they still own. Tombstone retention follows § 8.1 (30 days then hard-purge).
+
+- **Q3 — RESOLVED: `PUT /v1/devices/<device_id>` renames.** Settings → Devices list is the user-visible surface for device names (Phase 2.1.4). The endpoint accepts `{ "device_name": "<new name>" }`, validates against the calling token's account, returns 200 with the updated record. `device_name` is plaintext metadata (not encrypted) and is itself not a privacy-sensitive field — users name their devices.
+
+- **Q4 — RESOLVED: Expose server version in `/v1/health`.** The "version reveals CVEs" concern is real but weak — anyone testing the server can fingerprint the version from response headers, behavior, or error message shapes. Self-hosting users have a legitimate need to verify what's running. Operators who care can compile with a version-stripped build flag (TBD: provide a build option). Default behavior: full version string in `/v1/health`.
+
+These resolutions are locked the same way the P1-P12 decisions in §6 are locked: changing them requires a fresh review.
 
 ## 10. What this enables
 
