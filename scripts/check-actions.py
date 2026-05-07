@@ -17,9 +17,13 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-REGISTRY_FILE = ROOT / "lib" / "action-registry.js"
-ACTION_MAP_FILE = ROOT / "action-map.md"
-JSX_FILES = sorted(ROOT.glob("*.jsx"))
+REGISTRY_FILE = ROOT / "src" / "shared" / "ipc" / "action-registry.ts"
+ACTION_MAP_FILE = ROOT / "docs" / "action-map.md"
+# Phase 1: screens are still in src/features/_legacy/. Phase 2 will move them to features/<name>/.
+JSX_FILES = sorted(
+    list((ROOT / "src" / "features" / "_legacy").glob("*.tsx"))
+    + list((ROOT / "src" / "app").glob("*.tsx"))
+)
 
 
 def read(path: pathlib.Path) -> str:

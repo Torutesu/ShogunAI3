@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Ensures mockTransport switch cases in `hifi/lib/ipc-client.js` and `hifi/app.jsx`
+ * Ensures mockTransport switch cases in `src/shared/ipc/ipc-client.ts` and `src/app/App.tsx`
  * (mockIpcInvoke) list the same Tauri command strings — catches drift when one is updated.
  */
 import fs from "fs";
@@ -8,7 +8,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const hifiRoot = path.join(__dirname, "..");
+const repoRoot = path.join(__dirname, "..");
 
 function casesFromIpcClient(source) {
   const out = new Set();
@@ -34,8 +34,8 @@ function casesFromAppMock(source) {
   return out;
 }
 
-const ipcPath = path.join(hifiRoot, "lib", "ipc-client.js");
-const appPath = path.join(hifiRoot, "app.jsx");
+const ipcPath = path.join(repoRoot, "src", "shared", "ipc", "ipc-client.ts");
+const appPath = path.join(repoRoot, "src", "app", "App.tsx");
 
 const ipcSrc = fs.readFileSync(ipcPath, "utf8");
 const appSrc = fs.readFileSync(appPath, "utf8");
