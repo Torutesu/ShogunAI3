@@ -30,3 +30,6 @@ skills-lock.json
 
 # Local Google OAuth helper secrets
 scripts/.env.google-oauth
+
+# mirror-server build output
+mirror-server/target/
