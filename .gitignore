@@ -1,6 +1,10 @@
 .DS_Store
 web-dist/
+dist/
+.vite/
 node_modules/
+node_modules/.vite/
+coverage/
 test-results/
 playwright-report/
 blob-report/
