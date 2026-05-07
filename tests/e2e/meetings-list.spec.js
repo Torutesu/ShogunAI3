@@ -22,10 +22,27 @@ async function openHiFi(page) {
 
 async function gotoMeetings(page) {
   const navItems = page.locator(".sidebar .nav-item");
-  const count = await navItems.count();
   const meetingsNav = navItems.filter({ hasText: "Meetings" }).first();
   await meetingsNav.click();
   await expect(page.locator(".screen-meetings-root")).toBeVisible({ timeout: 10000 });
+}
+
+/**
+ * The mock calendar always returns an in-progress event ("Design review"),
+ * which auto-fires a shogun-meeting-detected event, opening the Granola note
+ * panel and setting granola != null. This hides the chatdock (!granola gate).
+ * Close the note panel first so the chatdock becomes visible.
+ */
+async function closeGranolaIfOpen(page) {
+  const closeBtn = page.locator('button[aria-label="Close note"]');
+  try {
+    await closeBtn.waitFor({ state: "visible", timeout: 3000 });
+    await closeBtn.click();
+    // Wait for chatdock to appear after granola is closed
+    await expect(page.locator(".screen-meetings-chatdock")).toBeVisible({ timeout: 5000 });
+  } catch (_e) {
+    // Granola panel was not open — chatdock should already be visible
+  }
 }
 
 test.describe("Meetings screen", () => {
@@ -33,7 +50,7 @@ test.describe("Meetings screen", () => {
     await preacceptConsent(page);
   });
 
-  test("Meetings tab mounts with header and renders content", async ({ page }) => {
+  test("Meetings tab mounts with header and populated calendar events", async ({ page }) => {
     const consoleErrors = [];
     page.on("pageerror", (err) => consoleErrors.push(String(err.message)));
 
@@ -44,30 +61,51 @@ test.describe("Meetings screen", () => {
     await expect(page.locator(".screen-meetings-inner h1").first()).toContainText("Meetings");
     await expect(page.locator(".screen-meetings-inner h1 .jp").first()).toContainText("会議");
 
-    // Mock runtime populates "Coming up" section (calendar.sync returns mock events).
-    // The empty state copy only appears when comingUp.length === 0, which doesn't
-    // happen with the default mock integration connector that returns 2 events.
+    // Mock integration connector returns two events (lines 344–357 of integration-connectors.js):
+    // "Design review (Google Meet)" and "Partner sync (Zoom)".
+    // Assert that the actual event names appear — not just the section title.
     await expect(page.locator(".screen-meetings-inner")).toContainText(
-      /Coming up|これからの予定/i,
+      /Design review|Partner sync/i,
     );
 
     expect(consoleErrors).toEqual([]);
   });
 
-  test("Meetings tab is stable on navigation away", async ({ page }) => {
+  test("Meetings tab shows the chat dock", async ({ page }) => {
     await openHiFi(page);
     await gotoMeetings(page);
-    // Verify the meetings screen rendered successfully with no console errors.
-    await expect(page.locator(".screen-meetings-inner")).toBeVisible({ timeout: 10000 });
+
+    // The mock in-progress event auto-opens the Granola note panel (granola != null),
+    // which hides the chatdock via the !granola gate. Close the note first.
+    await closeGranolaIfOpen(page);
+
+    // With granola closed (granola === null), !granola is truthy so chatdock renders.
+    await expect(page.locator(".screen-meetings-chatdock")).toBeVisible({ timeout: 10000 });
+    await expect(page.locator(".screen-meetings-chatdock-inner")).toBeVisible({ timeout: 10000 });
   });
 
-  test("Mock calendar events are populated by calendar.sync", async ({ page }) => {
+  test("Slash menu opens when prompt starts with '/'", async ({ page }) => {
     await openHiFi(page);
     await gotoMeetings(page);
-    // The integration connector mock returns two events: one Google Meet (in progress),
-    // one Zoom (upcoming). Verify at least one appears in the rendered list.
-    await expect(page.locator(".screen-meetings-inner")).toContainText(
-      /Design review|Partner sync|Google Meet|Zoom/i,
+
+    // Close granola note panel so the chatdock is visible.
+    await closeGranolaIfOpen(page);
+
+    // Locate the chatdock input; fall back to first input if aria-label selector misses.
+    const primarySelector = page.locator('.screen-meetings-chatdock input[aria-label="Ask anything"]');
+    const count = await primarySelector.count();
+    const chatInput = count === 1
+      ? primarySelector
+      : page.locator(".screen-meetings-chatdock input").first();
+
+    // Filling with '/' triggers showDockRecipeOverlay (screens-meetings.jsx:951).
+    await chatInput.fill("/");
+
+    // The mtg-recipe-overlay lists MEETINGS_DOCK_SLASH_CATALOG entries;
+    // "Write weekly recap" is the third entry (id: 'weekly').
+    await expect(page.locator(".screen-meetings-chatdock")).toContainText(
+      /Write weekly recap/i,
+      { timeout: 5000 },
     );
   });
 
