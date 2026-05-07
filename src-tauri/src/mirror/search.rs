@@ -213,14 +213,22 @@ where
     let since_rfc = unix_ms_to_rfc3339(since_ms);
     let until_rfc = unix_ms_to_rfc3339(until_ms);
 
-    // 2. List blobs in range. The current server endpoint (RFC § 5.3) is not
-    //    paginated for the time-range query — a single response carries the
-    //    whole window. If pagination is added later, drain via repeated calls.
-    let resp = client
-        .list_blobs_time_range(&since_rfc, &until_rfc, None)
-        .await
-        .map_err(|e| format!("cloud-search: list failed: {:?}", e))?;
-    let entries = resp.blobs;
+    // 2. List blobs in range. Drain the cursor — server enforces a per-page
+    //    limit (default 100 / max 1000); we may need multiple round trips for
+    //    active accounts.
+    let mut entries = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let resp = client
+            .list_blobs_time_range(&since_rfc, &until_rfc, None, cursor.as_deref())
+            .await
+            .map_err(|e| format!("cloud-search: list failed: {:?}", e))?;
+        entries.extend(resp.blobs);
+        if resp.next_cursor.is_none() {
+            break;
+        }
+        cursor = resp.next_cursor;
+    }
 
     // 3. For each non-tombstoned entry: cache-or-fetch, decrypt, deserialize,
     //    score. Skip entries that fail to decrypt or lack an embedding.
@@ -1042,5 +1050,113 @@ mod tests {
                 device_name: expected_prefix
             }
         );
+    }
+
+    // ─── Cursor pagination ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn search_cloud_blobs_drains_cursor() {
+        // Server paginates GET /v1/blobs (default 100 / max 1000). Verify the
+        // search drains all pages by making two list calls and producing hits
+        // from both pages.
+        let _g = cache_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        clear_cache_for_test();
+        let mek = make_mek();
+        let device_id = "this_dev";
+
+        let item_emb = vec![1.0f32, 0.0, 0.0];
+        let query_emb = vec![1.0f32, 0.0, 0.0];
+
+        // Page 1: blobs "p1a" + "p1b", with next_cursor = "page2".
+        let p1a = make_plaintext_obj("r1a", "P1A", "x", Some(&item_emb));
+        let p1b = make_plaintext_obj("r1b", "P1B", "y", Some(&item_emb));
+        let env_p1a = build_test_envelope("p1a", device_id, p1a, &mek);
+        let env_p1b = build_test_envelope("p1b", device_id, p1b, &mek);
+        // Page 2: blob "p2a", with next_cursor = null.
+        let p2a = make_plaintext_obj("r2a", "P2A", "z", Some(&item_emb));
+        let env_p2a = build_test_envelope("p2a", device_id, p2a, &mek);
+
+        let mut server = Server::new_async().await;
+
+        // mockito's matching algorithm (mockito 1.x server.rs::handle_request):
+        // collect every mock whose matcher matches the request, then prefer the
+        // first one with "missing hits" (default expectation: hits < 1).
+        //
+        // Page-1 mock: matches any /v1/blobs? request. After it serves the
+        // first call, its hits == 1, so it stops being "missing" and the
+        // page-2 mock takes over for the second call.
+        let list_body_p1 = json!({
+            "blobs": [
+                make_list_entry("p1a", device_id, false),
+                make_list_entry("p1b", device_id, false),
+            ],
+            "next_cursor": "page2",
+        });
+        let _list_p1 = server
+            .mock("GET", mockito::Matcher::Regex(r"^/v1/blobs\?".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body_p1.to_string())
+            .create_async()
+            .await;
+
+        // Page-2 mock: only matches when `cursor=page2` is present in the
+        // query string. Verifies the client actually round-tripped the cursor.
+        let list_body_p2 = json!({
+            "blobs": [make_list_entry("p2a", device_id, false)],
+            "next_cursor": null,
+        });
+        let _list_p2 = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"^/v1/blobs\?.*cursor=page2".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body_p2.to_string())
+            .create_async()
+            .await;
+
+        // Per-blob fetch mocks for all three blobs.
+        let _f_p1a = server
+            .mock("GET", "/v1/blobs/p1a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::to_string(&env_p1a).unwrap())
+            .create_async()
+            .await;
+        let _f_p1b = server
+            .mock("GET", "/v1/blobs/p1b")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::to_string(&env_p1b).unwrap())
+            .create_async()
+            .await;
+        let _f_p2a = server
+            .mock("GET", "/v1/blobs/p2a")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::to_string(&env_p2a).unwrap())
+            .create_async()
+            .await;
+
+        let client = make_client(&server);
+        let hits = search_cloud_blobs_with_embedding(
+            &query_emb,
+            0,
+            i64::MAX / 2,
+            &client,
+            &mek,
+            device_id,
+            |_| None,
+        )
+        .await
+        .expect("search");
+
+        // All three blobs across both pages should produce hits.
+        assert_eq!(hits.len(), 3, "expected 3 hits across 2 pages, got {}", hits.len());
+        let mut ids: Vec<String> = hits.iter().map(|h| h.blob_id.clone()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["p1a".to_string(), "p1b".to_string(), "p2a".to_string()]);
     }
 }

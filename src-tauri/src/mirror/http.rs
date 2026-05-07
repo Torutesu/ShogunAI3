@@ -266,13 +266,18 @@ impl Client {
         }
     }
 
-    /// GET /v1/blobs?since=<rfc3339>&until=<rfc3339>&device_id=<id> — time-range query.
+    /// GET /v1/blobs?since=<rfc3339>&until=<rfc3339>&device_id=<id>&cursor=<c> — time-range query.
+    ///
+    /// The server paginates this endpoint (default 100, max 1000 per page) and
+    /// returns `next_cursor` when more results are available. Callers that need
+    /// the full window must drain by re-calling with the returned cursor.
     #[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
     pub(crate) async fn list_blobs_time_range(
         &self,
         since: &str,
         until: &str,
         device_id: Option<&str>,
+        cursor: Option<&str>,
     ) -> Result<ListBlobsResponse, Error> {
         let mut params: Vec<(&str, String)> = vec![
             ("since", since.to_string()),
@@ -280,6 +285,9 @@ impl Client {
         ];
         if let Some(d) = device_id {
             params.push(("device_id", d.to_string()));
+        }
+        if let Some(c) = cursor {
+            params.push(("cursor", c.to_string()));
         }
 
         let mut req = self.http.get(self.url("/v1/blobs")).query(&params);
