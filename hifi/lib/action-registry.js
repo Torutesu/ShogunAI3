@@ -160,6 +160,12 @@
     register("mirror.disable", (payload) => api.mirror.disable(payload));
     register("mirror.reset_stuck", (payload) => api.mirror.resetStuck(payload));
 
+    // Phase 2.1.4: Mirror search + device management actions.
+    register("mirror.search_blobs", (payload) => api.mirror.searchBlobs(payload));
+    register("mirror.list_devices", (payload) => api.mirror.listDevices(payload));
+    register("mirror.rename_device", (payload) => api.mirror.renameDevice(payload));
+    register("mirror.delete_device", (payload) => api.mirror.deleteDevice(payload));
+
     return {
       run: run,
       register: register,

@@ -2878,17 +2878,20 @@ pub async fn mirror_rename_device(payload: Value) -> Result<Value, String> {
     .and_then(|v| v.as_str())
     .ok_or("device_id required")?
     .to_string();
-  let new_name = payload
+  let new_name_raw = payload
     .get("new_name")
     .and_then(|v| v.as_str())
-    .ok_or("new_name required")?
-    .to_string();
+    .ok_or("name-empty")?;
+  let new_name = new_name_raw.trim();
 
-  if new_name.trim().is_empty() {
-    return Err("new_name required".into());
+  if new_name.is_empty() {
+    return Err("name-empty".into());
   }
-  if new_name.len() > 64 {
-    return Err("new_name too long (max 64)".into());
+  // RFC § 5.4: device names are bounded by 64 *characters* (not bytes).
+  // Use char count so multibyte names (e.g. Japanese, ~3 bytes/char) aren't
+  // rejected by an over-strict byte limit.
+  if new_name.chars().count() > 64 {
+    return Err("name-too-long".into());
   }
 
   mirror::sync::SyncEngine::global().ensure_client_from_persisted_state();
@@ -2897,12 +2900,14 @@ pub async fn mirror_rename_device(payload: Value) -> Result<Value, String> {
     .ok_or_else(|| "not registered".to_string())?;
 
   let record = client
-    .rename_device(&device_id, &new_name)
+    .rename_device(&device_id, new_name)
     .await
     .map_err(|e| e.to_string())?;
 
   // Refresh the local name cache so subsequent list/search responses
   // surface the updated label without re-fetching from the server.
+  // Best-effort: TOCTOU race possible if two clients rename/delete concurrently.
+  // Acceptable for single-user Settings UI; the server is the source of truth.
   let mut names = load_device_names_cache();
   names.insert(record.device_id.clone(), record.device_name.clone());
   save_device_names_cache(&names)?;
@@ -2935,7 +2940,7 @@ pub async fn mirror_delete_device(payload: Value) -> Result<Value, String> {
 
   let this_device_id = load_this_device_id();
   if this_device_id.as_deref() == Some(device_id.as_str()) {
-    return Err("cannot-delete-self (use mirror_disable instead)".into());
+    return Err("cannot-delete-self".into());
   }
 
   mirror::sync::SyncEngine::global().ensure_client_from_persisted_state();
@@ -2949,6 +2954,8 @@ pub async fn mirror_delete_device(payload: Value) -> Result<Value, String> {
     .map_err(|e| e.to_string())?;
 
   // Drop the deleted device from the local name cache.
+  // Best-effort: TOCTOU race possible if two clients rename/delete concurrently.
+  // Acceptable for single-user Settings UI; the server is the source of truth.
   let mut names = load_device_names_cache();
   if names.remove(&device_id).is_some() {
     save_device_names_cache(&names)?;
@@ -2983,10 +2990,7 @@ mod mirror_phase_2_1_4_tests {
     let res = mirror_rename_device(payload).await;
     assert!(res.is_err(), "expected Err for empty name, got {:?}", res);
     let err = res.unwrap_err();
-    assert!(
-      err.contains("new_name required"),
-      "expected name-required error, got {err:?}"
-    );
+    assert_eq!(err, "name-empty", "expected 'name-empty' sentinel, got {err:?}");
   }
 
   #[tokio::test]
@@ -2996,10 +3000,36 @@ mod mirror_phase_2_1_4_tests {
     let res = mirror_rename_device(payload).await;
     assert!(res.is_err(), "expected Err for >64-char name, got {:?}", res);
     let err = res.unwrap_err();
-    assert!(
-      err.contains("too long"),
-      "expected too-long error, got {err:?}"
+    assert_eq!(err, "name-too-long", "expected 'name-too-long' sentinel, got {err:?}");
+  }
+
+  #[tokio::test]
+  async fn mirror_rename_device_accepts_multibyte_name_under_64_chars() {
+    // RFC § 5.4 says the limit is 64 *characters*, not bytes. A 22-char
+    // Japanese name is ~66 bytes (3 bytes/char) — historically rejected by a
+    // byte-count check. It must pass length validation now.
+    // 22 CJK chars ⇒ 66 bytes (3 bytes/char): "会議室の私のマックブックプロ一号機テスト用名"
+    let multibyte_22 = "会議室の私のマックブックプロ一号機テスト用名";
+    assert_eq!(
+      multibyte_22.chars().count(),
+      22,
+      "fixture sanity: char count should be 22, got {}",
+      multibyte_22.chars().count()
     );
+    assert!(
+      multibyte_22.len() > 64,
+      "fixture sanity: byte length should be >64 to exercise the regression (got {})",
+      multibyte_22.len()
+    );
+
+    let payload = json!({ "device_id": "dev_a", "new_name": multibyte_22 });
+    let res = mirror_rename_device(payload).await;
+    // The call will still fail (unit tests don't have a registered client),
+    // but the failure must NOT be a length-validation error.
+    assert!(res.is_err(), "expected Err (no client), got {:?}", res);
+    let err = res.unwrap_err();
+    assert_ne!(err, "name-too-long", "multibyte 22-char name was wrongly rejected as too long");
+    assert_ne!(err, "name-empty", "multibyte name was wrongly rejected as empty");
   }
 
   #[tokio::test]
