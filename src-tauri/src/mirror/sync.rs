@@ -755,6 +755,7 @@ pub(crate) fn classify_error_for_retry(err: &http::Error) -> RetryDisposition {
     match err {
         // Permanent rejections — don't retry.
         http::Error::Unauthorized
+        | http::Error::Forbidden
         | http::Error::InvalidEnvelope(_)
         | http::Error::Conflict(_)
         | http::Error::PayloadTooLarge
