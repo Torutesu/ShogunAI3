@@ -1891,12 +1891,6 @@ function MainApp() {
   }, [activeChat, chats, workProjects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.__SHOGUN_GOTO__ = (key) => setActive(String(key));
-    }
-  }, [setActive]);
-
-  useEffect(() => {
     try {
       window.dispatchEvent(new CustomEvent('shogun-chats-changed', { detail: { chats } }));
     } catch (_) {

@@ -21,15 +21,20 @@ async function openHiFi(page) {
 }
 
 /**
- * Memory Debug screen is a dev-only view not exposed in NAV by default. The runtime
- * exposes a programmatic switch via window.__SHOGUN_GOTO__('memory_debug')
- * if available; fall back to clicking a hidden nav-item if it surfaces in
- * dev builds. Update this helper if the goto mechanism changes.
+ * Memory Debug screen is a dev-only view not exposed in NAV by default.
+ * Memory Debug is gated behind a backend devGate in production. For e2e we
+ * navigate via the existing SHOGUN_RUNTIME.setActiveScreen API (already
+ * exposed by app.jsx); fall back to clicking a hidden nav-item if it
+ * surfaces in dev builds. Update this helper if the runtime API changes.
  */
 async function openMemoryDebug(page) {
+  // Use the existing SHOGUN_RUNTIME global (already exposed for e2e by app.jsx)
+  // to navigate to dev-only screens without adding a new window global. The
+  // JSX-split project's goal is to REDUCE globals, so we don't add new ones.
   const switched = await page.evaluate(() => {
-    if (typeof window.__SHOGUN_GOTO__ === "function") {
-      window.__SHOGUN_GOTO__("memory_debug");
+    const r = window.SHOGUN_RUNTIME;
+    if (r && typeof r.setActiveScreen === "function") {
+      r.setActiveScreen("memory_debug");
       return true;
     }
     return false;
@@ -43,7 +48,7 @@ async function openMemoryDebug(page) {
       return;
     }
     throw new Error(
-      "Memory Debug screen is not reachable. Add window.__SHOGUN_GOTO__ in app.jsx or expose a dev nav-item.",
+      "Memory Debug screen is not reachable. Ensure SHOGUN_RUNTIME.setActiveScreen is available or expose a dev nav-item.",
     );
   }
   // Wait for the screen to render
