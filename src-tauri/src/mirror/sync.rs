@@ -930,7 +930,7 @@ fn format_rfc3339(secs: u64, millis: u64) -> String {
 /// because serde_json's default float formatting and Unicode escaping diverge
 /// from JCS §3.2 / §3.3. Keep this restriction documented at the AD
 /// construction site as well — see `build_blob_envelope`.
-fn sorted_json_for_ad(value: &Value) -> Result<Vec<u8>, String> {
+pub(crate) fn sorted_json_for_ad(value: &Value) -> Result<Vec<u8>, String> {
     // serde_json serializes Object in insertion order. To get sorted keys we
     // round-trip through a recursive BTreeMap rebuild.
     let canonical = to_sorted_value(value);
