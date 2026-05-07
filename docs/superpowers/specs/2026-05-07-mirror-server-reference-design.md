@@ -341,16 +341,19 @@ Per master spec § 8.1 estimate: 5GB / active user / year. Operators should:
 | `cargo test` (in `mirror-server/`) green | full suite |
 | `cargo clippy` clean | gates |
 
-## 9. Open Questions for Reviewer
+## 9. Open Questions — RESOLVED 2026-05-07
 
-These don't block design review but inform implementation:
+These were the open questions; their resolutions feed into the implementation plan.
 
-- **OQ1**: Co-locate in monorepo (`mirror-server/`) or split to a new repo? Defaulting to **monorepo** for MVP — easier version-locking with the Mac client and simpler PR review. Split is mechanical later.
-- **OQ2**: `axum` vs `actix-web` vs others? Defaulting to **axum 0.7** — tokio-team-maintained, ergonomic for this surface size, well-documented.
-- **OQ3**: Built-in TLS via `rustls` direct, or assume reverse-proxy (nginx / Caddy / Cloudflare)? Defaulting to **both supported** — direct for dev / LAN, reverse-proxy for production.
-- **OQ4**: Single-account or multi-account from day 1? Defaulting to **single-account** for self-hosted MVP — multi-tenant is a SaaS concern (Phase 2.1.5+).
+- **OQ1 — RESOLVED: Monorepo (`mirror-server/` directory) for MVP.** Co-located makes version-locking with the Mac client straightforward, simplifies PR review (one diff covers protocol + client + server), and lets us ship a single `cargo install` story for self-hosters. A split to a dedicated repo is mechanical when the project's scale justifies the operational overhead — not in 2.1.x.
 
-These can be flipped at plan-review without re-doing the design.
+- **OQ2 — RESOLVED: `axum 0.7`.** Tokio-team-maintained, idiomatic Tower-based middleware composition, mature `axum_test` ecosystem for our HTTP integration tests, well-documented. `actix-web` is a fine alternative but doesn't bring measurable advantages for this surface size and would be a less common choice for new Tower-aware projects.
+
+- **OQ3 — RESOLVED: Both supported — `rustls` direct for dev/LAN, reverse-proxy assumed in production guides.** Operators on a VPS will typically already have a Caddy / nginx / Cloudflare layer for cert management, log centralization, etc. Production docs default to that. The `rustls` direct path stays available for "I just want to try this on my LAN" workflows and is featured in the README quick-start.
+
+- **OQ4 — RESOLVED: Single-account for self-hosted MVP.** Each server instance assumes one account with multiple devices. Multi-tenant accounts (separate user namespaces, billing, quota) are a SaaS hosting concern — Phase 2.1.5+. Self-hosted users wanting multi-account today can run multiple instances on different ports.
+
+These resolutions are locked the same way decisions R1-R14 in §4 are locked.
 
 ## 10. What this enables
 
