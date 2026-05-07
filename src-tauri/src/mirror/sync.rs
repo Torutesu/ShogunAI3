@@ -918,6 +918,22 @@ fn format_rfc3339(secs: u64, millis: u64) -> String {
 /// object keys (BTreeMap-via-rebuild) and otherwise relies on serde_json's
 /// defaults.
 ///
+/// # Cross-module contract — byte-identical AD invariant
+///
+/// This function is **shared between `mirror::sync` (write side) and
+/// `mirror::search` (read side)**. Both call sites must produce
+/// byte-identical AD bytes from logically-equivalent inputs, or AEAD
+/// decryption will silently fail for previously-uploaded blobs.
+///
+/// Any change to this function — or to the structure of the AD object that
+/// either side passes in (`{blob_id, device_id, metadata, schema, version}`)
+/// — MUST be applied symmetrically on both sides. Adding/removing keys,
+/// changing key names, swapping types, or altering serialization defaults
+/// breaks the contract. The current callers are:
+///
+/// - `mirror::sync::build_blob_envelope` (encryption / upload)
+/// - `mirror::search::decrypt_envelope` (download / decryption)
+///
 /// **NOT** RFC 8785 (JCS) compliant. The function name was renamed from
 /// `canonical_json` to be honest about its scope. The AEAD AD payload is
 /// restricted by design to:

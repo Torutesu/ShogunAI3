@@ -5,8 +5,6 @@
 //! hits. The merge with local results happens in the frontend (per spec
 //! `docs/superpowers/specs/2026-05-07-mirror-search-and-settings-ui-design.md`).
 
-#![allow(dead_code)] // consumed in T2 (commands.rs IPC) and T4 (frontend merge)
-
 use crate::mirror::{crypto, http, sync as mirror_sync};
 use base64::Engine;
 use lru::LruCache;
@@ -19,6 +17,7 @@ use std::sync::{Mutex, OnceLock};
 
 /// Plaintext shape produced by `mirror::sync::build_plaintext_obj_no_embedding`
 /// (with optional `embedding_b64` per RFC § 4.1).
+#[allow(dead_code)] // consumed in T2 (commands.rs IPC) and T4 (frontend merge)
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct MemItemPlaintext {
     pub id: String,
@@ -42,6 +41,7 @@ pub(crate) struct MemItemPlaintext {
     pub embedding_b64: Option<String>,
 }
 
+#[allow(dead_code)] // consumed in T2 (commands.rs IPC) and T4 (frontend merge)
 #[derive(Debug, Clone)]
 pub(crate) struct CloudSearchHit {
     pub blob_id: String,
@@ -54,6 +54,7 @@ pub(crate) struct CloudSearchHit {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum HitSource {
     /// Reserved for the merge step in T4 (not produced by this module).
+    #[allow(dead_code)]
     Local,
     MirrorThisDevice,
     MirrorOtherDevice {
@@ -85,6 +86,7 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 
 /// Sort hits by similarity desc; truncate to `k`. If `k == 0`, returns empty.
 /// If `k >= hits.len()`, returns the full sorted list.
+#[allow(dead_code)] // consumed in T4 (frontend merge ranks the cross-source result list)
 pub(crate) fn rank_and_truncate(mut hits: Vec<CloudSearchHit>, k: usize) -> Vec<CloudSearchHit> {
     if k == 0 {
         return Vec::new();
@@ -109,18 +111,17 @@ fn decode_embedding_b64(s: &str) -> Option<Vec<f32>> {
     }
     let out: Vec<f32> = bytes
         .chunks_exact(4)
-        .map(|chunk| {
-            let arr: [u8; 4] = chunk.try_into().expect("chunks_exact(4) yields 4-byte chunks");
-            f32::from_le_bytes(arr)
-        })
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
     Some(out)
 }
 
 // ─── Blob plaintext cache ────────────────────────────────────────────────────
 
-/// Cap chosen per spec §5.1 / U8: roughly bounds in-process memory at the
-/// "10K blobs at ~6KB each ≈ 60MB" upper end. Eviction is LRU.
+/// Bounded by entry count (10K), not bytes. At typical blob sizes (~6KB)
+/// this approximates the design's 64MB cap. A pathological user (blobs near
+/// the 1MB plaintext limit) could push memory to ~10GB before saturation —
+/// acceptable since that's far beyond the personal-memory-store scale.
 const CACHE_CAPACITY: usize = 10_000;
 
 static BLOB_CACHE: OnceLock<Mutex<LruCache<String, Vec<u8>>>> = OnceLock::new();
@@ -141,6 +142,12 @@ pub(crate) fn clear_cache_for_test() {
 
 // ─── Cloud search orchestration ──────────────────────────────────────────────
 
+/// Defensive cap on cursor-drain pagination. Server max page size is 1000
+/// entries, so 10K pages = 10M entries — well past anything legitimate. If
+/// the loop hits this, the server is buggy or the response is hostile, and
+/// we abort rather than burn unbounded memory.
+const MAX_PAGES: usize = 10_000;
+
 /// RFC 3339 representation of a unix-millisecond timestamp.
 ///
 /// Clamps absurdly-far-future timestamps to year 9999-12-31 (chrono's max
@@ -157,6 +164,38 @@ fn unix_ms_to_rfc3339(ms: i64) -> String {
     format!("{}.{:03}Z", dt.format("%Y-%m-%dT%H:%M:%S"), millis)
 }
 
+/// Drain `GET /v1/blobs` across all paginated cursors, returning a flat
+/// vector of entries. Bounded by `max_pages` as a defensive cap against a
+/// runaway `next_cursor` (server bug or hostile response).
+async fn drain_blob_list(
+    client: &http::Client,
+    since_rfc: &str,
+    until_rfc: &str,
+    max_pages: usize,
+) -> Result<Vec<http::BlobListEntry>, String> {
+    let mut entries = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0usize;
+    loop {
+        pages += 1;
+        if pages > max_pages {
+            return Err(format!(
+                "cloud-search: pagination exceeded MAX_PAGES ({max_pages}) — possible server bug or attack"
+            ));
+        }
+        let resp = client
+            .list_blobs_time_range(since_rfc, until_rfc, None, cursor.as_deref())
+            .await
+            .map_err(|e| format!("cloud-search: list failed: {e}"))?;
+        entries.extend(resp.blobs);
+        if resp.next_cursor.is_none() {
+            break;
+        }
+        cursor = resp.next_cursor;
+    }
+    Ok(entries)
+}
+
 /// Search cloud blobs in the given time range. Returns unranked hits — the
 /// caller (frontend merge layer) handles ranking + truncation across local +
 /// cloud.
@@ -166,6 +205,15 @@ fn unix_ms_to_rfc3339(ms: i64) -> String {
 /// directly with a precomputed query vector.
 ///
 /// `since_ms` / `until_ms` are unix milliseconds.
+///
+/// # Errors
+/// - Returns `Err` if `embeddings::embed_one` fails (network or model issue).
+/// - Returns `Err` if listing blobs fails on any page (network).
+/// - Returns `Err` if pagination exceeds MAX_PAGES (defensive bound).
+///
+/// Per-blob errors (decrypt, deserialize, dimension mismatch, missing
+/// embedding) are logged and the blob is skipped without aborting the search.
+#[allow(dead_code)] // consumed in T2 (commands.rs IPC)
 pub(crate) async fn search_cloud_blobs<F>(
     query: &str,
     since_ms: i64,
@@ -196,6 +244,7 @@ where
 /// Same as `search_cloud_blobs` but takes a precomputed query embedding.
 /// Factored out so tests can avoid the network roundtrip to the embedding
 /// provider.
+#[allow(dead_code)] // consumed in T2 (commands.rs IPC) and exercised by tests below
 pub(crate) async fn search_cloud_blobs_with_embedding<F>(
     query_emb: &[f32],
     since_ms: i64,
@@ -216,19 +265,7 @@ where
     // 2. List blobs in range. Drain the cursor — server enforces a per-page
     //    limit (default 100 / max 1000); we may need multiple round trips for
     //    active accounts.
-    let mut entries = Vec::new();
-    let mut cursor: Option<String> = None;
-    loop {
-        let resp = client
-            .list_blobs_time_range(&since_rfc, &until_rfc, None, cursor.as_deref())
-            .await
-            .map_err(|e| format!("cloud-search: list failed: {:?}", e))?;
-        entries.extend(resp.blobs);
-        if resp.next_cursor.is_none() {
-            break;
-        }
-        cursor = resp.next_cursor;
-    }
+    let entries = drain_blob_list(client, &since_rfc, &until_rfc, MAX_PAGES).await?;
 
     // 3. For each non-tombstoned entry: cache-or-fetch, decrypt, deserialize,
     //    score. Skip entries that fail to decrypt or lack an embedding.
@@ -251,9 +288,8 @@ where
                     Ok(e) => e,
                     Err(e) => {
                         log::warn!(
-                            "cloud-search: fetch {} failed: {:?}",
-                            entry.blob_id,
-                            e
+                            "cloud-search: fetch {} failed: {e}",
+                            entry.blob_id
                         );
                         continue;
                     }
@@ -296,6 +332,19 @@ where
         let Some(item_emb) = decode_embedding_b64(emb_b64) else {
             continue;
         };
+
+        // Skip entries whose embedding dimension differs from the query.
+        // `cosine_similarity` would defensively return 0.0, but a 0-similarity
+        // hit still pollutes the ranked result list — drop them entirely.
+        if item_emb.len() != query_emb.len() {
+            log::warn!(
+                "cloud-search: dimension mismatch for {} (query {} vs item {}); skipping",
+                entry.blob_id,
+                query_emb.len(),
+                item_emb.len()
+            );
+            continue;
+        }
 
         let similarity = cosine_similarity(query_emb, &item_emb);
 
@@ -823,8 +872,19 @@ mod tests {
             .with_body(list_body.to_string())
             .create_async()
             .await;
-        // Note: no fetch_blob mock — if it gets called the test will hang
-        // (mockito will return 501) which would surface as a failed search.
+
+        // Explicit fetch-blob mock that fails the test if it is hit. Without
+        // this, a regression that broke tombstone skipping but also broke
+        // fetch (e.g. mockito returning 501 for an un-mocked path) would
+        // still leave `hits.is_empty()` true and silently pass. `.expect(0)`
+        // + `.assert_async()` makes mockito panic if any GET hits the path.
+        let no_fetch_mock = server
+            .mock("GET", "/v1/blobs/dead")
+            .with_status(200)
+            .with_body("{}")
+            .expect(0)
+            .create_async()
+            .await;
 
         let client = make_client(&server);
         let hits = search_cloud_blobs_with_embedding(
@@ -840,6 +900,7 @@ mod tests {
         .expect("search");
 
         assert!(hits.is_empty(), "tombstoned blobs must be skipped");
+        no_fetch_mock.assert_async().await;
     }
 
     #[tokio::test]
@@ -1078,13 +1139,19 @@ mod tests {
 
         let mut server = Server::new_async().await;
 
-        // mockito's matching algorithm (mockito 1.x server.rs::handle_request):
-        // collect every mock whose matcher matches the request, then prefer the
-        // first one with "missing hits" (default expectation: hits < 1).
+        // We want page-1 and page-2 list mocks to be unambiguous. mockito 1.x
+        // routes a request to the first mock whose matcher matches AND whose
+        // hits are still under expectation; if multiple mocks match, the
+        // tiebreak (first-with-missing-hits) is an internal detail we don't
+        // want this test depending on. So:
         //
-        // Page-1 mock: matches any /v1/blobs? request. After it serves the
-        // first call, its hits == 1, so it stops being "missing" and the
-        // page-2 mock takes over for the second call.
+        // - Page-2 mock has an explicit `cursor=page2` matcher (UrlEncoded),
+        //   so it ONLY matches the second call, when the client round-tripped
+        //   the cursor.
+        // - Page-1 mock matches any /v1/blobs? request and is constrained by
+        //   `expect(1)` + `assert_async` below — if a regression caused both
+        //   calls to land on it (e.g. the cursor wasn't sent), mockito would
+        //   panic with "expected 1 hit, got 2", catching the bug.
         let list_body_p1 = json!({
             "blobs": [
                 make_list_entry("p1a", device_id, false),
@@ -1092,28 +1159,32 @@ mod tests {
             ],
             "next_cursor": "page2",
         });
-        let _list_p1 = server
+        let list_p1 = server
             .mock("GET", mockito::Matcher::Regex(r"^/v1/blobs\?".to_string()))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(list_body_p1.to_string())
+            .expect(1)
             .create_async()
             .await;
 
         // Page-2 mock: only matches when `cursor=page2` is present in the
-        // query string. Verifies the client actually round-tripped the cursor.
+        // query string. `match_query(Matcher::UrlEncoded(...))` parses the
+        // query string properly (no fragile substring regex on the path).
         let list_body_p2 = json!({
             "blobs": [make_list_entry("p2a", device_id, false)],
             "next_cursor": null,
         });
-        let _list_p2 = server
-            .mock(
-                "GET",
-                mockito::Matcher::Regex(r"^/v1/blobs\?.*cursor=page2".to_string()),
-            )
+        let list_p2 = server
+            .mock("GET", "/v1/blobs")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "cursor".to_string(),
+                "page2".to_string(),
+            ))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(list_body_p2.to_string())
+            .expect(1)
             .create_async()
             .await;
 
@@ -1158,5 +1229,142 @@ mod tests {
         let mut ids: Vec<String> = hits.iter().map(|h| h.blob_id.clone()).collect();
         ids.sort();
         assert_eq!(ids, vec!["p1a".to_string(), "p1b".to_string(), "p2a".to_string()]);
+
+        // Guard rail: each list mock must have been hit exactly once. If the
+        // client failed to send the cursor, both calls would land on page-1
+        // and `list_p1.assert_async()` would panic with "expected 1 hit, got 2".
+        list_p1.assert_async().await;
+        list_p2.assert_async().await;
+    }
+
+    // ─── unix_ms_to_rfc3339 ──────────────────────────────────────────────────
+
+    #[test]
+    fn unix_ms_to_rfc3339_zero() {
+        let s = unix_ms_to_rfc3339(0);
+        assert_eq!(s, "1970-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn unix_ms_to_rfc3339_negative_clamps_to_zero() {
+        // Negative ms should clamp to epoch (same as ms=0).
+        let s = unix_ms_to_rfc3339(-1000);
+        assert_eq!(s, "1970-01-01T00:00:00.000Z");
+        let s_zero = unix_ms_to_rfc3339(0);
+        assert_eq!(s, s_zero);
+    }
+
+    #[test]
+    fn unix_ms_to_rfc3339_max_clamped() {
+        // i64::MAX ms is far past year 9999. Seconds are clamped to year 9999
+        // (chrono's max), but the millis-suffix is `(ms_u % 1000)` of the
+        // unclamped value — that's a known quirk; we just verify the prefix.
+        let s = unix_ms_to_rfc3339(i64::MAX);
+        assert!(
+            s.starts_with("9999-12-31T23:59:59."),
+            "expected clamp to year 9999, got: {s}"
+        );
+        assert!(s.ends_with('Z'), "expected RFC 3339 'Z' suffix, got: {s}");
+    }
+
+    // ─── search_cloud_blobs_with_embedding — dimension mismatch ──────────────
+
+    #[tokio::test]
+    async fn search_cloud_blobs_dimension_mismatch_skipped() {
+        // Item embedding length differs from query embedding length. Without
+        // the orchestration-level skip, cosine_similarity would defensively
+        // return 0.0 and pollute the result list with a 0-similarity hit.
+        let _g = cache_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        clear_cache_for_test();
+        let mek = make_mek();
+        let device_id = "this_dev";
+
+        // Item embedding has 4 dims; query has 2.
+        let item_emb = vec![1.0f32, 0.0, 0.0, 0.0];
+        let query_emb = vec![1.0f32, 0.0];
+        let plaintext = make_plaintext_obj("row1", "Hello", "World", Some(&item_emb));
+        let env = build_test_envelope("blob_dim", device_id, plaintext, &mek);
+
+        let mut server = Server::new_async().await;
+        let list_body = json!({
+            "blobs": [make_list_entry("blob_dim", device_id, false)],
+            "next_cursor": null,
+        });
+        let _list = server
+            .mock("GET", mockito::Matcher::Regex(r"^/v1/blobs\?".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(list_body.to_string())
+            .create_async()
+            .await;
+        let _fetch = server
+            .mock("GET", "/v1/blobs/blob_dim")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::to_string(&env).unwrap())
+            .create_async()
+            .await;
+
+        let client = make_client(&server);
+        let hits = search_cloud_blobs_with_embedding(
+            &query_emb,
+            0,
+            i64::MAX / 2,
+            &client,
+            &mek,
+            device_id,
+            |_| None,
+        )
+        .await
+        .expect("search");
+
+        assert!(
+            hits.is_empty(),
+            "blobs with mismatched embedding dimensions must be skipped, got {} hits",
+            hits.len()
+        );
+    }
+
+    // ─── Pagination max-pages cap ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn drain_blob_list_caps_at_max_pages() {
+        // Server keeps returning a non-null next_cursor forever. The drain
+        // helper must abort once it exceeds the configured max_pages bound.
+        // We use a small max_pages here so the test doesn't actually do 10K
+        // round trips — the production constant is `MAX_PAGES = 10_000`.
+        let mut server = Server::new_async().await;
+        let runaway_body = json!({
+            "blobs": [],
+            "next_cursor": "always_more",
+        });
+        let _list = server
+            .mock("GET", mockito::Matcher::Regex(r"^/v1/blobs\?".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(runaway_body.to_string())
+            // Allow this mock to serve as many calls as needed (up to the
+            // bound + 1 attempt that fails the cap check).
+            .expect_at_least(1)
+            .create_async()
+            .await;
+
+        let client = make_client(&server);
+        // Use a small bound for testing. The production code uses
+        // `MAX_PAGES = 10_000`; the helper takes max_pages as a parameter
+        // expressly so we can verify the bound triggers without 10K calls.
+        let result = drain_blob_list(
+            &client,
+            "1970-01-01T00:00:00.000Z",
+            "9999-12-31T23:59:59.000Z",
+            5,
+        )
+        .await;
+
+        let err = result.expect_err("drain should fail when pagination exceeds max_pages");
+        assert!(
+            err.contains("MAX_PAGES (5)") || err.contains("pagination exceeded"),
+            "expected pagination-exceeded error message, got: {err}"
+        );
     }
 }
