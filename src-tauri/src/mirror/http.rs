@@ -4,6 +4,7 @@
 //! retry-aware error taxonomy.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 
 // ─── Error taxonomy ──────────────────────────────────────────────────────────
@@ -142,6 +143,17 @@ pub(crate) struct DeviceSummary {
     /// RFC3339 string of the most recent blob's `stored_at`, or `None` if no
     /// non-tombstoned blobs exist for this device.
     pub latest_stored_at: Option<String>,
+}
+
+/// Result envelope for `list_devices_by_aggregation`. The `truncated` flag
+/// lets the Settings UI surface a banner when `MAX_AGGREGATION_PAGES` was
+/// hit and the returned list is incomplete.
+#[allow(dead_code)] // consumed by Phase 2.1.4 Settings UI device management
+#[derive(Debug, Clone)]
+pub(crate) struct DeviceListResult {
+    pub summaries: Vec<DeviceSummary>,
+    /// True iff the pagination cap was hit and the result is partial.
+    pub truncated: bool,
 }
 
 // ─── Status code → Error ─────────────────────────────────────────────────────
@@ -425,6 +437,12 @@ impl Client {
     ///
     /// Returns the count of tombstoned blobs (`tombstoned_blobs` field of the
     /// server response). Bearer auth required.
+    ///
+    /// Errors:
+    /// - 401 → `Error::Unauthorized` (missing/invalid token, or cross-account)
+    /// - 403 → `Error::Forbidden`
+    /// - 404 → `Error::NotFound`
+    /// - other → mapped via `map_error_response`
     #[allow(dead_code)] // consumed by Phase 2.1.4 Settings UI device management
     pub(crate) async fn delete_device(&self, device_id: &str) -> Result<u64, Error> {
         let mut req = self
@@ -452,23 +470,25 @@ impl Client {
     /// the cursor. Bounded by `MAX_AGGREGATION_PAGES` (100; ~100K blobs max
     /// at the server's 1000-per-page cap).
     ///
-    /// Returns a `Vec<DeviceSummary>` sorted by `latest_stored_at` desc (most
-    /// recent first). Tombstoned blobs are excluded from `blob_count` and from
-    /// the `latest_stored_at` calculation.
+    /// Returns a `DeviceListResult` whose `summaries` are sorted by
+    /// `latest_stored_at` desc (most recent first), with `device_id` ascending
+    /// as a deterministic tie-breaker. Tombstoned blobs are excluded from
+    /// `blob_count` and from the `latest_stored_at` calculation. The
+    /// `truncated` flag is `true` iff the pagination cap was hit and the
+    /// result is partial.
     ///
     /// NOTE: this returns counts only — `device_name` is not available here
     /// (server has no `GET /v1/devices` endpoint per design U9). The frontend
     /// caches names from the register response.
     ///
     /// If pagination cap is hit, logs a warning and returns the partial
-    /// aggregation rather than erroring (graceful degradation).
+    /// aggregation with `truncated: true` rather than erroring (graceful
+    /// degradation).
     #[allow(dead_code)] // consumed by Phase 2.1.4 Settings UI device management
     pub(crate) async fn list_devices_by_aggregation(
         &self,
-    ) -> Result<Vec<DeviceSummary>, Error> {
+    ) -> Result<DeviceListResult, Error> {
         const MAX_AGGREGATION_PAGES: usize = 100;
-
-        use std::collections::HashMap;
 
         struct Agg {
             count: u64,
@@ -478,6 +498,7 @@ impl Client {
         let mut groups: HashMap<String, Agg> = HashMap::new();
         let mut cursor: Option<String> = None;
         let mut pages = 0usize;
+        let mut truncated = false;
 
         loop {
             pages += 1;
@@ -486,6 +507,7 @@ impl Client {
                     "list_devices_by_aggregation: pagination cap ({}) reached; returning partial results",
                     MAX_AGGREGATION_PAGES
                 );
+                truncated = true;
                 break;
             }
             let resp = self
@@ -525,10 +547,19 @@ impl Client {
             })
             .collect();
 
-        // Sort by latest_stored_at desc. None sorts last.
-        summaries.sort_by(|a, b| b.latest_stored_at.cmp(&a.latest_stored_at));
+        // Sort by latest_stored_at desc. None sorts last. Tie-break with
+        // device_id ascending so the order is deterministic across runs
+        // (HashMap iteration order is randomized).
+        summaries.sort_by(|a, b| {
+            b.latest_stored_at
+                .cmp(&a.latest_stored_at)
+                .then_with(|| a.device_id.cmp(&b.device_id))
+        });
 
-        Ok(summaries)
+        Ok(DeviceListResult {
+            summaries,
+            truncated,
+        })
     }
 }
 
@@ -909,15 +940,19 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(body.to_string())
+            .expect(1)
             .create_async()
             .await;
 
         let client = make_client(&server, "tok");
-        let summaries = client
+        let result = client
             .list_devices_by_aggregation()
             .await
             .expect("aggregation should succeed");
 
+        // Single page (next_cursor: null) → no truncation.
+        assert!(!result.truncated);
+        let summaries = result.summaries;
         assert_eq!(summaries.len(), 2);
         // device_b first (latest = 14:00), device_a second (latest = 13:00).
         assert_eq!(summaries[0].device_id, "device_b");
@@ -998,11 +1033,14 @@ mod tests {
             .await;
 
         let client = make_client(&server, "tok");
-        let summaries = client
+        let result = client
             .list_devices_by_aggregation()
             .await
             .expect("aggregation should succeed");
 
+        // Cursor fully drained (page 2 has next_cursor: null) → no truncation.
+        assert!(!result.truncated);
+        let summaries = result.summaries;
         // Both pages contributed: device_a has 2 blobs across pages, device_c
         // has 1 from page 2.
         assert_eq!(summaries.len(), 2);
@@ -1014,6 +1052,90 @@ mod tests {
         assert_eq!(
             summaries[1].latest_stored_at.as_deref(),
             Some("2026-05-07T12:00:00Z")
+        );
+    }
+
+    /// D7: list_devices_by_aggregation — when two devices share the same
+    /// `latest_stored_at`, the secondary key is `device_id` ascending. This
+    /// pins ordering across runs (HashMap iteration is randomized).
+    #[tokio::test]
+    async fn d7_list_devices_tie_sorts_by_device_id_ascending() {
+        let mut server = Server::new_async().await;
+        // Three devices, all with identical latest_stored_at. Without a
+        // deterministic tie-break the result order would depend on HashMap
+        // randomization; with the secondary key it must be alphabetical by
+        // device_id.
+        let body = json!({
+            "blobs": [
+                {
+                    "blob_id": "blob_z",
+                    "device_id": "device_z",
+                    "stored_at": "2026-05-07T12:00:00Z",
+                    "metadata": null,
+                    "tombstoned_at": null
+                },
+                {
+                    "blob_id": "blob_a",
+                    "device_id": "device_a",
+                    "stored_at": "2026-05-07T12:00:00Z",
+                    "metadata": null,
+                    "tombstoned_at": null
+                },
+                {
+                    "blob_id": "blob_m",
+                    "device_id": "device_m",
+                    "stored_at": "2026-05-07T12:00:00Z",
+                    "metadata": null,
+                    "tombstoned_at": null
+                }
+            ],
+            "next_cursor": null
+        });
+        let _m = server
+            .mock("GET", mockito::Matcher::Regex(r"^/v1/blobs".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = make_client(&server, "tok");
+        let result = client
+            .list_devices_by_aggregation()
+            .await
+            .expect("aggregation should succeed");
+
+        assert!(!result.truncated);
+        let summaries = result.summaries;
+        assert_eq!(summaries.len(), 3);
+        // Tie on latest_stored_at → sorted by device_id ascending.
+        assert_eq!(summaries[0].device_id, "device_a");
+        assert_eq!(summaries[1].device_id, "device_m");
+        assert_eq!(summaries[2].device_id, "device_z");
+    }
+
+    /// D8: rename_device 401 → Error::Unauthorized. Locks in the 401 mapping
+    /// for device-management endpoints (delete_device shares the same path).
+    #[tokio::test]
+    async fn d8_rename_device_401_unauthorized() {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("PUT", "/v1/devices/01HVDDD")
+            .with_status(401)
+            .with_body("")
+            .create_async()
+            .await;
+
+        let client = make_client(&server, "tok");
+        let err = client
+            .rename_device("01HVDDD", "Whatever")
+            .await
+            .expect_err("should be Unauthorized");
+        assert!(
+            matches!(err, Error::Unauthorized),
+            "expected Unauthorized, got: {:?}",
+            err
         );
     }
 }
