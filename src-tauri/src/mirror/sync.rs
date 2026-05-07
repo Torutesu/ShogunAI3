@@ -218,6 +218,22 @@ impl SyncEngine {
         }
     }
 
+    /// Snapshot the cached `http::Client` (Phase 2.1.4: needed by IPC commands
+    /// that drive search / device management outside of `run_cycle`). Returns
+    /// `None` if the client has not been wired up yet (e.g. before
+    /// `mirror_register` ran or after `clear_client()`).
+    pub(crate) fn client(&self) -> Option<http::Client> {
+        self.client.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Derive a fresh `MemoryEncryptionKey` from the cached `MasterKey`. Returns
+    /// `None` if Mirror is locked (no MK in memory). Phase 2.1.4 IPC search
+    /// uses this to decrypt blobs without re-deriving via passphrase.
+    pub(crate) fn mek(&self) -> Option<crypto::MemoryEncryptionKey> {
+        let guard = self.master_key.lock().ok()?;
+        guard.as_ref().map(crypto::derive_mek)
+    }
+
     /// Restore the authenticated `http::Client` after an app restart.
     ///
     /// `mirror_register` constructs a client and stashes it in this engine, but

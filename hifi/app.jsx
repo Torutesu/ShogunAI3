@@ -876,6 +876,19 @@ function mockIpcInvoke(command, payload) {
       return { ok: true, data: { stub: true } };
     case 'mirror_reset_stuck':
       return { ok: true, data: { reset: 0, stub: true } };
+    case 'mirror_search_blobs':
+      return { ok: true, data: { hits: [
+        { blob_id: 'stub_blob_1', device_id: 'stub_device_other', id: 'stub_mem_1', title: 'Stub mirror result', snippet: 'Mock cloud hit', source_field: 'google.com', kinds_json: '["screen"]', created_at: 1715000000000, similarity: 0.85, source: 'mirror-other', device_name: 'Stub iMac' },
+      ], stub: true } };
+    case 'mirror_list_devices':
+      return { ok: true, data: { devices: [
+        { device_id: 'stub_device_self', blob_count: 42, latest_stored_at: '2026-05-06T12:00:00Z', is_this_device: true, device_name: 'This Mac' },
+        { device_id: 'stub_device_other', blob_count: 17, latest_stored_at: '2026-05-05T08:30:00Z', is_this_device: false, device_name: 'Stub iMac' },
+      ], truncated: false, stub: true } };
+    case 'mirror_rename_device':
+      return { ok: true, data: { device: { device_id: echo?.device_id || 'stub_device', device_name: echo?.new_name || 'Renamed Stub', registered_at: '2026-04-01T00:00:00Z' }, stub: true } };
+    case 'mirror_delete_device':
+      return { ok: true, data: { tombstoned_blobs: 5, stub: true } };
     default:
       return { ok: true, data: { command, payload: echo, mock: true } };
   }
