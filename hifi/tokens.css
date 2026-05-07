@@ -103,6 +103,8 @@ input, textarea { font-family:inherit; color:inherit; }
 .btn-secondary:hover { border-color:var(--gold); color:var(--gold); }
 .btn-ghost { color:var(--text-mute); }
 .btn-ghost:hover { color:var(--text); }
+.btn-danger-ghost { color:var(--danger); border-color:color-mix(in srgb, var(--danger) 40%, transparent); }
+.btn-danger-ghost:hover { color:var(--danger); border-color:var(--danger); background:color-mix(in srgb, var(--danger) 8%, transparent); }
 .btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
 
 /* Card */
