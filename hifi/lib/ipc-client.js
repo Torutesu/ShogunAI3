@@ -986,6 +986,8 @@
         return { synced_count: 0, stub: true };
       case "mirror_disable":
         return { stub: true };
+      case "mirror_reset_stuck":
+        return { reset: 0, stub: true };
       default:
         return {
           stub: true,

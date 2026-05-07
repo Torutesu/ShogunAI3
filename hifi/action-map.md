@@ -224,6 +224,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `mirror.status`
 - `mirror.sync_now`
 - `mirror.disable`
+- `mirror.reset_stuck`
 
 ## Quick Verification
 

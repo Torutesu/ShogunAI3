@@ -287,6 +287,7 @@ pub fn run() {
       commands::shogun_memory_year_rollup_get,
       commands::mirror_disable,
       commands::mirror_register,
+      commands::mirror_reset_stuck,
       commands::mirror_status,
       commands::mirror_sync_now,
       commands::mirror_unlock,

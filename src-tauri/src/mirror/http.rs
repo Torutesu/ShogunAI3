@@ -87,6 +87,7 @@ pub(crate) struct UploadResponse {
 }
 
 /// One entry in a ListBlobsResponse.
+#[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BlobListEntry {
     pub blob_id: String,
@@ -97,6 +98,7 @@ pub(crate) struct BlobListEntry {
 }
 
 /// Response from GET /v1/blobs (RFC § 5.3).
+#[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ListBlobsResponse {
     pub blobs: Vec<BlobListEntry>,
@@ -104,6 +106,7 @@ pub(crate) struct ListBlobsResponse {
 }
 
 /// Response from GET /v1/health (RFC § 5.3).
+#[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HealthResponse {
     pub ok: bool,
@@ -231,6 +234,7 @@ impl Client {
     }
 
     /// GET /v1/blobs?cursor=<cursor>&device_id=<id>&limit=<n> — delta sync.
+    #[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
     pub(crate) async fn list_blobs_cursor(
         &self,
         cursor: Option<&str>,
@@ -263,6 +267,7 @@ impl Client {
     }
 
     /// GET /v1/blobs?since=<rfc3339>&until=<rfc3339>&device_id=<id> — time-range query.
+    #[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
     pub(crate) async fn list_blobs_time_range(
         &self,
         since: &str,
@@ -292,6 +297,7 @@ impl Client {
     }
 
     /// GET /v1/blobs/<blob_id> — fetch a single blob envelope.
+    #[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
     pub(crate) async fn fetch_blob(&self, blob_id: &str) -> Result<BlobEnvelope, Error> {
         let mut req = self.http.get(self.url(&format!("/v1/blobs/{}", blob_id)));
         if let Some(auth) = self.auth_header() {
@@ -308,6 +314,7 @@ impl Client {
     }
 
     /// POST /v1/blobs/<blob_id>/tombstone — soft delete.
+    #[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
     pub(crate) async fn tombstone(&self, blob_id: &str) -> Result<(), Error> {
         let mut req = self
             .http
@@ -325,6 +332,7 @@ impl Client {
     }
 
     /// GET /v1/health — server reachability check. No auth.
+    #[allow(dead_code)] // consumed by Phase 2.1.4 split-arch search and 2.1.3 server tests
     pub(crate) async fn health(&self) -> Result<HealthResponse, Error> {
         let resp = self.http.get(self.url("/v1/health")).send().await?;
 

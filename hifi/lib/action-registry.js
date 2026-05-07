@@ -158,6 +158,7 @@
     register("mirror.status", (payload) => api.mirror.status(payload));
     register("mirror.sync_now", (payload) => api.mirror.syncNow(payload));
     register("mirror.disable", (payload) => api.mirror.disable(payload));
+    register("mirror.reset_stuck", (payload) => api.mirror.resetStuck(payload));
 
     return {
       run: run,

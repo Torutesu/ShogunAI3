@@ -2601,10 +2601,45 @@ pub fn mirror_status(_payload: Value) -> Result<Value, String> {
 
 /// Trigger an immediate sync cycle outside the schedule.
 /// Returns: { synced_count }
+///
+/// Async (Fix #6): `run_cycle` is synchronous and may take seconds (SQLite
+/// I/O + HTTP via the dedicated `MIRROR_RUNTIME`). Wrapping it in
+/// `spawn_blocking` keeps the Tauri async runtime free for other IPC during
+/// a long sync, and avoids holding a Tauri command worker thread.
 #[tauri::command]
-pub fn mirror_sync_now(_payload: Value) -> Result<Value, String> {
-  let synced_count = mirror::sync::SyncEngine::global().run_cycle()?;
+pub async fn mirror_sync_now(_payload: Value) -> Result<Value, String> {
+  let synced_count = tokio::task::spawn_blocking(|| {
+    mirror::sync::SyncEngine::global().run_cycle()
+  })
+  .await
+  .map_err(|e| format!("mirror_sync_now task join error: {}", e))??;
   Ok(json!({ "synced_count": synced_count, "stub": false }))
+}
+
+/// Reset all rows that the sync engine marked `excluded=stuck` back to
+/// `local_only` so they can be retried. Used by the "Retry stuck rows"
+/// admin action surfaced when `mirror_status.last_error` indicates stuck
+/// rows. Sync-friendly: just a single `UPDATE`, no I/O over the wire.
+/// Returns: { reset: <count> }
+#[tauri::command]
+pub async fn mirror_reset_stuck(_payload: Value) -> Result<Value, String> {
+  let reset = tokio::task::spawn_blocking(|| -> Result<u64, String> {
+    let conn = memory_store::open_conn()?;
+    let updated = conn
+      .execute(
+        "UPDATE mem_items
+         SET sync_status = 'local_only',
+             sync_attempt_count = 0,
+             sync_excluded_reason = NULL
+         WHERE sync_status = 'excluded' AND sync_excluded_reason = 'stuck'",
+        [],
+      )
+      .map_err(|e| e.to_string())?;
+    Ok(updated as u64)
+  })
+  .await
+  .map_err(|e| format!("mirror_reset_stuck task join error: {}", e))??;
+  Ok(json!({ "reset": reset, "stub": false }))
 }
 
 /// Disable Mirror sync.
