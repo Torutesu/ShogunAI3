@@ -65,7 +65,15 @@
     register("data.delete_range", (payload) => api.accountDeleteData(payload));
     register("data.delete_all", () => api.accountDeleteAll({}));
     register("account.delete", () => api.accountDeleteSelf({}));
-    register("memory.search", (payload) => api.memorySearch(payload));
+    register("memory.search", (payload) => {
+      // Phase 2.1.4: route through the local+cloud merge layer when available.
+      // Falls back to local-only if memory-search.js wasn't loaded.
+      const merge = global.ShogunMemorySearch;
+      if (merge && typeof merge.runMemorySearchMerged === "function") {
+        return merge.runMemorySearchMerged(api, payload);
+      }
+      return api.memorySearch(payload);
+    });
     register("memory.fetch", (payload) => api.memoryFetch(payload));
     register("memory.ingest", (payload) => api.memoryIngest(payload));
     register("memory.delete", (payload) => api.memoryDelete(payload));
