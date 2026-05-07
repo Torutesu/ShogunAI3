@@ -308,16 +308,19 @@ Use `mockito` (already in dev-deps for Phase 2.0d's HTTP work). Each test starts
 | `npm run test:e2e` 30 pass (no regression — 2.1.4 will exercise UI) | full suite |
 | Manual smoke against a Mirror server | user-driven |
 
-## 10. Open Questions for Reviewer
+## 10. Open Questions — RESOLVED 2026-05-07
 
-These don't block design review but inform implementation choices:
+These were the open questions; their resolutions feed into the implementation plan.
 
-- **OQ1**: Use `mockito` (already in dev-deps) or a more minimal HTTP test fixture? Mockito is heavyweight but well-known. Defaulting to **mockito** for 2.1.2 and revisit if test runtime is unacceptable.
-- **OQ2**: Single-row vs batched HTTP requests? Currently 1 request per row. RFC has only single-blob POST. A batched endpoint is a 2.1.5+ optimization once we have measured throughput.
-- **OQ3**: Should `mirror_disable` always wipe the cached Master Key, or offer a "soft pause" that keeps it? Defaulting to **always wipe** — if user disables, they should have to unlock again. Keeps the security model simple.
-- **OQ4**: How does the sync engine surface "Mirror locked, cannot sync" to the user? Toast on next ingest? Persistent banner in Settings? Defaulting to **status string in `mirror_status` only** for 2.1.2, with the UI surface as 2.1.4's job.
+- **OQ1 — RESOLVED: `mockito` for HTTP integration tests.** Already in dev-deps from Phase 2.0d. Well-understood by the team. Sufficient for the integration test surface this sub-phase requires (mock 5xx, 401, 429-with-Retry-After, 201 happy path). A lighter custom fixture was considered but offers no measurable benefit at this scale.
 
-These can be flipped at plan-review without re-doing the design.
+- **OQ2 — RESOLVED: Single-row HTTP requests.** Per-row idempotency, simpler retry semantics, and a clean 1:1 mapping between `mem_items` rows and `BlobEnvelope` posts. Throughput is bounded by the user's typical capture rate (~1 row / minute), not request rate. A batched endpoint becomes worthwhile only when measurements show wire overhead matters; defer to Phase 2.1.5+ optimization with empirical data.
+
+- **OQ3 — RESOLVED: `mirror_disable` always wipes the cached Master Key.** "Soft pause" retains the key in process memory so re-enable is instant — but that's exactly the footgun: a user who disables Mirror and then re-enables expects a deliberate unlock step, not silent resumption. Consistency with the security model: disabled means locked; locked means re-unlock required. Per-call decision is removed.
+
+- **OQ4 — RESOLVED: 2.1.2 only exposes status strings via `mirror_status`.** Visual surfaces (toast / persistent banner / status indicator) are Phase 2.1.4's responsibility. This keeps 2.1.2 a self-contained backend phase and lets 2.1.4 design the UX holistically once the Settings → Cloud Mirror pane lands. Concretely, `mirror_status` returns `{ enabled, queue_depth, last_sync_at, last_error, locked, device_id }`; the `locked` boolean is the signal 2.1.4 binds to.
+
+These resolutions are locked the same way decisions S1-S12 in §4 are locked.
 
 ## 11. What this enables
 
