@@ -29,13 +29,25 @@ const SETTINGS_TABS = [
 // NOTE: Helper duplicated from tests/e2e/hifi-smoke.spec.js for Phase 0.
 // TODO: extract to tests/e2e/_helpers/open-hifi.js once Tasks 1-4 land.
 async function openHiFi(page) {
-  await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
-  await page.waitForSelector(".app", { timeout: 20000 });
-  await page.waitForFunction(() => !!window.SHOGUN_RUNTIME, null, { timeout: 20000 });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
+    try {
+      await page.waitForSelector(".app", { timeout: 20000 });
+      await page.waitForFunction(() => !!window.SHOGUN_RUNTIME, null, { timeout: 20000 });
+      return;
+    } catch (error) {
+      if (attempt === 1) throw error;
+      await page.waitForTimeout(500);
+    }
+  }
 }
 
 async function openSettingsModal(page) {
   await page.locator(".user-pill").click();
+  // Wait for the floating menu to render before clicking inside it. Without
+  // this, the inner click can race the menu's enter animation across the
+  // 16 sequential cases in this spec and produce flaky failures.
+  await expect(page.locator(".user-float")).toBeVisible();
   await page.locator(".user-float").getByText("Settings", { exact: true }).click();
   await expect(page.locator(".s-modal")).toBeVisible();
 }
