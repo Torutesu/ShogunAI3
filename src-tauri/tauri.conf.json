@@ -5,9 +5,9 @@
   "identifier": "ai.shogun.desktop",
   "build": {
     "frontendDist": "../web-dist",
-    "devUrl": "http://127.0.0.1:4173/SHOGUN%20Hi-Fi%20UI.html",
-    "beforeDevCommand": "bash scripts/tauri-dev-static-server.sh",
-    "beforeBuildCommand": "npm run build:web-dist && npx tauri icon hifi/assets/app-icon-mac-1024.png"
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build:web-dist && npx tauri icon ../public/assets/app-icon-mac-1024.png"
   },
   "app": {
     "windows": [
