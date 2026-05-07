@@ -53,9 +53,9 @@ pub(crate) struct ResultEncryptionKey([u8; KEY_LEN]);
 /// The tag is appended by XChaCha20-Poly1305 and included in `ciphertext`.
 /// Total wire size = 24 + plaintext.len() + 16 bytes.
 pub(crate) struct Ciphertext {
-    pub nonce: [u8; 24],
+    pub(crate) nonce: [u8; 24],
     /// Ciphertext bytes including the 16-byte authentication tag appended by the AEAD.
-    pub ciphertext: Vec<u8>,
+    pub(crate) ciphertext: Vec<u8>,
 }
 
 /// Derive a `MasterKey` from a user passphrase and a per-device random salt.
