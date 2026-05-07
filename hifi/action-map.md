@@ -219,6 +219,12 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `meetings.mcp.tools`
 - `meetings.import.pick`
 - `meetings.import.file`
+- `mirror.register`
+- `mirror.unlock`
+- `mirror.status`
+- `mirror.sync_now`
+- `mirror.disable`
+- `mirror.reset_stuck`
 
 ## Quick Verification
 

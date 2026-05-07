@@ -152,6 +152,14 @@
     register("meetings.import.pick", (payload) => api.meetingImportPick(payload));
     register("meetings.import.file", (payload) => api.meetingImportFile(payload));
 
+    // Phase 2.1.2: Mirror cloud sync actions.
+    register("mirror.register", (payload) => api.mirror.register(payload));
+    register("mirror.unlock", (payload) => api.mirror.unlock(payload));
+    register("mirror.status", (payload) => api.mirror.status(payload));
+    register("mirror.sync_now", (payload) => api.mirror.syncNow(payload));
+    register("mirror.disable", (payload) => api.mirror.disable(payload));
+    register("mirror.reset_stuck", (payload) => api.mirror.resetStuck(payload));
+
     return {
       run: run,
       register: register,

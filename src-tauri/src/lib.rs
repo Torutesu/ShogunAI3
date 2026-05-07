@@ -146,6 +146,7 @@ pub fn run() {
         }
       }
       capture_sampler::start_background_sampler(app.handle().clone());
+      mirror::sync::spawn_scheduler(app.handle().clone());
       #[cfg(target_os = "macos")]
       {
         let handle = app.handle().clone();
@@ -284,6 +285,12 @@ pub fn run() {
       commands::shogun_memory_day_rollup_get,
       commands::shogun_memory_month_rollup_get,
       commands::shogun_memory_year_rollup_get,
+      commands::mirror_disable,
+      commands::mirror_register,
+      commands::mirror_reset_stuck,
+      commands::mirror_status,
+      commands::mirror_sync_now,
+      commands::mirror_unlock,
       commands::shogun_lesson_capture_rejection,
       commands::shogun_lesson_capture_tool_failure,
       commands::shogun_patterns_run_now,

@@ -155,6 +155,14 @@
       meetingMcpTools: (input) => call("shogun_meeting_mcp_tools", input, READ),
       meetingImportPick: (input) => call("shogun_meeting_import_pick", input || {}, WRITE),
       meetingImportFile: (input) => call("shogun_meeting_import_file", input, WRITE),
+      mirror: {
+        register: (input) => call("mirror_register", input, WRITE),
+        unlock: (input) => call("mirror_unlock", input, WRITE),
+        status: (input) => call("mirror_status", input || {}, READ),
+        syncNow: (input) => call("mirror_sync_now", input || {}, WRITE),
+        disable: (input) => call("mirror_disable", input || {}, WRITE),
+        resetStuck: (input) => call("mirror_reset_stuck", input || {}, WRITE),
+      },
     };
   }
 
