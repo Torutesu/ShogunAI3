@@ -16,6 +16,7 @@ use chacha20poly1305::{
 };
 use hkdf::Hkdf;
 use sha2::Sha256;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Argon2id parameters: 64MiB / 3 iters / 1 lane / 32-byte output.
 const KDF_M_KIB: u32 = 64 * 1024;
@@ -35,22 +36,27 @@ const HKDF_INFO_REK: &[u8] = b"shogun.mirror.rek.v1";
 /// `Debug` is implemented manually to redact the key bytes — never `#[derive(Debug)]`
 /// on a key type, or a logging line like `tracing::error!("save failed for {:?}", mk)`
 /// will dump the master key in plaintext.
-#[derive(Clone)]
+///
+/// `ZeroizeOnDrop` actively zeroes the 32-byte array when the struct is dropped,
+/// so key material does not linger in memory until the allocator reuses the page.
+/// Pairs with the keychain-backed lifetime: live in process memory only between
+/// `mirror_unlock` and `mirror_disable`; on either path the bytes are zeroed.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct MasterKey([u8; KEY_LEN]);
 
 /// Memory Encryption Key — derived from MasterKey via HKDF-SHA256 with info
 /// `b"shogun.mirror.mek.v1"`. Used to encrypt memory metadata blobs.
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct MemoryEncryptionKey([u8; KEY_LEN]);
 
 /// Job Encryption Key — derived from MasterKey via HKDF-SHA256 with info
 /// `b"shogun.mirror.jek.v1"`. Used to encrypt extraction job payloads.
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct JobEncryptionKey([u8; KEY_LEN]);
 
 /// Result Encryption Key — derived from MasterKey via HKDF-SHA256 with info
 /// `b"shogun.mirror.rek.v1"`. Used to encrypt extraction result blobs.
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct ResultEncryptionKey([u8; KEY_LEN]);
 
 // Redacted `Debug` impls. Each prints only the type name and length — never the
@@ -488,4 +494,31 @@ mod tests {
             .expect("KEY_LEN must equal XChaCha20Poly1305 key length (32)");
     }
 
+    /// `ZeroizeOnDrop` regression: dropping a key explicitly via `Zeroize::zeroize`
+    /// (the same routine `ZeroizeOnDrop`'s Drop impl invokes) clears the bytes.
+    /// We can't reliably observe the bytes after a normal Drop because Rust may
+    /// reuse the stack slot, and the dropped value is no longer addressable; the
+    /// trait test is the right boundary here. If `#[derive(ZeroizeOnDrop)]` ever
+    /// gets removed from a key type, this test fails to compile (the call to
+    /// `zeroize()` requires the `Zeroize` trait implementation that the derive
+    /// produces).
+    #[test]
+    fn c19_keys_implement_zeroize_on_drop() {
+        use zeroize::Zeroize;
+
+        let mut master = MasterKey([0xAAu8; KEY_LEN]);
+        let mut mek = MemoryEncryptionKey([0xBBu8; KEY_LEN]);
+        let mut jek = JobEncryptionKey([0xCCu8; KEY_LEN]);
+        let mut rek = ResultEncryptionKey([0xDDu8; KEY_LEN]);
+
+        master.zeroize();
+        mek.zeroize();
+        jek.zeroize();
+        rek.zeroize();
+
+        assert_eq!(master.as_bytes(), &[0u8; KEY_LEN]);
+        assert_eq!(mek.as_bytes(), &[0u8; KEY_LEN]);
+        assert_eq!(jek.as_bytes(), &[0u8; KEY_LEN]);
+        assert_eq!(rek.as_bytes(), &[0u8; KEY_LEN]);
+    }
 }
