@@ -37,9 +37,12 @@
 #![allow(dead_code)]
 
 use security_framework::passwords::{
-    delete_generic_password, delete_generic_password_options, generic_password,
-    set_generic_password_options, PasswordOptions,
+    delete_generic_password_options, generic_password, set_generic_password_options,
+    PasswordOptions,
 };
+// Used only by the test-mode delete fallback (see `delete_with_effective_sync`).
+#[cfg(test)]
+use security_framework::passwords::delete_generic_password;
 
 use crate::mirror::crypto::MasterKey;
 
@@ -151,6 +154,18 @@ fn effective_account_salt() -> String {
     ACCOUNT_SALT.to_string()
 }
 
+/// Format a `security_framework::base::Error` as a locale-stable string.
+///
+/// macOS' `SecCopyErrorMessageString` (which `Error::Display` ultimately calls)
+/// returns LOCALIZED strings — on a Japanese or German developer machine the
+/// English word "entitlement" won't appear in the message. The numeric OSStatus
+/// is the only stable identifier across locales, so we always prefix the message
+/// with `OSStatus(N): `. Callers (and tests) should match on the prefix, not the
+/// localized tail.
+fn format_os_error(e: &security_framework::base::Error) -> String {
+    format!("OSStatus({}): {}", e.code(), e)
+}
+
 /// Build a `PasswordOptions` for a generic-password entry, with sync flag set
 /// to the effective value (production: `true`; test: per-thread override).
 ///
@@ -167,7 +182,7 @@ pub(crate) fn save_master_key(mk: &MasterKey) -> Result<(), String> {
     let service = effective_service();
     let account = effective_account_master();
     set_generic_password_options(mk.as_bytes(), sync_options(&service, &account))
-        .map_err(|e| e.to_string())
+        .map_err(|e| format_os_error(&e))
 }
 
 /// Load the Master Key from the macOS Keychain.
@@ -190,7 +205,7 @@ pub(crate) fn load_master_key() -> Result<Option<MasterKey>, String> {
             Ok(Some(MasterKey::from_bytes(arr)))
         }
         Err(e) if e.code() == -25300 => Ok(None), // errSecItemNotFound
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(format_os_error(&e)),
     }
 }
 
@@ -205,7 +220,8 @@ pub(crate) fn delete_master_key() -> Result<(), String> {
 pub(crate) fn save_salt(salt: &[u8]) -> Result<(), String> {
     let service = effective_service();
     let account = effective_account_salt();
-    set_generic_password_options(salt, sync_options(&service, &account)).map_err(|e| e.to_string())
+    set_generic_password_options(salt, sync_options(&service, &account))
+        .map_err(|e| format_os_error(&e))
 }
 
 /// Load the per-device passphrase salt from the keychain.
@@ -217,7 +233,7 @@ pub(crate) fn load_salt() -> Result<Option<Vec<u8>>, String> {
     match load_key_bytes(&service, &account) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(e) if e.code() == -25300 => Ok(None),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(format_os_error(&e)),
     }
 }
 
@@ -251,25 +267,36 @@ fn load_key_bytes(
     generic_password(opts)
 }
 
-/// Delete a keychain entry using the effective sync flag, or fall through to the
-/// non-sync store if the sync delete fails with the entitlement error. Idempotent.
+/// Delete a keychain entry using the effective sync flag. Idempotent on
+/// `errSecItemNotFound` (-25300).
+///
+/// In production, an unexpected `-34018: errSecMissingEntitlement` propagates
+/// as an error so the caller can observe and react — silent fallback during
+/// key deletion would mask iCloud unavailability and is not the right default.
+///
+/// Tests, however, write entries to the local (non-synced) store via the
+/// thread-local sync override but cleanup paths still go through this function
+/// and may receive `-34018` from the sync delete probe. The `#[cfg(test)]`
+/// fallback below covers cleanup of those local-store entries — in production
+/// builds it's compiled out entirely.
 fn delete_with_effective_sync(service: &str, account: &str) -> Result<(), String> {
     let mut opts = PasswordOptions::new_generic_password(service, account);
     opts.set_access_synchronized(Some(effective_sync()));
     match delete_generic_password_options(opts) {
         Ok(()) => Ok(()),
         Err(e) if e.code() == -25300 => Ok(()), // errSecItemNotFound
+        #[cfg(test)]
         Err(e) if e.code() == -34018 => {
-            // Entitlement missing for sync store — fall through to delete_any
-            // (covers the test cleanup case where the entry was actually written
-            // to the local store with sync=false).
+            // Test-only fallback: tests sometimes need to clean up entries that
+            // landed in the local store. Compiled out of production builds —
+            // see function doc comment.
             match delete_generic_password(service, account) {
                 Ok(()) => Ok(()),
                 Err(e) if e.code() == -25300 => Ok(()),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(format_os_error(&e)),
             }
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(format_os_error(&e)),
     }
 }
 
@@ -558,9 +585,13 @@ mod tests {
                 // Unsigned-binary path: must be the entitlement error specifically.
                 // Any other error means save_master_key failed for a reason
                 // unrelated to the iCloud sync flag — that would be a real bug.
+                //
+                // Match the locale-stable `OSStatus(-34018)` prefix produced by
+                // `format_os_error` rather than the localized message tail (which
+                // varies by system language).
                 assert!(
-                    msg.contains("-34018") || msg.contains("entitlement"),
-                    "K10: expected -34018 errSecMissingEntitlement on unsigned binary, got: {}",
+                    msg.contains("OSStatus(-34018)"),
+                    "K10: expected OSStatus(-34018) errSecMissingEntitlement on unsigned binary, got: {}",
                     msg
                 );
             }

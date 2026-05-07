@@ -31,7 +31,11 @@ const HKDF_INFO_REK: &[u8] = b"shogun.mirror.rek.v1";
 
 /// Master Key — 32-byte opaque value derived from a user passphrase via Argon2id.
 /// Never exposed to JS/TS; only crosses module boundaries inside the Rust crate.
-#[derive(Clone, Debug)]
+///
+/// `Debug` is implemented manually to redact the key bytes — never `#[derive(Debug)]`
+/// on a key type, or a logging line like `tracing::error!("save failed for {:?}", mk)`
+/// will dump the master key in plaintext.
+#[derive(Clone)]
 pub(crate) struct MasterKey([u8; KEY_LEN]);
 
 /// Memory Encryption Key — derived from MasterKey via HKDF-SHA256 with info
@@ -48,6 +52,30 @@ pub(crate) struct JobEncryptionKey([u8; KEY_LEN]);
 /// `b"shogun.mirror.rek.v1"`. Used to encrypt extraction result blobs.
 #[derive(Clone)]
 pub(crate) struct ResultEncryptionKey([u8; KEY_LEN]);
+
+// Redacted `Debug` impls. Each prints only the type name and length — never the
+// key bytes. Future maintainers must NOT add `#[derive(Debug)]` to these types,
+// or `format!("{:?}", key)` will leak plaintext key material into logs.
+impl std::fmt::Debug for MasterKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MasterKey([REDACTED; 32])")
+    }
+}
+impl std::fmt::Debug for MemoryEncryptionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MemoryEncryptionKey([REDACTED; 32])")
+    }
+}
+impl std::fmt::Debug for JobEncryptionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("JobEncryptionKey([REDACTED; 32])")
+    }
+}
+impl std::fmt::Debug for ResultEncryptionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ResultEncryptionKey([REDACTED; 32])")
+    }
+}
 
 /// Encrypted envelope: 24-byte nonce ‖ ciphertext ‖ 16-byte AEAD tag.
 /// The tag is appended by XChaCha20-Poly1305 and included in `ciphertext`.
