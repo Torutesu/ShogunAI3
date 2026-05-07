@@ -55,6 +55,9 @@ pub(crate) const ACCOUNT_MASTER_KEY: &str = "master_key.v1";
 /// Keychain account name for the per-device passphrase salt.
 pub(crate) const ACCOUNT_SALT: &str = "passphrase_salt.v1";
 
+/// Keychain account name for the server-issued device token (Phase 2.1.2).
+pub(crate) const ACCOUNT_DEVICE_TOKEN: &str = "device_token.v1";
+
 // ─── Test overrides (production = None on every accessor) ─────────────────────
 //
 // Thread-local because tests may run in parallel and each test wants its own
@@ -255,6 +258,36 @@ pub(crate) fn ensure_salt() -> Result<Vec<u8>, String> {
     getrandom::getrandom(&mut salt).map_err(|e| e.to_string())?;
     save_salt(&salt)?;
     Ok(salt)
+}
+
+/// Save (or replace) the server-issued device token in the Keychain with iCloud sync.
+pub(crate) fn save_device_token(token: &str) -> Result<(), String> {
+    let service = effective_service();
+    let account = ACCOUNT_DEVICE_TOKEN.to_string();
+    set_generic_password_options(token.as_bytes(), sync_options(&service, &account))
+        .map_err(|e| format_os_error(&e))
+}
+
+/// Load the device token from the Keychain.
+/// Returns `Ok(None)` if no entry exists.
+pub(crate) fn load_device_token() -> Result<Option<String>, String> {
+    let service = effective_service();
+    let account = ACCOUNT_DEVICE_TOKEN.to_string();
+    match load_key_bytes(&service, &account) {
+        Ok(bytes) => {
+            let s = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+            Ok(Some(s))
+        }
+        Err(e) if e.code() == -25300 => Ok(None),
+        Err(e) => Err(format_os_error(&e)),
+    }
+}
+
+/// Delete the device token entry. Idempotent.
+pub(crate) fn delete_device_token() -> Result<(), String> {
+    let service = effective_service();
+    let account = ACCOUNT_DEVICE_TOKEN.to_string();
+    delete_with_effective_sync(&service, &account)
 }
 
 /// Read a generic password using the effective sync flag.

@@ -447,6 +447,46 @@ fn migrate_sync_status_columns(conn: &Connection) -> Result<(), String> {
   Ok(())
 }
 
+/// Idempotent migration: add `cloud_index_id` / `encrypted_at` columns (Phase 2.1.2).
+/// Both are nullable — NULL means the row has not yet been uploaded to the Mirror server.
+fn migrate_mirror_columns(conn: &Connection) -> Result<(), String> {
+  let mut stmt = conn
+    .prepare("PRAGMA table_info(mem_items)")
+    .map_err(|e| e.to_string())?;
+  let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+  let mut has_cloud_index_id = false;
+  let mut has_encrypted_at = false;
+  while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+    let name: String = row.get(1).map_err(|e| e.to_string())?;
+    if name == "cloud_index_id" {
+      has_cloud_index_id = true;
+    }
+    if name == "encrypted_at" {
+      has_encrypted_at = true;
+    }
+  }
+  drop(rows);
+  drop(stmt);
+
+  if !has_cloud_index_id {
+    conn
+      .execute(
+        "ALTER TABLE mem_items ADD COLUMN cloud_index_id TEXT",
+        [],
+      )
+      .map_err(|e| e.to_string())?;
+  }
+  if !has_encrypted_at {
+    conn
+      .execute(
+        "ALTER TABLE mem_items ADD COLUMN encrypted_at INTEGER",
+        [],
+      )
+      .map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 pub(crate) fn init_schema(conn: &Connection) -> Result<(), String> {
   conn
     .execute_batch(
@@ -475,6 +515,7 @@ pub(crate) fn init_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
   migrate_sync_status_columns(conn)?;
+  migrate_mirror_columns(conn)?;
 
   let n: i64 = conn
     .query_row(
@@ -689,6 +730,8 @@ fn row_to_item(
   redaction: Option<String>,
   sync_status: Option<String>,
   sync_excluded_reason: Option<String>,
+  cloud_index_id: Option<String>,
+  encrypted_at: Option<i64>,
 ) -> Value {
   let prov = provenance
     .filter(|s| !s.is_empty())
@@ -716,6 +759,12 @@ fn row_to_item(
     }
     if let Some(reason) = sync_excluded_reason.filter(|s| !s.is_empty()) {
       map.insert("syncExcludedReason".to_string(), json!(reason));
+    }
+    if let Some(cid) = cloud_index_id.filter(|s| !s.is_empty()) {
+      map.insert("cloudIndexId".to_string(), json!(cid));
+    }
+    if let Some(ea) = encrypted_at {
+      map.insert("encryptedAt".to_string(), json!(ea));
     }
   }
   obj
@@ -801,6 +850,7 @@ fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usiz
       SELECT m.id, m.title, m.snippet, m.source, m.kinds_json, m.created_at,
              m.provenance, m.entity_id, m.confidence, m.redaction,
              m.sync_status, m.sync_excluded_reason,
+             m.cloud_index_id, m.encrypted_at,
              highlight(fts, 0, char(2), char(3)) AS title_hl,
              snippet(fts, 1, char(2), char(3), '…', 32) AS snippet_hl
       FROM mem_items_fts AS fts
@@ -814,8 +864,8 @@ fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usiz
 
   let rows = stmt
     .query_map(params![fts_q, cap as i64], |r| {
-      let title_hl: Option<String> = r.get(12).ok();
-      let snippet_hl: Option<String> = r.get(13).ok();
+      let title_hl: Option<String> = r.get(14).ok();
+      let snippet_hl: Option<String> = r.get(15).ok();
       let mut item = row_to_item(
         r.get(0)?,
         r.get(1)?,
@@ -829,6 +879,8 @@ fn search_fts(conn: &Connection, fts_q: &str, kinds_want: &[String], limit: usiz
         r.get(9)?,
         r.get(10).ok(),
         r.get(11).ok(),
+        r.get(12).ok(),
+        r.get(13).ok(),
       );
       attach_fts_highlights(&mut item, title_hl, snippet_hl);
       Ok(item)
@@ -861,7 +913,7 @@ fn search_fallback_like(
 ) -> Result<(Vec<Value>, usize), String> {
   let mut stmt = conn
     .prepare(
-      "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction, sync_status, sync_excluded_reason FROM mem_items ORDER BY created_at DESC",
+      "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction, sync_status, sync_excluded_reason, cloud_index_id, encrypted_at FROM mem_items ORDER BY created_at DESC",
     )
     .map_err(|e| e.to_string())?;
   let rows = stmt
@@ -879,6 +931,8 @@ fn search_fallback_like(
         r.get(9)?,
         r.get(10).ok(),
         r.get(11).ok(),
+        r.get(12).ok(),
+        r.get(13).ok(),
       ))
     })
     .map_err(|e| e.to_string())?;
@@ -925,7 +979,7 @@ fn search_fallback_like(
 fn search_recent(conn: &Connection, kinds_want: &[String], limit: usize) -> Result<(Vec<Value>, usize), String> {
   let mut stmt = conn
     .prepare(
-      "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction, sync_status, sync_excluded_reason FROM mem_items ORDER BY created_at DESC",
+      "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction, sync_status, sync_excluded_reason, cloud_index_id, encrypted_at FROM mem_items ORDER BY created_at DESC",
     )
     .map_err(|e| e.to_string())?;
   let rows = stmt
@@ -943,6 +997,8 @@ fn search_recent(conn: &Connection, kinds_want: &[String], limit: usize) -> Resu
         r.get(9)?,
         r.get(10).ok(),
         r.get(11).ok(),
+        r.get(12).ok(),
+        r.get(13).ok(),
       ))
     })
     .map_err(|e| e.to_string())?;
@@ -1382,7 +1438,7 @@ pub fn fetch(payload: &Value) -> Result<Value, String> {
   for want in &id_list {
     let found = conn
       .query_row(
-        "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction, sync_status, sync_excluded_reason FROM mem_items WHERE id = ?1",
+        "SELECT id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction, sync_status, sync_excluded_reason, cloud_index_id, encrypted_at FROM mem_items WHERE id = ?1",
         params![want],
         |r| {
           Ok(row_to_item(
@@ -1398,6 +1454,8 @@ pub fn fetch(payload: &Value) -> Result<Value, String> {
             r.get(9)?,
             r.get(10).ok(),
             r.get(11).ok(),
+            r.get(12).ok(),
+            r.get(13).ok(),
           ))
         },
       )
@@ -1830,6 +1888,8 @@ mod tests {
       None,
       None,
       None,
+      None,
+      None,
     );
     // Persisted `user` overrides the would-be-derived `screen`.
     assert_eq!(v.get("provenance").and_then(|x| x.as_str()), Some("user"));
@@ -1844,6 +1904,8 @@ mod tests {
       "google_calendar".into(),
       "[]".into(),
       10,
+      None,
+      None,
       None,
       None,
       None,
@@ -1872,6 +1934,8 @@ mod tests {
       None,
       None,
       None,
+      None,
+      None,
     );
     assert_eq!(v.get("provenance").and_then(|x| x.as_str()), Some("screen"));
   }
@@ -1889,6 +1953,8 @@ mod tests {
       Some("eid-1".into()),
       Some(0.83),
       Some("summary_only".into()),
+      None,
+      None,
       None,
       None,
     );
@@ -1912,6 +1978,8 @@ mod tests {
       Some(String::new()),
       None,
       None,
+      None,
+      None,
     );
     assert!(sparse.get("entity_id").is_none());
     assert!(sparse.get("confidence").is_none());
@@ -1930,6 +1998,8 @@ mod tests {
       Some("user".into()),
       None,
       Some(f64::NAN),
+      None,
+      None,
       None,
       None,
       None,
@@ -1952,6 +2022,8 @@ mod tests {
       None,
       None,
       None,
+      None,
+      None,
     );
     assert_eq!(v.get("created_at").and_then(|x| x.as_u64()), Some(0));
   }
@@ -1966,6 +2038,8 @@ mod tests {
       "[\"note\",\"screen\"]".into(),
       0,
       Some("user".into()),
+      None,
+      None,
       None,
       None,
       None,
@@ -2356,6 +2430,134 @@ mod tests {
       item.get("syncExcludedReason").and_then(|v| v.as_str()),
       Some("payment_screen"),
       "syncExcludedReason should be 'payment_screen'"
+    );
+  }
+
+  // ─── Mirror column tests (Phase 2.1.2) ────────────────────────────────────
+
+  /// TM1: Fresh DB has both mirror columns (cloud_index_id, encrypted_at), both nullable.
+  #[test]
+  fn tm1_fresh_db_has_mirror_columns() {
+    let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+    super::init_schema(&conn).expect("init_schema");
+
+    let names = pragma_column_names(&conn);
+    assert!(names.contains(&"cloud_index_id".to_string()), "cloud_index_id missing");
+    assert!(names.contains(&"encrypted_at".to_string()), "encrypted_at missing");
+
+    // Both must be nullable (notnull=0).
+    let (_, notnull_cid, _) = pragma_column_info(&conn, "cloud_index_id")
+      .expect("cloud_index_id column info");
+    assert_eq!(notnull_cid, 0, "cloud_index_id should be nullable");
+
+    let (_, notnull_ea, _) = pragma_column_info(&conn, "encrypted_at")
+      .expect("encrypted_at column info");
+    assert_eq!(notnull_ea, 0, "encrypted_at should be nullable");
+  }
+
+  /// TM2: Legacy DB (no mirror columns) gets both via migration; existing rows NULL.
+  #[test]
+  fn tm2_legacy_db_migration_adds_mirror_columns() {
+    let conn = make_mem_items_legacy();
+
+    // Insert a row before migration.
+    conn.execute(
+      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at)
+       VALUES ('m_legacy', 'Legacy', '', 'capture', '[]', 1)",
+      [],
+    ).expect("insert legacy row");
+
+    // Add sync_status columns first (legacy path).
+    super::migrate_sync_status_columns(&conn).expect("sync migration");
+
+    // Now add mirror columns.
+    super::migrate_mirror_columns(&conn).expect("mirror migration");
+
+    let names = pragma_column_names(&conn);
+    assert!(names.contains(&"cloud_index_id".to_string()), "cloud_index_id missing after migration");
+    assert!(names.contains(&"encrypted_at".to_string()), "encrypted_at missing after migration");
+
+    // Existing row must have NULLs for both new columns.
+    let (cid, ea): (Option<String>, Option<i64>) = conn
+      .query_row(
+        "SELECT cloud_index_id, encrypted_at FROM mem_items WHERE id = 'm_legacy'",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+      )
+      .expect("select");
+    assert!(cid.is_none(), "cloud_index_id should be NULL for legacy row");
+    assert!(ea.is_none(), "encrypted_at should be NULL for legacy row");
+  }
+
+  /// TM3: Calling migrate_mirror_columns twice is idempotent.
+  #[test]
+  fn tm3_mirror_migration_is_idempotent() {
+    let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+    super::init_schema(&conn).expect("init_schema");
+
+    // Second call must succeed without error.
+    super::migrate_mirror_columns(&conn).expect("second migrate_mirror_columns is idempotent");
+
+    // Columns appear exactly once.
+    let names = pragma_column_names(&conn);
+    assert_eq!(
+      names.iter().filter(|n| *n == "cloud_index_id").count(),
+      1,
+      "cloud_index_id should appear exactly once"
+    );
+    assert_eq!(
+      names.iter().filter(|n| *n == "encrypted_at").count(),
+      1,
+      "encrypted_at should appear exactly once"
+    );
+  }
+
+  /// TM4: fetch() round-trip surfaces cloudIndexId when populated, absent when NULL.
+  #[test]
+  fn tm4_fetch_roundtrip_with_cloud_index_id() {
+    let _guard = TempDbGuard::new("tm4");
+
+    let conn = super::open_conn().expect("open_conn");
+
+    // Insert two rows: one with cloud_index_id, one without.
+    conn.execute(
+      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at, cloud_index_id, encrypted_at)
+       VALUES ('m_synced', 'Synced', '', 'capture_sampler', '[]', 1000, '01HV_blob_id_xxx', 1700000000000)",
+      [],
+    ).expect("insert synced row");
+    conn.execute(
+      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at)
+       VALUES ('m_local', 'Local Only', '', 'capture_sampler', '[]', 2000)",
+      [],
+    ).expect("insert local row");
+    drop(conn);
+
+    // Fetch the synced row — cloudIndexId must appear.
+    let fetched = super::fetch(&json!({ "id": "m_synced" })).expect("fetch synced");
+    let items = fetched["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+      items[0].get("cloudIndexId").and_then(|v| v.as_str()),
+      Some("01HV_blob_id_xxx"),
+      "cloudIndexId should be surfaced in JSON"
+    );
+    assert_eq!(
+      items[0].get("encryptedAt").and_then(|v| v.as_i64()),
+      Some(1700000000000),
+      "encryptedAt should be surfaced in JSON"
+    );
+
+    // Fetch the local-only row — cloudIndexId must be absent.
+    let fetched_local = super::fetch(&json!({ "id": "m_local" })).expect("fetch local");
+    let items_local = fetched_local["items"].as_array().expect("items");
+    assert_eq!(items_local.len(), 1);
+    assert!(
+      items_local[0].get("cloudIndexId").is_none(),
+      "cloudIndexId must be absent for un-synced row"
+    );
+    assert!(
+      items_local[0].get("encryptedAt").is_none(),
+      "encryptedAt must be absent for un-synced row"
     );
   }
 }

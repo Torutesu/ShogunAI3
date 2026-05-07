@@ -976,6 +976,16 @@
         }
         return { imported: 0, path: "/mock/memory.shogun-memory.jsonl", stub: true, echo };
       }
+      case "mirror_register":
+        return { device_id: "mock_device_id_stub", stub: true };
+      case "mirror_unlock":
+        return { stub: true };
+      case "mirror_status":
+        return { enabled: false, queue_depth: 0, last_sync_at: null, last_error: null, locked: true, device_id: null, stub: true };
+      case "mirror_sync_now":
+        return { synced_count: 0, stub: true };
+      case "mirror_disable":
+        return { stub: true };
       default:
         return {
           stub: true,

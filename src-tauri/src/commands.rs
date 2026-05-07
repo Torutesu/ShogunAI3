@@ -3,7 +3,7 @@
 use crate::{
   auth, biometric, brief, brief_actions, dead_letter, embed_backfill, github, gmail,
   google_calendar, google_drive, integration_secrets, integrations, linear, llm, macos_ax,
-  memory_export, memory_store, notion, secrets, settings_store, slack, zoom,
+  memory_export, memory_store, mirror, notion, secrets, settings_store, slack, zoom,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -2505,4 +2505,137 @@ pub fn shogun_memory_summary_set_priority(payload: serde_json::Value) -> Result<
     priority_opt.as_deref(),
   )?;
   Ok(serde_json::json!({ "updated": updated, "userPriority": priority_opt }))
+}
+
+// ─── Phase 2.1.2: Mirror IPC commands ────────────────────────────────────────
+
+/// Register this device with a Mirror server.
+/// Payload: { server_url, registration_code, device_name? }
+/// Returns: { device_id }
+#[tauri::command]
+pub async fn mirror_register(payload: Value) -> Result<Value, String> {
+  let server_url = payload
+    .get("server_url")
+    .and_then(|v| v.as_str())
+    .ok_or("server_url required")?
+    .to_string();
+  let registration_code = payload
+    .get("registration_code")
+    .and_then(|v| v.as_str())
+    .ok_or("registration_code required")?;
+  let device_name = payload
+    .get("device_name")
+    .and_then(|v| v.as_str())
+    .unwrap_or("My Mac");
+
+  let client = mirror::http::Client::new_unauthenticated(server_url.clone())
+    .map_err(|e| e.to_string())?;
+  let registration = client
+    .register_device(registration_code, device_name)
+    .await
+    .map_err(|e| e.to_string())?;
+
+  // Persist device_id + server_url to settings.
+  settings_store::save_patch(&json!({
+    "section": "cloud_mirror",
+    "enabled": true,
+    "server_url": server_url,
+    "device_id": registration.device_id,
+  }))?;
+
+  // Persist device_token to Keychain.
+  #[cfg(target_os = "macos")]
+  mirror::keychain::save_device_token(&registration.device_token)?;
+
+  // Wire up the authenticated client in the SyncEngine.
+  let auth_client = mirror::http::Client::new(server_url, registration.device_token)
+    .map_err(|e| e.to_string())?;
+  mirror::sync::SyncEngine::global().set_client(auth_client);
+
+  Ok(json!({ "device_id": registration.device_id, "stub": false }))
+}
+
+/// Unlock Mirror by deriving the MasterKey from the user's passphrase.
+/// Payload: { passphrase }
+/// Returns: {}
+#[tauri::command]
+pub fn mirror_unlock(payload: Value) -> Result<Value, String> {
+  let passphrase = payload
+    .get("passphrase")
+    .and_then(|v| v.as_str())
+    .ok_or("passphrase required")?;
+  mirror::sync::SyncEngine::global().unlock(passphrase)?;
+  Ok(json!({ "stub": false }))
+}
+
+/// Return the current Mirror sync status.
+/// Returns: { enabled, queue_depth, last_sync_at, last_error, locked, device_id }
+#[tauri::command]
+pub fn mirror_status(_payload: Value) -> Result<Value, String> {
+  let settings = settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
+  let enabled = settings
+    .get("sections")
+    .and_then(|s| s.get("cloud_mirror"))
+    .and_then(|m| m.get("enabled"))
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  let device_id = settings
+    .get("sections")
+    .and_then(|s| s.get("cloud_mirror"))
+    .and_then(|m| m.get("device_id"))
+    .and_then(|v| v.as_str())
+    .map(String::from);
+
+  let stats = mirror::sync::SyncEngine::global().stats();
+
+  Ok(json!({
+    "enabled": enabled,
+    "queue_depth": stats.queue_depth,
+    "last_sync_at": stats.last_sync_at,
+    "last_error": stats.last_error,
+    "locked": stats.locked,
+    "device_id": device_id,
+    "stub": false,
+  }))
+}
+
+/// Trigger an immediate sync cycle outside the schedule.
+/// Returns: { synced_count }
+#[tauri::command]
+pub fn mirror_sync_now(_payload: Value) -> Result<Value, String> {
+  let synced_count = mirror::sync::SyncEngine::global().run_cycle()?;
+  Ok(json!({ "synced_count": synced_count, "stub": false }))
+}
+
+/// Disable Mirror sync.
+/// Payload: { wipe_keys?: bool }
+/// Returns: {}
+#[tauri::command]
+pub fn mirror_disable(payload: Value) -> Result<Value, String> {
+  let wipe_keys = payload
+    .get("wipe_keys")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  // Always lock the engine (clears in-process MasterKey).
+  mirror::sync::SyncEngine::global().lock();
+  mirror::sync::SyncEngine::global().clear_client();
+
+  if wipe_keys {
+    // Remove Master Key and device token from Keychain.
+    #[cfg(target_os = "macos")]
+    {
+      let _ = mirror::keychain::delete_master_key();
+      let _ = mirror::keychain::delete_device_token();
+      let _ = mirror::keychain::delete_salt();
+    }
+  }
+
+  // Disable in settings.
+  settings_store::save_patch(&json!({
+    "section": "cloud_mirror",
+    "enabled": false,
+  }))?;
+
+  Ok(json!({ "stub": false }))
 }

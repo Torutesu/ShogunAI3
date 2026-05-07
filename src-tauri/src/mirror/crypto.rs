@@ -137,6 +137,21 @@ pub(crate) fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<Ciphertex
     Ok(Ciphertext { nonce: nonce_bytes, ciphertext })
 }
 
+/// Encrypt `plaintext` with XChaCha20-Poly1305 AEAD using a random 24-byte nonce
+/// and explicit `associated_data` that is authenticated but not encrypted.
+///
+/// Use this when you need to bind metadata fields to the ciphertext per RFC § 4.3.
+pub(crate) fn encrypt_with_ad(key: &[u8; KEY_LEN], plaintext: &[u8], associated_data: &[u8]) -> Result<Ciphertext, String> {
+    use chacha20poly1305::aead::Payload;
+    let cipher = XChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
+    let mut nonce_bytes = [0u8; 24];
+    getrandom::getrandom(&mut nonce_bytes).map_err(|e| e.to_string())?;
+    let nonce = XNonce::from_slice(&nonce_bytes);
+    let payload = Payload { msg: plaintext, aad: associated_data };
+    let ciphertext = cipher.encrypt(nonce, payload).map_err(|e| e.to_string())?;
+    Ok(Ciphertext { nonce: nonce_bytes, ciphertext })
+}
+
 /// Decrypt a `Ciphertext` produced by `encrypt`. Returns the original plaintext.
 ///
 /// On any failure (wrong key, tampered ciphertext, tampered nonce) returns a
