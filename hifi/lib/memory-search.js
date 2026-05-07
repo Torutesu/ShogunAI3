@@ -22,7 +22,10 @@
   "use strict";
 
   const CLOUD_TIMEOUT_MS = 5000;
-  const LOCAL_TIMEOUT_MS = 20000; // generous; local should always be fast
+  // 20s = 4× the cloud timeout. Local memory search is normally <1s; this is
+  // purely defensive against pathological disk I/O or runaway queries. We don't
+  // want a wedged local path to block UI when cloud could have produced results.
+  const LOCAL_TIMEOUT_MS = 20000;
   const DEFAULT_LIMIT = 60;
   const DEFAULT_CLOUD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -84,6 +87,32 @@
   }
 
   /**
+   * Filter cloud hits by `kinds` post-hoc. The mirror_search_blobs server-side
+   * call doesn't support a kinds filter (T1's CloudSearchHit doesn't carry the
+   * right metadata for it), so we filter here using the `kinds_json` field on
+   * each cloud hit. This keeps merged result lists consistent with the user's
+   * local kind filter (IMP-2).
+   *
+   * If `kindsFilter` is empty/missing, returns all cloud hits unchanged. If a
+   * cloud hit has no/invalid `kinds_json`, it's filtered OUT (we can't prove it
+   * matches).
+   */
+  function filterCloudHitsByKinds(cloudHits, kindsFilter) {
+    if (!Array.isArray(kindsFilter) || kindsFilter.length === 0) return cloudHits;
+    const kindsSet = new Set(kindsFilter);
+    return cloudHits.filter(function isHitInKinds(h) {
+      if (!h.kinds_json) return false;
+      try {
+        const arr = JSON.parse(h.kinds_json);
+        if (!Array.isArray(arr)) return false;
+        return arr.some(function inSet(k) { return kindsSet.has(k); });
+      } catch (_e) {
+        return false;
+      }
+    });
+  }
+
+  /**
    * Dedupe by id. When two hits share an id:
    *   - newer `created_at` wins (per spec § 7 tiebreaker),
    *   - on tie, local wins (it's the authoritative copy on this device).
@@ -133,23 +162,42 @@
     const safePayload = payload || {};
     const limit = Number(safePayload.limit) > 0 ? Number(safePayload.limit) : DEFAULT_LIMIT;
 
-    // 1. Check cloud availability (cheap status call). Any error → local-only path.
+    // 1. Check cloud availability (cheap status call). Capture the precise
+    //    reason for not using cloud so T5 UI can render specific banners
+    //    (disabled vs locked vs status-timeout vs status-error). See IMP-1.
     let cloudReady = false;
+    let cloudUnreadyReason = "disabled"; // default if we somehow miss a branch
     try {
       const statusRes = await withTimeout(
         api.mirror.status({}),
         CLOUD_TIMEOUT_MS,
         "status-timeout"
       );
-      if (statusRes.ok && statusRes.value && statusRes.value.ok && statusRes.value.data) {
+      if (!statusRes.ok) {
+        // Timeout or rejection from the wrapped status call.
+        cloudUnreadyReason = statusRes.reason === "status-timeout"
+          ? "status-timeout"
+          : "status-error";
+      } else if (!statusRes.value || !statusRes.value.ok || !statusRes.value.data) {
+        // Status envelope returned non-ok or missing data.
+        cloudUnreadyReason = "status-error";
+      } else {
         const sd = statusRes.value.data;
-        cloudReady = sd.enabled === true && sd.locked === false;
+        if (sd.enabled !== true) {
+          cloudUnreadyReason = "disabled";
+        } else if (sd.locked === true) {
+          cloudUnreadyReason = "locked";
+        } else {
+          cloudReady = true;
+        }
       }
     } catch (_e) {
       cloudReady = false;
+      cloudUnreadyReason = "status-error";
     }
 
-    // 2. Cloud disabled / locked / status failed → local only (current behavior).
+    // 2. Cloud not ready → local only. Pass through the precise reason so
+    //    T5 banners can differentiate user-disabled vs locked vs failed.
     if (!cloudReady) {
       const localRes = await api.memorySearch(safePayload);
       if (!localRes || !localRes.ok || !localRes.data) return localRes;
@@ -157,7 +205,7 @@
       return Object.assign({}, localRes, {
         data: Object.assign({}, localRes.data, {
           hits: hits,
-          cloud_status: "disabled",
+          cloud_status: cloudUnreadyReason,
         }),
       });
     }
@@ -189,25 +237,38 @@
       // No usable local envelope. If cloud worked, synthesize a minimal-success envelope
       // from the cloud result so the caller still sees hits.
       if (cloudResult.ok && cloudResult.value && cloudResult.value.ok && cloudResult.value.data) {
-        const cloudHits = Array.isArray(cloudResult.value.data.hits)
+        let cloudHitsOnly = Array.isArray(cloudResult.value.data.hits)
           ? cloudResult.value.data.hits.map(normalizeCloudHit).filter(Boolean)
           : [];
+        // IMP-2: server-side mirror_search_blobs has no kinds filter, so apply
+        // the user's kinds filter post-hoc to keep result lists consistent.
+        cloudHitsOnly = filterCloudHitsByKinds(cloudHitsOnly, safePayload.kinds);
         return {
           ok: true,
           kind: cloudResult.value.kind,
           command: "shogun_memory_search",
           data: {
-            hits: rankBySimilarity(cloudHits).slice(0, limit),
-            total: cloudHits.length,
+            hits: rankBySimilarity(cloudHitsOnly).slice(0, limit),
+            total: cloudHitsOnly.length,
             cloud_status: "ok",
             local_status: localResult.ok ? "non-ok" : localResult.reason,
           },
           error: null,
         };
       }
-      // Both failed — return the local envelope as-is (preserves error).
-      if (localResult.ok) return localEnvelope || { ok: false, error: { code: "MEMORY_SEARCH_FAILED", message: "local search returned empty envelope" } };
-      return { ok: false, error: { code: "MEMORY_SEARCH_TIMEOUT", message: localResult.reason } };
+      // Both failed — return a synthetic envelope that matches the IPC contract
+      // { ok, kind, command, data, error } so T5 / consumers can rely on those
+      // fields uniformly. See IMP-3.
+      const bothFailedMessage = localResult.ok
+        ? "local search returned empty envelope"
+        : (localResult.reason || "local-failed");
+      return {
+        ok: false,
+        kind: "READ",
+        command: "shogun_memory_search",
+        data: null,
+        error: bothFailedMessage,
+      };
     }
 
     // 6. Local OK. Collect hits from both sides.
@@ -221,6 +282,9 @@
       cloudHits = Array.isArray(cloudResult.value.data.hits)
         ? cloudResult.value.data.hits.map(normalizeCloudHit).filter(Boolean)
         : [];
+      // IMP-2: server-side mirror_search_blobs has no kinds filter, so apply
+      // the user's kinds filter post-hoc to keep result lists consistent.
+      cloudHits = filterCloudHitsByKinds(cloudHits, safePayload.kinds);
     } else if (!cloudResult.ok) {
       cloudStatus = cloudResult.reason || "cloud-failed";
       try {
@@ -252,6 +316,7 @@
       rankBySimilarity: rankBySimilarity,
       normalizeLocalHit: normalizeLocalHit,
       normalizeCloudHit: normalizeCloudHit,
+      filterCloudHitsByKinds: filterCloudHitsByKinds,
       withTimeout: withTimeout,
       CLOUD_TIMEOUT_MS: CLOUD_TIMEOUT_MS,
       LOCAL_TIMEOUT_MS: LOCAL_TIMEOUT_MS,
