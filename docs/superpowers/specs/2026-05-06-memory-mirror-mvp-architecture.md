@@ -129,14 +129,16 @@ These are real choices but don't block decomposition:
 - **D7**: Settings UI surface (new top-level pane vs nested under Privacy) — 2.1.4 design. Recommendation: new top-level pane "Cloud Mirror" — important enough to surface.
 - **D8**: Search-merge ranking (local-only vs unified) — 2.1.4 design. Recommendation: unified, with provenance markers in result metadata.
 
-## 6. Open questions for human review
+## 6. Open questions — RESOLVED 2026-05-07
 
-These need a decision before 2.1.0 detailed design starts:
+These were the open questions; their resolutions feed into 2.1.0+ design.
 
-- **OQ1**: Apple-only vs cross-platform from day 1? Master § 3.1 says "Apple ecosystem dependent for MVP, non-Apple later". Confirm we're committing to that for 2.1.0 (no Linux/Windows keychain abstraction).
-- **OQ2**: Passphrase recovery flow? If the user forgets the passphrase, ALL synced memories are unrecoverable (zero-knowledge property). Do we surface this risk explicitly during onboarding (e.g., a "write down your passphrase" step), or accept that some users will lose data?
-- **OQ3**: Is the Mirror server something we host, something users self-host, or both? Affects 2.1.3 scope materially.
-- **OQ4**: Do we want telemetry on sync (queue depth, error rates) sent to a non-Mirror endpoint? Helpful for debugging; adds a second outbound channel that needs its own privacy review.
+- **OQ1 — RESOLVED: Apple-only for the 2.1.x cycle.** No Linux/Windows keychain abstraction in 2.1.0. Cross-platform key storage moves to Phase 4. Implication for 2.1.0: the keychain wrapper is `#[cfg(target_os = "macos")]`-gated; pure crypto helpers stay platform-agnostic. Rust apps on other platforms compile but the Mirror feature is hard-gated off.
+- **OQ2 — RESOLVED: Surface the risk explicitly. No backdoor.** Mirror onboarding MUST include an unmissable "this passphrase is the only key — if you forget it, every synced memory is unrecoverable" screen with a typed-text confirmation (similar to the 2.0d REPLACE pattern). The zero-knowledge property is the entire point; we do not weaken it for recovery.
+- **OQ3 — RESOLVED: Self-hostable Rust binary first.** Phase 2.1.3 ships a Rust microservice the user can run on their own machine / VPS. Public hosted SaaS is a follow-up (Phase 2.1.5+). This keeps the cloud component honest — if the user doesn't trust SHOGUN's hosted Mirror, they can run their own; the only thing the hosted version adds is convenience.
+- **OQ4 — RESOLVED: No non-Mirror telemetry.** Sync stats are surfaced LOCALLY only — visible in `Settings → Cloud Mirror → Status`, never reported to anyone. Keep the outbound channel story clean: one Mirror endpoint, zero side-channels.
+
+These resolutions are locked the same way the A1-A7 decisions in §4 are locked: changing them is a privacy-policy decision, not a tech decision.
 
 ## 7. What this document IS and ISN'T
 
