@@ -34,6 +34,7 @@ pub mod kioku_mcp;
 pub mod mcp_server;
 pub mod meeting_recipes;
 mod meeting_session;
+mod mirror;
 mod meeting_store;
 mod meeting_stt;
 mod memory_debug;
