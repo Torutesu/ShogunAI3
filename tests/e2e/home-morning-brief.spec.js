@@ -4,6 +4,9 @@ const { preacceptConsent } = require("./_helpers/preseed-consent");
 
 const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
 
+// NOTE: This helper is intentionally duplicated from tests/e2e/hifi-smoke.spec.js
+// for Phase 0. TODO: extract to tests/e2e/_helpers/open-hifi.js once Tasks 1-4
+// of the Phase 0 plan all land (after meetings-list, memory-debug, settings-all-tabs).
 async function openHiFi(page) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
@@ -45,9 +48,10 @@ test.describe("Home + Morning Brief", () => {
     await openHiFi(page);
     const homeItem = page.locator(".sidebar .nav-item").filter({ hasText: "Home" }).first();
     await expect(homeItem).toBeVisible();
-    // The active nav-item carries an "active" or aria-selected marker in app.jsx;
-    // accept either class containing "active" or aria-current.
-    await expect(homeItem).toHaveClass(/active|is-active|nav-item--active/);
+    // app.jsx renders className={'nav-item '+(active===n.id?'active':'')} — match
+    // the literal "active" token bounded by whitespace or start/end-of-string so
+    // we don't accidentally match an unrelated class that happens to share a substring.
+    await expect(homeItem).toHaveClass(/(?:^|\s)active(?:\s|$)/);
   });
 
   test("brief.get IPC resolves (mock transport)", async ({ page }) => {
@@ -59,9 +63,11 @@ test.describe("Home + Morning Brief", () => {
         { silentError: true },
       );
     });
-    // Mock returns either { ok:true, data:{ brief: {...} | null } } or
-    // { ok:true, data: null }. Accept both — Phase 0 only checks the
-    // call path is wired, not content.
+    // Mock returns either { ok:true, data:{ brief: {...} | null } } or a stub
+    // for unhandled commands. Phase 0 only verifies the action path resolves
+    // without throwing — the assertion is intentionally weak (any registered
+    // OR unregistered action returns ok:true under the mock fallback). Phase 2
+    // will add a tighter shape check once brief.get has a real contract.
     expect(out.ok).toBe(true);
   });
 
