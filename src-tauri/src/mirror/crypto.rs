@@ -164,6 +164,29 @@ pub(crate) fn decrypt(key: &[u8; KEY_LEN], ct: &Ciphertext) -> Result<Vec<u8>, S
         .map_err(|_| "decryption failed (key mismatch or tampering)".to_string())
 }
 
+/// Decrypt a `Ciphertext` produced by `encrypt_with_ad`, verifying the
+/// `associated_data` matches what was bound at encryption time. Returns the
+/// original plaintext on success.
+///
+/// On any failure (wrong key, AD mismatch, tampered ciphertext, tampered
+/// nonce) returns a generic error to avoid acting as a decryption oracle.
+pub(crate) fn decrypt_with_ad(
+    key: &[u8; KEY_LEN],
+    ct: &Ciphertext,
+    associated_data: &[u8],
+) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::Payload;
+    let cipher = XChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
+    let nonce = XNonce::from_slice(&ct.nonce);
+    let payload = Payload {
+        msg: ct.ciphertext.as_slice(),
+        aad: associated_data,
+    };
+    cipher
+        .decrypt(nonce, payload)
+        .map_err(|_| "decryption failed (key mismatch or tampering)".to_string())
+}
+
 impl MasterKey {
     /// Construct a MasterKey from raw bytes (e.g. when loading from keychain).
     /// Caller is responsible for ensuring the bytes came from a trusted source.

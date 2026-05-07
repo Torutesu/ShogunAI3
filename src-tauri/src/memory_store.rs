@@ -447,8 +447,15 @@ fn migrate_sync_status_columns(conn: &Connection) -> Result<(), String> {
   Ok(())
 }
 
-/// Idempotent migration: add `cloud_index_id` / `encrypted_at` columns (Phase 2.1.2).
-/// Both are nullable — NULL means the row has not yet been uploaded to the Mirror server.
+/// Idempotent migration: add `cloud_index_id` / `encrypted_at` / `sync_attempt_count`
+/// columns (Phase 2.1.2).
+///
+/// - `cloud_index_id TEXT` — server-assigned blob_id, NULL until uploaded
+/// - `encrypted_at INTEGER` — Unix ms when uploaded, NULL until uploaded
+/// - `sync_attempt_count INTEGER NOT NULL DEFAULT 0` — per-row upload attempt
+///   counter so the S4 retry-and-stuck guard survives app restarts. Increments
+///   on transient failure; rows reaching `max_attempts` (6) are marked
+///   `sync_status='excluded'` with `sync_excluded_reason='stuck'`.
 fn migrate_mirror_columns(conn: &Connection) -> Result<(), String> {
   let mut stmt = conn
     .prepare("PRAGMA table_info(mem_items)")
@@ -456,6 +463,7 @@ fn migrate_mirror_columns(conn: &Connection) -> Result<(), String> {
   let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
   let mut has_cloud_index_id = false;
   let mut has_encrypted_at = false;
+  let mut has_sync_attempt_count = false;
   while let Some(row) = rows.next().map_err(|e| e.to_string())? {
     let name: String = row.get(1).map_err(|e| e.to_string())?;
     if name == "cloud_index_id" {
@@ -463,6 +471,9 @@ fn migrate_mirror_columns(conn: &Connection) -> Result<(), String> {
     }
     if name == "encrypted_at" {
       has_encrypted_at = true;
+    }
+    if name == "sync_attempt_count" {
+      has_sync_attempt_count = true;
     }
   }
   drop(rows);
@@ -480,6 +491,14 @@ fn migrate_mirror_columns(conn: &Connection) -> Result<(), String> {
     conn
       .execute(
         "ALTER TABLE mem_items ADD COLUMN encrypted_at INTEGER",
+        [],
+      )
+      .map_err(|e| e.to_string())?;
+  }
+  if !has_sync_attempt_count {
+    conn
+      .execute(
+        "ALTER TABLE mem_items ADD COLUMN sync_attempt_count INTEGER NOT NULL DEFAULT 0",
         [],
       )
       .map_err(|e| e.to_string())?;
@@ -2435,7 +2454,9 @@ mod tests {
 
   // ─── Mirror column tests (Phase 2.1.2) ────────────────────────────────────
 
-  /// TM1: Fresh DB has both mirror columns (cloud_index_id, encrypted_at), both nullable.
+  /// TM1: Fresh DB has all mirror columns (cloud_index_id, encrypted_at,
+  /// sync_attempt_count). The first two are nullable; sync_attempt_count is
+  /// NOT NULL with DEFAULT 0 so the retry-and-stuck guard always has a value.
   #[test]
   fn tm1_fresh_db_has_mirror_columns() {
     let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
@@ -2444,8 +2465,12 @@ mod tests {
     let names = pragma_column_names(&conn);
     assert!(names.contains(&"cloud_index_id".to_string()), "cloud_index_id missing");
     assert!(names.contains(&"encrypted_at".to_string()), "encrypted_at missing");
+    assert!(
+      names.contains(&"sync_attempt_count".to_string()),
+      "sync_attempt_count missing"
+    );
 
-    // Both must be nullable (notnull=0).
+    // cloud_index_id + encrypted_at must be nullable (notnull=0).
     let (_, notnull_cid, _) = pragma_column_info(&conn, "cloud_index_id")
       .expect("cloud_index_id column info");
     assert_eq!(notnull_cid, 0, "cloud_index_id should be nullable");
@@ -2453,6 +2478,16 @@ mod tests {
     let (_, notnull_ea, _) = pragma_column_info(&conn, "encrypted_at")
       .expect("encrypted_at column info");
     assert_eq!(notnull_ea, 0, "encrypted_at should be nullable");
+
+    // sync_attempt_count must be NOT NULL with default 0.
+    let (_, notnull_sac, default_sac) = pragma_column_info(&conn, "sync_attempt_count")
+      .expect("sync_attempt_count column info");
+    assert_eq!(notnull_sac, 1, "sync_attempt_count should be NOT NULL");
+    assert_eq!(
+      default_sac.as_deref(),
+      Some("0"),
+      "sync_attempt_count default should be 0"
+    );
   }
 
   /// TM2: Legacy DB (no mirror columns) gets both via migration; existing rows NULL.

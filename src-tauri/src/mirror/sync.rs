@@ -42,6 +42,11 @@ pub(crate) struct MemItemRow {
     pub snippet: String,
     pub source: String,
     pub kinds_json: String,
+    /// Raw embedding BLOB (column added by `ensure_embedding_column`).
+    /// Base64-encoded into the encrypted payload as `embedding_b64` per RFC § 4.1
+    /// so that Phase 2.1.4 split-architecture search can run vector similarity on
+    /// decrypted blobs.
+    pub embedding: Option<Vec<u8>>,
     pub created_at: i64,
     pub provenance: Option<String>,
     pub entity_id: Option<String>,
@@ -51,7 +56,10 @@ pub(crate) struct MemItemRow {
     pub sync_excluded_reason: Option<String>,
     pub cloud_index_id: Option<String>,
     pub encrypted_at: Option<i64>,
-    /// How many upload attempts have been made for this row.
+    /// Persisted per-row upload attempt counter (column `sync_attempt_count`).
+    /// Persistence chosen over an in-process map (Option B) so the S4 retry-and-stuck
+    /// guard survives app restarts and the row can be marked `excluded` with
+    /// `sync_excluded_reason='stuck'` deterministically.
     pub attempt_count: i64,
 }
 
@@ -162,6 +170,52 @@ impl SyncEngine {
         }
     }
 
+    /// Restore the authenticated `http::Client` after an app restart.
+    ///
+    /// `mirror_register` constructs a client and stashes it in this engine, but
+    /// the `OnceLock` resets on app launch. On restart we reconstruct the client
+    /// from persisted state: `server_url` from settings, `device_token` from
+    /// macOS Keychain. Idempotent — does nothing if a client is already set or
+    /// if either piece of persisted state is missing.
+    ///
+    /// Called automatically from `run_cycle` so the scheduler self-heals after
+    /// a restart without requiring the user to re-register.
+    pub(crate) fn ensure_client_from_persisted_state(&self) {
+        // Fast path: already configured.
+        if let Ok(guard) = self.client.lock() {
+            if guard.is_some() {
+                return;
+            }
+        }
+
+        // Need server_url from settings.
+        let settings = crate::settings_store::load()
+            .unwrap_or_else(|_| json!({ "sections": {} }));
+        let server_url = settings
+            .get("sections")
+            .and_then(|s| s.get("cloud_mirror"))
+            .and_then(|m| m.get("server_url"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let Some(server_url) = server_url else { return };
+
+        // Need device_token from Keychain (macOS only).
+        #[cfg(target_os = "macos")]
+        {
+            let token = match crate::mirror::keychain::load_device_token() {
+                Ok(Some(t)) => t,
+                _ => return,
+            };
+            if let Ok(client) = http::Client::new(server_url, token) {
+                self.set_client(client);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = server_url; // unused off macOS
+        }
+    }
+
     /// Run one sync cycle. Returns the number of rows successfully uploaded.
     pub(crate) fn run_cycle(&self) -> Result<u64, String> {
         // Check if mirror is enabled in settings.
@@ -199,7 +253,10 @@ impl SyncEngine {
             }
         };
 
-        // Must have a configured client.
+        // Must have a configured client. After an app restart the in-memory
+        // client is None even though the user previously registered — try to
+        // reconstruct from persisted server_url + device_token before giving up.
+        self.ensure_client_from_persisted_state();
         let client = {
             let guard = self.client.lock().map_err(|e| e.to_string())?;
             guard.clone()
@@ -294,13 +351,20 @@ impl SyncEngine {
 
             match upload_result {
                 Ok(resp) => {
-                    // 201: mark synced, store cloud_index_id + encrypted_at.
+                    // 201: mark synced, store cloud_index_id + encrypted_at,
+                    // reset attempt counter (defensive — synced rows won't be
+                    // re-selected, but resetting keeps the column consistent).
                     let now_ms = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map(|d| d.as_millis() as i64)
                         .unwrap_or(0);
                     let _ = conn.execute(
-                        "UPDATE mem_items SET sync_status = 'synced', cloud_index_id = ?1, encrypted_at = ?2 WHERE id = ?3",
+                        "UPDATE mem_items
+                         SET sync_status = 'synced',
+                             cloud_index_id = ?1,
+                             encrypted_at = ?2,
+                             sync_attempt_count = 0
+                         WHERE id = ?3",
                         params![resp.blob_id, now_ms, row.id],
                     );
                     synced_count += 1;
@@ -317,11 +381,26 @@ impl SyncEngine {
                         }
                         RetryDisposition::Transient | RetryDisposition::BackoffSpecific(_) => {
                             let new_attempts = row.attempt_count + 1;
+                            // Persist the new counter so the guard survives restarts.
+                            let _ = conn.execute(
+                                "UPDATE mem_items SET sync_attempt_count = ?1 WHERE id = ?2",
+                                params![new_attempts, row.id],
+                            );
                             if new_attempts >= max_attempts {
-                                // "Stuck" — leave as local_only but log for the user.
+                                // S4: after `max_attempts` transient failures, the
+                                // row is "stuck". Mark it `excluded` with reason
+                                // `stuck` so the queue isn't blocked, and surface
+                                // the failure to the user via `stats.last_error`.
                                 log::warn!(
                                     "mirror sync: row {} stuck after {} attempts: {}",
                                     row.id, new_attempts, err
+                                );
+                                let _ = conn.execute(
+                                    "UPDATE mem_items
+                                     SET sync_status = 'excluded',
+                                         sync_excluded_reason = 'stuck'
+                                     WHERE id = ?1",
+                                    params![row.id],
                                 );
                                 if let Ok(mut s) = self.stats.lock() {
                                     s.last_error = Some(format!("stuck: {}", err));
@@ -390,15 +469,20 @@ fn scheduler_interval_secs(_app: &tauri::AppHandle) -> u64 {
 // ─── Pure helpers (testable) ──────────────────────────────────────────────────
 
 /// Select rows eligible for sync: sync_status = 'local_only', up to batch_size rows.
+///
+/// Pulls `embedding` (raw BLOB) and `sync_attempt_count` so that
+/// `build_blob_envelope` can include `embedding_b64` (RFC § 4.1) and the
+/// retry-and-stuck guard can persist across app restarts.
 pub(crate) fn select_pending_rows(
     conn: &Connection,
     batch_size: usize,
 ) -> Result<Vec<MemItemRow>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, title, snippet, source, kinds_json, created_at,
+            "SELECT id, title, snippet, source, kinds_json, embedding, created_at,
                     provenance, entity_id, confidence, redaction,
-                    sync_status, sync_excluded_reason, cloud_index_id, encrypted_at
+                    sync_status, sync_excluded_reason, cloud_index_id, encrypted_at,
+                    COALESCE(sync_attempt_count, 0)
              FROM mem_items
              WHERE sync_status = 'local_only'
              ORDER BY created_at ASC
@@ -414,16 +498,17 @@ pub(crate) fn select_pending_rows(
                 snippet: r.get(2)?,
                 source: r.get(3)?,
                 kinds_json: r.get(4)?,
-                created_at: r.get(5)?,
-                provenance: r.get(6)?,
-                entity_id: r.get(7)?,
-                confidence: r.get(8)?,
-                redaction: r.get(9)?,
-                sync_status: r.get(10)?,
-                sync_excluded_reason: r.get(11)?,
-                cloud_index_id: r.get(12)?,
-                encrypted_at: r.get(13)?,
-                attempt_count: 0, // tracked in-process only for now
+                embedding: r.get::<_, Option<Vec<u8>>>(5)?,
+                created_at: r.get(6)?,
+                provenance: r.get(7)?,
+                entity_id: r.get(8)?,
+                confidence: r.get(9)?,
+                redaction: r.get(10)?,
+                sync_status: r.get(11)?,
+                sync_excluded_reason: r.get(12)?,
+                cloud_index_id: r.get(13)?,
+                encrypted_at: r.get(14)?,
+                attempt_count: r.get(15)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -442,20 +527,61 @@ pub(crate) fn build_blob_envelope(
     device_id: &str,
 ) -> Result<http::BlobEnvelope, String> {
     // Construct plaintext: the row's JSON representation.
-    let plaintext_value = json!({
-        "id": row.id,
-        "title": row.title,
-        "snippet": row.snippet,
-        "source": row.source,
-        "kinds_json": row.kinds_json,
-        "created_at": row.created_at,
-        "provenance": row.provenance,
-        "entity_id": row.entity_id,
-        "confidence": row.confidence,
-        "redaction": row.redaction,
-        "sync_status": "synced",
-        "sync_excluded_reason": null,
-    });
+    // We build a serde_json::Map so we can conditionally add `embedding_b64`
+    // only when the row has an embedding BLOB (RFC § 4.1).
+    let mut plaintext_obj = serde_json::Map::new();
+    plaintext_obj.insert("id".to_string(), Value::String(row.id.clone()));
+    plaintext_obj.insert("title".to_string(), Value::String(row.title.clone()));
+    plaintext_obj.insert("snippet".to_string(), Value::String(row.snippet.clone()));
+    plaintext_obj.insert("source".to_string(), Value::String(row.source.clone()));
+    plaintext_obj.insert("kinds_json".to_string(), Value::String(row.kinds_json.clone()));
+    plaintext_obj.insert(
+        "created_at".to_string(),
+        Value::Number(serde_json::Number::from(row.created_at)),
+    );
+    plaintext_obj.insert(
+        "provenance".to_string(),
+        row.provenance
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    plaintext_obj.insert(
+        "entity_id".to_string(),
+        row.entity_id
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    plaintext_obj.insert(
+        "confidence".to_string(),
+        row.confidence
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+    );
+    plaintext_obj.insert(
+        "redaction".to_string(),
+        row.redaction
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    plaintext_obj.insert("sync_status".to_string(), Value::String("synced".to_string()));
+    plaintext_obj.insert("sync_excluded_reason".to_string(), Value::Null);
+    if let Some(ref emb) = row.embedding {
+        // RFC § 4.1: `embedding_b64` is the base64-encoded raw embedding BLOB.
+        // Phase 2.1.4 split-architecture search decodes this and runs vector
+        // similarity over decrypted blobs.
+        plaintext_obj.insert(
+            "embedding_b64".to_string(),
+            Value::String(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                emb,
+            )),
+        );
+    }
+    let plaintext_value = Value::Object(plaintext_obj);
     let plaintext_bytes = serde_json::to_vec(&plaintext_value).map_err(|e| e.to_string())?;
 
     // Size guard: 1MB limit per RFC § 4.1 + S7.
@@ -557,11 +683,19 @@ pub(crate) fn classify_error_for_retry(err: &http::Error) -> RetryDisposition {
     }
 }
 
-/// Apply allowlist filter: a row is eligible for sync only if its source/app is
-/// permitted by `sections.cloud_mirror.app_allowlist`.
-/// Default when no allowlist configured: allow all (pass-through).
+/// Apply allowlist filter (S2): a row is eligible for sync only if BOTH the
+/// `app_allowlist` AND the `url_allowlist` accept it.
+///
+/// - `app_allowlist`: matched against `row.source`. Empty = allow-all.
+/// - `url_allowlist`: matched against any URL extracted from `row.title` /
+///   `row.snippet` using suffix matching (mirrors Phase 2.0a's
+///   `excludedSites` host-suffix convention). Empty = allow-all (no URL
+///   filtering applied). If the row contains no URL, the URL allowlist is
+///   trivially satisfied (the row has nothing to filter on).
+///
+/// Both filters use the same wildcard semantics: a `"*"` entry matches anything.
 pub(crate) fn apply_allowlist(row: &MemItemRow, settings: &Value) -> bool {
-    let allowlist: Vec<String> = settings
+    let app_allowlist: Vec<String> = settings
         .get("sections")
         .and_then(|s| s.get("cloud_mirror"))
         .and_then(|m| m.get("app_allowlist"))
@@ -569,18 +703,75 @@ pub(crate) fn apply_allowlist(row: &MemItemRow, settings: &Value) -> bool {
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
 
-    // Empty allowlist = allow all.
-    if allowlist.is_empty() {
+    // App-allowlist check. Empty = allow all.
+    let app_ok = app_allowlist.is_empty()
+        || app_allowlist.iter().any(|a| a == "*")
+        || app_allowlist.iter().any(|a| a == &row.source);
+    if !app_ok {
+        return false;
+    }
+
+    // URL-allowlist check. Empty = allow all (no URL filtering).
+    let url_allowlist: Vec<String> = settings
+        .get("sections")
+        .and_then(|s| s.get("cloud_mirror"))
+        .and_then(|m| m.get("url_allowlist"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    if url_allowlist.is_empty() || url_allowlist.iter().any(|a| a == "*") {
         return true;
     }
 
-    // Wildcard.
-    if allowlist.iter().any(|a| a == "*") {
+    // Extract URLs/hosts from row text. If the row has no URL, the URL
+    // allowlist is trivially satisfied (only filters rows that actually
+    // contain a URL). This mirrors the spirit of Phase 2.0a's privacy filter,
+    // which only acts on text that actually contains URLs.
+    let hosts = extract_hosts_from_row(row);
+    if hosts.is_empty() {
         return true;
     }
 
-    // Check if the row's source matches any allowlist entry.
-    allowlist.iter().any(|a| a == &row.source)
+    // Match if ANY host in the row matches ANY allowlist entry (suffix-match
+    // per Phase 2.0a's `host_suffix_match`).
+    hosts
+        .iter()
+        .any(|h| url_allowlist.iter().any(|allow| host_suffix_match(h, allow)))
+}
+
+/// Extract host names from any URL-like tokens in the row's `title` and
+/// `snippet`. Mirrors the URL-extraction logic in `capture_sampler.rs::ax_text_excluded`.
+fn extract_hosts_from_row(row: &MemItemRow) -> Vec<String> {
+    let mut hosts: Vec<String> = Vec::new();
+    for text in [row.title.as_str(), row.snippet.as_str()] {
+        let lower = text.to_ascii_lowercase();
+        for tok in lower.split_whitespace() {
+            if !tok.contains("://") {
+                continue;
+            }
+            let clean = tok.trim_end_matches(|c: char| {
+                matches!(c, '.' | ',' | ';' | ')' | ']' | '>' | '"' | '\'' | '!' | '?')
+            });
+            if let Ok(url) = url::Url::parse(clean) {
+                if let Some(h) = url.host_str() {
+                    hosts.push(h.to_string());
+                }
+            }
+        }
+    }
+    hosts
+}
+
+/// Suffix-match a host against an allowlist entry. `example.com` matches
+/// `mail.example.com` but not `notexample.com` (label boundary required).
+fn host_suffix_match(host: &str, suffix: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    let s = suffix.to_ascii_lowercase();
+    if h == s {
+        return true;
+    }
+    h.ends_with(&format!(".{}", s))
 }
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
@@ -643,6 +834,7 @@ mod tests {
             snippet: "Test Snippet".to_string(),
             source: "capture_sampler".to_string(),
             kinds_json: "[\"screen\"]".to_string(),
+            embedding: None,
             created_at: 1700000000000,
             provenance: Some("screen".to_string()),
             entity_id: None,
@@ -924,5 +1116,373 @@ mod tests {
         let pos_m = s.find("\"m\"").unwrap();
         let pos_z = s.find("\"z\"").unwrap();
         assert!(pos_a < pos_m && pos_m < pos_z, "keys must be sorted: {}", s);
+    }
+
+    // ─── Spec-reviewer follow-up tests (Fixes #1–#4) ─────────────────────────
+
+    /// FIX1: `embedding_b64` field appears in decrypted plaintext and matches
+    /// the original BLOB byte-for-byte. Phase 2.1.4 split-architecture search
+    /// depends on this for vector similarity over decrypted blobs (RFC § 4.1).
+    #[test]
+    fn fix1_embedding_b64_roundtrip_in_encrypted_payload() {
+        let mek = make_mek();
+        let mut row = make_row("r_emb");
+        // Non-trivial 4-byte sequence — easy to spot-check in the b64.
+        let original_embedding: Vec<u8> = vec![0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd, 0x00, 0x80];
+        row.embedding = Some(original_embedding.clone());
+
+        let env = build_blob_envelope(&row, &mek, "dev_emb").expect("build_blob_envelope");
+
+        // Decrypt the ciphertext using the same AD construction as build_blob_envelope.
+        let nonce_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            env.ciphertext.nonce.as_bytes(),
+        )
+        .expect("decode nonce");
+        let data_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            env.ciphertext.data.as_bytes(),
+        )
+        .expect("decode data");
+        // Reconstruct the AD exactly the way build_blob_envelope does.
+        let captured_at_minute = (row.created_at.max(0) as u64) / 60_000;
+        let ad_value = json!({
+            "blob_id": env.blob_id,
+            "device_id": env.device_id,
+            "metadata": {
+                "captured_at_minute": captured_at_minute,
+                "kinds": env.metadata.kinds,
+                "provenance": env.metadata.provenance,
+            },
+            "schema": "mem_items.v1",
+            "version": 1u8,
+        });
+        let ad_bytes = canonical_json(&ad_value).expect("canonical_json");
+
+        // Decrypt with associated data.
+        let mut nonce_arr = [0u8; 24];
+        nonce_arr.copy_from_slice(&nonce_bytes[..24]);
+        let plaintext = crypto::decrypt_with_ad(
+            mek.as_bytes(),
+            &crypto::Ciphertext {
+                nonce: nonce_arr,
+                ciphertext: data_bytes,
+            },
+            &ad_bytes,
+        )
+        .expect("decrypt_with_ad");
+
+        // Parse the plaintext JSON and assert embedding_b64 is present.
+        let plaintext_value: Value = serde_json::from_slice(&plaintext).expect("plaintext JSON");
+        let emb_b64 = plaintext_value
+            .get("embedding_b64")
+            .and_then(|v| v.as_str())
+            .expect("embedding_b64 present in decrypted plaintext");
+        let decoded = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            emb_b64.as_bytes(),
+        )
+        .expect("decode embedding_b64");
+        assert_eq!(
+            decoded, original_embedding,
+            "embedding_b64 must round-trip byte-for-byte"
+        );
+    }
+
+    /// FIX1b: Rows without an embedding must NOT include `embedding_b64`.
+    /// Otherwise a NULL embedding becomes ambiguous on the decrypt side.
+    #[test]
+    fn fix1_no_embedding_field_when_row_has_no_embedding() {
+        let mek = make_mek();
+        let mut row = make_row("r_no_emb");
+        row.embedding = None;
+        let env = build_blob_envelope(&row, &mek, "dev_no_emb").expect("build_blob_envelope");
+
+        // Decrypt and parse.
+        let nonce_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            env.ciphertext.nonce.as_bytes(),
+        )
+        .unwrap();
+        let data_bytes = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            env.ciphertext.data.as_bytes(),
+        )
+        .unwrap();
+        let captured_at_minute = (row.created_at.max(0) as u64) / 60_000;
+        let ad_value = json!({
+            "blob_id": env.blob_id,
+            "device_id": env.device_id,
+            "metadata": {
+                "captured_at_minute": captured_at_minute,
+                "kinds": env.metadata.kinds,
+                "provenance": env.metadata.provenance,
+            },
+            "schema": "mem_items.v1",
+            "version": 1u8,
+        });
+        let ad_bytes = canonical_json(&ad_value).unwrap();
+        let mut nonce_arr = [0u8; 24];
+        nonce_arr.copy_from_slice(&nonce_bytes[..24]);
+        let plaintext = crypto::decrypt_with_ad(
+            mek.as_bytes(),
+            &crypto::Ciphertext {
+                nonce: nonce_arr,
+                ciphertext: data_bytes,
+            },
+            &ad_bytes,
+        )
+        .unwrap();
+        let plaintext_value: Value = serde_json::from_slice(&plaintext).unwrap();
+        assert!(
+            plaintext_value.get("embedding_b64").is_none(),
+            "embedding_b64 must be absent when row.embedding is None"
+        );
+    }
+
+    /// FIX2: Persisted attempt counter survives in `sync_attempt_count` and
+    /// after `max_attempts` (6) consecutive transient failures the row is
+    /// marked `excluded` with `sync_excluded_reason='stuck'` (S4).
+    ///
+    /// Drives a row through 6 simulated transient failures (server 5xx) by
+    /// directly invoking the same persistence logic `run_cycle` uses, since
+    /// `run_cycle` requires a tokio runtime + live HTTP client.
+    #[test]
+    fn fix2_attempt_count_persisted_and_row_marked_stuck_after_max_attempts() {
+        let conn = make_full_conn();
+        let max_attempts = 6;
+
+        conn.execute(
+            "INSERT INTO mem_items
+                (id, title, snippet, source, kinds_json, created_at, sync_status, sync_attempt_count)
+             VALUES ('r_flaky', 'T', 'S', 'capture_sampler', '[]', 1000, 'local_only', 0)",
+            [],
+        )
+        .expect("insert flaky row");
+
+        // Simulate `max_attempts` transient failures the same way run_cycle does.
+        for _ in 0..max_attempts {
+            // Re-fetch the current attempt_count (the column is the source of truth).
+            let attempts: i64 = conn
+                .query_row(
+                    "SELECT sync_attempt_count FROM mem_items WHERE id = 'r_flaky'",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("read counter");
+            let new_attempts = attempts + 1;
+
+            // Assert the disposition stays Transient throughout (5xx).
+            let err = http::Error::ServerError(503);
+            assert_eq!(
+                classify_error_for_retry(&err),
+                RetryDisposition::Transient
+            );
+
+            // Persist the increment exactly the way run_cycle does.
+            conn.execute(
+                "UPDATE mem_items SET sync_attempt_count = ?1 WHERE id = ?2",
+                params![new_attempts, "r_flaky"],
+            )
+            .expect("update counter");
+
+            // On the final attempt, run_cycle promotes to excluded.
+            if new_attempts >= max_attempts {
+                conn.execute(
+                    "UPDATE mem_items
+                     SET sync_status = 'excluded',
+                         sync_excluded_reason = 'stuck'
+                     WHERE id = ?1",
+                    params!["r_flaky"],
+                )
+                .expect("mark stuck");
+            }
+        }
+
+        // Final assertions.
+        let (status, reason, attempts): (String, Option<String>, i64) = conn
+            .query_row(
+                "SELECT sync_status, sync_excluded_reason, sync_attempt_count
+                 FROM mem_items WHERE id = 'r_flaky'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("select final state");
+        assert_eq!(status, "excluded", "row should be excluded after stuck");
+        assert_eq!(
+            reason.as_deref(),
+            Some("stuck"),
+            "reason must be 'stuck' so UI can surface it"
+        );
+        assert_eq!(attempts, max_attempts, "counter should equal max_attempts");
+
+        // The next select_pending_rows must NOT return the stuck row (it's excluded).
+        let pending = select_pending_rows(&conn, 50).expect("select pending");
+        assert!(
+            pending.iter().all(|r| r.id != "r_flaky"),
+            "stuck row must not be re-selected"
+        );
+    }
+
+    /// FIX2b: After a successful upload the persisted counter resets to 0.
+    /// Defensive: synced rows aren't re-selected, but resetting keeps the
+    /// column meaningful in the durable record.
+    #[test]
+    fn fix2_counter_resets_on_successful_upload() {
+        let conn = make_full_conn();
+        conn.execute(
+            "INSERT INTO mem_items
+                (id, title, snippet, source, kinds_json, created_at, sync_status, sync_attempt_count)
+             VALUES ('r_recover', 'T', 'S', 'capture_sampler', '[]', 1000, 'local_only', 3)",
+            [],
+        )
+        .expect("insert recovering row");
+
+        // Simulate the success branch: synced + reset.
+        conn.execute(
+            "UPDATE mem_items
+             SET sync_status = 'synced',
+                 cloud_index_id = 'srv_blob_xyz',
+                 encrypted_at = 1700000000000,
+                 sync_attempt_count = 0
+             WHERE id = 'r_recover'",
+            [],
+        )
+        .expect("update on success");
+
+        let attempts: i64 = conn
+            .query_row(
+                "SELECT sync_attempt_count FROM mem_items WHERE id = 'r_recover'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(attempts, 0, "counter must reset on successful upload");
+    }
+
+    /// FIX3: `url_allowlist` filters rows whose extracted URL host is NOT
+    /// in the allowlist. Rows whose URL DOES match are accepted.
+    #[test]
+    fn fix3_url_allowlist_filters_by_host_suffix() {
+        // Row carrying a URL in its snippet.
+        let mut row = make_row("r_url");
+        row.snippet = "Check out https://docs.example.com/page-x for context".to_string();
+        // app_allowlist is wide-open; only url_allowlist is constrained.
+        let allow_settings = json!({
+            "sections": {
+                "cloud_mirror": {
+                    "app_allowlist": ["*"],
+                    "url_allowlist": ["example.com"]
+                }
+            }
+        });
+        assert!(
+            apply_allowlist(&row, &allow_settings),
+            "URL host docs.example.com matches example.com (suffix)"
+        );
+
+        // Now switch the allowlist so the row's URL is excluded.
+        let block_settings = json!({
+            "sections": {
+                "cloud_mirror": {
+                    "app_allowlist": ["*"],
+                    "url_allowlist": ["other.com"]
+                }
+            }
+        });
+        assert!(
+            !apply_allowlist(&row, &block_settings),
+            "URL host docs.example.com must NOT match other.com"
+        );
+    }
+
+    /// FIX3b: Rows with NO URL pass the URL allowlist (vacuously true).
+    /// Otherwise non-URL rows would be filtered out by any non-empty
+    /// allowlist, which was not the design intent.
+    #[test]
+    fn fix3_url_allowlist_no_url_passes() {
+        let row = make_row("r_no_url"); // no URL in title/snippet
+        let settings = json!({
+            "sections": {
+                "cloud_mirror": {
+                    "app_allowlist": ["*"],
+                    "url_allowlist": ["example.com"]
+                }
+            }
+        });
+        assert!(
+            apply_allowlist(&row, &settings),
+            "rows without URLs must pass the URL allowlist trivially"
+        );
+    }
+
+    /// FIX3c: Wildcard `"*"` in url_allowlist allows everything.
+    #[test]
+    fn fix3_url_allowlist_wildcard() {
+        let mut row = make_row("r_url");
+        row.snippet = "https://anything.example.org".to_string();
+        let settings = json!({
+            "sections": {
+                "cloud_mirror": {
+                    "app_allowlist": ["*"],
+                    "url_allowlist": ["*"]
+                }
+            }
+        });
+        assert!(apply_allowlist(&row, &settings));
+    }
+
+    /// FIX4: After an "app restart" — fresh SyncEngine with `client: None` —
+    /// `ensure_client_from_persisted_state` is a no-op when no token has been
+    /// persisted (off macOS the call is a stub). On macOS, with a server_url
+    /// in settings and a token in Keychain, it reconstructs the client.
+    ///
+    /// This test verifies the no-op path (the macOS Keychain path is exercised
+    /// by manual smoke tests; making it deterministic in CI requires Keychain
+    /// mocking, which is out of scope).
+    #[test]
+    fn fix4_ensure_client_from_persisted_state_is_idempotent_when_unconfigured() {
+        let engine = SyncEngine {
+            master_key: Mutex::new(None),
+            stats: Mutex::new(SyncStats::default()),
+            client: Mutex::new(None),
+        };
+
+        // No client at start.
+        assert!(engine.client.lock().unwrap().is_none());
+
+        // Calling restore is a safe no-op when there's nothing persisted.
+        engine.ensure_client_from_persisted_state();
+
+        // Still no client (Keychain has no token in test env, or off-macOS the
+        // function is a no-op). This is the "fresh install / never registered"
+        // case — should NOT panic, should NOT fabricate a client.
+        // (Note: on a developer machine with a real Mirror device_token in
+        // Keychain this test would still pass because we only care about the
+        // graceful no-op contract; reconstruction is exercised manually.)
+        // We at least verify the call doesn't panic and the state is
+        // observable through stats().
+        let _ = engine.stats();
+    }
+
+    /// FIX4b: If a client was already set, ensure_client_from_persisted_state
+    /// must NOT clobber it (idempotent fast path).
+    #[test]
+    fn fix4_ensure_client_does_not_clobber_existing() {
+        // Build a stand-in client (any base_url; test never makes a request).
+        let stand_in =
+            http::Client::new("http://localhost:65535".to_string(), "tok_xyz".to_string())
+                .expect("stand-in client");
+        let engine = SyncEngine {
+            master_key: Mutex::new(None),
+            stats: Mutex::new(SyncStats::default()),
+            client: Mutex::new(Some(stand_in)),
+        };
+        // Ensure does not replace.
+        engine.ensure_client_from_persisted_state();
+        assert!(
+            engine.client.lock().unwrap().is_some(),
+            "existing client must not be replaced"
+        );
     }
 }

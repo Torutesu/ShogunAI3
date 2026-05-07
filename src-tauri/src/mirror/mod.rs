@@ -16,6 +16,7 @@ pub(crate) mod sync;
 // These APIs are consumed starting in Phase 2.1.2 (sync engine + IPC commands).
 #[allow(unused_imports)]
 pub(crate) use crypto::{
-    decrypt, derive_jek, derive_master_key, derive_mek, derive_rek, encrypt, encrypt_with_ad,
-    Ciphertext, JobEncryptionKey, MasterKey, MemoryEncryptionKey, ResultEncryptionKey, KEY_LEN,
+    decrypt, decrypt_with_ad, derive_jek, derive_master_key, derive_mek, derive_rek, encrypt,
+    encrypt_with_ad, Ciphertext, JobEncryptionKey, MasterKey, MemoryEncryptionKey,
+    ResultEncryptionKey, KEY_LEN,
 };
