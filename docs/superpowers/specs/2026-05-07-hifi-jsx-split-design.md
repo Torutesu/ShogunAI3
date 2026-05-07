@@ -322,9 +322,9 @@ Phase 1 PR、Phase 2 各 PR で：
 
 ### Phase 0 — 安全網の構築（1 PR、1〜2日）
 
-1. 8 つの追加 e2e spec を `tests/e2e/` 配下に新規追加。既存 `python3 -m http.server` で green。
-2. CI に `madge --circular` ジョブ追加（現状で循環ゼロを基準化）。
-3. PR 説明に現状の Tauri 実機スクショ（Home / Memory / Chat / Settings / Meetings）を添付。
+1. 4 つの追加 e2e spec を `tests/e2e/` 配下に新規追加（既存 `hifi-smoke.spec.js` でカバー済の領域は除外、ギャップに集中）。既存 `python3 -m http.server` で green。
+2. （madge ジョブは Phase 1 で導入。Phase 0 時点では静的 import がゼロのため意味のあるベースラインにならない。）
+3. PR 説明に現状の Tauri 実機スクショ（Home / Memory / Chat / Settings / Meetings ほか）を添付し、`docs/screenshots/baseline-pre-vite/` にも保存。
 
 **完了条件**: 既存 + 新 e2e が両方 green。
 **ロールバック**: revert で完結。
