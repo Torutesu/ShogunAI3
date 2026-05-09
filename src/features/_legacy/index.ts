@@ -4,5 +4,5 @@ export { ScreenWork, ScreenCapture, ScreenIntegrations, ScreenSettings } from '.
 export { ScreenAgents } from './screens-agents';
 export { ScreenMeetings } from './screens-meetings';
 export { ScreenMemoryDebug } from './screens-memory-debug';
-export { ScreenMorningBrief } from './screens-morning-brief';
+// ScreenMorningBrief moved to src/features/morning-brief/ in Phase 2 Step 3.
 export { SettingsModal } from './settings-modal';
