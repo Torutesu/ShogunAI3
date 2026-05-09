@@ -2736,6 +2736,15 @@ fn save_device_names_cache(
 /// variant is reserved for the T4 frontend merge step. The `MemItemPlaintext`
 /// `source` field is renamed to `source_field` in the JSON DTO so it can't
 /// collide with the new provenance tag.
+///
+/// Async (Phase 2.1.4.1 follow-up #4): the per-blob work — XChaCha20-Poly1305
+/// decrypt + JSON parse + base64 + cosine similarity — is CPU-bound and for
+/// realistic workloads (~500 blobs in a 30-day window) can wedge other IPC
+/// for hundreds of ms if it runs inline on Tauri's async runtime. We move
+/// the entire search call into `tokio::task::spawn_blocking` and bridge the
+/// inner async network calls through the dedicated `MIRROR_RUNTIME` (same
+/// pattern used by `mirror_sync_now` / `mirror_reset_stuck`). This keeps
+/// Tauri's runtime free for other commands during a long search.
 #[tauri::command]
 pub async fn mirror_search_blobs(payload: Value) -> Result<Value, String> {
   let query = payload
@@ -2760,30 +2769,40 @@ pub async fn mirror_search_blobs(payload: Value) -> Result<Value, String> {
     return Err("locked".into());
   }
 
-  let mek = mirror::sync::SyncEngine::global()
-    .mek()
-    .ok_or_else(|| "locked".to_string())?;
-
   // Reconstruct the client from persisted state if needed (e.g. fresh app
   // launch where the user already registered but hasn't synced yet).
+  // Cheap; safe to run on the Tauri runtime before handing off to spawn_blocking.
   mirror::sync::SyncEngine::global().ensure_client_from_persisted_state();
-  let client = mirror::sync::SyncEngine::global()
-    .client()
-    .ok_or_else(|| "not registered".to_string())?;
 
-  let this_device_id = load_this_device_id().unwrap_or_else(|| "unknown_device".to_string());
-  let names = load_device_names_cache();
+  // Move the CPU-heavy decrypt/parse/score work into spawn_blocking. The
+  // closure captures owned values (`String`, `i64`, `HashMap`) so it is `Send`,
+  // and uses the dedicated `MIRROR_RUNTIME` to drive the inner async HTTP
+  // calls inside `search_cloud_blobs`.
+  let hits = tokio::task::spawn_blocking(
+    move || -> Result<Vec<mirror::search::CloudSearchHit>, String> {
+      let mek = mirror::sync::SyncEngine::global()
+        .mek()
+        .ok_or_else(|| "locked".to_string())?;
+      let client = mirror::sync::SyncEngine::global()
+        .client()
+        .ok_or_else(|| "not registered".to_string())?;
+      let this_device_id =
+        load_this_device_id().unwrap_or_else(|| "unknown_device".to_string());
+      let names = load_device_names_cache();
 
-  let hits = mirror::search::search_cloud_blobs(
-    &query,
-    since_ms,
-    until_ms,
-    &client,
-    &mek,
-    &this_device_id,
-    |id| names.get(id).cloned(),
+      mirror::sync::mirror_runtime().block_on(mirror::search::search_cloud_blobs(
+        &query,
+        since_ms,
+        until_ms,
+        &client,
+        &mek,
+        &this_device_id,
+        move |id: &str| names.get(id).cloned(),
+      ))
+    },
   )
-  .await?;
+  .await
+  .map_err(|e| format!("mirror_search_blobs task join error: {}", e))??;
 
   let out: Vec<Value> = hits
     .into_iter()
