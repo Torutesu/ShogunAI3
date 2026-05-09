@@ -3,6 +3,13 @@ import React, { useState as useStateS } from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon, Kamon, IntegrationLogo } from '@/shared/icons';
 
+// Phase 1 expedient: this helper used to come from screens-a.jsx as a global
+// in the Babel-in-browser era. Phase 2 will consolidate to @/shared/ipc/runtime.
+function runRuntimeActionA(key, payload, options) {
+  if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok: false });
+  return window.SHOGUN_RUNTIME.executeAction(key, payload || {}, options || {});
+}
+
 const SETTINGS_NAV = [
   {id:'general',      label:'General',            jp:'一般', icon:'settings'},
   {id:'system',       label:'System',             jp:'系統', icon:'terminal'},
@@ -949,23 +956,8 @@ function PanePrivacy() {
     DEFAULT_PAYMENT_DOMAINS.map((d) => ({ ...d })),
   );
   const [paymentDraft, setPaymentDraft] = useStateS('');
-  const addPaymentDomain = React.useCallback(async () => {
-    let host = paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0].trim();
-    if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
-      toast('有効なホスト名を入力してください', 'warn');
-      return;
-    }
-    if (paymentDomains.some((x) => x.host === host)) {
-      toast('そのドメインは既にあります', 'info');
-      return;
-    }
-    const next = paymentDomains.concat([
-      { id: `pd-${host}`, host, label: host, enabled: true },
-    ]);
-    setPaymentDomains(next);
-    setPaymentDraft('');
-    await persistPrivacy(apps, sites, { paymentDomains: next });
-  }, [apps, sites, paymentDraft, paymentDomains, persistPrivacy, toast]);
+  // NOTE: addPaymentDomain was moved below persistPrivacy to fix TDZ
+  // (Babel-in-browser allowed forward reference; esbuild/strict ESM does not).
   const [incognitoEnabled, setIncognitoEnabled] = useStateS(true);
   const [incognitoBrowsers, setIncognitoBrowsers] = useStateS({
     safari: true, chrome: true, arc: true, firefox: true, edge: true,
@@ -1024,6 +1016,25 @@ function PanePrivacy() {
       timeBlocks,
     ],
   );
+
+  // Moved here from above persistPrivacy declaration to satisfy TDZ.
+  const addPaymentDomain = React.useCallback(async () => {
+    let host = paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0].trim();
+    if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
+      toast('有効なホスト名を入力してください', 'warn');
+      return;
+    }
+    if (paymentDomains.some((x) => x.host === host)) {
+      toast('そのドメインは既にあります', 'info');
+      return;
+    }
+    const next = paymentDomains.concat([
+      { id: `pd-${host}`, host, label: host, enabled: true },
+    ]);
+    setPaymentDomains(next);
+    setPaymentDraft('');
+    await persistPrivacy(apps, sites, { paymentDomains: next });
+  }, [apps, sites, paymentDraft, paymentDomains, persistPrivacy, toast]);
 
   const privacyKey = JSON.stringify(privacySec);
   React.useEffect(() => {

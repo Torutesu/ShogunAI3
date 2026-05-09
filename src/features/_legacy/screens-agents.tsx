@@ -4,6 +4,14 @@
 // All globals (React, Icon, window.SHOGUN_RUNTIME) are loaded by earlier <script> tags.
 import React from 'react';
 import { Icon } from '@/shared/icons';
+import { runRuntimeActionB } from '@/shared/ipc/runtime-actions';
+
+// Phase 1 expedient: these helpers used to come from screens-a.jsx and runtime-actions.jsx
+// as globals in the Babel-in-browser era. Phase 2 will consolidate to @/shared/ipc/runtime.
+function runRuntimeActionA(key, payload, options) {
+  if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok: false });
+  return window.SHOGUN_RUNTIME.executeAction(key, payload || {}, options || {});
+}
 
 // L4 · AGENTS — execution layer
 // ═══════════════════════════════════════════════════════════════════════════
