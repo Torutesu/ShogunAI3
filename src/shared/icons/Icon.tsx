@@ -1,7 +1,7 @@
-import React from 'react';
+import type * as React from 'react';
 
 // Shared icon set (Lucide-style, 1.5 stroke)
-export const Icon = ({ name, size = 16, className = '' }) => {
+export const Icon = ({ name, size = 16, className = '' }: { name: string; size?: number; className?: string }) => {
   const s = size;
   const paths = {
     dashboard: <><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></>,
@@ -78,7 +78,7 @@ export const Icon = ({ name, size = 16, className = '' }) => {
   };
   return (
     <svg className={`ico ${className}`} width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      {paths[name] || null}
+      {(paths as Record<string, React.ReactNode>)[name] || null}
     </svg>
   );
 };
