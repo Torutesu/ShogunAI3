@@ -1,5 +1,5 @@
 export { ScreenHome, ScreenMemory } from './screens-a';
-export { ScreenChat } from './screens-b';
+// ScreenChat moved to src/features/chat/ in Phase 2 Step 5.
 export { ScreenWork, ScreenCapture, ScreenIntegrations, ScreenSettings } from './screens-c';
 export { ScreenAgents } from './screens-agents';
 export { ScreenMeetings } from './screens-meetings';

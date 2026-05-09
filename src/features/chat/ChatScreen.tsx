@@ -1,60 +1,39 @@
-// @ts-nocheck — Phase 1 _legacy file. Will be split into features/<name>/ in Phase 2.
-import React, { useState as useStateB, useEffect as useEffectB, useRef as useRefB } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Icon, Kamon } from '@/shared/icons';
 import { runRuntimeActionB } from '@/shared/ipc/runtime-actions';
-
-/** One-shot Memory assembly overrides from `shogun-chat-composer-seed` (Memory / Agents). */
-function normalizeSeedMemoryAssembly(d) {
-  if (!d || typeof d !== 'object') return null;
-  if (d.memoryAssemblyPreset && typeof d.memoryAssemblyPreset === 'object') {
-    const p = d.memoryAssemblyPreset;
-    const q = String(p.query || '').trim().slice(0, 480);
-    const limRaw = p.limit != null ? Number(p.limit) : 12;
-    const lim = Number.isFinite(limRaw) ? Math.min(80, Math.max(1, Math.floor(limRaw))) : 12;
-    const semantic = p.semantic !== false;
-    return { query: q, limit: lim, semantic };
-  }
-  if (d.memoryAssemblyQuery != null && String(d.memoryAssemblyQuery).trim()) {
-    const q = String(d.memoryAssemblyQuery).trim().slice(0, 480);
-    const limRaw = d.memoryAssemblyLimit != null ? Number(d.memoryAssemblyLimit) : 12;
-    const lim = Number.isFinite(Number(limRaw)) ? Math.min(80, Math.max(1, Math.floor(Number(limRaw)))) : 12;
-    const semantic = d.memoryAssemblySemantic !== false;
-    return { query: q, limit: lim, semantic };
-  }
-  return null;
-}
+import { normalizeSeedMemoryAssembly } from './lib/normalize-seed';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // L3 · CHAT — interaction layer (memory-aware conversations)
 // ═══════════════════════════════════════════════════════════════════════════
-export function ScreenChat() {
-  const [messages, setMessages] = useStateB([]);
-  const [composerText, setComposerText] = useStateB('');
-  const [memoryContext, setMemoryContext] = useStateB('');
+export function ChatScreen() {
+  const [messages, setMessages] = useState<any[]>([]);
+  const [composerText, setComposerText] = useState('');
+  const [memoryContext, setMemoryContext] = useState('');
   /**
    * Structured hits when the memory block came from an in-app search (so we
    * can render FTS5 highlights per field). `null` when the block came from
    * a composer seed — the plain string in `memoryContext` is the source of
    * truth in that case.
    */
-  const [memoryContextHits, setMemoryContextHits] = useStateB(null);
-  const [loading, setLoading] = useStateB(false);
-  const [memoryTotal, setMemoryTotal] = useStateB(0);
-  const [modelHint, setModelHint] = useStateB('');
-  const [chatMax, setChatMax] = useStateB(false);
-  const [webSearchOn, setWebSearchOn] = useStateB(true);
+  const [memoryContextHits, setMemoryContextHits] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [memoryTotal, setMemoryTotal] = useState(0);
+  const [modelHint, setModelHint] = useState('');
+  const [chatMax, setChatMax] = useState(false);
+  const [webSearchOn, setWebSearchOn] = useState(true);
   /** Server-side Memory assembly (`memoryAssembly` on `chat.complete`); desktop runs search / semantic rerank. */
-  const [assembleMemoryOn, setAssembleMemoryOn] = useStateB(false);
+  const [assembleMemoryOn, setAssembleMemoryOn] = useState(false);
   /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useStateB(true);
-  const pendingMemoryAssemblyRef = useRefB(null);
-  const pendingAutoSendRef = useRefB(false);
-  const [attachments, setAttachments] = useStateB([]);
-  const [dropActive, setDropActive] = useStateB(false);
-  const dragDepthRef = useRefB(0);
-  const fileInputRef = useRefB(null);
+  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
+  const pendingMemoryAssemblyRef = useRef<any>(null);
+  const pendingAutoSendRef = useRef(false);
+  const [attachments, setAttachments] = useState<any[]>([]);
+  const [dropActive, setDropActive] = useState(false);
+  const dragDepthRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  function formatFreshness(createdAt) {
+  function formatFreshness(createdAt: any) {
     const t = Number(createdAt);
     if (!Number.isFinite(t) || t <= 0) return null;
     const ageMs = Date.now() - t;
@@ -67,7 +46,7 @@ export function ScreenChat() {
     return `${days}d`;
   }
 
-  useEffectB(() => {
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       const r = await runRuntimeActionB('stats.get', {}, { silentError: true });
@@ -77,7 +56,7 @@ export function ScreenChat() {
     return () => { cancelled = true; };
   }, []);
 
-  useEffectB(() => {
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       const r = await runRuntimeActionB('settings.load', {}, { silentError: true });
@@ -92,7 +71,7 @@ export function ScreenChat() {
     return () => { cancelled = true; };
   }, []);
 
-  useEffectB(() => {
+  useEffect(() => {
     const onPrivacy = () => {
       void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
@@ -105,18 +84,18 @@ export function ScreenChat() {
     return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
   }, []);
 
-  const toast = (msg, kind) => {
-    if (window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.pushToast) {
-      window.SHOGUN_RUNTIME.pushToast(msg, kind || 'info');
+  const toast = (msg: string, kind?: string) => {
+    if ((window as any).SHOGUN_RUNTIME && (window as any).SHOGUN_RUNTIME.pushToast) {
+      (window as any).SHOGUN_RUNTIME.pushToast(msg, kind || 'info');
     }
   };
 
-  useEffectB(() => {
+  useEffect(() => {
     const syncFromShell = () => {
-      const seed = window.SHOGUN_DEMO_SEED;
-      const rt = window.SHOGUN_RUNTIME;
+      const seed = (window as any).SHOGUN_DEMO_SEED;
+      const rt = (window as any).SHOGUN_RUNTIME;
       const id =
-        (typeof window !== 'undefined' && window.__SHOGUN_SHELL_ACTIVE_CHAT__) ||
+        (typeof window !== 'undefined' && (window as any).__SHOGUN_SHELL_ACTIVE_CHAT__) ||
         (rt && rt.__activeChatId) ||
         (rt && typeof rt.getActiveChat === 'function' && rt.getActiveChat() && rt.getActiveChat().id) ||
         null;
@@ -126,7 +105,7 @@ export function ScreenChat() {
         setMemoryContextHits(null);
         return;
       }
-      setMessages(seed.chatThreads[id].map((m) => ({ ...m })));
+      setMessages(seed.chatThreads[id].map((m: any) => ({ ...m })));
       const ctx = seed.chatMemoryContext && seed.chatMemoryContext[id];
       setMemoryContext(ctx ? String(ctx) : '');
       // Seed-provided contexts are plain strings — structured hits only come
@@ -138,9 +117,9 @@ export function ScreenChat() {
     return () => window.removeEventListener('shogun-active-chat-changed', syncFromShell);
   }, []);
 
-  useEffectB(() => {
+  useEffect(() => {
     const onMax = () => setChatMax((v) => !v);
-    const onComposerSeed = (ev) => {
+    const onComposerSeed = (ev: Event | any) => {
       const d = ev && ev.detail ? ev.detail : {};
       if (d.text != null) setComposerText(String(d.text));
       if (typeof d.webSearch === 'boolean') setWebSearchOn(d.webSearch);
@@ -184,7 +163,7 @@ export function ScreenChat() {
     // in chat_complete). We keep the existing "[provenance] title: snippet"
     // format so the backend contract is unchanged.
     const block = hits
-      .map((h) => '[' + (h.provenance || 'user') + '] ' + (h.title || '') + ': ' + (h.snippet || ''))
+      .map((h: any) => '[' + (h.provenance || 'user') + '] ' + (h.title || '') + ': ' + (h.snippet || ''))
       .join('\n');
     setMemoryContext(block.slice(0, 12000));
     setMemoryContextHits(hits);
@@ -196,13 +175,13 @@ export function ScreenChat() {
     );
   };
 
-  const formatAttachmentSize = (bytes) => {
+  const formatAttachmentSize = (bytes: any) => {
     if (!Number.isFinite(bytes) || bytes < 1024) return `${Math.max(0, Math.round(bytes || 0))} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const addFiles = (fileList) => {
+  const addFiles = (fileList: FileList | null | undefined) => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
     const mapped = files.map((f) => ({
@@ -216,7 +195,7 @@ export function ScreenChat() {
     toast(`${mapped.length} ${mapped.length === 1 ? 'file' : 'files'} attached`, 'success');
   };
 
-  const removeAttachment = (id) => {
+  const removeAttachment = (id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
@@ -228,7 +207,7 @@ export function ScreenChat() {
     const text = composerText.trim();
     if ((!text && attachments.length === 0) || loading) return;
     const attachmentSummary = attachments.length
-      ? '\n\n[Attached: ' + attachments.map((a) => a.name).join(', ') + ']'
+      ? '\n\n[Attached: ' + attachments.map((a: any) => a.name).join(', ') + ']'
       : '';
     const userTurn = { role: 'user', content: text + attachmentSummary };
     const next = messages.concat(userTurn);
@@ -236,7 +215,7 @@ export function ScreenChat() {
     setComposerText('');
     setAttachments([]);
     setLoading(true);
-    const payload = {
+    const payload: Record<string, any> = {
       messages: next,
       memoryContext: memoryContext || undefined,
       webSearch: webSearchOn,
@@ -262,8 +241,8 @@ export function ScreenChat() {
       }
     }
     const manualCtx = (memoryContext || '').trim();
-    if (window.BriefTelemetry && window.BriefTelemetry.log && window.BriefTelemetry.EVENTS) {
-      window.BriefTelemetry.log(window.BriefTelemetry.EVENTS.CHAT_COMPLETION_CONTEXT, {
+    if ((window as any).BriefTelemetry && (window as any).BriefTelemetry.log && (window as any).BriefTelemetry.EVENTS) {
+      (window as any).BriefTelemetry.log((window as any).BriefTelemetry.EVENTS.CHAT_COMPLETION_CONTEXT, {
         hasManualMemoryContext: manualCtx.length > 0,
         manualMemoryContextChars: manualCtx.length,
         memoryAssemblyRequested: shouldAssemble,
@@ -289,14 +268,14 @@ export function ScreenChat() {
   };
 
   const openLlmSettings = () => {
-    if (window.SHOGUN_RUNTIME && window.SHOGUN_RUNTIME.openSettingsPane) {
-      window.SHOGUN_RUNTIME.openSettingsPane('llm');
+    if ((window as any).SHOGUN_RUNTIME && (window as any).SHOGUN_RUNTIME.openSettingsPane) {
+      (window as any).SHOGUN_RUNTIME.openSettingsPane('llm');
     } else {
       toast('Open Settings → Model & API', 'info');
     }
   };
 
-  useEffectB(() => {
+  useEffect(() => {
     if (!pendingAutoSendRef.current) return;
     if (!composerText.trim() || loading) return;
     pendingAutoSendRef.current = false;
@@ -467,8 +446,8 @@ export function ScreenChat() {
                 >
                   <Icon name="memory" size={13} /> Assemble
                 </button>
-                <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
-                <button className="composer-pill" type="button" onClick={() => window.SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
+                <button className="composer-pill" type="button" onClick={() => (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
+                <button className="composer-pill" type="button" onClick={() => (window as any).SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
                 <span className="spacer"/>
                 <button
                   className="composer-send"
@@ -540,12 +519,12 @@ export function ScreenChat() {
                       ) : null;
                     })()}
                     <span className="memory-context-hit-title">
-                      {window.ShogunHighlight ? window.ShogunHighlight.renderHighlighted(titleSrc) : titleSrc}
+                      {(window as any).ShogunHighlight ? (window as any).ShogunHighlight.renderHighlighted(titleSrc) : titleSrc}
                     </span>
                   </div>
                   {snippetSrc && (
                     <div className="memory-context-hit-snippet">
-                      {window.ShogunHighlight ? window.ShogunHighlight.renderHighlighted(snippetSrc) : snippetSrc}
+                      {(window as any).ShogunHighlight ? (window as any).ShogunHighlight.renderHighlighted(snippetSrc) : snippetSrc}
                     </div>
                   )}
                 </div>
@@ -716,5 +695,5 @@ export function ScreenChat() {
 }
 
 if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenChat = ScreenChat;
+  (window as unknown as Record<string, unknown>).ScreenChat = ChatScreen;
 }
