@@ -137,6 +137,13 @@ function mockIpcInvoke(command, payload) {
     ok: true,
     data: { notImplemented: true, message, stub: false, echo },
   });
+  // Phase 2.1.4 T6 — Test-only seam (mirrors ipc-client.js::mockTransport).
+  // Playwright specs may set `window.__shogunMockOverrides[command]` to
+  // dial in arbitrary mirror_status / etc. responses without rebuilding the
+  // mock layer. Override returns the full envelope `{ ok, data }`.
+  if (window.__shogunMockOverrides && typeof window.__shogunMockOverrides[command] === 'function') {
+    return window.__shogunMockOverrides[command](echo);
+  }
   switch (command) {
     case 'app_integration_connect':
     case 'app_integration_toggle':

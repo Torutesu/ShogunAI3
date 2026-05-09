@@ -401,6 +401,22 @@
       echo: echo,
     });
 
+    // Phase 2.1.4 T6 — Test-only seam. Playwright specs set
+    // `window.__shogunMockOverrides[command] = (payload) => envelope` to
+    // dial in mirror_status / list_devices / etc. Override convention is the
+    // app.jsx envelope `{ ok, data }`; ipc-client unwraps to inner data here
+    // (the surrounding `invoke()` re-wraps it). See tests/e2e/_helpers/mirror-mock.js.
+    if (
+      typeof global !== "undefined" &&
+      global.__shogunMockOverrides &&
+      typeof global.__shogunMockOverrides[command] === "function"
+    ) {
+      const result = global.__shogunMockOverrides[command](echo);
+      return result && result.ok === true && Object.prototype.hasOwnProperty.call(result, "data")
+        ? result.data
+        : result;
+    }
+
     switch (command) {
       case "app_integration_connect":
       case "app_integration_toggle":
