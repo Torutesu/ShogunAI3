@@ -45,7 +45,7 @@
   - 各クエリ（10 件想定）に対する「正しいヒット ID リスト」「不適切なヒット ID リスト」
   - `is_same_fact` テスト用 30 ケース（表記揺れ / 同義表現 / 矛盾 / 別 entity）
   - `same_entity_different_fact` テスト用 15 ケース
-- フォーマット: JSONL、1 行 1 サンプル。`hifi/amc-pipeline/fixtures/` の既存スタイルに準拠
+- フォーマット: JSONL、1 行 1 サンプル。`tools/amc-pipeline/fixtures/` の既存スタイルに準拠
 
 ### Stage 1.3 — decay 重み再調整
 

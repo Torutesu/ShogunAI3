@@ -12,7 +12,7 @@
 
 | 呼称 | 使用箇所 | 用法 |
 |------|----------|------|
-| **KIOKU** (`kioku`) | `src-tauri/src/meeting_store.rs:1` のコメント、`hifi/amc-pipeline/src/schemas.js`、`prompts.js` | 内部コードネーム（"work memory" の意）。AMC pipeline の `trigger_source` enum と `KiokuHitSchema` で外部契約として露出。 |
+| **KIOKU** (`kioku`) | `src-tauri/src/meeting_store.rs:1` のコメント、`tools/amc-pipeline/src/schemas.js`、`prompts.js` | 内部コードネーム（"work memory" の意）。AMC pipeline の `trigger_source` enum と `KiokuHitSchema` で外部契約として露出。 |
 | **Memory**（大文字 M） | UI / END_USER_SETUP.md / hifi 全般 | ユーザー向け呼称。アプリ内で見える名称はこれ。 |
 | `memory.db` | `src-tauri/src/memory_store.rs:14` `MEMORY_DB` | KIOKU の物理ファイル名（SQLite）。`paths::app_data_dir()` 配下。 |
 | `memory_items.json`（legacy） | `src-tauri/src/memory_store.rs:15` `LEGACY_JSON` | DB が空のときのみ一度だけ取り込み、`memory_items.json.migrated` にリネームされる旧形式。 |
@@ -82,7 +82,7 @@ meeting* / meetings* / "meeting"    → meeting
 
 ## 4. AMC / Brief 周りの語彙（contract レベル）
 
-`hifi/amc-pipeline/src/schemas.js` で Zod スキーマとして定義され、外部契約として固定。
+`tools/amc-pipeline/src/schemas.js` で Zod スキーマとして定義され、外部契約として固定。
 
 | 識別子 | 種類 | 備考 |
 |--------|------|------|

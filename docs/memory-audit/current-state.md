@@ -40,8 +40,8 @@
 | `hifi/lib/ipc-client.js` | Tauri `invoke` ラッパ + Tauri 不在時のモック | localStorage（モック時） | 開発 / プレビュー |
 | `hifi/lib/brief-telemetry.js` | `chat.completion.context` イベントの ring buffer + Memory 化 | `localStorage` の ring buffer + `memory.ingest`（`source='telemetry_chat_context'`） | KIOKU 行を生む副作用あり |
 | `hifi/screens-memory-debug.jsx` | Memory デバッグ画面 | — | `memory_debug` Rust と対 |
-| `hifi/amc-pipeline/src/composer.js` 他 | Anthropic 呼び出しで AMC 化 | — | 入力は **`MorningBriefCandidate`** で、`related_kioku_hits` と `decision_graph_hits` を**呼出側が用意**して渡す |
-| `hifi/amc-pipeline/src/schemas.js` | Zod スキーマ。`KiokuHitSchema` / `DecisionGraphHitSchema` を定義 | — | AMC 契約の正典 |
+| `tools/amc-pipeline/src/composer.js` 他 | Anthropic 呼び出しで AMC 化 | — | 入力は **`MorningBriefCandidate`** で、`related_kioku_hits` と `decision_graph_hits` を**呼出側が用意**して渡す |
+| `tools/amc-pipeline/src/schemas.js` | Zod スキーマ。`KiokuHitSchema` / `DecisionGraphHitSchema` を定義 | — | AMC 契約の正典 |
 
 `amc-pipeline` は Node プロセスとして外部から動くこともある（`brief:run` / `brief:dry`）。本番では Rust 側 `shogun_brief_get` が同じ JSON を返す方針（`hifi/README.md:53`）。
 

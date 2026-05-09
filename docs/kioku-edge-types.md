@@ -37,7 +37,7 @@ edge_type ∈ {decided_in, follows_up, mentions, attended, blocks,
 
 1. **意味的な独立性** — 既存 8 型のいずれかで十分にカバーできるなら却下
 2. **観測頻度** — 7 日で `seen_count` が 5 未満なら早期判断は保留
-3. **AMC 契約との整合** — `hifi/amc-pipeline/src/schemas.js` の `DecisionGraphHit` / `KiokuHit` で参照される signal を再現できるか
+3. **AMC 契約との整合** — `tools/amc-pipeline/src/schemas.js` の `DecisionGraphHit` / `KiokuHit` で参照される signal を再現できるか
 4. **graph traversal への影響** — `kioku_graph_traversal::DEFAULT_EDGE_TYPES` に追加すべきか別フィルタにするか
 
 採択時は `kioku_edge_types::set_review_status(conn, edge_type, REVIEW_ACCEPTED, Some(note))`。

@@ -1,17 +1,17 @@
 <wizard-report>
 # PostHog post-wizard report
 
-The wizard has completed a deep integration of PostHog analytics into the `hifi/amc-pipeline` Node.js package. A new shared PostHog client (`src/posthog.js`) was added using `posthog-node` with CLI-appropriate settings (`flushAt: 1`, `flushInterval: 0`). Environment variables `POSTHOG_API_KEY` and `POSTHOG_HOST` were written to `hifi/amc-pipeline/.env`. Events were instrumented across three files: the CLI entry point, the pipeline orchestrator, and the AI composer.
+The wizard has completed a deep integration of PostHog analytics into the `tools/amc-pipeline` Node.js package. A new shared PostHog client (`src/posthog.js`) was added using `posthog-node` with CLI-appropriate settings (`flushAt: 1`, `flushInterval: 0`). Environment variables `POSTHOG_API_KEY` and `POSTHOG_HOST` were written to `tools/amc-pipeline/.env`. Events were instrumented across three files: the CLI entry point, the pipeline orchestrator, and the AI composer.
 
 | Event | Description | File |
 |---|---|---|
-| `brief_pipeline_started` | Fired when the CLI is invoked, capturing dry-run and validate-only mode | `hifi/amc-pipeline/src/cli.js` |
-| `brief_pipeline_completed` | Fired on successful pipeline completion with item and deferred counts | `hifi/amc-pipeline/src/cli.js` |
-| `brief_pipeline_failed` | Exception captured via `captureException` when the CLI process throws | `hifi/amc-pipeline/src/cli.js` |
-| `brief_pipeline_skipped` | Fired when the orchestrator exits early due to no candidates | `hifi/amc-pipeline/src/orchestrator.js` |
-| `brief_composer_error` | Fired when a single candidate composition fails and the heuristic fallback is used | `hifi/amc-pipeline/src/orchestrator.js` |
-| `brief_summary_generated` | Fired after ranked items and headline summary are produced | `hifi/amc-pipeline/src/orchestrator.js` |
-| `brief_composer_fallback_used` | Fired when the primary model is rate-limited (429/529) and retries with the fallback | `hifi/amc-pipeline/src/composer.js` |
+| `brief_pipeline_started` | Fired when the CLI is invoked, capturing dry-run and validate-only mode | `tools/amc-pipeline/src/cli.js` |
+| `brief_pipeline_completed` | Fired on successful pipeline completion with item and deferred counts | `tools/amc-pipeline/src/cli.js` |
+| `brief_pipeline_failed` | Exception captured via `captureException` when the CLI process throws | `tools/amc-pipeline/src/cli.js` |
+| `brief_pipeline_skipped` | Fired when the orchestrator exits early due to no candidates | `tools/amc-pipeline/src/orchestrator.js` |
+| `brief_composer_error` | Fired when a single candidate composition fails and the heuristic fallback is used | `tools/amc-pipeline/src/orchestrator.js` |
+| `brief_summary_generated` | Fired after ranked items and headline summary are produced | `tools/amc-pipeline/src/orchestrator.js` |
+| `brief_composer_fallback_used` | Fired when the primary model is rate-limited (429/529) and retries with the fallback | `tools/amc-pipeline/src/composer.js` |
 
 ## Next steps
 

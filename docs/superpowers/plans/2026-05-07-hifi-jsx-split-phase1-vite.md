@@ -52,7 +52,7 @@ ShogunAI3/
 │  ├─ check-ipc-mock-sync.mjs        ← 同上
 │  └─ build-icons.mjs                ← 既存
 ├─ tools/
-│  └─ amc-pipeline/                  ← hifi/amc-pipeline から移動、独立 package.json 維持
+│  └─ amc-pipeline/                  ← tools/amc-pipeline から移動、独立 package.json 維持
 ├─ tests/e2e/                        ← Playwright（Phase 0 で追加した4 spec含む）
 ├─ docs/
 │  ├─ action-map.md                  ← hifi/ から移動
@@ -1113,20 +1113,20 @@ git commit -m "feat(hifi): relocate scripts/docs/schemas to repo-root structure 
 ## Task 13: tools/amc-pipeline/ を移動
 
 **Files:**
-- Move: `hifi/amc-pipeline/` → `tools/amc-pipeline/`
+- Move: `tools/amc-pipeline/` → `tools/amc-pipeline/`
 
 - [ ] **Step 1: 移動**
 
 ```bash
 cd /Users/torutano/code/ShogunAI3-hifi-phase0
 mkdir -p tools
-git mv hifi/amc-pipeline tools/amc-pipeline
+git mv tools/amc-pipeline tools/amc-pipeline
 ```
 
 - [ ] **Step 2: 参照確認**
 
 ```bash
-grep -rn "hifi/amc-pipeline" --include="*.json" --include="*.md" .
+grep -rn "tools/amc-pipeline" --include="*.json" --include="*.md" .
 ```
 
 検出された参照を `tools/amc-pipeline` に書換える（`tools/amc-pipeline/README.md` は内部相対パスで完結している想定だが、念のため確認）。
