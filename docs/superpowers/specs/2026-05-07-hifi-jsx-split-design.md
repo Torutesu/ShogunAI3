@@ -353,7 +353,7 @@ Phase 1 PR、Phase 2 各 PR で：
    - `hifi/preview-home*.jpg` などのプレビュー画像はリポジトリから削除（README で参照されていなければ）するか、`docs/screenshots/` に移動
    - `hifi/README.md` の有用な内容を `src/README.md` または ルート `README.md` に統合し、旧ファイルは削除
    - `hifi/action-map.md` を `docs/action-map.md` に移動（`scripts/check-actions.py` の参照先もここに合わせる）
-   - `hifi/amc-pipeline/`（独立 Node サブパッケージ）は `tools/amc-pipeline/` にディレクトリごと移動。Vite ビルドの対象外で、独自の `package.json` を持つため移動だけ行い中身は触らない
+   - `tools/amc-pipeline/`（独立 Node サブパッケージ）は `tools/amc-pipeline/` にディレクトリごと移動。Vite ビルドの対象外で、独自の `package.json` を持つため移動だけ行い中身は触らない
 6. 検証：
    - `npm run quality` が green
    - `npm run build:desktop`（未署名）で Tauri 実機が起動し、Phase 0 のスクショと目視一致

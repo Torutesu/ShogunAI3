@@ -12,7 +12,7 @@ The audit on 2026-05-02 identified that:
 
 - The repository ships `docs/TERMS_OF_SERVICE_EN.md`, `docs/TERMS_OF_SERVICE.md`, `PRIVACY.md`, and `docs/PRIVACY.ja.md` as bundled legal documents, but **no UI flow exists to obtain user acceptance of them**. A grep for `consent|accept.*terms|tos` in `hifi/` found no first-launch acceptance path.
 - The audit's High-priority list flagged the absence of a consent flow as one of the top blockers to a production release.
-- Telemetry collection via PostHog (per `posthog-setup-report.md` and `hifi/amc-pipeline/`) is mentioned in `PRIVACY.md` but the application has no opt-in mechanism. GDPR and the Japanese Personal Information Protection Act both require explicit consent for telemetry.
+- Telemetry collection via PostHog (per `posthog-setup-report.md` and `tools/amc-pipeline/`) is mentioned in `PRIVACY.md` but the application has no opt-in mechanism. GDPR and the Japanese Personal Information Protection Act both require explicit consent for telemetry.
 
 This work delivers the consent modal and persistence. PostHog runtime gating ("only initialize if `telemetryOptIn === true`") is **out of scope** for this PR and will be tracked separately.
 
@@ -255,7 +255,7 @@ Mocking `app_quit` in tests requires a small extension to `hifi/lib/ipc-client.j
 
 ## Out of Scope
 
-- **PostHog runtime gating** — the telemetry toggle is stored in settings but the actual PostHog initialization in `hifi/amc-pipeline/` is not yet wired to it. Tracked as a follow-up PR.
+- **PostHog runtime gating** — the telemetry toggle is stored in settings but the actual PostHog initialization in `tools/amc-pipeline/` is not yet wired to it. Tracked as a follow-up PR.
 - **Settings UI to view / change consents** — users cannot revisit telemetry choice from inside the app yet (only by deleting `settings.json`). A "Privacy Controls" panel addition is a follow-up.
 - **CI version-pair enforcement** — the rule "if you change a `.md` legal doc, you must bump the constant in `legal-versions.js`" is not enforced by CI in this PR.
 - **Multilingual beyond JP/EN** — the locale detection is binary.

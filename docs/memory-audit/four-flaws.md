@@ -12,7 +12,7 @@
 | **重複除去なし** | あり（部分的にしか効いていない） | `memory_store.rs:499` (`idx_mem_items_entity_unique` は `entity_id IS NOT NULL` のみ); `capture_sampler.rs:28` (in-memory `LAST_SIG` ハッシュのみ、プロセス再起動で消える) | **high** |
 | **減衰なし** | あり（完全に無し） | DDL 全体に `last_accessed_at` / `access_count` / `decay_score` 列が無い（`memory_store.rs:346–353`、Phase 1 追加列も含めて）。検索結果のランキングは FTS5 rank と cosine のみで時間項なし (`memory_store.rs:988–1056`) | **high** |
 | **ランキングなし** | あり（薄い） | `search` は FTS5 rank のみ、`search_with_semantics` は cosine 内積のみ (`memory_store.rs:1124–1135`)。recency / centrality / access boost / provenance バイアス いずれも掛けない | **mid** |
-| **関係性追跡なし** | あり（完全に無し） | `mem_items` 同士、`mem_items ↔ meetings`、`mem_items ↔ mem_summaries` のいずれにも edges テーブル無し。外部キーは `meeting_*` 内部の親子のみ (`meeting_store.rs:38, 49`)。`mem_summaries.target_id → mem_items.id` は文字列マッチ、参照整合性は強制されない (`memory_store.rs:413`)。`AMC pipeline.DecisionGraphHitSchema` (`hifi/amc-pipeline/src/schemas.js:26`) に対応する Rust 実装は **0 件** (`rg "decision_graph" src-tauri/`) | **high** |
+| **関係性追跡なし** | あり（完全に無し） | `mem_items` 同士、`mem_items ↔ meetings`、`mem_items ↔ mem_summaries` のいずれにも edges テーブル無し。外部キーは `meeting_*` 内部の親子のみ (`meeting_store.rs:38, 49`)。`mem_summaries.target_id → mem_items.id` は文字列マッチ、参照整合性は強制されない (`memory_store.rs:413`)。`AMC pipeline.DecisionGraphHitSchema` (`tools/amc-pipeline/src/schemas.js:26`) に対応する Rust 実装は **0 件** (`rg "decision_graph" src-tauri/`) | **high** |
 
 ---
 
@@ -76,7 +76,7 @@ DDL を見渡しても `last_accessed_at` / `access_count` / `decay_score` / `re
 - 「決定 → 後続のフォローアップ」 ＝ `decision_graph`：これは AMC pipeline の Zod schema 上は存在するが Rust 側に**ゼロ**
 
 **`AMC contract と実装のギャップ（決定的）:**
-`hifi/amc-pipeline/src/schemas.js:26–30`：
+`tools/amc-pipeline/src/schemas.js:26–30`：
 ```js
 export const DecisionGraphHitSchema = z.object({
   decision_id: z.string(),

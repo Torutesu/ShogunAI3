@@ -11,9 +11,9 @@ macOS 向けの **Tauri v2** デスクトップアプリと、**Hi-Fi UI**（Rea
 
 ## 開発者向け
 
-- **UI / IPC / アクション一覧:** [`hifi/README.md`](hifi/README.md)、[`hifi/action-map.md`](hifi/action-map.md)  
+- **UI / IPC / アクション一覧:** [`docs/action-map.md`](docs/action-map.md)  
 - **macOS 配布・署名・公証:** [`docs/macos-release.md`](docs/macos-release.md)  
-- **Morning Brief パイプライン（Node）:** [`hifi/amc-pipeline/README.md`](hifi/amc-pipeline/README.md)
+- **Morning Brief パイプライン（Node）:** [`tools/amc-pipeline/README.md`](tools/amc-pipeline/README.md)
 
 ### よく使うコマンド（リポジトリルート）
 
