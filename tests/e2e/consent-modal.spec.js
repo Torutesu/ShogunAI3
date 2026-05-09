@@ -3,7 +3,7 @@
 //
 // Harness notes:
 //   - Playwright serves the repo root via Python HTTP on port 4173.
-//   - Entry point: /SHOGUN%20Hi-Fi%20UI.html  (same as other specs).
+//   - Entry point: /  (same as other specs).
 //   - No Tauri IPC available → ShogunIpcClient auto-selects "mock" transport.
 //   - The consent gate DOES fire in mock mode (ShogunIpcClient is present).
 //   - Fresh settings state per test: localStorage is cleared via addInitScript
@@ -20,7 +20,7 @@
 const { test, expect } = require("@playwright/test");
 const { pinLegalVersions, MOCK_SETTINGS_LS } = require("./_helpers/preseed-consent");
 
-const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
+const HIFI_ENTRY = "/";
 
 /** Navigate to the Hi-Fi app and wait for either the consent modal or the
  *  main app to appear (whichever the legalGate produces). */

@@ -15,11 +15,13 @@ module.exports = defineConfig({
   reporter: "list",
   timeout: 120000,
   webServer: {
-    command: `python3 -m http.server ${PORT} --bind 127.0.0.1`,
+    // Vite preview serves the built web-dist/ on the configured port.
+    // We run `vite build` first so preview has artifacts to serve.
+    command: `npm run build && npm run preview -- --port ${PORT} --strictPort`,
     cwd: path.join(ROOT),
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
-    timeout: 120000,
+    timeout: 240000,
   },
   use: {
     baseURL: BASE_URL,

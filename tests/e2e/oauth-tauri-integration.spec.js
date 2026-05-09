@@ -1,7 +1,7 @@
 const { test, expect } = require("@playwright/test");
 const { preacceptConsent } = require("./_helpers/preseed-consent");
 
-const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
+const HIFI_ENTRY = "/";
 
 async function openHiFi(page) {
   await page.goto(HIFI_ENTRY, { waitUntil: "load", timeout: 90000 });
