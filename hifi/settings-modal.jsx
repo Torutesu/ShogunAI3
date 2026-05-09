@@ -4409,7 +4409,7 @@ function ConfirmTypedText({ word, title, description, confirmLabel, onConfirm, o
 
 /** Heuristic strength meter for the onboarding wizard's passphrase step. */
 function PassphraseStrengthMeter({ score }) {
-  const labels = ['Too weak', 'Weak', 'OK', 'Good', 'Strong'];
+  const labels = ['Too weak', 'Weak', 'OK', 'Acceptable', 'Strong'];
   const colors = ['var(--danger)', 'var(--danger)', 'var(--warning)', 'var(--success)', 'var(--success)'];
   const idx = Math.max(0, Math.min(4, score | 0));
   return (
@@ -4441,15 +4441,26 @@ function MirrorOnboardingModal({ onClose, onComplete, run, toast }) {
   const [pass1, setPass1] = useStateS('');
   const [pass2, setPass2] = useStateS('');
   const [busy, setBusy] = useStateS(false);
+  const [urlNextAttempted, setUrlNextAttempted] = useStateS(false);
+
+  const deviceNameTooLong = React.useMemo(
+    () => Array.from(deviceName).length > 64,
+    [deviceName],
+  );
 
   const urlError = React.useMemo(() => {
     if (!serverUrl) return 'URL required';
     if (!/^https?:\/\//.test(serverUrl)) return 'Must start with http:// or https://';
-    if (serverUrl.startsWith('http://')
-        && !/localhost|127\.0\.0\.1/.test(serverUrl)) {
+    let parsed;
+    try { parsed = new URL(serverUrl); } catch (_e) { return 'Invalid URL'; }
+    if (parsed.protocol === 'http:'
+        && parsed.hostname !== 'localhost'
+        && parsed.hostname !== '127.0.0.1'
+        && parsed.hostname !== '[::1]'
+        && parsed.hostname !== '::1') {
       return 'http:// is only allowed for localhost (use https:// otherwise)';
     }
-    try { new URL(serverUrl); return null; } catch (_e) { return 'Invalid URL'; }
+    return null;
   }, [serverUrl]);
 
   const passStrength = React.useMemo(() => {
@@ -4522,7 +4533,9 @@ function MirrorOnboardingModal({ onClose, onComplete, run, toast }) {
               spellCheck={false}
               style={{ marginBottom: 'var(--space-2)' }}
             />
-            {urlError && <div className="t-cap" style={{ color: 'var(--warning)' }}>{urlError}</div>}
+            {urlError && (serverUrl.length > 0 || urlNextAttempted) && (
+              <div className="t-cap" style={{ color: 'var(--warning)' }}>{urlError}</div>
+            )}
             <div className="t-cap" style={{ color: 'var(--text-mute)', marginTop: 'var(--space-2)' }}>
               The address of your self-hosted shogun-mirror-server.
             </div>
@@ -4560,6 +4573,11 @@ function MirrorOnboardingModal({ onClose, onComplete, run, toast }) {
               spellCheck={false}
               style={{ marginBottom: 'var(--space-2)' }}
             />
+            {deviceNameTooLong && (
+              <div className="t-cap" style={{ color: 'var(--warning)' }}>
+                Name too long (max 64 chars)
+              </div>
+            )}
             <div className="t-cap" style={{ color: 'var(--text-mute)' }}>
               Shown to other devices when displaying synced memories.
             </div>
@@ -4624,10 +4642,17 @@ function MirrorOnboardingModal({ onClose, onComplete, run, toast }) {
             {step < 4 && (
               <button
                 className="btn btn-sm btn-primary"
-                onClick={() => setStep(step + 1)}
+                onClick={() => {
+                  if (step === 1 && urlError) {
+                    setUrlNextAttempted(true);
+                    return;
+                  }
+                  setStep(step + 1);
+                }}
                 disabled={
-                  !!((step === 1 && urlError)
-                  || (step === 2 && !regCode.trim()))
+                  !!((step === 1 && urlError && (serverUrl.length > 0 || urlNextAttempted))
+                  || (step === 2 && !regCode.trim())
+                  || (step === 3 && deviceNameTooLong))
                 }
               >
                 Next
@@ -4764,13 +4789,13 @@ function MirrorDeviceRow({ device, run, toast, refreshDevices }) {
               { device_id: device.device_id, confirm: 'DELETE' },
               { silentError: true },
             );
-            setShowDelete(false);
             if (r && r.ok) {
+              setShowDelete(false);
               const n = (r.data && r.data.tombstoned_blobs) || 0;
               toast(`Tombstoned ${n} ${n === 1 ? 'memory' : 'memories'}`, 'success');
               await refreshDevices();
             } else {
-              toast((r && r.error && r.error.message) || 'Delete failed', 'error');
+              toast((r && r.error && r.error.message) || 'Delete failed', 'warn');
             }
           }}
           onCancel={() => setShowDelete(false)}
@@ -4995,7 +5020,7 @@ function MirrorActiveView({ status, refreshStatus, run, toast }) {
 
       {/* Devices card */}
       <div className="card" style={{ padding: 'var(--space-6)', marginBottom: 'var(--space-4)' }}>
-        <div className="t-h3" style={{ marginBottom: 'var(--space-3) ' }}>Devices</div>
+        <div className="t-h3" style={{ marginBottom: 'var(--space-3)' }}>Devices</div>
         <div className="t-sm" style={{ color: 'var(--text-mute)', marginBottom: 'var(--space-3)' }}>
           Mirror is shared across these devices. Counts reflect non-tombstoned blobs.
           {devicesTruncated && ' (List truncated; you have many devices.)'}
@@ -5073,12 +5098,12 @@ function MirrorActiveView({ status, refreshStatus, run, toast }) {
           confirmLabel="Disable Mirror"
           onConfirm={async () => {
             const r = await run('mirror.disable', { wipe_keys: true }, { silentError: true });
-            setShowDisable(false);
             if (r && r.ok) {
+              setShowDisable(false);
               toast('Cloud Mirror disabled', 'success');
               await refreshStatus();
             } else {
-              toast((r && r.error && r.error.message) || 'Disable failed', 'error');
+              toast((r && r.error && r.error.message) || 'Disable failed', 'warn');
             }
           }}
           onCancel={() => setShowDisable(false)}
