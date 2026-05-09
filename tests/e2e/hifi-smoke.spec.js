@@ -2,7 +2,7 @@ const { test, expect } = require("@playwright/test");
 const { preacceptConsent } = require("./_helpers/preseed-consent");
 
 /** Served by playwright webServer from repo root (see playwright.config.js). */
-const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
+const HIFI_ENTRY = "/";
 
 async function openHiFi(page) {
   for (let attempt = 0; attempt < 2; attempt += 1) {

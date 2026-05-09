@@ -2,7 +2,7 @@
 const { test, expect } = require("@playwright/test");
 const { preacceptConsent } = require("./_helpers/preseed-consent");
 
-const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
+const HIFI_ENTRY = "/";
 
 // NOTE: This helper is intentionally duplicated from tests/e2e/hifi-smoke.spec.js
 // for Phase 0. TODO: extract to tests/e2e/_helpers/open-hifi.js once Tasks 1-4

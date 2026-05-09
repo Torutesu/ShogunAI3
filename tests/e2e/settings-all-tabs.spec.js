@@ -2,7 +2,7 @@
 const { test, expect } = require("@playwright/test");
 const { preacceptConsent } = require("./_helpers/preseed-consent");
 
-const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
+const HIFI_ENTRY = "/";
 
 // Source of truth: hifi/settings-modal.jsx:5-20 (SETTINGS_NAV array).
 // If you add/remove a tab there, update this list and the test will fail
