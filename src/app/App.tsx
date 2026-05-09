@@ -5,11 +5,11 @@ import { Icon, Kamon } from '@/shared/icons';
 import {
   ScreenHome,
   ScreenMemory,
-  ScreenAgents,
   ScreenWork,
   ScreenMeetings,
   SettingsModal,
 } from '@/features/_legacy';
+import { ScreenAgents } from '@/features/agents';
 import { ScreenChat } from '@/features/chat';
 import { ScreenMemoryDebug } from '@/features/memory-debug';
 import { ConfirmWriteModal, ConsentModal } from '@/shared/modals';
