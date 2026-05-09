@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export function ConsentModal(props: any) {
   const initialLang = props.initialLang === 'ja' ? 'ja' : 'en';

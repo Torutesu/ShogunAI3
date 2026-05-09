@@ -14,7 +14,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "allowJs": true,
-    "checkJs": false,
+    "checkJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -23,7 +23,7 @@
     "paths": { "@/*": ["src/*"] },
     "types": ["vite/client"]
   },
-  "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "web-dist", "dist", "src-tauri", "tools/amc-pipeline"],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "web-dist", "dist", "src-tauri", "tools/amc-pipeline", "tests"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
