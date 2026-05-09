@@ -1,6 +1,7 @@
 // @ts-nocheck — Phase 1 _legacy file. Will be split into features/<name>/ in Phase 2.
 import React, { useState as useStateB, useEffect as useEffectB, useRef as useRefB } from 'react';
 import { Icon, Kamon } from '@/shared/icons';
+import { runRuntimeActionB } from '@/shared/ipc/runtime-actions';
 
 /** One-shot Memory assembly overrides from `shogun-chat-composer-seed` (Memory / Agents). */
 function normalizeSeedMemoryAssembly(d) {
