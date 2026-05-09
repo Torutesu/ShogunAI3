@@ -9,9 +9,9 @@ import {
   ScreenAgents,
   ScreenWork,
   ScreenMeetings,
-  ScreenMemoryDebug,
   SettingsModal,
 } from '@/features/_legacy';
+import { ScreenMemoryDebug } from '@/features/memory-debug';
 import { ConfirmWriteModal, ConsentModal } from '@/shared/modals';
 import { ShogunIpcClient, ShogunAPI, ShogunActionRegistry } from '@/shared/ipc';
 import { ShogunKeyboardShortcuts, shogunMarkdownMini } from '@/shared/lib';
