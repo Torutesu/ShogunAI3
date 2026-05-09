@@ -162,6 +162,10 @@
         syncNow: (input) => call("mirror_sync_now", input || {}, WRITE),
         disable: (input) => call("mirror_disable", input || {}, WRITE),
         resetStuck: (input) => call("mirror_reset_stuck", input || {}, WRITE),
+        searchBlobs: (input) => call("mirror_search_blobs", input, READ),
+        listDevices: (input) => call("mirror_list_devices", input || {}, READ),
+        renameDevice: (input) => call("mirror_rename_device", input, WRITE),
+        deleteDevice: (input) => call("mirror_delete_device", input, WRITE),
       },
     };
   }

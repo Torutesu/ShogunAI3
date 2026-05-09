@@ -55,6 +55,7 @@ hkdf = "0.12"
 sha2 = "0.10"
 getrandom = "0.2"
 zeroize = { version = "1", features = ["derive"] }
+lru = "0.12"
 
 [dev-dependencies]
 mockito = "1"

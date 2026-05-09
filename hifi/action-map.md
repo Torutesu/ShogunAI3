@@ -225,6 +225,10 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `mirror.sync_now`
 - `mirror.disable`
 - `mirror.reset_stuck`
+- `mirror.search_blobs`
+- `mirror.list_devices`
+- `mirror.rename_device`
+- `mirror.delete_device`
 
 ## Quick Verification
 
