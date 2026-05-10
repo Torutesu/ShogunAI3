@@ -1,4 +1,5 @@
-export { ScreenHome, ScreenMemory } from './screens-a';
+// ScreenHome moved to src/features/home/ in Phase 2 Step 8.
+// ScreenMemory moved to src/features/memory/ in Phase 2 Step 8.
 // ScreenChat moved to src/features/chat/ in Phase 2 Step 5.
 // ScreenWork moved to src/features/work/ in Phase 2 Step 7.
 // ScreenCapture moved to src/features/capture/ in Phase 2 Step 7.

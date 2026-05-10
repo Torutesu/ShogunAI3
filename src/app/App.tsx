@@ -2,9 +2,9 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon, Kamon } from '@/shared/icons';
+import { ScreenHome } from '@/features/home';
+import { ScreenMemory } from '@/features/memory';
 import {
-  ScreenHome,
-  ScreenMemory,
   ScreenMeetings,
   SettingsModal,
 } from '@/features/_legacy';
