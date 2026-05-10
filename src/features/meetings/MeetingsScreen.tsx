@@ -1,152 +1,49 @@
-// @ts-nocheck — Phase 1 _legacy file. Will be split into features/<name>/ in Phase 2.
+/* eslint-disable max-lines -- Phase 2 Step 9: feature split. Phase 3 will further decompose. */
 import React from 'react';
+import * as ReactDOM from 'react-dom';
 import { Icon, Kamon, IntegrationLogo } from '@/shared/icons';
-
-function runRuntimeActionM(key, payload, options) {
-  if (!window.SHOGUN_RUNTIME || !window.SHOGUN_RUNTIME.executeAction) return Promise.resolve({ ok:false });
-  return window.SHOGUN_RUNTIME.executeAction(key, payload || {}, options || {});
-}
-
-function mnl() {
-  return window.MeetingNoteLocal || null;
-}
-
-function toastM(message, kind) {
-  if (window.SHOGUN_RUNTIME && typeof window.SHOGUN_RUNTIME.pushToast === 'function') {
-    window.SHOGUN_RUNTIME.pushToast(message, kind || 'info');
-  }
-}
-
-function briefPayloadWithUserTz(base) {
-  var b = base && typeof base === 'object' ? base : {};
-  var tz = '';
-  if (window.ShogunUserTimezone && typeof window.ShogunUserTimezone.getTimeZone === 'function') {
-    tz = window.ShogunUserTimezone.getTimeZone();
-  }
-  if (!tz) {
-    try {
-      tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-    } catch (_e) {}
-  }
-  return tz ? Object.assign({}, b, { user_tz: tz }) : b;
-}
-
-const RECIPE_LOCAL_BODIES = {
-  'Write weekly recap': '## \u9031\u5831\n\n### \u4eca\u9031\u306e\u30cf\u30a4\u30e9\u30a4\u30c8\n- \n\n### \u6765\u9031\u306e\u30d5\u30a9\u30fc\u30ab\u30b9\n- \n\n### \u30ea\u30b9\u30af\n- \n',
-  'Coach me: Matt 1:1': '## 1:1 \u30b3\u30fc\u30c1\u30f3\u30b0\n\n### \u524d\u56de\u304b\u3089\u306e\u30d5\u30a9\u30ed\u30fc\n- \n\n### \u4eca\u56de\u306e\u8b70\u984c\n- \n\n### \u30cd\u30af\u30b9\u30c8\u30a2\u30af\u30b7\u30e7\u30f3\n- [ ] \n',
-  'List open decisions': '## \u672a\u6c7a\u5b9a\u4e8b\u9805\u30ea\u30b9\u30c8\n\n| \u8b70\u984c | \u72b6\u614b | \u671f\u65e5 |\n|------|------|------|\n| | \u691c\u8a0e\u4e2d | |\n\n### \u6c7a\u5b9a\u6e08\u307f\n- \n',
-  'Draft follow-ups': '## \u30d5\u30a9\u30ed\u30fc\u30a2\u30c3\u30d7\n\n- [ ] \n- [ ] \n\n### \u9001\u4fe1\u6e08\u307f\n- \n',
-};
-
-var MEETINGS_COMING_UP_STORAGE = 'shogun.hifi.meetingsComingUp.v1';
-
-/** Dock slash menu + "All recipes" browser (labels must match RECIPE_LOCAL_BODIES / Granola recipes). */
-var MEETINGS_DOCK_SLASH_CATALOG = [
-  { id: 'todos', label: 'List recent todos', desc: 'Surface every unchecked line and TODO marker across notes—in one pass.', jpHint: '\u30ce\u30fc\u30c8\u6a2a\u65ad\u3067\u672a\u5b8c\u4e86\u3092\u96c6\u7d04', kind: 'action', accent: 'mint' },
-  { id: 'coach', label: 'Coach me: Matt 1:1', desc: 'Spin up a structured 1:1—agenda, follow-ups, and next actions.', jpHint: '1:1 \u7528\u306e\u30c6\u30f3\u30d7\u3092\u958b\u304f', kind: 'recipe', recipeLabel: 'Coach me: Matt 1:1', recipeJp: '\u5bfe\u8bdd', accent: 'amber' },
-  { id: 'weekly', label: 'Write weekly recap', desc: 'Ship a crisp weekly narrative: wins, risks, and what changed.', jpHint: '\u9031\u6b21\u30ec\u30d3\u30e5\u30fc\u306e\u9aa8\u5b50\u3092\u4f5c\u6210', kind: 'recipe', recipeLabel: 'Write weekly recap', recipeJp: '\u9031\u5831', accent: 'violet' },
-  { id: 'decisions', label: 'List open decisions', desc: 'Draft a decision log—what is open, who owns it, and by when.', jpHint: '\u672a\u6c7a\u5b9a\u3068\u30aa\u30fc\u30ca\u30fc\u3092\u4e00\u89a7', kind: 'recipe', recipeLabel: 'List open decisions', recipeJp: '\u6c7a\u5b9a', accent: 'rose' },
-  { id: 'followups', label: 'Draft follow-ups', desc: 'Turn threads into a send-ready checklist your team can act on.', jpHint: '\u30d5\u30a9\u30ed\u30fc\u7528\u30c1\u30a7\u30c3\u30af\u30ea\u30b9\u30c8', kind: 'recipe', recipeLabel: 'Draft follow-ups', recipeJp: '\u8ffd\u8de1', accent: 'cyan' },
-];
-
-function granolaMiniBtn(surface, border, color) {
-  return {
-    fontSize:12,
-    padding:'6px 12px',
-    borderRadius:999,
-    border:'1px solid ' + border,
-    background:surface,
-    color:color,
-    cursor:'pointer',
-    fontFamily:'inherit',
-  };
-}
-
-function granolaTextareaStyle() {
-  return {
-    width:'100%',
-    minHeight:'min(48vh, 420px)',
-    marginTop:14,
-    padding:0,
-    border:'none',
-    outline:'none',
-    resize:'vertical',
-    background:'transparent',
-    color:'var(--text)',
-    fontSize:16,
-    lineHeight:1.65,
-    fontFamily:'inherit',
-  };
-}
-
-function fmtElapsedMs(ms) {
-  var s = Math.floor(ms / 1000);
-  var h = Math.floor(s / 3600);
-  var m = Math.floor((s % 3600) / 60);
-  var sec = s % 60;
-  if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
-  return String(m) + ':' + String(sec).padStart(2, '0');
-}
-
-/** ノートに録音完了行が入っているか（録音済みMTGとして下部タブを出す） */
-function noteHasCompletedRecording(storageKey) {
-  var L = mnl();
-  if (!L || !storageKey || !L.loadNote) return false;
-  var n = L.loadNote(storageKey);
-  var t = (n && n.transcript) || '';
-  return /\[録音\s[^\]]+\]/.test(t) || t.indexOf('音声ファイル:') !== -1;
-}
-
-/** Memo / transcript / summary / minutes completion (4 dots). listVersion bumps parent to refresh. */
-function MtgProgressDots({ storageKey, listVersion }) {
-  void listVersion;
-  var L = typeof window !== 'undefined' ? window.MeetingNoteLocal : null;
-  if (!L || !storageKey) return null;
-  var saved = L.loadNote ? L.loadNote(storageKey) : null;
-  var p = L.noteProgress ? L.noteProgress(saved) : null;
-  if (!p || p.pct === 0) return null;
-  function dot(on) {
-    return (
-      <span style={{
-        display:'inline-block', width:6, height:6, borderRadius:999,
-        background: on ? 'var(--gold)' : 'var(--border)',
-        opacity: on ? 1 : 0.35,
-      }}/>
-    );
-  }
-  return (
-    <span className="row" style={{gap:3, marginLeft:6}} title={p.pct + '%'}>
-      {dot(p.memo)}{dot(p.transcript)}{dot(p.summary)}{dot(p.minutes)}
-    </span>
-  );
-}
+import { MtgProgressDots } from './components/MtgProgressDots';
+import {
+  runRuntimeActionM,
+  mnl,
+  toastM,
+  briefPayloadWithUserTz,
+  RECIPE_LOCAL_BODIES,
+  MEETINGS_COMING_UP_STORAGE,
+  MEETINGS_DOCK_SLASH_CATALOG,
+  granolaMiniBtn,
+  granolaTextareaStyle,
+  noteHasCompletedRecording,
+  granolaPillStyle,
+  granolaIconBtn,
+} from './lib/runtime';
 
 // ===========================================================================
 // MEETINGS — synthesis layer for calendar events + conversations
 // ===========================================================================
-export function ScreenMeetings() {
+export function MeetingsScreen() {
   const { useState, useEffect, useCallback, useRef, useMemo } = React;
-  const [granola, setGranola] = useState(null);
+  const [granola, setGranola] = useState<any>(null);
   const [granolaPane, setGranolaPane] = useState('memo');
   const [granolaDraft, setGranolaDraft] = useState({ body:'', transcript:'', summary:'', minutes:'' });
   const [granolaMenuOpen, setGranolaMenuOpen] = useState(false);
   const [cmdBarMin, setCmdBarMin] = useState(false);
   const [granolaOutline, setGranolaOutline] = useState(false);
   const [granolaAsk, setGranolaAsk] = useState('');
-  const [granolaTodos, setGranolaTodos] = useState(null);
+  const [granolaTodos, setGranolaTodos] = useState<any>(null);
   const [granolaEnhanceMenuOpen, setGranolaEnhanceMenuOpen] = useState(false);
-  const granolaRef = useRef(null);
+  const granolaRef = useRef<any>(null);
   const granolaDraftRef = useRef(granolaDraft);
   granolaDraftRef.current = granolaDraft;
 
-  const [userMeetingItems, setUserMeetingItems] = useState([]);
-  const [importedMeetings, setImportedMeetings] = useState([]);
+  const [userMeetingItems, setUserMeetingItems] = useState<any[]>([]);
+  const [importedMeetings, setImportedMeetings] = useState<any[]>([]);
   // { meeting, segments, loading, filter } when the detail modal is open.
-  const [meetingDetail, setMeetingDetail] = useState(null);
+  const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [listTick, setListTick] = useState(0);
-  const [audioRecSession, setAudioRecSession] = useState(null);
-  const [recTick, setRecTick] = useState(0);
-  const [comingUp, setComingUp] = useState([]);
+  const [audioRecSession, setAudioRecSession] = useState<any>(null);
+  const [_recTick, setRecTick] = useState(0);
+  const [comingUp, setComingUp] = useState<any[]>([]);
   const [meetingsPrompt, setMeetingsPrompt] = useState('');
   const [meetingsRecipeBrowse, setMeetingsRecipeBrowse] = useState(false);
   const [postRecSessionFlag, setPostRecSessionFlag] = useState(false);
@@ -250,7 +147,7 @@ export function ScreenMeetings() {
       }
       if (!r.data || !Array.isArray(r.data.events) || !r.data.events.length) return;
       var WKD = ['\u65e5', '\u6708', '\u706b', '\u6c34', '\u6728', '\u91d1', '\u571f'];
-      var mapped = r.data.events.map(function (ev, idx) {
+      var mapped = r.data.events.map(function (ev: any, idx: any) {
         var start = ev.startDateTimeMs != null ? new Date(ev.startDateTimeMs) : (ev.start ? new Date(ev.start) : new Date());
         var end = ev.endDateTimeMs != null ? new Date(ev.endDateTimeMs) : (ev.end ? new Date(ev.end) : start);
         return {
@@ -301,7 +198,7 @@ export function ScreenMeetings() {
       runRuntimeActionM('meetings.list', { limit: 50 }, { silentError: true }).then(function (r) {
         if (cancelled) return;
         const items = r && r.ok && Array.isArray(r.data && r.data.items) ? r.data.items : [];
-        const filtered = items.filter(function (m) {
+        const filtered = items.filter(function (m: any) {
           return m && m.app_bundle_id === 'com.shogun.import';
         });
         setImportedMeetings(filtered);
@@ -318,7 +215,7 @@ export function ScreenMeetings() {
 
   useEffect(function () {
     function syncRec() {
-      var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+      var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
       if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting()) {
         var sk = M.getActiveStorageKey && M.getActiveStorageKey();
         setAudioRecSession({ startedAt: M.getStartedAt(), storageKey: sk || null });
@@ -345,7 +242,7 @@ export function ScreenMeetings() {
   /** Keep MediaRecorder titleRef aligned with the note title (download filename + HUD) while recording. */
   useEffect(function () {
     if (!granola || !granola.storageKey) return;
-    var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
     if (!M || !M.setActiveTitle || !M.isRecording || !M.isRecording()) return;
     var activeSk = M.getActiveStorageKey && M.getActiveStorageKey();
     if (!activeSk || activeSk !== granola.storageKey) return;
@@ -353,7 +250,7 @@ export function ScreenMeetings() {
   }, [granola && granola.storageKey, granola && granola.title, audioRecSession]);
 
   useEffect(function () {
-    const onAutoMinutes = function (e) {
+    const onAutoMinutes = function (e: any) {
       var d = (e && e.detail) || {};
       var sk = d.storageKey;
       var g = granolaRef.current;
@@ -367,7 +264,7 @@ export function ScreenMeetings() {
     };
   }, []);
 
-  const openGranolaMinutesForDetectedMeeting = useCallback(function (title, eventId) {
+  const openGranolaMinutesForDetectedMeeting = useCallback(function (title: any, eventId: any) {
     const L = mnl();
     const key = 'cal-' + String(eventId != null ? eventId : Date.now());
     const storageKey = L ? L.storageHash({ cal: key, t: title }) : key;
@@ -390,11 +287,11 @@ export function ScreenMeetings() {
   }, []);
 
   useEffect(function () {
-    const onDetected = function (e) {
+    const onDetected = function (e: any) {
       if (granolaRef.current) return;
       var d = (e && e.detail) || {};
-      if (window.SHOGUN_RUNTIME && typeof window.SHOGUN_RUNTIME.setActiveScreen === 'function') {
-        window.SHOGUN_RUNTIME.setActiveScreen('meetings');
+      if ((window as any).SHOGUN_RUNTIME && typeof (window as any).SHOGUN_RUNTIME.setActiveScreen === 'function') {
+        (window as any).SHOGUN_RUNTIME.setActiveScreen('meetings');
       }
       openGranolaMinutesForDetectedMeeting(d.title, d.eventId);
     };
@@ -433,13 +330,13 @@ export function ScreenMeetings() {
     };
   }, [comingUp]);
 
-  function rowStorageKey(n, dateCtx, dayJp) {
+  function rowStorageKey(n: any, dateCtx: any, dayJp?: any) {
     const L = mnl();
     if (n && n.storageKey) return n.storageKey;
     return L ? L.storageHash({ t: n.t, time: n.time, ctx: dateCtx, j: dayJp || '' }) : ('mtg-' + n.t + n.time);
   }
 
-  const tagColor = (tag) => ({
+  const tagColor = (tag: any): string => (({
     DECISION: 'var(--gold)',
     RESEARCH: 'var(--text)',
     REVIEW:   'var(--text-mute)',
@@ -450,7 +347,7 @@ export function ScreenMeetings() {
     REC:      'var(--text-mute)',
     LIVE:     'var(--gold)',
     LOCAL:    'var(--text-dim)',
-  }[tag] || 'var(--text-dim)');
+  } as Record<string, string>)[tag] || 'var(--text-dim)');
 
   const openQuickNote = useCallback(() => {
     const key = 'quick-' + Date.now();
@@ -473,7 +370,7 @@ export function ScreenMeetings() {
     });
   }, []);
 
-  const openMeetingNote = useCallback((n, dateCtx, dayJp) => {
+  const openMeetingNote = useCallback((n: any, dateCtx?: any, dayJp?: any) => {
     const isY = dateCtx === 'yesterday';
     const L = mnl();
     const storageKey = (n && n.storageKey) ? n.storageKey : (L ? L.storageHash({ t: n.t, time: n.time, ctx: dateCtx, j: dayJp || '' }) : ('mtg-' + n.t + n.time));
@@ -494,7 +391,7 @@ export function ScreenMeetings() {
     });
   }, []);
 
-  const openRecipeGranola = useCallback((recipe) => {
+  const openRecipeGranola = useCallback((recipe: any) => {
     const key = 'recipe-' + recipe.label + '-' + Date.now();
     const L = mnl();
     const storageKey = L ? L.storageHash({ r: recipe.label, ts: Date.now() }) : key;
@@ -528,7 +425,7 @@ export function ScreenMeetings() {
         L.updateMeetingLogTitleByStorageKey(g.storageKey, tit);
       }
     }
-    var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
     if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting() && typeof M.abort === 'function') {
       M.abort();
     }
@@ -541,7 +438,7 @@ export function ScreenMeetings() {
 
   const startNoteRecording = useCallback(async function () {
     if (!granola || !granola.storageKey) return;
-    var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
     if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting()) return;
     if (!M || typeof M.start !== 'function') {
       toastM('録音モジュールが読み込まれていません', 'error');
@@ -558,7 +455,7 @@ export function ScreenMeetings() {
   }, [granola]);
 
   const stopNoteRecording = useCallback(function () {
-    var M = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
     if (M && typeof M.stop === 'function') {
       M.stop();
     } else {
@@ -595,7 +492,7 @@ export function ScreenMeetings() {
 
   useEffect(() => {
     if (!granola) return;
-    const onKey = (e) => {
+    const onKey = (e: any) => {
       if (e.key === 'Escape') {
         if (mtgLinkAccessMenuOpen) { setMtgLinkAccessMenuOpen(false); return; }
         if (mtgTopShareOpen) { setMtgTopShareOpen(false); return; }
@@ -816,7 +713,7 @@ export function ScreenMeetings() {
     toastM('ToDo ' + todos.length + '\u4ef6\uff08\u30ed\u30fc\u30ab\u30eb\u62bd\u51fa\u30fb\u30dc\u30c3\u30c8\u672a\u4f7f\u7528\uff09', todos.length ? 'success' : 'info');
   }, [granolaDraft]);
 
-  const injectRecipeIntoMemo = useCallback(function (recipeLabel) {
+  const injectRecipeIntoMemo = useCallback(function (recipeLabel: any) {
     var block = RECIPE_LOCAL_BODIES[recipeLabel];
     if (!granola || !block) return;
     setGranolaPane('memo');
@@ -828,7 +725,7 @@ export function ScreenMeetings() {
     setPostRecWaveMenuOpen(false);
   }, [granola]);
 
-  const runPostRecSlashItem = useCallback(function (item) {
+  const runPostRecSlashItem = useCallback(function (item: any) {
     setPostRecWaveMenuOpen(false);
     if (item.kind === 'action' && item.id === 'todos') {
       listLocalTodos();
@@ -839,14 +736,14 @@ export function ScreenMeetings() {
     }
   }, [listLocalTodos, injectRecipeIntoMemo]);
 
-  const [granolaPillMenu, setGranolaPillMenu] = useState(null); // { kind: 'date'|'attendees'|'folder', anchor: {left, top, width} }
-  const [granolaAttendees, setGranolaAttendees] = useState(['Toru Tano']);
+  const [granolaPillMenu, setGranolaPillMenu] = useState<any>(null); // { kind: 'date'|'attendees'|'folder', anchor: {left, top, width} }
+  const [granolaAttendees, setGranolaAttendees] = useState<string[]>(['Toru Tano']);
   const [granolaAttendeesQuery, setGranolaAttendeesQuery] = useState('');
   const [granolaFolder, setGranolaFolder] = useState('My notes');
   const [granolaFolderQuery, setGranolaFolderQuery] = useState('');
-  const [granolaFolderList, setGranolaFolderList] = useState(['My notes', 'Toru team']);
+  const [granolaFolderList, setGranolaFolderList] = useState<string[]>(['My notes', 'Toru team']);
 
-  const openGranolaPillMenu = useCallback(function (kind, evt) {
+  const openGranolaPillMenu = useCallback(function (kind: any, evt: any) {
     try {
       var el = evt && evt.currentTarget;
       if (!el) { setGranolaPillMenu({ kind: kind, anchor: { left: 80, top: 80, width: 260 } }); return; }
@@ -861,7 +758,7 @@ export function ScreenMeetings() {
   }, []);
   const closeGranolaPillMenu = useCallback(function () { setGranolaPillMenu(null); }, []);
 
-  const addFolderTag = useCallback(function (ev) {
+  const addFolderTag = useCallback(function (ev: any) {
     openGranolaPillMenu('folder', ev);
   }, [openGranolaPillMenu]);
 
@@ -869,11 +766,11 @@ export function ScreenMeetings() {
     toastM('\u30ab\u30ec\u30f3\u30c0\u30fc\u30a4\u30d9\u30f3\u30c8\u306e\u30ea\u30f3\u30af\u306f\u8a2d\u5b9a\u304b\u3089\u6709\u52b9\u5316\u3067\u304d\u307e\u3059\uff08\u30e2\u30c3\u30af\uff09', 'info');
   }, []);
 
-  const showGranolaDateInfo = useCallback(function (ev) {
+  const showGranolaDateInfo = useCallback(function (ev: any) {
     openGranolaPillMenu('date', ev);
   }, [openGranolaPillMenu]);
 
-  const showGranolaAuthorInfo = useCallback(function (ev) {
+  const showGranolaAuthorInfo = useCallback(function (ev: any) {
     openGranolaPillMenu('attendees', ev);
   }, [openGranolaPillMenu]);
 
@@ -888,12 +785,12 @@ export function ScreenMeetings() {
       return { en: 'Today', jp: '\u672c\u65e5', t: '--:--' };
     }
   }, [granolaPillMenu]); // re-eval when menu opens so "today" stays fresh
-  const toggleAttendee = useCallback(function (name) {
+  const toggleAttendee = useCallback(function (name: any) {
     setGranolaAttendees(function (list) {
       return list.indexOf(name) >= 0 ? list.filter(function (n) { return n !== name; }) : list.concat([name]);
     });
   }, []);
-  const pickFolder = useCallback(function (name) {
+  const pickFolder = useCallback(function (name: any) {
     setGranolaFolder(name);
     toastM('Folder: ' + name, 'success');
     setGranolaPillMenu(null);
@@ -908,7 +805,7 @@ export function ScreenMeetings() {
     setGranolaPillMenu(null);
   }, [granolaFolderQuery]);
 
-  const submitMeetingsPrompt = useCallback(function (e) {
+  const submitMeetingsPrompt = useCallback(function (e: any) {
     if (e) e.preventDefault();
     var raw = (meetingsPrompt || '').trim();
     if (!raw) return;
@@ -927,7 +824,7 @@ export function ScreenMeetings() {
     runRuntimeActionM('memory.search', { query: 'TODO [ ]', kinds: ['note'], limit: 25 }, { successMessage: 'TODO\u3092\u691c\u7d22\u3057\u307e\u3057\u305f' });
   }, []);
 
-  const runDockSlashItem = useCallback(function (item) {
+  const runDockSlashItem = useCallback(function (item: any) {
     setMeetingsRecipeBrowse(false);
     setMeetingsPrompt('');
     if (item.kind === 'action' && item.id === 'todos') {
@@ -954,7 +851,7 @@ export function ScreenMeetings() {
 
   useEffect(function () {
     if (!showDockRecipeOverlay) return;
-    function onKey(e) {
+    function onKey(e: any) {
       if (e.key === 'Escape') {
         setMeetingsRecipeBrowse(false);
         setMeetingsPrompt(function (p) { return (p && p.startsWith('/')) ? '' : (p || ''); });
@@ -1076,7 +973,7 @@ export function ScreenMeetings() {
             const pick = await runRuntimeActionM('meetings.import.pick', {}, { silentError: true });
             const paths = pick && pick.ok && Array.isArray(pick.data?.paths) ? pick.data.paths : [];
             if (!paths.length) return;
-            window.SHOGUN_RUNTIME?.pushToast?.(
+            (window as any).SHOGUN_RUNTIME?.pushToast?.(
               `Importing ${paths.length} recording${paths.length > 1 ? 's' : ''}…`,
               'info',
             );
@@ -1088,11 +985,11 @@ export function ScreenMeetings() {
               else {
                 failed += 1;
                 const msg = (r && r.error && r.error.message) || `Failed: ${p}`;
-                window.SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
+                (window as any).SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
               }
             }
             if (succeeded > 0) {
-              window.SHOGUN_RUNTIME?.pushToast?.(
+              (window as any).SHOGUN_RUNTIME?.pushToast?.(
                 failed === 0
                   ? `Imported ${succeeded} recording${succeeded > 1 ? 's' : ''}`
                   : `Imported ${succeeded}, failed ${failed}`,
@@ -1150,7 +1047,7 @@ export function ScreenMeetings() {
                       const segs = r && r.ok && Array.isArray(r.data && r.data.segments)
                         ? r.data.segments
                         : [];
-                      setMeetingDetail((prev) => (
+                      setMeetingDetail((prev: any) => (
                         prev && prev.meeting && prev.meeting.id === m.id
                           ? { ...prev, segments: segs, loading: false }
                           : prev
@@ -1158,7 +1055,7 @@ export function ScreenMeetings() {
                     });
                   }}
                 >
-                  <Icon name="calendar" size={14} className="gold" style={{flexShrink:0}}/>
+                  <span style={{flexShrink:0, display:'inline-flex'}}><Icon name="calendar" size={14} className="gold"/></span>
                   <div style={{flex:1, minWidth:0}}>
                     <div style={{fontSize:14, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
                       {m.title || 'Imported recording'}
@@ -1179,11 +1076,11 @@ export function ScreenMeetings() {
                       if (!ok) return;
                       runRuntimeActionM('meetings.purge', { meeting_id: m.id }, { silentError: true }).then(function (r) {
                         if (r && r.ok) {
-                          window.SHOGUN_RUNTIME?.pushToast?.('Recording removed', 'success');
+                          (window as any).SHOGUN_RUNTIME?.pushToast?.('Recording removed', 'success');
                           window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
                         } else {
                           const msg = (r && r.error && r.error.message) || 'Remove failed';
-                          window.SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
+                          (window as any).SHOGUN_RUNTIME?.pushToast?.(msg, 'error');
                         }
                       });
                     }}
@@ -1208,7 +1105,7 @@ export function ScreenMeetings() {
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:2}}>
             {(function () {
-              var Mrow = typeof window !== 'undefined' ? window.MeetingMediaRecording : null;
+              var Mrow = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
               var recSk = audioRecSession && audioRecSession.storageKey;
               var activeSk = recSk || (Mrow && Mrow.getActiveStorageKey && Mrow.getActiveStorageKey());
               var isBusy = !!(Mrow && Mrow.isBusyRecordingOrStarting && Mrow.isBusyRecordingOrStarting());
@@ -1224,7 +1121,7 @@ export function ScreenMeetings() {
                 return a.i - b.i;
               });
               return annotated;
-            })().map(function (entry) {
+            })().map(function (entry: any) {
               var n = entry.n;
               var i = entry.i;
               var isLiveRow = entry.isLiveRow;
@@ -1242,7 +1139,7 @@ export function ScreenMeetings() {
                         style={{
                           color: tagColor(rowTag),
                           borderColor: 'color-mix(in srgb, ' + tagColor(rowTag) + ' 30%, var(--border))',
-                          animation: isLiveRow ? 'shogun-rec-pulse 1.35s ease-in-out infinite' : undefined,
+                          animation: isLiveRow ? ('shogun-rec-pulse 1.35s ease-in-out infinite' as any) : undefined,
                         }}
                       >
                         {rowTag}
@@ -1382,7 +1279,7 @@ export function ScreenMeetings() {
                   </span>
                   <button type="button" className="btn btn-sm btn-ghost" style={{padding:'0 6px'}} onMouseDown={function (e) { e.preventDefault(); }} onClick={function () {
                     var q = (meetingsPrompt || '').trim();
-                    var payload = {
+                    var payload: any = {
                       source: 'meetings_prompt',
                       action: 'attach',
                       target: 'document',
@@ -2033,7 +1930,7 @@ export function ScreenMeetings() {
           {granolaOutline && (
             <div className="granola-float" style={{top:100, right:16, display:'flex', flexDirection:'column', gap:6, padding:10, borderRadius:12, background:'var(--surface)', border:'1px solid var(--border-hi)', maxWidth:140}}>
               {['memo','transcript','summary','minutes'].map(function (pid) {
-                const labels = { memo:'メモ', transcript:'文字起こし', summary:'要約', minutes:'議事録' };
+                const labels: Record<string,string> = { memo:'メモ', transcript:'文字起こし', summary:'要約', minutes:'議事録' };
                 return (
                   <button key={pid} type="button" onClick={function () { setGranolaPane(pid); }} style={{fontSize:11, padding:'6px 8px', borderRadius:8, border:'1px solid var(--border-hi)', background:granolaPane===pid?'color-mix(in srgb, var(--gold) 16%, transparent)':'transparent', color:'var(--text)', cursor:'pointer', fontFamily:'inherit'}}>
                     {labels[pid]}
@@ -2115,7 +2012,7 @@ export function ScreenMeetings() {
                     {row.logo ? (
                       <IntegrationLogo slug={row.logo} size={22} title={row.en} />
                     ) : (
-                      <Icon name={row.icon} size={16} />
+                      <Icon name={(row.icon || '') as any} size={16} />
                     )}
                     <span>
                       <span className="en-only">{row.en}</span>
@@ -2232,7 +2129,7 @@ export function ScreenMeetings() {
                 <div style={{fontSize:13, color:'var(--text-mute)'}}>\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\uff08[ ]\u3084 TODO:\u884c\u3092\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044\uff09</div>
               ) : (
                 <ul style={{margin:0, paddingLeft:18, fontSize:13}}>
-                  {granolaTodos.map(function (t, i) { return <li key={i} style={{marginBottom:4}}>{t}</li>; })}
+                  {granolaTodos.map(function (t: any, i: any) { return <li key={i} style={{marginBottom:4}}>{t}</li>; })}
                 </ul>
               )}
               <button type="button" onClick={function () { setGranolaTodos(null); }} style={{marginTop:10, fontSize:12, border:'1px solid var(--border-hi)', borderRadius:8, padding:'4px 10px', background:'transparent', color:'var(--text-mute)', cursor:'pointer'}}>Close</button>
@@ -2531,7 +2428,7 @@ export function ScreenMeetings() {
                 { id:'transcript', en:'Transcript', jp:'文字起こし' },
                 { id:'summary', en:'Summary', jp:'要約' },
                 { id:'minutes', en:'Minutes', jp:'議事録' },
-              ].map(function (t) {
+              ].map(function (t: any) {
                 const on = granolaPane === t.id;
                 return (
                   <button key={t.id} type="button" onClick={function () { setGranolaPane(t.id); }} style={{padding:'8px 14px', borderRadius:999, border:'1px solid ' + (on ? 'var(--gold)' : 'var(--border-hi)'), background:on ? 'color-mix(in srgb, var(--gold) 14%, transparent)' : 'transparent', color:on ? 'var(--gold)' : 'var(--text-mute)', cursor:'pointer', fontSize:12, fontFamily:'inherit'}}>
@@ -2827,7 +2724,7 @@ export function ScreenMeetings() {
                   color:'var(--gold)',
                   cursor:'pointer',
                   boxShadow: audioRecSession ? '0 0 0 1px color-mix(in srgb, var(--gold) 20%, transparent)' : 'none',
-                  animation: audioRecSession ? 'shogun-rec-pulse 1.35s ease-in-out infinite' : undefined,
+                  animation: audioRecSession ? ('shogun-rec-pulse 1.35s ease-in-out infinite' as any) : undefined,
                 }}
               >
                 <Icon name={audioRecSession ? 'stop' : 'play'} size={audioRecSession ? 15 : 16}/>
@@ -3047,16 +2944,16 @@ export function ScreenMeetings() {
           const segs = Array.isArray(meetingDetail.segments) ? meetingDetail.segments : [];
           const filter = String(meetingDetail.filter || '').toLowerCase();
           const visible = filter
-            ? segs.filter((s) => String(s.text || '').toLowerCase().indexOf(filter) !== -1)
+            ? segs.filter((s: any) => String(s.text || '').toLowerCase().indexOf(filter) !== -1)
             : segs;
-          const speakers = Array.from(new Set(segs.map((s) => String(s.speaker || ''))));
+          const speakers = Array.from(new Set(segs.map((s: any) => String(s.speaker || ''))));
           // Palette cycles so each speaker gets a stable color.
           const palette = ['var(--gold)', 'var(--success)', '#8ea8ff', '#c97d9e', '#f0a04b', '#7aa98f'];
-          const colorForSpeaker = (speaker) => {
+          const colorForSpeaker = (speaker: any) => {
             const idx = speakers.indexOf(String(speaker || ''));
             return idx >= 0 ? palette[idx % palette.length] : 'var(--text-mute)';
           };
-          const labelFor = (speaker) => {
+          const labelFor = (speaker: any) => {
             const raw = String(speaker || '');
             if (/^speaker_\d+$/.test(raw)) {
               const n = parseInt(raw.slice(8), 10);
@@ -3064,7 +2961,7 @@ export function ScreenMeetings() {
             }
             return raw || 'Unknown';
           };
-          const fmtMs = (ms) => {
+          const fmtMs = (ms: any) => {
             const secs = Math.max(0, Math.floor(Number(ms) / 1000));
             const mm = Math.floor(secs / 60);
             const ss = secs % 60;
@@ -3119,7 +3016,7 @@ export function ScreenMeetings() {
                   <input
                     type="text"
                     value={meetingDetail.filter || ''}
-                    onChange={(e) => setMeetingDetail((prev) => (prev ? { ...prev, filter: e.target.value } : prev))}
+                    onChange={(e) => setMeetingDetail((prev: any) => (prev ? { ...prev, filter: e.target.value } : prev))}
                     placeholder="Filter transcript…"
                     style={{
                       marginTop:12, width:'100%',
@@ -3144,7 +3041,7 @@ export function ScreenMeetings() {
                     </div>
                   ) : (
                     <div style={{display:'flex', flexDirection:'column', gap:10}}>
-                      {visible.map(function (seg, i) {
+                      {visible.map(function (seg: any, i: any) {
                         const color = colorForSpeaker(seg.speaker);
                         return (
                           <div
@@ -3188,33 +3085,6 @@ export function ScreenMeetings() {
   );
 }
 
-function granolaPillStyle(bg, border, color) {
-  return {
-    display:'inline-flex',
-    alignItems:'center',
-    gap:6,
-    padding:'6px 12px',
-    borderRadius:999,
-    border:`1px solid ${border}`,
-    background:bg,
-    fontSize:12,
-    color,
- };
-}
-
-const granolaIconBtn = {
-  display:'flex',
-  alignItems:'center',
-  justifyContent:'center',
-  width:34,
-  height:34,
-  borderRadius:999,
-  border:'none',
-  background:'transparent',
-  color:'var(--text-mute)',
-  cursor:'pointer',
-};
-
 if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenMeetings = ScreenMeetings;
+  (window as unknown as Record<string, unknown>).ScreenMeetings = MeetingsScreen;
 }

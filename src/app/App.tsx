@@ -4,8 +4,8 @@ import * as ReactDOM from 'react-dom';
 import { Icon, Kamon } from '@/shared/icons';
 import { ScreenHome } from '@/features/home';
 import { ScreenMemory } from '@/features/memory';
+import { ScreenMeetings } from '@/features/meetings';
 import {
-  ScreenMeetings,
   SettingsModal,
 } from '@/features/_legacy';
 import { ScreenWork } from '@/features/work';
