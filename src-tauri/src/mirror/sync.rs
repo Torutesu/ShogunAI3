@@ -121,7 +121,7 @@ static ENGINE: OnceLock<SyncEngine> = OnceLock::new();
 /// always a different one. See Fix #3 in the code-review follow-up.
 static MIRROR_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
-fn mirror_runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn mirror_runtime() -> &'static tokio::runtime::Runtime {
     MIRROR_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
