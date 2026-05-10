@@ -5,10 +5,10 @@ import { Icon, Kamon } from '@/shared/icons';
 import {
   ScreenHome,
   ScreenMemory,
-  ScreenWork,
   ScreenMeetings,
   SettingsModal,
 } from '@/features/_legacy';
+import { ScreenWork } from '@/features/work';
 import { ScreenAgents } from '@/features/agents';
 import { ScreenChat } from '@/features/chat';
 import { ScreenMemoryDebug } from '@/features/memory-debug';
