@@ -5,9 +5,7 @@ import { Icon, Kamon } from '@/shared/icons';
 import { ScreenHome } from '@/features/home';
 import { ScreenMemory } from '@/features/memory';
 import { ScreenMeetings } from '@/features/meetings';
-import {
-  SettingsModal,
-} from '@/features/_legacy';
+import { SettingsModal } from '@/features/settings';
 import { ScreenWork } from '@/features/work';
 import { ScreenAgents } from '@/features/agents';
 import { ScreenChat } from '@/features/chat';
