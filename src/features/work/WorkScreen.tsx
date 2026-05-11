@@ -524,7 +524,3 @@ export function WorkScreen() {
     </div>
   );
 }
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenWork = WorkScreen;
-}

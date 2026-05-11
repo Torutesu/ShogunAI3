@@ -47,7 +47,3 @@ export const IntegrationLogo = ({ slug, size = 30, title, className = '', style 
     </div>
   );
 };
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).IntegrationLogo = IntegrationLogo;
-}

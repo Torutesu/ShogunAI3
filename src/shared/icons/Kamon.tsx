@@ -19,7 +19,3 @@ export const Kamon = ({ size = 28, color: _color, className = '' }: KamonProps) 
     decoding="async"
   />
 );
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).Kamon = Kamon;
-}

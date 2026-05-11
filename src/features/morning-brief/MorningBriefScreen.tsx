@@ -155,9 +155,3 @@ export function MorningBriefScreen() {
     </div>
   );
 }
-
-// Phase 2 expedient: keep window export for any external code that still uses it.
-// Will be removed in Phase 2 Step 12 along with the rest of the legacy globals.
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenMorningBrief = MorningBriefScreen;
-}

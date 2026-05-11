@@ -116,7 +116,3 @@ export function SettingsScreen() {
     </div>
   );
 }
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenSettings = SettingsScreen;
-}

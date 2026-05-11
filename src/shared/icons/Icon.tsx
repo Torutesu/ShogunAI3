@@ -82,7 +82,3 @@ export const Icon = ({ name, size = 16, className = '' }: { name: string; size?:
     </svg>
   );
 };
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).Icon = Icon;
-}

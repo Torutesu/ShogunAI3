@@ -385,8 +385,3 @@ export function AgentsScreen() {
     </div>
   );
 }
-
-// Compat shim: expose AgentsScreen on window for any legacy script references.
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenAgents = AgentsScreen;
-}

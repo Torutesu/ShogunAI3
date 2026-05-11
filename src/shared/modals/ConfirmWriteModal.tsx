@@ -85,7 +85,3 @@ export function ConfirmWriteModal(props: any) {
   );
   return ReactDOM.createPortal(tree, document.body);
 }
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ConfirmWriteModal = ConfirmWriteModal;
-}

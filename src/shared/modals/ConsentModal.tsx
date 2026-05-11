@@ -242,7 +242,3 @@ export function ConsentModal(props: any) {
     </>
   );
 }
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ConsentModal = ConsentModal;
-}

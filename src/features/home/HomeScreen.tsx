@@ -1409,7 +1409,3 @@ export function HomeScreen() {
     </div>
   );
 }
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenHome = HomeScreen;
-}

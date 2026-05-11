@@ -212,7 +212,3 @@ export function CaptureScreen() {
     </div>
   );
 }
-
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenCapture = CaptureScreen;
-}

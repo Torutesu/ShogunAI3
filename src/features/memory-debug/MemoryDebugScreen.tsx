@@ -43,9 +43,3 @@ export function MemoryDebugScreen() {
     </div>
   );
 }
-
-// Compat shim: Phase 2 e2e uses SHOGUN_RUNTIME.setActiveScreen('memory_debug') which
-// routes via App.tsx, but this window export is preserved for completeness.
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ScreenMemoryDebug = MemoryDebugScreen;
-}
