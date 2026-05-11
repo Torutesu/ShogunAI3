@@ -56,20 +56,14 @@ export default [
         patterns: [{ group: ['hifi/**', '../../hifi/**'], message: 'hifi/ is removed in Phase 1; use src/ paths.' }],
       }],
       'max-lines': ['warn', { max: 800, skipBlankLines: true, skipComments: true }],
-      // boundaries: warn for Phase 1, will be flipped to error in Phase 1.5
-      'boundaries/element-types': ['warn', {
+      // boundaries: error from Phase 2 Step 12 onward — enforces feature isolation
+      'boundaries/element-types': ['error', {
         default: 'allow',
         rules: [
           { from: 'shared', disallow: ['app', 'feature'] },
           { from: 'app', allow: ['feature', 'shared'] },
         ],
       }],
-    },
-  },
-  {
-    files: ['src/features/_legacy/**'],
-    rules: {
-      'max-lines': 'off',
     },
   },
   {
