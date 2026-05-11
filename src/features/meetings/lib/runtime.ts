@@ -1,11 +1,3 @@
-/* eslint-disable max-lines -- Phase 2 Step 9: helper copy. Step 12 will consolidate shared runtime. */
-
-export function runRuntimeActionM(key: any, payload?: any, options?: any): Promise<any> {
-  const rt = (window as any).SHOGUN_RUNTIME;
-  if (!rt || !rt.executeAction) return Promise.resolve({ ok: false });
-  return rt.executeAction(key, payload || {}, options || {});
-}
-
 export function mnl(): any {
   return (window as any).MeetingNoteLocal || null;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useCallback } from 'react';
-import { runRuntimeActionA } from '../lib/runtime';
+import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
 
 function startOfDayMs(d: Date): number {
   const x = new Date(d);

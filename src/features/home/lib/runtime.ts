@@ -1,17 +1,3 @@
-/* eslint-disable max-lines -- Phase 2 Step 8: helper copy. Step 12 will consolidate shared runtime. */
-
-export function runRuntimeActionA(key: any, payload?: any, options?: any): Promise<any> {
-  const rt = (window as any).SHOGUN_RUNTIME;
-  if (!rt || !rt.executeAction) return Promise.resolve({ ok: false });
-  return rt.executeAction(key, payload || {}, options || {});
-}
-
-export function requestWriteActionA(actionKey: any, payload: any, title: any, description: any): void {
-  const rt = (window as any).SHOGUN_RUNTIME;
-  if (!rt || !rt.requestWriteAction) return;
-  rt.requestWriteAction(actionKey, payload, title, description);
-}
-
 /** IANA zone from Shogun helper or `Intl` (browser / OS). */
 export function resolveUserTimeZoneId(): string {
   const U = typeof window !== 'undefined' ? (window as any).ShogunUserTimezone : null;

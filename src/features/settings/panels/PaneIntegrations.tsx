@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Icon, IntegrationLogo } from '@/shared/icons';
 import { Pane } from '../components/Pane';
 import { Row } from '../components/Row';
-import { runRuntimeActionA } from '../lib/runtime';
+import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
 import { useRuntimeActions } from '../lib/hooks';
 import { SettingsHydrationContext } from '../types';
 

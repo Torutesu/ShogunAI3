@@ -1,7 +1,7 @@
 // Phase 2 Step 7.2: CaptureScreen split from _legacy/screens-c.tsx.
 import React from 'react';
 import { Icon } from '@/shared/icons';
-import { runRuntimeAction } from './lib/runtime';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 
 export function CaptureScreen() {
   const [isPaused, setIsPaused] = React.useState(false);

@@ -1,7 +1,7 @@
 // Phase 2 Step 7.3: IntegrationsScreen split from _legacy/screens-c.tsx.
 import React from 'react';
 import { Icon, IntegrationLogo } from '@/shared/icons';
-import { runRuntimeAction } from './lib/runtime';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 
 // Window-injected connector registry — populated at runtime by the native layer.
 declare const ShogunIntegrationConnectors: any;

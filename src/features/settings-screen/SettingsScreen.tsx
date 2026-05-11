@@ -2,7 +2,7 @@
 // Note: this is the sidebar Settings screen, NOT settings-modal (Step 10).
 import React from 'react';
 import { Icon } from '@/shared/icons';
-import { runRuntimeAction } from './lib/runtime';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 
 export function SettingsScreen() {
   const [storage, setStorage] = React.useState({ memories:'12,408', disk:'3.4 GB', days:'68 days', usagePercent:22 });
