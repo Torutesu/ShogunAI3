@@ -1,4 +1,5 @@
 import { ShogunAPI } from './shogun-api';
+import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
 
 (function initActionRegistry(global: any) {
   function createActionRegistry(api: any, options?: any) {
@@ -108,20 +109,20 @@ import { ShogunAPI } from './shogun-api';
     register("schedule.create", (payload) => api.scheduleAction(payload));
     register("auth.status", (payload) => api.authStatus(payload));
     register("auth.clerk_sign_in", async () => {
-      if (global.ShogunClerkAuth && typeof global.ShogunClerkAuth.openSignIn === "function") {
-        return global.ShogunClerkAuth.openSignIn();
+      if (ShogunClerkAuth && typeof ShogunClerkAuth.openSignIn === "function") {
+        return ShogunClerkAuth.openSignIn();
       }
       return api.authOpenBrowserSignIn({});
     });
     register("auth.clerk_sign_up", async () => {
-      if (global.ShogunClerkAuth && typeof global.ShogunClerkAuth.openSignUp === "function") {
-        return global.ShogunClerkAuth.openSignUp();
+      if (ShogunClerkAuth && typeof ShogunClerkAuth.openSignUp === "function") {
+        return ShogunClerkAuth.openSignUp();
       }
       return api.authOpenBrowserSignUp({});
     });
     register("auth.clerk_sign_out", () => {
-      if (global.ShogunClerkAuth && typeof global.ShogunClerkAuth.signOut === "function") {
-        return global.ShogunClerkAuth.signOut();
+      if (ShogunClerkAuth && typeof ShogunClerkAuth.signOut === "function") {
+        return ShogunClerkAuth.signOut();
       }
       return api.authSignOut({});
     });
@@ -170,12 +171,6 @@ import { ShogunAPI } from './shogun-api';
 
   global.ShogunActionRegistry = { createActionRegistry: createActionRegistry };
 })(typeof window !== 'undefined' ? window : globalThis);
-
-// Compat shim — exposes ShogunActionRegistry on window for legacy scripts
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ShogunActionRegistry =
-    (window as any).ShogunActionRegistry;
-}
 
 export const ShogunActionRegistry: { createActionRegistry: (api: typeof ShogunAPI, options?: any) => any } =
   (typeof window !== 'undefined' ? (window as any) : (globalThis as any)).ShogunActionRegistry;

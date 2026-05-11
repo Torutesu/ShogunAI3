@@ -1,3 +1,5 @@
+import { ShogunMemoryExport } from '@/shared/ipc/shogun-api';
+
 /**
  * Commercial build: customer-facing legal URLs (optional). Leave empty to rely on bundled markdown
  * (docs/TERMS_OF_SERVICE.md, docs/TERMS_OF_SERVICE_EN.md, PRIVACY.md). Replace supportMailto with your support address.
@@ -42,7 +44,7 @@ export const EMPTY_SETTINGS_SECURITY = {};
 
 // Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`.
 export const IMPORT_CONFIRM_TOKEN =
-  (typeof window !== 'undefined' && (window as any).ShogunMemoryExport && (window as any).ShogunMemoryExport.CONFIRM_TOKEN)
+  (ShogunMemoryExport && ShogunMemoryExport.CONFIRM_TOKEN)
     || 'REPLACE';
 
 export const MAX_PROFILE_PHOTO_BYTES = 512 * 1024;

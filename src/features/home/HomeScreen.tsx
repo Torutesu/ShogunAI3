@@ -1,5 +1,7 @@
 /* eslint-disable max-lines -- Phase 2 Step 8: feature split. Will tighten in Phase 3 with finer component extraction. */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { ShogunUserTimezone } from '@/shared/lib/user-timezone';
+import { BriefTelemetry } from '@/shared/lib/brief-telemetry';
 import { Icon, Kamon } from '@/shared/icons';
 import { ShogunDriveGlyph } from './components/ShogunDriveGlyph';
 import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
@@ -111,7 +113,7 @@ export function HomeScreen() {
   const briefGeneratedDisplay = useMemo(() => {
     const iso = morningBrief && morningBrief.generated_at;
     if (!iso) return '';
-    const U = typeof window !== 'undefined' ? (window as any).ShogunUserTimezone : null;
+    const U = ShogunUserTimezone;
     if (U && typeof U.formatIsoInTimeZone === 'function') {
       const x = U.formatIsoInTimeZone(iso);
       const t = (x.time || '').trim();
@@ -308,8 +310,8 @@ export function HomeScreen() {
         return;
       }
       setMorningBrief(inner.brief);
-      if ((window as any).BriefTelemetry) {
-        (window as any).BriefTelemetry.log((window as any).BriefTelemetry.EVENTS.BRIEF_RENDERED, {
+      if (BriefTelemetry) {
+        BriefTelemetry.log(BriefTelemetry.EVENTS.BRIEF_RENDERED, {
           itemCount: inner.brief.items?.length || 0,
         });
       }
@@ -525,8 +527,8 @@ export function HomeScreen() {
       },
     };
     runRuntimeActionA(key, payload, { successMessage: item.next_action?.label || "Done" });
-    if ((window as any).BriefTelemetry) {
-      (window as any).BriefTelemetry.log((window as any).BriefTelemetry.EVENTS.NEXT_ACTION_CLICK, {
+    if (BriefTelemetry) {
+      BriefTelemetry.log(BriefTelemetry.EVENTS.NEXT_ACTION_CLICK, {
         itemId: item.id,
         tool: key,
       });
@@ -541,14 +543,14 @@ export function HomeScreen() {
         items: prev.items.filter((i: any) => i.id !== item.id),
       };
     });
-    if ((window as any).BriefTelemetry) {
-      (window as any).BriefTelemetry.log((window as any).BriefTelemetry.EVENTS.ITEM_DISMISS, { itemId: item.id });
+    if (BriefTelemetry) {
+      BriefTelemetry.log(BriefTelemetry.EVENTS.ITEM_DISMISS, { itemId: item.id });
     }
   };
 
   const submitBriefRating = (n: number) => {
-    if ((window as any).BriefTelemetry) {
-      (window as any).BriefTelemetry.log((window as any).BriefTelemetry.EVENTS.RATING, { score: n });
+    if (BriefTelemetry) {
+      BriefTelemetry.log(BriefTelemetry.EVENTS.RATING, { score: n });
     }
     runRuntimeActionA("settings.save", { section: "brief", rating: n }, { successMessage: "Thanks — saved locally" });
   };

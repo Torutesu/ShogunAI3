@@ -33,6 +33,9 @@ import {
   applySavedAppearance,
 } from './lib/helpers';
 import { ensureRuntimeDeps } from './lib/mockIpc';
+import { ShogunKeyboardShortcuts } from '@/shared/lib/keyboard-shortcuts';
+import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
+import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -178,8 +181,8 @@ export function MainApp(): React.ReactElement {
   const navHistRef = useRef<any>(null);
   const skipNavHistRef = useRef(false);
   const shortcutBindingsRef = useRef(
-    typeof window !== 'undefined' && window.ShogunKeyboardShortcuts
-      ? window.ShogunKeyboardShortcuts.mergeShortcutBindings()
+    ShogunKeyboardShortcuts
+      ? ShogunKeyboardShortcuts.mergeShortcutBindings()
       : {},
   );
 
@@ -674,8 +677,8 @@ export function MainApp(): React.ReactElement {
         return true;
       },
       applyShortcutBindings: (raw: any) => {
-        if (window.ShogunKeyboardShortcuts) {
-          shortcutBindingsRef.current = window.ShogunKeyboardShortcuts.mergeShortcutBindings(raw);
+        if (ShogunKeyboardShortcuts) {
+          shortcutBindingsRef.current = ShogunKeyboardShortcuts.mergeShortcutBindings(raw);
         }
       },
     };
@@ -1134,8 +1137,8 @@ export function MainApp(): React.ReactElement {
       setProfileDisplayName(p.name);
       setProfileAvatarGlyph(p.avatarGlyph);
       setProfileAvatarImageDataUrl(p.avatarImageDataUrl);
-      if (window.ShogunKeyboardShortcuts) {
-        shortcutBindingsRef.current = window.ShogunKeyboardShortcuts.mergeShortcutBindings(
+      if (ShogunKeyboardShortcuts) {
+        shortcutBindingsRef.current = ShogunKeyboardShortcuts.mergeShortcutBindings(
           sec.shortcuts && sec.shortcuts.bindings,
         );
       }
@@ -1168,8 +1171,8 @@ export function MainApp(): React.ReactElement {
   }, []);
 
   useEffect(() => {
-    if (window.ShogunClerkAuth && typeof window.ShogunClerkAuth.init === 'function') {
-      void window.ShogunClerkAuth.init();
+    if (ShogunClerkAuth && typeof ShogunClerkAuth.init === 'function') {
+      void ShogunClerkAuth.init();
     }
   }, []);
 
@@ -1199,7 +1202,7 @@ export function MainApp(): React.ReactElement {
   useEffect(() => {
     if (bioGate.ready && bioGate.open) return undefined;
     const onKey = (e: any) => {
-      const Kbd = window.ShogunKeyboardShortcuts;
+      const Kbd = ShogunKeyboardShortcuts;
       const t = e.target;
       const tag = t && t.tagName;
       const editable = t && t.isContentEditable;
@@ -1357,7 +1360,7 @@ export function MainApp(): React.ReactElement {
   };
 
   const dismissMeetingHud = () => {
-    const M = typeof window !== 'undefined' && window.MeetingMediaRecording;
+    const M = MeetingMediaRecording;
     if (!M || typeof M.stop !== 'function') {
       pushToast('録音モジュールが読み込まれていません', 'warn');
       setMeetingHud(null);

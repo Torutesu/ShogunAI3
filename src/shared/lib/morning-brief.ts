@@ -234,6 +234,3 @@ export const ShogunMorningBrief = {
   resolveNextAction: resolveNextAction,
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ShogunMorningBrief = ShogunMorningBrief;
-}

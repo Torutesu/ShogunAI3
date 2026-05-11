@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { MorningBriefV2, MorningBriefV1, BriefItem, ContextItem } from '../types';
+import { ShogunMorningBrief } from '@/shared/lib/morning-brief';
+import { BriefTelemetry } from '@/shared/lib/brief-telemetry';
 
 interface ShogunRuntime {
   executeAction: (
@@ -35,13 +37,11 @@ function getRuntime(): ShogunRuntime | null {
 }
 
 function getMorningBriefApi(): ShogunMorningBriefAPI | null {
-  if (typeof window === 'undefined') return null;
-  return (window as unknown as { ShogunMorningBrief?: ShogunMorningBriefAPI }).ShogunMorningBrief ?? null;
+  return (ShogunMorningBrief as unknown as ShogunMorningBriefAPI) ?? null;
 }
 
 function getBriefTelemetry(): BriefTelemetryAPI | null {
-  if (typeof window === 'undefined') return null;
-  return (window as unknown as { BriefTelemetry?: BriefTelemetryAPI }).BriefTelemetry ?? null;
+  return (BriefTelemetry as unknown as BriefTelemetryAPI) ?? null;
 }
 
 async function runtimeInvoke(

@@ -1,3 +1,5 @@
+import { ShogunIpcClient } from '@/shared/ipc/ipc-client';
+
 function hasTauriInvoke() {
   return Boolean((window as any).__TAURI__ && (window as any).__TAURI__.core && typeof (window as any).__TAURI__.core.invoke === 'function');
 }
@@ -5,10 +7,10 @@ function hasTauriInvoke() {
 let clerkLoaded = false;
 
 async function getConfig() {
-  if (!(window as any).ShogunIpcClient || !(window as any).ShogunIpcClient.createIpcClient) {
+  if (!ShogunIpcClient || !ShogunIpcClient.createIpcClient) {
     return { enabled: false };
   }
-  const ipc = (window as any).ShogunIpcClient.createIpcClient();
+  const ipc = ShogunIpcClient.createIpcClient();
   const res = await ipc.invoke('auth_clerk_config', {});
   if (!res.ok) return { enabled: false };
   return res.data || { enabled: false };
@@ -67,8 +69,8 @@ async function ensureClerk(config: any) {
 }
 
 async function persistSnapshotFromClerk() {
-  if (!(window as any).ShogunIpcClient) return;
-  const ipc = (window as any).ShogunIpcClient.createIpcClient();
+  if (!ShogunIpcClient) return;
+  const ipc = ShogunIpcClient.createIpcClient();
   const u = (window as any).Clerk && (window as any).Clerk.user;
   if (!u) return;
   await ipc.invoke('auth_session_save', {
@@ -147,12 +149,12 @@ async function init() {
 }
 
 async function openSignInBrowser() {
-  const ipc = (window as any).ShogunIpcClient.createIpcClient();
+  const ipc = ShogunIpcClient.createIpcClient();
   return ipc.invoke('auth_open_browser_sign_in', {});
 }
 
 async function openSignUpBrowser() {
-  const ipc = (window as any).ShogunIpcClient.createIpcClient();
+  const ipc = ShogunIpcClient.createIpcClient();
   return ipc.invoke('auth_open_browser_sign_up', {});
 }
 
@@ -176,7 +178,7 @@ async function openSignIn() {
     return { ok: true, data: { embedded: true } };
   } catch (e) {
     console.warn('[ShogunClerkAuth] embedded sign-in failed, using browser', e);
-    if ((window as any).ShogunIpcClient && hasTauriInvoke()) {
+    if (ShogunIpcClient && hasTauriInvoke()) {
       return openSignInBrowser();
     }
     return { ok: false, error: { message: (e as any).message || 'Sign-in failed' } };
@@ -202,7 +204,7 @@ async function openSignUp() {
     return { ok: true, data: { embedded: true } };
   } catch (e) {
     console.warn('[ShogunClerkAuth] embedded sign-up failed, using browser', e);
-    if ((window as any).ShogunIpcClient && hasTauriInvoke()) {
+    if (ShogunIpcClient && hasTauriInvoke()) {
       return openSignUpBrowser();
     }
     return { ok: false, error: { message: (e as any).message || 'Sign-up failed' } };
@@ -214,8 +216,8 @@ async function signOut() {
     await (window as any).Clerk.signOut();
   }
   let out: any = { ok: true, data: { signedOut: true } };
-  if ((window as any).ShogunIpcClient) {
-    const ipc = (window as any).ShogunIpcClient.createIpcClient();
+  if (ShogunIpcClient) {
+    const ipc = ShogunIpcClient.createIpcClient();
     out = await ipc.invoke('auth_sign_out', {});
   }
   window.dispatchEvent(new CustomEvent('shogun-clerk-auth-changed'));
@@ -242,6 +244,3 @@ export const ShogunClerkAuth = {
   getConfig: getConfig,
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ShogunClerkAuth = ShogunClerkAuth;
-}

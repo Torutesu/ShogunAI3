@@ -2,9 +2,7 @@
 import React from 'react';
 import { Icon, IntegrationLogo } from '@/shared/icons';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
-
-// Window-injected connector registry — populated at runtime by the native layer.
-declare const ShogunIntegrationConnectors: any;
+import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors';
 
 export function IntegrationsScreen() {
   const [calCred, setCalCred] = React.useState(false);
@@ -37,7 +35,7 @@ export function IntegrationsScreen() {
     zoom: false,
   });
   const [tools, setTools] = React.useState(() => {
-    const C = typeof window !== 'undefined' ? (window as any).ShogunIntegrationConnectors : null;
+    const C = ShogunIntegrationConnectors;
     const base = C && C.hydrateTools ? C.hydrateTools(C.DEFAULT_GRID_TOOLS) : [
       { slug: 'gmail', name: 'Gmail', cat: 'Mail', jp: 'メール', connected: false, ops: ['read', 'draft', 'send'] },
       { slug: 'google_calendar', name: 'Google Calendar', cat: 'Calendar', jp: '予定', connected: false, ops: ['read', 'create'] },
@@ -185,7 +183,7 @@ export function IntegrationsScreen() {
       void refreshDriveStatus();
       void refreshZoomStatus();
       void refreshHistSettings();
-      const C = (window as any).ShogunIntegrationConnectors;
+      const C = ShogunIntegrationConnectors;
       if (C && typeof C.hydrateTools === 'function') {
         setTools(C.hydrateTools(C.DEFAULT_GRID_TOOLS));
       }

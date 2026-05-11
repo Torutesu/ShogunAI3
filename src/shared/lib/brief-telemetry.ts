@@ -42,7 +42,3 @@ export const BriefTelemetry = {
   peek: (n: any) => buffer.slice(-(n || 20)),
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).BriefTelemetry = BriefTelemetry;
-  (window as unknown as Record<string, unknown>).shogunBriefTelemetrySink = (window as unknown as Record<string, unknown>).shogunBriefTelemetrySink;
-}

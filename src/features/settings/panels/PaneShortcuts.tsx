@@ -1,10 +1,11 @@
 import React from 'react';
 import { Pane } from '../components/Pane';
 import { SettingsHydrationContext } from '../types';
+import { ShogunKeyboardShortcuts } from '@/shared/lib/keyboard-shortcuts';
 
 export function PaneShortcuts() {
   const { sections } = React.useContext(SettingsHydrationContext);
-  const Kbd = typeof window !== 'undefined' ? (window as any).ShogunKeyboardShortcuts : null;
+  const Kbd = ShogunKeyboardShortcuts;
   const merged = React.useMemo(() => {
     if (!Kbd) return null;
     return Kbd.mergeShortcutBindings(sections.shortcuts && sections.shortcuts.bindings);

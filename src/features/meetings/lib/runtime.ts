@@ -1,5 +1,8 @@
+import { MeetingNoteLocal } from '@/shared/lib/meeting-note-local';
+import { ShogunUserTimezone } from '@/shared/lib/user-timezone';
+
 export function mnl(): any {
-  return (window as any).MeetingNoteLocal || null;
+  return MeetingNoteLocal || null;
 }
 
 export function toastM(message: string, kind?: string): void {
@@ -12,7 +15,7 @@ export function toastM(message: string, kind?: string): void {
 export function briefPayloadWithUserTz(base: any): any {
   const b = base && typeof base === 'object' ? base : {};
   let tz = '';
-  const stz = (window as any).ShogunUserTimezone;
+  const stz = ShogunUserTimezone;
   if (stz && typeof stz.getTimeZone === 'function') {
     tz = stz.getTimeZone();
   }

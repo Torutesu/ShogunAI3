@@ -1,3 +1,4 @@
+import { MeetingNoteLocal } from '@/shared/lib/meeting-note-local';
 
 interface MtgProgressDotsProps {
   storageKey: string;
@@ -7,7 +8,7 @@ interface MtgProgressDotsProps {
 /** Memo / transcript / summary / minutes completion (4 dots). listVersion bumps parent to refresh. */
 export function MtgProgressDots({ storageKey, listVersion }: MtgProgressDotsProps) {
   void listVersion;
-  const L: any = typeof window !== 'undefined' ? (window as any).MeetingNoteLocal : null;
+  const L: any = MeetingNoteLocal;
   if (!L || !storageKey) return null;
   const saved = L.loadNote ? L.loadNote(storageKey) : null;
   const p = L.noteProgress ? L.noteProgress(saved) : null;

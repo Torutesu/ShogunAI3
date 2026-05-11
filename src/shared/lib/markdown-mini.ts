@@ -68,6 +68,3 @@ export function shogunMarkdownMini(text: any) {
   return out.join("");
 }
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).shogunMarkdownMini = shogunMarkdownMini;
-}

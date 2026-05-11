@@ -7,6 +7,7 @@ import { useRuntimeActions } from '../lib/hooks';
 import { isProfilePhotoDataUrlSetting, imageFileToAvatarDataUrl } from '../lib/utils';
 import { MAX_PROFILE_PHOTO_BYTES } from '../lib/defaults';
 import { SettingsHydrationContext } from '../types';
+import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
 
 export function PaneGeneral() {
   const { run, toast } = useRuntimeActions();
@@ -56,7 +57,7 @@ export function PaneGeneral() {
       const r = exec ? await exec('auth.status', {}, { silentError: true }) : { ok: false };
       const enabled = !!(r.ok && r.data && r.data.clerk && r.data.clerk.enabled);
       const snap = r.ok && r.data && r.data.snapshot && typeof r.data.snapshot === 'object' ? r.data.snapshot : null;
-      const auth = (window as any).ShogunClerkAuth;
+      const auth = ShogunClerkAuth;
       const u = auth && typeof auth.getClerkUser === 'function' ? auth.getClerkUser() : null;
       const signedIn = !!(u || (auth && typeof auth.isSignedIn === 'function' && auth.isSignedIn()));
       const emailPart =

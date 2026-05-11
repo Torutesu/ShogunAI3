@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
 import { memoryProviderKey, MEMORY_PROVIDER_META } from '../lib/runtime';
+import { ShogunHighlight } from '@/shared/lib/highlight';
 
 export interface MemorySearchViewProps {
   workProjects: any[];
@@ -98,8 +99,8 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
   }, [assignments, selected, targetWorkspace, newDraft, setAssignments]);
 
   const visibleProjects = workProjects.filter((p) => !p.archived);
-  const renderHL = (window as any).ShogunHighlight && (window as any).ShogunHighlight.renderHighlighted
-    ? (window as any).ShogunHighlight.renderHighlighted
+  const renderHL = ShogunHighlight && ShogunHighlight.renderHighlighted
+    ? ShogunHighlight.renderHighlighted
     : ((t: any) => t);
 
   return (

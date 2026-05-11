@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Phase 2 Step 9: feature split. Phase 3 will further decompose. */
 import React from 'react';
 import * as ReactDOM from 'react-dom';
+import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
 import { Icon, Kamon, IntegrationLogo } from '@/shared/icons';
 import { MtgProgressDots } from './components/MtgProgressDots';
 import { runRuntimeActionM } from '@/shared/ipc/runtime-actions';
@@ -215,7 +216,7 @@ export function MeetingsScreen() {
 
   useEffect(function () {
     function syncRec() {
-      var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
+      var M = MeetingMediaRecording;
       if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting()) {
         var sk = M.getActiveStorageKey && M.getActiveStorageKey();
         setAudioRecSession({ startedAt: M.getStartedAt(), storageKey: sk || null });
@@ -242,7 +243,7 @@ export function MeetingsScreen() {
   /** Keep MediaRecorder titleRef aligned with the note title (download filename + HUD) while recording. */
   useEffect(function () {
     if (!granola || !granola.storageKey) return;
-    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
+    var M = MeetingMediaRecording;
     if (!M || !M.setActiveTitle || !M.isRecording || !M.isRecording()) return;
     var activeSk = M.getActiveStorageKey && M.getActiveStorageKey();
     if (!activeSk || activeSk !== granola.storageKey) return;
@@ -425,7 +426,7 @@ export function MeetingsScreen() {
         L.updateMeetingLogTitleByStorageKey(g.storageKey, tit);
       }
     }
-    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
+    var M = MeetingMediaRecording;
     if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting() && typeof M.abort === 'function') {
       M.abort();
     }
@@ -438,7 +439,7 @@ export function MeetingsScreen() {
 
   const startNoteRecording = useCallback(async function () {
     if (!granola || !granola.storageKey) return;
-    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
+    var M = MeetingMediaRecording;
     if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting()) return;
     if (!M || typeof M.start !== 'function') {
       toastM('録音モジュールが読み込まれていません', 'error');
@@ -455,7 +456,7 @@ export function MeetingsScreen() {
   }, [granola]);
 
   const stopNoteRecording = useCallback(function () {
-    var M = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
+    var M = MeetingMediaRecording;
     if (M && typeof M.stop === 'function') {
       M.stop();
     } else {
@@ -1105,7 +1106,7 @@ export function MeetingsScreen() {
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:2}}>
             {(function () {
-              var Mrow = typeof window !== 'undefined' ? (window as any).MeetingMediaRecording : null;
+              var Mrow = MeetingMediaRecording;
               var recSk = audioRecSession && audioRecSession.storageKey;
               var activeSk = recSk || (Mrow && Mrow.getActiveStorageKey && Mrow.getActiveStorageKey());
               var isBusy = !!(Mrow && Mrow.isBusyRecordingOrStarting && Mrow.isBusyRecordingOrStarting());

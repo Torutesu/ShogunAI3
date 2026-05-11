@@ -177,14 +177,6 @@ import { ShogunIpcClient } from './ipc-client';
   global.ShogunMemoryExport = { CONFIRM_TOKEN: "REPLACE" };
 })(typeof window !== 'undefined' ? window : globalThis);
 
-// Compat shims
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ShogunAPI =
-    (window as any).ShogunAPI;
-  (window as unknown as Record<string, unknown>).ShogunMemoryExport =
-    (window as any).ShogunMemoryExport;
-}
-
 export const ShogunAPI: { createApi: (client?: any) => any; READ: string; WRITE: string } =
   (typeof window !== 'undefined' ? (window as any) : (globalThis as any)).ShogunAPI;
 

@@ -279,6 +279,3 @@ export const SHOGUN_DEMO_SEED = {
   chatMemoryContext: chatMemoryContext,
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).SHOGUN_DEMO_SEED = SHOGUN_DEMO_SEED;
-}

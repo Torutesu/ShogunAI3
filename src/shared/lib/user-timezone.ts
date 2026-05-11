@@ -49,6 +49,3 @@ export const ShogunUserTimezone = {
   formatIsoInTimeZone: formatIsoInTimeZone,
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ShogunUserTimezone = ShogunUserTimezone;
-}
