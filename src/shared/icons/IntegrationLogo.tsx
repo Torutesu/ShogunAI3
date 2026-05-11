@@ -1,5 +1,6 @@
 import type * as React from 'react';
 import { Icon } from './Icon';
+import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors';
 
 // Brand marks under public/assets/integrations/ (served by Vite)
 const INTEGRATION_ASSET_BASE = '/assets/integrations/';
@@ -13,7 +14,7 @@ interface IntegrationLogoProps {
 }
 
 export const IntegrationLogo = ({ slug, size = 30, title, className = '', style }: IntegrationLogoProps) => {
-  const C = typeof window !== 'undefined' ? (window as any).ShogunIntegrationConnectors : null;
+  const C = ShogunIntegrationConnectors;
   const file = C && slug ? C.getIconFile(slug) : null;
   const dim = Math.max(16, size - 8);
   if (!file) {

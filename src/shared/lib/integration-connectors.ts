@@ -383,6 +383,3 @@ export const ShogunIntegrationConnectors = {
   readGmailMock,
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ShogunIntegrationConnectors = ShogunIntegrationConnectors;
-}

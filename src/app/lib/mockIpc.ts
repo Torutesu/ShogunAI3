@@ -1,4 +1,7 @@
 // Mock IPC transport + ensureRuntimeDeps extracted from App.tsx (Phase 2 Step 11)
+import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors';
+import { SHOGUN_DEMO_SEED } from '@/shared/lib/demo-seed';
+import { ShogunMemoryExport } from '@/shared/ipc/shogun-api';
 
 /** Fallback when `ipc-client.js` is absent — keep in sync with `hifi/lib/ipc-client.js` mockTransport. */
 export function mockIpcInvoke(command: string, payload: any): any {
@@ -65,7 +68,7 @@ export function mockIpcInvoke(command: string, payload: any): any {
     case 'app_integration_credentials_status':
     case 'shogun_google_calendar_sync':
     case 'shogun_gmail_sync': {
-      const C = typeof window !== 'undefined' && (window as any).ShogunIntegrationConnectors;
+      const C = ShogunIntegrationConnectors;
       if (C && typeof C.mockIntegrationPayload === 'function') {
         const p = C.mockIntegrationPayload(command, echo);
         if (p) return { ok: true, data: p };
@@ -200,7 +203,7 @@ export function mockIpcInvoke(command: string, payload: any): any {
       return { ok: true, data: { saved: true, stub: false, echo } };
     }
     case 'shogun_memory_search': {
-      const DEMO = typeof window !== 'undefined' ? (window as any).SHOGUN_DEMO_SEED : null;
+      const DEMO = SHOGUN_DEMO_SEED;
       if (!DEMO || !Array.isArray(DEMO.memoryHits)) {
         return { ok: true, data: { hits: [], total: 0, echo, stub: false } };
       }
@@ -319,7 +322,7 @@ export function mockIpcInvoke(command: string, payload: any): any {
         },
       };
     case 'shogun_stats': {
-      const DEMO = typeof window !== 'undefined' ? (window as any).SHOGUN_DEMO_SEED : null;
+      const DEMO = SHOGUN_DEMO_SEED;
       const empty: any = {
         eventsToday: '0',
         memoriesToday: '0',
@@ -641,7 +644,7 @@ export function mockIpcInvoke(command: string, payload: any): any {
       writeMockLlmKeyConfigured(false);
       return { ok: true, data: { cleared: true, echo, stub: false } };
     case 'shogun_entity_query': {
-      const DEMO = typeof window !== 'undefined' ? (window as any).SHOGUN_DEMO_SEED : null;
+      const DEMO = SHOGUN_DEMO_SEED;
       return {
         ok: true,
         data: {
@@ -772,7 +775,7 @@ export function mockIpcInvoke(command: string, payload: any): any {
     case 'shogun_memory_import': {
       // Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`.
       const confirmToken =
-        (typeof window !== 'undefined' && (window as any).ShogunMemoryExport && (window as any).ShogunMemoryExport.CONFIRM_TOKEN)
+        (ShogunMemoryExport && ShogunMemoryExport.CONFIRM_TOKEN)
         || 'REPLACE';
       if ((echo && echo.confirm) !== confirmToken) {
         return {

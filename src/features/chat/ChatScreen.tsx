@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { Icon, Kamon } from '@/shared/icons';
 import { runRuntimeActionB } from '@/shared/ipc/runtime-actions';
 import { normalizeSeedMemoryAssembly } from './lib/normalize-seed';
+import { SHOGUN_DEMO_SEED } from '@/shared/lib/demo-seed';
+import { BriefTelemetry } from '@/shared/lib/brief-telemetry';
+import { ShogunHighlight } from '@/shared/lib/highlight';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // L3 · CHAT — interaction layer (memory-aware conversations)
@@ -92,7 +95,7 @@ export function ChatScreen() {
 
   useEffect(() => {
     const syncFromShell = () => {
-      const seed = (window as any).SHOGUN_DEMO_SEED;
+      const seed = SHOGUN_DEMO_SEED as any;
       const rt = (window as any).SHOGUN_RUNTIME;
       const id =
         (typeof window !== 'undefined' && (window as any).__SHOGUN_SHELL_ACTIVE_CHAT__) ||
@@ -241,8 +244,8 @@ export function ChatScreen() {
       }
     }
     const manualCtx = (memoryContext || '').trim();
-    if ((window as any).BriefTelemetry && (window as any).BriefTelemetry.log && (window as any).BriefTelemetry.EVENTS) {
-      (window as any).BriefTelemetry.log((window as any).BriefTelemetry.EVENTS.CHAT_COMPLETION_CONTEXT, {
+    if (BriefTelemetry && BriefTelemetry.log && BriefTelemetry.EVENTS) {
+      BriefTelemetry.log(BriefTelemetry.EVENTS.CHAT_COMPLETION_CONTEXT, {
         hasManualMemoryContext: manualCtx.length > 0,
         manualMemoryContextChars: manualCtx.length,
         memoryAssemblyRequested: shouldAssemble,
@@ -519,12 +522,12 @@ export function ChatScreen() {
                       ) : null;
                     })()}
                     <span className="memory-context-hit-title">
-                      {(window as any).ShogunHighlight ? (window as any).ShogunHighlight.renderHighlighted(titleSrc) : titleSrc}
+                      {ShogunHighlight ? ShogunHighlight.renderHighlighted(titleSrc) : titleSrc}
                     </span>
                   </div>
                   {snippetSrc && (
                     <div className="memory-context-hit-snippet">
-                      {(window as any).ShogunHighlight ? (window as any).ShogunHighlight.renderHighlighted(snippetSrc) : snippetSrc}
+                      {ShogunHighlight ? ShogunHighlight.renderHighlighted(snippetSrc) : snippetSrc}
                     </div>
                   )}
                 </div>

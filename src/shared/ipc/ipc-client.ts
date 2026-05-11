@@ -1,3 +1,7 @@
+import { ShogunMorningBrief } from '@/shared/lib/morning-brief';
+import { SHOGUN_DEMO_SEED } from '@/shared/lib/demo-seed';
+import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors';
+
 (function initIpcClient(global: any) {
   const DEFAULT_TIMEOUT_MS = 8000;
 
@@ -115,7 +119,7 @@
    */
   async function mockTransport(command: string, payload: any) {
     const echo = payload || {};
-    const DEMO = global.SHOGUN_DEMO_SEED || null;
+    const DEMO = SHOGUN_DEMO_SEED || null;
 
     const MOCK_SETTINGS_LS = "shogun.hifi.mock.settings.sections.v1";
     function readMockSettingsSections() {
@@ -276,8 +280,8 @@
       };
     }
 
-    if (command === "shogun_brief_get" && global.ShogunMorningBrief) {
-      return global.ShogunMorningBrief.mockBriefGetResponse(echo);
+    if (command === "shogun_brief_get" && ShogunMorningBrief) {
+      return (ShogunMorningBrief as any).mockBriefGetResponse(echo);
     }
 
     if (command === "shogun_kioku_brief_signals") {
@@ -407,7 +411,7 @@
       case "app_integration_credentials_status":
       case "shogun_google_calendar_sync":
       case "shogun_gmail_sync": {
-        const C = global.ShogunIntegrationConnectors;
+        const C = ShogunIntegrationConnectors;
         if (C && typeof C.mockIntegrationPayload === "function") {
           const payload = C.mockIntegrationPayload(command, echo);
           if (payload) return payload;
@@ -966,7 +970,8 @@
         return { exported: 0, path: "/mock/memory.shogun-memory.jsonl", stub: true, echo };
       case "shogun_memory_import": {
         // Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`.
-        const confirmToken = (global.ShogunMemoryExport && global.ShogunMemoryExport.CONFIRM_TOKEN) || "REPLACE";
+        // CONFIRM_TOKEN mirrors src-tauri/src/memory_export.rs::CONFIRM_TOKEN
+        const confirmToken = "REPLACE";
         if ((echo && echo.confirm) !== confirmToken) {
           throw createError(
             "INVALID_INPUT",
@@ -1075,11 +1080,6 @@
   }
 
   global.ShogunIpcClient = { createIpcClient: createIpcClient };
-
-  // Compat shim
-  if (typeof window !== 'undefined') {
-    (window as unknown as Record<string, unknown>).ShogunIpcClient = global.ShogunIpcClient;
-  }
 })(typeof window !== 'undefined' ? window : globalThis);
 
 export const ShogunIpcClient: { createIpcClient: (options?: any) => any } =

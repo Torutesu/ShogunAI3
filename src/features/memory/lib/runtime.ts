@@ -1,3 +1,5 @@
+import { ShogunHighlight } from '@/shared/lib/highlight';
+
 /** Mirrors desktop `derive_provenance_from_source` when API omits `provenance`. */
 export function deriveLocalProvenance(source: any): string {
   const s = String(source || '');
@@ -126,8 +128,8 @@ export function clusterScreenSessions(events: any[], gapMs = 15 * 60 * 1000): an
 
 /** Shared FTS5 highlight renderer. */
 export const renderHighlighted = (text: any): any =>
-  ((window as any).ShogunHighlight && (window as any).ShogunHighlight.renderHighlighted)
-    ? (window as any).ShogunHighlight.renderHighlighted(text)
+  (ShogunHighlight && ShogunHighlight.renderHighlighted)
+    ? ShogunHighlight.renderHighlighted(text)
     : (text || '');
 
 export function mergeIndexHitsIntoRiver(res: any, setEvents: any, setScrubIdx: any): void {

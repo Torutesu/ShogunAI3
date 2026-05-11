@@ -1,7 +1,8 @@
 /**
  * Persists across navigations so the top HUD + MediaRecorder survive leaving Meetings.
- * Depends on window.MeetingNoteLocal (meeting-note-local.js).
+ * Depends on MeetingNoteLocal (meeting-note-local.ts).
  */
+import { MeetingNoteLocal } from '@/shared/lib/meeting-note-local';
 
 var mediaRecorder: any = null;
 var mediaStream: any = null;
@@ -169,7 +170,7 @@ async function start(opts: any) {
           window.URL.revokeObjectURL(url);
         }, 4000);
 
-        var L = (window as any).MeetingNoteLocal;
+        var L = MeetingNoteLocal;
         if (L && sk) {
           var prev = L.loadNote(sk) || {};
           var line = '\n\n---\n[録音 ' + durStr + '] 音声ファイル: ' + fname + '（ダウンロード済み）\n';
@@ -233,15 +234,24 @@ async function start(opts: any) {
   }
 }
 
+/** Alias for isRecording() — true if a recording is active or starting. */
+function isBusyRecordingOrStarting() {
+  return isRecording();
+}
+
+/** Update the title reference used in the HUD and download filename while recording. */
+function setActiveTitle(title: string) {
+  titleRef = title || 'Untitled';
+}
+
 export const MeetingMediaRecording = {
   start: start,
   stop: stop,
   abort: abort,
   isRecording: isRecording,
+  isBusyRecordingOrStarting: isBusyRecordingOrStarting,
+  setActiveTitle: setActiveTitle,
   getStartedAt: getStartedAt,
   getActiveStorageKey: getActiveStorageKey,
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).MeetingMediaRecording = MeetingMediaRecording;
-}

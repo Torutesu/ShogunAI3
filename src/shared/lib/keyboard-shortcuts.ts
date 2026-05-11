@@ -90,7 +90,7 @@ function validateBinding(b: any) {
 }
 
 /** @param {Record<string, unknown> | null | undefined} saved */
-function mergeShortcutBindings(saved: any) {
+function mergeShortcutBindings(saved?: any) {
   /** @type {Record<string, { key: string, super: boolean, ctrl: boolean, alt: boolean, shift: boolean }>} */
   const out: Record<string, any> = {};
   for (const id of KNOWN_ACTION_IDS) {
@@ -204,6 +204,3 @@ export const ShogunKeyboardShortcuts = {
   bindingToDisplayParts,
 };
 
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).ShogunKeyboardShortcuts = ShogunKeyboardShortcuts;
-}

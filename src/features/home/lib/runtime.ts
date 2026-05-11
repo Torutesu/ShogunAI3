@@ -1,6 +1,8 @@
+import { ShogunUserTimezone } from '@/shared/lib/user-timezone';
+
 /** IANA zone from Shogun helper or `Intl` (browser / OS). */
 export function resolveUserTimeZoneId(): string {
-  const U = typeof window !== 'undefined' ? (window as any).ShogunUserTimezone : null;
+  const U = ShogunUserTimezone;
   if (U && typeof U.getTimeZone === 'function') {
     const z = U.getTimeZone();
     if (z && String(z).trim()) return String(z).trim();

@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ConsentModal } from '@/shared/modals';
 import { MainApp } from './MainApp';
+import { shogunMarkdownMini } from '@/shared/lib/markdown-mini';
+import { ShogunIpcClient } from '@/shared/ipc/ipc-client';
 
 export function AppCore(): React.ReactElement {
   // ───────── Consent gate (TOS / Privacy) ─────────
@@ -13,13 +15,15 @@ export function AppCore(): React.ReactElement {
   const [legalGate, setLegalGate] = useState<any>({ status: "loading" });
 
   const consentClient = React.useMemo(function () {
-    const w = window as any;
-    if (!w.ShogunIpcClient || !w.ShogunIpcClient.createIpcClient) return null;
-    return w.ShogunIpcClient.createIpcClient();
+    if (!ShogunIpcClient || !ShogunIpcClient.createIpcClient) return null;
+    return ShogunIpcClient.createIpcClient();
   }, []);
 
   useEffect(function loadConsentState() {
     let cancelled = false;
+    // SHOGUN_LEGAL_VERSIONS is read from window (not ESM import) so that the
+    // e2e test helper (preseed-consent.js) can intercept via Object.defineProperty
+    // accessor traps. This is the intended cross-context consumer of the binding.
     const versions = (window as any).SHOGUN_LEGAL_VERSIONS || {};
     const expectedTerms = versions.TERMS_VERSION || "";
     const expectedPrivacy = versions.PRIVACY_VERSION || "";
@@ -139,7 +143,7 @@ export function AppCore(): React.ReactElement {
         onAccept={handleConsentAccept}
         onDecline={handleConsentDecline}
         loadDocs={loadConsentDocs}
-        renderMarkdown={(window as any).shogunMarkdownMini}
+        renderMarkdown={shogunMarkdownMini}
       />
     );
   }
