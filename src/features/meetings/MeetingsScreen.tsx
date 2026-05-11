@@ -3,8 +3,8 @@ import React from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon, Kamon, IntegrationLogo } from '@/shared/icons';
 import { MtgProgressDots } from './components/MtgProgressDots';
+import { runRuntimeActionM } from '@/shared/ipc/runtime-actions';
 import {
-  runRuntimeActionM,
   mnl,
   toastM,
   briefPayloadWithUserTz,

@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Icon } from '@/shared/icons';
-import { runRuntimeActionB } from '@/shared/ipc/runtime-actions';
+import { runRuntimeActionA, runRuntimeActionB } from '@/shared/ipc/runtime-actions';
 import { AGENTS_DEMO, AGENTS_DEMO_NOW, AGENTS_LIVE } from './lib/demo-data';
 import { AGENT_RUNTIME } from './lib/metadata';
-import { runRuntimeActionA } from './lib/runtime';
 import { AttentionStrip } from './components/AttentionStrip';
 import { AgentsEmptyState } from './components/AgentsEmptyState';
 import { EditAgentModal } from './components/EditAgentModal';

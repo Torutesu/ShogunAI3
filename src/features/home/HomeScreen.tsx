@@ -2,8 +2,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Icon, Kamon } from '@/shared/icons';
 import { ShogunDriveGlyph } from './components/ShogunDriveGlyph';
+import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
 import {
-  runRuntimeActionA,
   resolveUserTimeZoneId,
   composerPlaceholderForLang,
   homeFirstNameToken,

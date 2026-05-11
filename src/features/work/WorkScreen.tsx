@@ -2,7 +2,7 @@
 import React from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon } from '@/shared/icons';
-import { runRuntimeAction } from './lib/runtime';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 
 function useWorkProjects() {
   const [projects, setProjects] = React.useState(() => {

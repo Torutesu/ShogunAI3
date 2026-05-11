@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { runRuntimeActionA, memoryProviderKey, MEMORY_PROVIDER_META } from '../lib/runtime';
+import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { memoryProviderKey, MEMORY_PROVIDER_META } from '../lib/runtime';
 
 export interface MemorySearchViewProps {
   workProjects: any[];
