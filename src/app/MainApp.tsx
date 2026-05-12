@@ -62,7 +62,6 @@ import { useChatHistory } from './hooks/useChatHistory';
 import { useMeetingHud } from './hooks/useMeetingHud';
 import { useTweaks } from './hooks/useTweaks';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
 
 /** Renders only after `legalGate.status === "ok"`. Do NOT mount this
@@ -285,13 +284,13 @@ export function MainApp(): React.ReactElement {
     };
     window.addEventListener('shogun-meeting-hud', onHud);
     return () => window.removeEventListener('shogun-meeting-hud', onHud);
-  }, [setActive]);
+  }, [setActive, setMeetingHud]);
 
   useEffect(() => {
     if (!meetingHud) return undefined;
     const id = window.setInterval(() => setMeetingHudTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
-  }, [meetingHud]);
+  }, [meetingHud, setMeetingHudTick]);
 
   useEffect(() => {
     try {
@@ -313,7 +312,7 @@ export function MainApp(): React.ReactElement {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [hummingbirdOpen]);
+  }, [hummingbirdOpen, setHummingbirdOpen]);
 
   useEffect(() => {
     if (!contextPanelOpen) return undefined;
@@ -322,7 +321,7 @@ export function MainApp(): React.ReactElement {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [contextPanelOpen]);
+  }, [contextPanelOpen, setContextPanelOpen]);
 
   const pushToast = (message: any, kind: any = 'info', options: any = {}) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -416,7 +415,7 @@ export function MainApp(): React.ReactElement {
     return () => {
       if (typeof unlisten === 'function') unlisten();
     };
-  }, []);
+  }, [setHistoricalImportProgress]);
 
   useEffect(() => {
     let unlisten: any;
@@ -571,9 +570,9 @@ export function MainApp(): React.ReactElement {
     runtimeRef.current = { client, api, registry };
   }
 
-  const executeAction = async (actionKey: any, payload: any, options: any = {}) => {
+  const executeAction = useCallback(async (actionKey: any, payload: any, options: any = {}) => {
     if (!runtimeRef.current) {
-      pushToast('IPC runtime unavailable', 'error');
+      pushToastRef.current('IPC runtime unavailable', 'error');
       return { ok:false };
     }
     let res;
@@ -581,24 +580,24 @@ export function MainApp(): React.ReactElement {
       res = await runtimeRef.current.registry.run(actionKey, payload);
     } catch (err: any) {
       const msg = err && err.message ? String(err.message) : 'Action failed unexpectedly';
-      if (!options.silentError) pushToast(msg, 'error');
+      if (!options.silentError) pushToastRef.current(msg, 'error');
       return { ok: false, error: { code: 'RUNTIME_EXCEPTION', message: msg } };
     }
     if (res.ok && res.data && res.data.notImplemented) {
-      pushToast(res.data.message || 'Not available in this version', 'warn');
+      pushToastRef.current(res.data.message || 'Not available in this version', 'warn');
       return res;
     }
     if (res.ok && res.data && res.data.honestPreferenceOnly) {
-      pushToast(res.data.message || 'Preference saved locally only.', 'info');
+      pushToastRef.current(res.data.message || 'Preference saved locally only.', 'info');
       return res;
     }
     if (res.ok) {
-      if (options.successMessage) pushToast(options.successMessage, 'success');
+      if (options.successMessage) pushToastRef.current(options.successMessage, 'success');
     } else if (!options.silentError) {
-      pushToast(res.error?.message || 'Action failed', 'error');
+      pushToastRef.current(res.error?.message || 'Action failed', 'error');
     }
     return res;
-  };
+  }, []);
 
   const requestWriteAction = (actionKey: any, payload: any, title: any, description: any) => {
     setWriteConfirm({ open:true, actionKey, payload, title, description });
@@ -840,7 +839,7 @@ export function MainApp(): React.ReactElement {
     setActiveChat(id);
     setActive('chat');
     pushToast('New Chat created', 'success');
-  }, []);
+  }, [setActiveChat, setChats]);
 
   useLayoutEffect(() => {
     if (!navHistRef.current) {
@@ -861,7 +860,7 @@ export function MainApp(): React.ReactElement {
     navHistRef.current = { entries: next, cursor: next.length - 1 };
   }, [active]);
 
-  const toggleFav = (id: any) => setChats(cs => cs.map(c => c.id===id ? {...c, favorite: !c.favorite} : c));
+  const toggleFav = useCallback((id: any) => setChats(cs => cs.map(c => c.id===id ? {...c, favorite: !c.favorite} : c)), [setChats]);
   const openChatMenuAt = useCallback((chatId: any, x: any, y: any) => {
     const vw = window.innerWidth || 1280;
     const vh = window.innerHeight || 800;
@@ -887,13 +886,13 @@ export function MainApp(): React.ReactElement {
     const clampedX = Math.max(minX, Math.min(x, maxX));
     const clampedY = Math.max(minY, Math.min(y, maxY));
     setChatMenu({ open:true, chatId, x:clampedX, y:clampedY, width:menuW });
-  }, []);
-  const closeChatMenu = useCallback(() => setChatMenu({ open:false, chatId:null, x:0, y:0, width:240 }), []);
+  }, [setChatMenu]);
+  const closeChatMenu = useCallback(() => setChatMenu({ open:false, chatId:null, x:0, y:0, width:240 }), [setChatMenu]);
   const openRenameModal = useCallback((id: any) => {
     const current = chats.find((c) => c.id === id);
     if (!current) return;
     setChatRenameModal({ open:true, chatId:id, value:current.title || '' });
-  }, [chats]);
+  }, [chats, setChatRenameModal]);
   const submitRenameModal = useCallback(() => {
     const id = chatRenameModal.chatId;
     const trimmed = String(chatRenameModal.value || '').trim();
@@ -901,12 +900,12 @@ export function MainApp(): React.ReactElement {
     setChats((cs) => cs.map((c) => (c.id === id ? { ...c, title: trimmed } : c)));
     setChatRenameModal({ open:false, chatId:null, value:'' });
     pushToast('チャット名を更新しました', 'success');
-  }, [chatRenameModal]);
+  }, [chatRenameModal, setChatRenameModal, setChats]);
   const openDeleteModal = useCallback((id: any) => {
     const target = chats.find((c) => c.id === id);
     if (!target) return;
     setChatDeleteModal({ open:true, chatId:id });
-  }, [chats]);
+  }, [chats, setChatDeleteModal]);
   const confirmDeleteChat = useCallback(() => {
     const id = chatDeleteModal.chatId;
     if (!id) return;
@@ -919,12 +918,12 @@ export function MainApp(): React.ReactElement {
     });
     setChatDeleteModal({ open:false, chatId:null });
     pushToast('チャットを削除しました', 'success');
-  }, [activeChat, chatDeleteModal.chatId]);
+  }, [activeChat, chatDeleteModal.chatId, setActiveChat, setChatDeleteModal, setChats]);
   const openWorkModal = useCallback((id: any) => {
     const target = chats.find((c) => c.id === id);
     if (!target) return;
     setChatWorkModal({ open:true, chatId:id, query:'' });
-  }, [chats]);
+  }, [chats, setChatWorkModal]);
   const assignChatToWork = useCallback((workId: any, workName: any) => {
     let id = chatWorkModal.chatId;
     const newChat = !id;
@@ -939,7 +938,7 @@ export function MainApp(): React.ReactElement {
     setChatWorkModal({ open:false, chatId:null, query:'' });
     setActive(newChat ? 'chat' : 'work');
     pushToast(`Workに追加: ${workName}`, 'success');
-  }, [chatWorkModal.chatId]);
+  }, [chatWorkModal.chatId, setActiveChat, setChatWorkModal, setChats]);
   const createAndAssignWork = useCallback(() => {
     const name = String(chatWorkModal.query || '').trim();
     if (!name) return;
@@ -973,7 +972,7 @@ export function MainApp(): React.ReactElement {
       openDeleteModal(id);
     }
     closeChatMenu();
-  }, [closeChatMenu, openDeleteModal, openRenameModal, openWorkModal, toggleWorkArchiveForChat]);
+  }, [closeChatMenu, openDeleteModal, openRenameModal, openWorkModal, toggleFav, toggleWorkArchiveForChat]);
   useEffect(() => {
     if (!chatMenu.open) return undefined;
     const onKey = (e: any) => {
@@ -982,12 +981,12 @@ export function MainApp(): React.ReactElement {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [chatMenu.open, closeChatMenu]);
-  const clearChatDrag = () => {
+  const clearChatDrag = useCallback(() => {
     dragIdRef.current = null;
     dragOverRef.current = null;
     setDragId(null);
     setDragOver(null);
-  };
+  }, [setDragId, setDragOver]);
   /** HTML5 drag/drop is unreliable in Tauri/WKWebView; reorder uses pointer events instead. */
   const applyChatDragReorder = useCallback(() => {
     const did = dragIdRef.current;
@@ -1010,7 +1009,7 @@ export function MainApp(): React.ReactElement {
       out.splice(insertAt, 0, moved);
       return out;
     });
-  }, []);
+  }, [setChats]);
   const updateDragOverFromPoint = useCallback((clientX: any, clientY: any) => {
     const did = dragIdRef.current;
     let root;
@@ -1046,7 +1045,7 @@ export function MainApp(): React.ReactElement {
         setDragOver(next);
       }
     }
-  }, []);
+  }, [setDragOver]);
   const CHAT_DRAG_THRESHOLD_PX = 6;
   const onChatRowPointerDown = useCallback(
     (id: any) => (e: any) => {
@@ -1082,7 +1081,7 @@ export function MainApp(): React.ReactElement {
       window.addEventListener('pointerup', finish);
       window.addEventListener('pointercancel', finish);
     },
-    [applyChatDragReorder, updateDragOverFromPoint],
+    [applyChatDragReorder, clearChatDrag, setDragId, setDragOver, updateDragOverFromPoint],
   );
 
   useEffect(() => {
@@ -1170,7 +1169,7 @@ export function MainApp(): React.ReactElement {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [executeAction, setProfileAvatarGlyph, setProfileAvatarImageDataUrl, setProfileDisplayName]);
 
   useEffect(() => {
     const onProfile = (e: any) => {
@@ -1189,7 +1188,7 @@ export function MainApp(): React.ReactElement {
     };
     window.addEventListener('shogun-profile-changed', onProfile);
     return () => window.removeEventListener('shogun-profile-changed', onProfile);
-  }, []);
+  }, [setProfileAvatarGlyph, setProfileAvatarImageDataUrl, setProfileDisplayName]);
 
   useEffect(() => {
     if (ShogunClerkAuth && typeof ShogunClerkAuth.init === 'function') {
@@ -1315,7 +1314,7 @@ export function MainApp(): React.ReactElement {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [bioGate.ready, bioGate.open, active, createNewChat]);
+  }, [bioGate.ready, bioGate.open, active, createNewChat, setSidebarCollapsed]);
 
 
   useEffect(() => {
@@ -1326,7 +1325,7 @@ export function MainApp(): React.ReactElement {
     window.addEventListener('message', handler);
     window.parent.postMessage({type:'__edit_mode_available'}, '*');
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, [setEditMode]);
 
   const update = (k: any, v: any) => {
     const next = {...tweaks, [k]: v};
