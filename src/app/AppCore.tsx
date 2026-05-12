@@ -21,9 +21,11 @@ export function AppCore(): React.ReactElement {
 
   useEffect(function loadConsentState() {
     let cancelled = false;
-    // SHOGUN_LEGAL_VERSIONS is read from window (not ESM import) so that the
-    // e2e test helper (preseed-consent.js) can intercept via Object.defineProperty
-    // accessor traps. This is the intended cross-context consumer of the binding.
+    // SHOGUN_LEGAL_VERSIONS is read from window (not ESM import) so that
+    // the e2e test helper (preseed-consent.js) can install
+    // Object.defineProperty accessor traps to simulate version bumps
+    // for the "version bump re-prompts" test. This is the intended
+    // cross-context consumer of the binding — keep it.
     const versions = (window as any).SHOGUN_LEGAL_VERSIONS || {};
     const expectedTerms = versions.TERMS_VERSION || "";
     const expectedPrivacy = versions.PRIVACY_VERSION || "";
