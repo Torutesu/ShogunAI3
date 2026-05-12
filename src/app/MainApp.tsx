@@ -41,6 +41,7 @@ import { ShareModal } from './shell/ShareModal';
 import { TopBar } from './shell/TopBar';
 import { Sidebar } from './shell/Sidebar';
 import { ChatDeleteModal } from './shell/portals/ChatDeleteModal';
+import { ChatRenameModal } from './shell/portals/ChatRenameModal';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -2003,29 +2004,13 @@ export function MainApp(): React.ReactElement {
         onConfirm={confirmDeleteChat}
       />
 
-      {chatRenameModal.open && ReactDOM.createPortal(
-        <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatRenameModal({ open:false, chatId:null, value:'' })}>
-          <div className="chat-dialog rename" role="dialog" aria-modal="true" aria-label="チャット名変更" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="chat-dialog-title small">チャットの名前を変更</div>
-            <input
-              type="text"
-              className="chat-dialog-input"
-              value={chatRenameModal.value}
-              autoFocus
-              onChange={(e) => setChatRenameModal((s: any) => ({ ...s, value: e.target.value }))}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submitRenameModal();
-                if (e.key === 'Escape') setChatRenameModal({ open:false, chatId:null, value:'' });
-              }}
-            />
-            <div className="chat-dialog-actions">
-              <button type="button" className="chat-dialog-btn ghost" onClick={() => setChatRenameModal({ open:false, chatId:null, value:'' })}>キャンセル</button>
-              <button type="button" className="chat-dialog-btn solid" onClick={submitRenameModal}>保存</button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <ChatRenameModal
+        open={chatRenameModal.open}
+        value={chatRenameModal.value}
+        onClose={() => setChatRenameModal({ open:false, chatId:null, value:'' })}
+        onChange={(value) => setChatRenameModal((s: any) => ({ ...s, value }))}
+        onSubmit={submitRenameModal}
+      />
 
       {chatWorkModal.open && ReactDOM.createPortal(
         <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatWorkModal({ open:false, chatId:null, query:'' })}>
