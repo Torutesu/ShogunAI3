@@ -1,5 +1,6 @@
-/* eslint-disable max-lines -- App shell: owns 43 useState + many effects + handlers. Phase 5 will split state into custom hooks (useShellLayout, useChatState, useTweaks) to further decompose. */
+/* eslint-disable max-lines -- App shell: state clusters extracted to src/app/hooks/ (Phase 5 Step 1). Remaining bulk is inline <style> (~700 lines) + JSX handlers. Next reduction: extract style block into MainApp.css. */
 // MainApp extracted from App.tsx (Phase 2 Step 11)
+// State clusters extracted to custom hooks in src/app/hooks/ (Phase 5 Step 1).
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon, Kamon } from '@/shared/icons';
@@ -14,10 +15,8 @@ import { ScreenMemoryDebug } from '@/features/memory-debug';
 import { ConfirmWriteModal } from '@/shared/modals';
 import { ShogunIpcClient, ShogunAPI, ShogunActionRegistry } from '@/shared/ipc';
 import {
-  TWEAK_DEFAULTS,
   NAV,
   REMOVED_NAV_IDS,
-  INITIAL_CHAT_HISTORY,
   CHAT_CONTEXT_TELEMETRY_LS,
   CHAT_WORKSPACE_LS,
   SIDEBAR_WIDTH_LS,
@@ -48,6 +47,18 @@ import { HistoricalImportModal } from './shell/portals/HistoricalImportModal';
 import { UserFloatMenu } from './shell/portals/UserFloatMenu';
 import { PasteTokenModal } from './shell/portals/PasteTokenModal';
 import { HummingbirdOverlay } from './shell/portals/HummingbirdOverlay';
+
+import { useHummingbird } from './hooks/useHummingbird';
+import { useShareControls } from './hooks/useShareControls';
+import { useFloatMenus } from './hooks/useFloatMenus';
+import { useSidebarLayout } from './hooks/useSidebarLayout';
+import { useProfile } from './hooks/useProfile';
+import { useHistoricalImport } from './hooks/useHistoricalImport';
+import { useWriteConfirm } from './hooks/useWriteConfirm';
+import { useChatModals } from './hooks/useChatModals';
+import { useChatHistory } from './hooks/useChatHistory';
+import { useMeetingHud } from './hooks/useMeetingHud';
+import { useTweaks } from './hooks/useTweaks';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -111,48 +122,53 @@ export function MainApp(): React.ReactElement {
     const saved = localStorage.getItem('shogun-active') || 'home';
     return REMOVED_NAV_IDS.has(saved) ? 'home' : saved;
   });
-  const [activeChat, setActiveChat] = useState<any>(() => (INITIAL_CHAT_HISTORY[0] ? INITIAL_CHAT_HISTORY[0].id : null));
-  const [chats, setChats] = useState<any[]>(INITIAL_CHAT_HISTORY);
-  const [dragId, setDragId] = useState<any>(null);
-  const [dragOver, setDragOver] = useState<any>(null); // {id, pos:'before'|'after'|'fav'|'chats'}
+  // Chat history cluster
+  const {
+    activeChat, chats, dragId, dragOver, chatGroupsOpen,
+    setActiveChat, setChats, setDragId, setDragOver, setChatGroupsOpen,
+  } = useChatHistory();
   const dragIdRef = useRef<any>(null);
   const dragOverRef = useRef<any>(null);
   const suppressChatRowClickRef = useRef(false);
-  const [tweaks, setTweaks] = useState(TWEAK_DEFAULTS);
-  const [editMode, setEditMode] = useState(false);
-  const [favorited, setFavorited] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
-  const [shareMode, setShareMode] = useState('private');
-  const [shareTip, setShareTip] = useState<any>(null); // 'popout' | 'star' | 'share' | null
-  const [hummingbirdOpen, setHummingbirdOpen] = useState(false);
-  const [hummingbirdInput, setHummingbirdInput] = useState('');
-  const [userOpen, setUserOpen] = useState(false);
-  const [userAnchor, setUserAnchor] = useState({left:0, bottom:0, width:220, maxHeight:600});
-  const [contextPanelOpen, setContextPanelOpen] = useState(false);
-  const [contextPanelAnchor, setContextPanelAnchor] = useState({ left: 0, bottom: 0, width: 320 });
-  const [chatMenu, setChatMenu] = useState<any>({ open:false, chatId:null, x:0, y:0, width:240 });
-  const [chatRenameModal, setChatRenameModal] = useState<any>({ open:false, chatId:null, value:'' });
-  const [chatDeleteModal, setChatDeleteModal] = useState<any>({ open:false, chatId:null });
-  const [chatWorkModal, setChatWorkModal] = useState<any>({ open:false, chatId:null, query:'' });
-  const [chatGroupsOpen, setChatGroupsOpen] = useState<any>({ favorite: true, chats: true });
+  // Tweaks cluster
+  const { tweaks, setTweaks } = useTweaks();
+  // Share controls cluster (includes editMode + favorited)
+  const {
+    shareOpen, shareMode, shareTip, editMode, favorited,
+    setShareOpen, setShareMode, setShareTip, setEditMode, setFavorited,
+  } = useShareControls();
+  // Hummingbird cluster
+  const { hummingbirdOpen, hummingbirdInput, setHummingbirdOpen, setHummingbirdInput } = useHummingbird();
+  // Float menus cluster
+  const {
+    userOpen, userAnchor, contextPanelOpen, contextPanelAnchor,
+    setUserOpen, setUserAnchor, setContextPanelOpen, setContextPanelAnchor,
+  } = useFloatMenus();
+  // Chat modals cluster
+  const {
+    chatMenu, chatRenameModal, chatDeleteModal, chatWorkModal,
+    setChatMenu, setChatRenameModal, setChatDeleteModal, setChatWorkModal,
+  } = useChatModals();
   const [workProjects, setWorkProjects] = useState<any[]>([]);
   const chatWorkspaceHydratedRef = useRef(false);
   const userBtnRef = React.useRef<any>(null);
   const contextBtnRef = React.useRef<any>(null);
-  const [profileDisplayName, setProfileDisplayName] = useState('');
-  const [profileAvatarGlyph, setProfileAvatarGlyph] = useState('');
-  const [profileAvatarImageDataUrl, setProfileAvatarImageDataUrl] = useState('');
+  // Profile cluster
+  const {
+    profileDisplayName, profileAvatarGlyph, profileAvatarImageDataUrl,
+    setProfileDisplayName, setProfileAvatarGlyph, setProfileAvatarImageDataUrl,
+  } = useProfile();
   const [settingsOpen, setSettingsOpen] = useState<any>(null); // null | 'general' | 'system' | 'appearance' | 'privacy' | 'data' | 'hummingbird' | 'meetings' | 'chat' | 'integrations' | 'shortcuts' | 'team' | 'support' | 'api' | 'upgrade' | 'changelog' | 'feedback'
-  // { provider: 'gmail' | 'google_calendar', days: 30 } when prompting; null when hidden.
-  const [historicalImport, setHistoricalImport] = useState<any>(null);
-  const [historicalImportBusy, setHistoricalImportBusy] = useState(false);
-  // { current, total, phase } — live status from the backend `historical-sync-progress` event.
-  const [historicalImportProgress, setHistoricalImportProgress] = useState<any>(null);
+  // Historical import cluster
+  const {
+    historicalImport, historicalImportBusy, historicalImportProgress,
+    setHistoricalImport, setHistoricalImportBusy, setHistoricalImportProgress,
+  } = useHistoricalImport();
   // { provider, token, busy } when the Paste-token modal is open (Slack / Notion / GitHub).
   const [pasteTokenModal, setPasteTokenModal] = useState<any>(null);
   const [toast, setToast] = useState<any>(null);
-  const [writeConfirm, setWriteConfirm] = useState<any>({ open:false, actionKey:null, payload:null, title:null, description:null });
-  const [writePending, setWritePending] = useState(false);
+  // Write confirm cluster
+  const { writeConfirm, writePending, setWriteConfirm, setWritePending } = useWriteConfirm();
   const [devGate, setDevGate] = useState({ available: false });
   useEffect(() => {
     let cancel = false;
@@ -176,20 +192,11 @@ export function MainApp(): React.ReactElement {
   // Sidebar Memory nav badge — count of HIGH-priority items from the last
   // 7 days. Updated by ScreenHome's brief.get callback via a window event.
   const [memoryHighUnreadCount, setMemoryHighUnreadCount] = useState(0);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    try {
-      const raw = Number(localStorage.getItem(SIDEBAR_WIDTH_LS));
-      if (Number.isFinite(raw)) return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(raw)));
-    } catch (_) {
-      /* ignore */
-    }
-    return 240;
-  });
-  const [sidebarResizeHint, setSidebarResizeHint] = useState(false);
+  // Sidebar layout cluster
+  const { sidebarCollapsed, sidebarWidth, sidebarResizeHint, setSidebarCollapsed, setSidebarWidth, setSidebarResizeHint } = useSidebarLayout();
   const resizeStateRef = useRef({ active: false, moved: false, startX: 0, startWidth: 240 });
-  const [meetingHud, setMeetingHud] = useState<any>(null);
-  const [meetingHudTick, setMeetingHudTick] = useState(0);
+  // Meeting HUD cluster
+  const { meetingHud, meetingHudTick, setMeetingHud, setMeetingHudTick } = useMeetingHud();
   const navHistRef = useRef<any>(null);
   const skipNavHistRef = useRef(false);
   const shortcutBindingsRef = useRef(
