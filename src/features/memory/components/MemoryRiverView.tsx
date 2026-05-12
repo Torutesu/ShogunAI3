@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import { Icon } from '@/shared/icons';
 import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
 import {
