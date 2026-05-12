@@ -9,7 +9,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "build:web-dist": "vite build",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings 50",
+    "lint": "eslint . --max-warnings 0",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "knip": "knip --no-progress",
