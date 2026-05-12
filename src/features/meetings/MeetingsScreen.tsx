@@ -97,6 +97,7 @@ export function MeetingsScreen() {
     return function () { window.removeEventListener('shogun-privacy-settings-changed', onPrivacy); };
   }, []);
 
+  const granolaStorageKey = granola && granola.storageKey;
   useEffect(function () {
     setPostRecSessionFlag(false);
     setPostRecWaveMenuOpen(false);
@@ -104,7 +105,7 @@ export function MeetingsScreen() {
     setMtgShareSearch('');
     setMtgLinkAccessMenuOpen(false);
     setMtgLinkAccess('anyone');
-  }, [granola && granola.storageKey]);
+  }, [granolaStorageKey]);
 
   useEffect(function () {
     if (!mtgTopShareOpen) return;
@@ -238,6 +239,7 @@ export function MeetingsScreen() {
     return function () { clearInterval(id); };
   }, [audioRecSession]);
 
+  const granolaTitle = granola && granola.title;
   /** Keep MediaRecorder titleRef aligned with the note title (download filename + HUD) while recording. */
   useEffect(function () {
     if (!granola || !granola.storageKey) return;
@@ -246,7 +248,7 @@ export function MeetingsScreen() {
     var activeSk = M.getActiveStorageKey && M.getActiveStorageKey();
     if (!activeSk || activeSk !== granola.storageKey) return;
     M.setActiveTitle(granola.title);
-  }, [granola && granola.storageKey, granola && granola.title, audioRecSession]);
+  }, [granola, granolaStorageKey, granolaTitle, audioRecSession]);
 
   useEffect(function () {
     const onAutoMinutes = function (e: any) {
@@ -462,6 +464,7 @@ export function MeetingsScreen() {
     }
   }, []);
 
+  const granolaKey = granola && granola.key;
   useEffect(() => {
     if (!granola || !granola.storageKey) return;
     const L = mnl();
@@ -477,7 +480,7 @@ export function MeetingsScreen() {
       setGranolaDraft({ body: granola.body || '', transcript:'', summary:'', minutes:'' });
     }
     setGranolaPane('memo');
-  }, [granola && granola.storageKey, granola && granola.key]);
+  }, [granola, granolaStorageKey, granolaKey]);
 
   useEffect(() => {
     if (!granola || !granola.storageKey) return;
@@ -487,7 +490,7 @@ export function MeetingsScreen() {
       L.saveNote(granola.storageKey, granolaDraft);
     }, 450);
     return function () { clearTimeout(t); };
-  }, [granola && granola.storageKey, granolaDraft]);
+  }, [granola, granolaStorageKey, granolaDraft]);
 
   useEffect(() => {
     if (!granola) return;
@@ -783,7 +786,8 @@ export function MeetingsScreen() {
     } catch (_e) {
       return { en: 'Today', jp: '\u672c\u65e5', t: '--:--' };
     }
-  }, [granolaPillMenu]); // re-eval when menu opens so "today" stays fresh
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: re-eval when menu opens so "today" stays fresh
+  }, [granolaPillMenu]);
   const toggleAttendee = useCallback(function (name: any) {
     setGranolaAttendees(function (list) {
       return list.indexOf(name) >= 0 ? list.filter(function (n) { return n !== name; }) : list.concat([name]);
