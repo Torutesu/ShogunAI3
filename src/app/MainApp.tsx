@@ -44,6 +44,7 @@ import { ChatDeleteModal } from './shell/portals/ChatDeleteModal';
 import { ChatRenameModal } from './shell/portals/ChatRenameModal';
 import { ChatMenu } from './shell/portals/ChatMenu';
 import { ChatWorkModal } from './shell/portals/ChatWorkModal';
+import { ContextPanel } from './shell/portals/ContextPanel';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -1916,48 +1917,12 @@ export function MainApp(): React.ReactElement {
         document.body,
       )}
 
-      {contextPanelOpen && ReactDOM.createPortal(
-        <>
-          <div
-            role="presentation"
-            style={{ position: 'fixed', inset: 0, zIndex: 1078 }}
-            onMouseDown={() => setContextPanelOpen(false)}
-          />
-          <div
-            className="context-panel"
-            style={{ left: contextPanelAnchor.left, bottom: contextPanelAnchor.bottom, width: contextPanelAnchor.width }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="context-panel-title">Data and Privacy</div>
-            <div className="context-awareness-card">
-              <button type="button" className="context-awareness-close" onClick={() => setContextPanelOpen(false)} aria-label="Close">
-                <Icon name="x" size={16} />
-              </button>
-              <div className="context-awareness-heading">Context Awareness</div>
-              <div className="context-panel-body-copy">
-                SHOGUN AI remembers your work across apps, no integrations needed.
-              </div>
-              <button type="button" className="context-link-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
-                Learn more <Icon name="arrowUpRight" size={14} />
-              </button>
-            </div>
-            <button type="button" className="context-panel-row" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
-              <span>Pause Context Awareness</span>
-              <Icon name="chevronRight" size={14} />
-            </button>
-            <button type="button" className="context-panel-row" onClick={() => { setSettingsOpen('data'); setContextPanelOpen(false); }}>
-              <span>Delete Data</span>
-              <Icon name="chevronRight" size={14} />
-            </button>
-            <div className="context-panel-foot">
-              <button type="button" className="context-manage-btn" onClick={() => { setSettingsOpen('privacy'); setContextPanelOpen(false); }}>
-                Manage
-              </button>
-            </div>
-          </div>
-        </>,
-        document.body,
-      )}
+      <ContextPanel
+        open={contextPanelOpen}
+        anchor={contextPanelAnchor}
+        onClose={() => setContextPanelOpen(false)}
+        onOpenSettings={(pane) => setSettingsOpen(pane)}
+      />
 
       <ChatMenu
         open={chatMenu.open}
