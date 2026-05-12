@@ -404,6 +404,22 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
       echo: echo,
     });
 
+    // Phase 2.1.4 T6 — Test-only seam. Playwright specs set
+    // `window.__shogunMockOverrides[command] = (payload) => envelope` to
+    // dial in mirror_status / list_devices / etc. Override convention is the
+    // app.jsx envelope `{ ok, data }`; ipc-client unwraps to inner data here
+    // (the surrounding `invoke()` re-wraps it). See tests/e2e/_helpers/mirror-mock.js.
+    if (
+      typeof global !== "undefined" &&
+      global.__shogunMockOverrides &&
+      typeof global.__shogunMockOverrides[command] === "function"
+    ) {
+      const result = global.__shogunMockOverrides[command](echo);
+      return result && result.ok === true && Object.prototype.hasOwnProperty.call(result, "data")
+        ? result.data
+        : result;
+    }
+
     switch (command) {
       case "app_integration_connect":
       case "app_integration_toggle":
@@ -992,6 +1008,19 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
         return { stub: true };
       case "mirror_reset_stuck":
         return { reset: 0, stub: true };
+      case "mirror_search_blobs":
+        return { hits: [
+          { blob_id: "stub_blob_1", device_id: "stub_device_other", id: "stub_mem_1", title: "Stub mirror result", snippet: "Mock cloud hit", source_field: "google.com", kinds_json: "[\"screen\"]", created_at: 1715000000000, similarity: 0.85, source: "mirror-other", device_name: "Stub iMac" },
+        ], stub: true };
+      case "mirror_list_devices":
+        return { devices: [
+          { device_id: "stub_device_self", blob_count: 42, latest_stored_at: "2026-05-06T12:00:00Z", is_this_device: true, device_name: "This Mac" },
+          { device_id: "stub_device_other", blob_count: 17, latest_stored_at: "2026-05-05T08:30:00Z", is_this_device: false, device_name: "Stub iMac" },
+        ], truncated: false, stub: true };
+      case "mirror_rename_device":
+        return { device: { device_id: echo?.device_id || "stub_device", device_name: echo?.new_name || "Renamed Stub", registered_at: "2026-04-01T00:00:00Z" }, stub: true };
+      case "mirror_delete_device":
+        return { tombstoned_blobs: 5, stub: true };
       default:
         return {
           stub: true,

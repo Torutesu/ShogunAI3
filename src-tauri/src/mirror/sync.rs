@@ -121,7 +121,7 @@ static ENGINE: OnceLock<SyncEngine> = OnceLock::new();
 /// always a different one. See Fix #3 in the code-review follow-up.
 static MIRROR_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
-fn mirror_runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn mirror_runtime() -> &'static tokio::runtime::Runtime {
     MIRROR_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -216,6 +216,22 @@ impl SyncEngine {
         if let Ok(mut guard) = self.client.lock() {
             *guard = None;
         }
+    }
+
+    /// Snapshot the cached `http::Client` (Phase 2.1.4: needed by IPC commands
+    /// that drive search / device management outside of `run_cycle`). Returns
+    /// `None` if the client has not been wired up yet (e.g. before
+    /// `mirror_register` ran or after `clear_client()`).
+    pub(crate) fn client(&self) -> Option<http::Client> {
+        self.client.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Derive a fresh `MemoryEncryptionKey` from the cached `MasterKey`. Returns
+    /// `None` if Mirror is locked (no MK in memory). Phase 2.1.4 IPC search
+    /// uses this to decrypt blobs without re-deriving via passphrase.
+    pub(crate) fn mek(&self) -> Option<crypto::MemoryEncryptionKey> {
+        let guard = self.master_key.lock().ok()?;
+        guard.as_ref().map(crypto::derive_mek)
     }
 
     /// Restore the authenticated `http::Client` after an app restart.
@@ -755,6 +771,7 @@ pub(crate) fn classify_error_for_retry(err: &http::Error) -> RetryDisposition {
     match err {
         // Permanent rejections — don't retry.
         http::Error::Unauthorized
+        | http::Error::Forbidden
         | http::Error::InvalidEnvelope(_)
         | http::Error::Conflict(_)
         | http::Error::PayloadTooLarge
@@ -918,6 +935,22 @@ fn format_rfc3339(secs: u64, millis: u64) -> String {
 /// object keys (BTreeMap-via-rebuild) and otherwise relies on serde_json's
 /// defaults.
 ///
+/// # Cross-module contract — byte-identical AD invariant
+///
+/// This function is **shared between `mirror::sync` (write side) and
+/// `mirror::search` (read side)**. Both call sites must produce
+/// byte-identical AD bytes from logically-equivalent inputs, or AEAD
+/// decryption will silently fail for previously-uploaded blobs.
+///
+/// Any change to this function — or to the structure of the AD object that
+/// either side passes in (`{blob_id, device_id, metadata, schema, version}`)
+/// — MUST be applied symmetrically on both sides. Adding/removing keys,
+/// changing key names, swapping types, or altering serialization defaults
+/// breaks the contract. The current callers are:
+///
+/// - `mirror::sync::build_blob_envelope` (encryption / upload)
+/// - `mirror::search::decrypt_envelope` (download / decryption)
+///
 /// **NOT** RFC 8785 (JCS) compliant. The function name was renamed from
 /// `canonical_json` to be honest about its scope. The AEAD AD payload is
 /// restricted by design to:
@@ -930,7 +963,7 @@ fn format_rfc3339(secs: u64, millis: u64) -> String {
 /// because serde_json's default float formatting and Unicode escaping diverge
 /// from JCS §3.2 / §3.3. Keep this restriction documented at the AD
 /// construction site as well — see `build_blob_envelope`.
-fn sorted_json_for_ad(value: &Value) -> Result<Vec<u8>, String> {
+pub(crate) fn sorted_json_for_ad(value: &Value) -> Result<Vec<u8>, String> {
     // serde_json serializes Object in insertion order. To get sorted keys we
     // round-trip through a recursive BTreeMap rebuild.
     let canonical = to_sorted_value(value);
