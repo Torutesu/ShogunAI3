@@ -43,6 +43,7 @@ import { Sidebar } from './shell/Sidebar';
 import { ChatDeleteModal } from './shell/portals/ChatDeleteModal';
 import { ChatRenameModal } from './shell/portals/ChatRenameModal';
 import { ChatMenu } from './shell/portals/ChatMenu';
+import { ChatWorkModal } from './shell/portals/ChatWorkModal';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -1985,52 +1986,15 @@ export function MainApp(): React.ReactElement {
         onSubmit={submitRenameModal}
       />
 
-      {chatWorkModal.open && ReactDOM.createPortal(
-        <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatWorkModal({ open:false, chatId:null, query:'' })}>
-          <div className="chat-dialog work" role="dialog" aria-modal="true" aria-label="Workに追加" onMouseDown={(e) => e.stopPropagation()}>
-            <button type="button" className="chat-dialog-close" onClick={() => setChatWorkModal({ open:false, chatId:null, query:'' })} aria-label="閉じる">
-              <Icon name="x" size={16}/>
-            </button>
-            <div className="chat-dialog-title">チャットを移動</div>
-            <div className="chat-dialog-desc">このチャットを移動するプロジェクトを選択してください。</div>
-            <div className="work-search-wrap">
-              <Icon name="search" size={16}/>
-              <input
-                type="text"
-                className="work-search-input"
-                placeholder="プロジェクトを検索または作成"
-                value={chatWorkModal.query}
-                autoFocus
-                onChange={(e) => setChatWorkModal((s: any) => ({ ...s, query: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    if (filteredWorkProjects[0]) assignChatToWork(filteredWorkProjects[0].id, filteredWorkProjects[0].name);
-                    else createAndAssignWork();
-                  }
-                }}
-              />
-            </div>
-            {filteredWorkProjects.length > 0 ? (
-              <div className="work-list">
-                {filteredWorkProjects.map((p) => (
-                  <button key={p.id} type="button" className="work-list-item" onClick={() => assignChatToWork(p.id, p.name)}>
-                    <Icon name="folder" size={14}/>
-                    <span>{p.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : chatWorkModal.query.trim() ? (
-              <button type="button" className="work-list-item create" style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} onClick={createAndAssignWork}>
-                <Icon name="plus" size={14}/>
-                <span>「{chatWorkModal.query.trim()}」を作成して追加</span>
-              </button>
-            ) : (
-              <div className="work-list-empty">プロジェクトはまだありません。名前を入力して作成してください。</div>
-            )}
-          </div>
-        </div>,
-        document.body,
-      )}
+      <ChatWorkModal
+        open={chatWorkModal.open}
+        query={chatWorkModal.query}
+        filteredWorkProjects={filteredWorkProjects}
+        onClose={() => setChatWorkModal({ open:false, chatId:null, query:'' })}
+        onQueryChange={(query) => setChatWorkModal((s: any) => ({ ...s, query }))}
+        onAssignToWork={assignChatToWork}
+        onCreateAndAssign={createAndAssignWork}
+      />
 
       {/* Settings modal — floating with semi-transparent backdrop */}
       {settingsOpen && (
