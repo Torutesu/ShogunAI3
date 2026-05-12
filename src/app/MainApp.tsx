@@ -3,15 +3,19 @@
 // Inline <style> block extracted to MainApp.css (Phase 5 Step 1.5).
 // Handler bundles extracted to custom hooks (Phase 7 Step 1).
 import './MainApp.css';
-import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-import { ScreenHome } from '@/features/home';
-import { ScreenMemory } from '@/features/memory';
-import { ScreenMeetings } from '@/features/meetings';
-import { SettingsModal } from '@/features/settings';
-import { ScreenWork } from '@/features/work';
-import { ScreenAgents } from '@/features/agents';
-import { ScreenChat } from '@/features/chat';
-import { ScreenMemoryDebug } from '@/features/memory-debug';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense } from 'react';
+
+// Lazy-load feature screens — each becomes its own chunk loaded on demand
+// when the user navigates to that nav item. SettingsModal is heaviest
+// (16 settings panels) and is only loaded when the user opens Settings.
+const ScreenHome = lazy(() => import('@/features/home').then(m => ({ default: m.ScreenHome })));
+const ScreenMemory = lazy(() => import('@/features/memory').then(m => ({ default: m.ScreenMemory })));
+const ScreenMeetings = lazy(() => import('@/features/meetings').then(m => ({ default: m.ScreenMeetings })));
+const SettingsModal = lazy(() => import('@/features/settings').then(m => ({ default: m.SettingsModal })));
+const ScreenWork = lazy(() => import('@/features/work').then(m => ({ default: m.ScreenWork })));
+const ScreenAgents = lazy(() => import('@/features/agents').then(m => ({ default: m.ScreenAgents })));
+const ScreenChat = lazy(() => import('@/features/chat').then(m => ({ default: m.ScreenChat })));
+const ScreenMemoryDebug = lazy(() => import('@/features/memory-debug').then(m => ({ default: m.ScreenMemoryDebug })));
 import { ConfirmWriteModal } from '@/shared/modals';
 import { ShogunIpcClient, ShogunAPI, ShogunActionRegistry } from '@/shared/ipc';
 import {
@@ -1234,7 +1238,9 @@ export function MainApp(): React.ReactElement {
           (active === 'meetings' ? ' content-meetings' : '')
         }
       >
-        <Screen/>
+        <Suspense fallback={<div style={{ padding: 40, color: 'var(--text-mute)' }}>Loading…</div>}>
+          <Screen/>
+        </Suspense>
       </div>
 
       {/* Share modal — portaled so it is not clipped by .app overflow */}
@@ -1314,26 +1320,29 @@ export function MainApp(): React.ReactElement {
         onCreateAndAssign={createAndAssignWork}
       />
 
-      {/* Settings modal — floating with semi-transparent backdrop */}
+      {/* Settings modal — floating with semi-transparent backdrop. Lazy-loaded
+          so the 16-panel module is only fetched when the user opens Settings. */}
       {settingsOpen && (
-        <SettingsModal
-          pane={settingsOpen}
-          setPane={setSettingsOpen}
-          close={() => {
-            setSettingsOpen(null);
-            (async () => {
-              const r = await executeAction('settings.load', {}, { silentError: true });
-              if (r.ok && r.data?.settings?.sections) {
-                const sec = r.data.settings.sections;
-                applySavedAppearance(sec);
-                const p = profileStateFromSections(sec);
-                setProfileDisplayName(p.name);
-                setProfileAvatarGlyph(p.avatarGlyph);
-                setProfileAvatarImageDataUrl(p.avatarImageDataUrl);
-              }
-            })();
-          }}
-        />
+        <Suspense fallback={null}>
+          <SettingsModal
+            pane={settingsOpen}
+            setPane={setSettingsOpen}
+            close={() => {
+              setSettingsOpen(null);
+              (async () => {
+                const r = await executeAction('settings.load', {}, { silentError: true });
+                if (r.ok && r.data?.settings?.sections) {
+                  const sec = r.data.settings.sections;
+                  applySavedAppearance(sec);
+                  const p = profileStateFromSections(sec);
+                  setProfileDisplayName(p.name);
+                  setProfileAvatarGlyph(p.avatarGlyph);
+                  setProfileAvatarImageDataUrl(p.avatarImageDataUrl);
+                }
+              })();
+            }}
+          />
+        </Suspense>
       )}
 
       <WriteModal

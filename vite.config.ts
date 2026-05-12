@@ -24,5 +24,16 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     target: 'es2022',
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // React runtime — stable across releases, cacheable separately
+          'vendor-react': ['react', 'react-dom', 'react-dom/client'],
+          // Tauri runtime
+          'vendor-tauri': ['@tauri-apps/api'],
+        },
+      },
+    },
   },
 });
