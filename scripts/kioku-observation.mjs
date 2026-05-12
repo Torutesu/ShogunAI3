@@ -183,7 +183,7 @@ function dedupSection(dbPath) {
   for (const [s, n] of rows) lines.push(`| ${s} | ${fmtNumber(Number(n))} |`);
   // Skipped count = significance filter dropped them. Compare to total to get
   // a rough "filter aggressiveness" reading.
-  const skipped = Number((rows.find((r) => r[0] === "skipped") || [, 0])[1]);
+  const skipped = Number((rows.find((r) => r[0] === "skipped") || [undefined, 0])[1]);
   const total = rows.reduce((a, r) => a + Number(r[1]), 0);
   if (total > 0) {
     const pct = ((skipped / total) * 100).toFixed(1);

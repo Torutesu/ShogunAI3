@@ -49,6 +49,15 @@ export default [
       'react/prop-types': 'off',
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+      // Allow conventional underscore-prefix for intentionally unused vars
+      // (e.g. `catch (_e) { /* ignore */ }`).
+      'no-unused-vars': ['error', {
+        args: 'none',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+      // Empty `catch {}` is OK — intentional ignore.
+      'no-empty': ['error', { allowEmptyCatch: true }],
       'import/no-cycle': 'error',
       'import/no-self-import': 'error',
       'unused-imports/no-unused-imports': 'error',
@@ -73,10 +82,31 @@ export default [
   {
     files: ['tests/**/*.js', 'tests/**/*.ts'],
     languageOptions: {
-      globals: { ...globals.node, ...globals.browser },
+      globals: { ...globals.node, ...globals.browser, ...globals.commonjs },
     },
     rules: {
       'max-lines': 'off',
+      // Tests use _e / _ for unused catch args; CJS uses require/module.
+      'no-unused-vars': ['error', {
+        args: 'none',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+      'no-empty': ['error', { allowEmptyCatch: true }],
+    },
+  },
+  {
+    // Node scripts and tool configs. Includes Playwright config (CJS) and Vite configs.
+    files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'playwright.config.js', 'vite.config.ts', 'vitest.config.ts'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.commonjs },
+    },
+    rules: {
+      'no-unused-vars': ['error', {
+        args: 'none',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
     },
   },
   {
