@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- Sidebar is inherently large; contains full nav + user cluster + resize controls */
 import React from 'react';
 import { Icon } from '@/shared/icons';
 import { isProfilePhotoDataUrl, shellAvatarChar } from '../lib/helpers';
