@@ -1,11 +1,9 @@
-/* eslint-disable max-lines -- App shell: state clusters extracted to src/app/hooks/ + style to MainApp.css (Phase 5 Step 1). Remaining bulk is ~1900 lines of JSX + effects + handlers. */
 // MainApp extracted from App.tsx (Phase 2 Step 11)
 // State clusters extracted to custom hooks in src/app/hooks/ (Phase 5 Step 1).
 // Inline <style> block extracted to MainApp.css (Phase 5 Step 1.5).
+// Handler bundles extracted to custom hooks (Phase 7 Step 1).
 import './MainApp.css';
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
-import * as ReactDOM from 'react-dom';
-import { Icon, Kamon } from '@/shared/icons';
 import { ScreenHome } from '@/features/home';
 import { ScreenMemory } from '@/features/memory';
 import { ScreenMeetings } from '@/features/meetings';
@@ -22,8 +20,6 @@ import {
   CHAT_CONTEXT_TELEMETRY_LS,
   CHAT_WORKSPACE_LS,
   SIDEBAR_WIDTH_LS,
-  SIDEBAR_MIN_WIDTH,
-  SIDEBAR_MAX_WIDTH,
 } from './lib/constants';
 import {
   profileStateFromSections,
@@ -40,6 +36,10 @@ import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
 import { ShareModal } from './shell/ShareModal';
 import { TopBar } from './shell/TopBar';
 import { Sidebar } from './shell/Sidebar';
+import { TweaksPanel } from './shell/TweaksPanel';
+import { MeetingHud } from './shell/MeetingHud';
+import { BioLockOverlay } from './shell/BioLockOverlay';
+import { FallbackWriteModal } from './shell/FallbackWriteModal';
 import { ChatDeleteModal } from './shell/portals/ChatDeleteModal';
 import { ChatRenameModal } from './shell/portals/ChatRenameModal';
 import { ChatMenu } from './shell/portals/ChatMenu';
@@ -61,6 +61,8 @@ import { useChatModals } from './hooks/useChatModals';
 import { useChatHistory } from './hooks/useChatHistory';
 import { useMeetingHud } from './hooks/useMeetingHud';
 import { useTweaks } from './hooks/useTweaks';
+import { useChatDrag } from './hooks/useChatDrag';
+import { useChatActions } from './hooks/useChatActions';
 
 declare const window: any;
 
@@ -74,51 +76,7 @@ declare const window: any;
  *  "Rendered more hooks than during the previous render." */
 export function MainApp(): React.ReactElement {
   ensureRuntimeDeps();
-  const WriteModal = ConfirmWriteModal || function FallbackWriteModal(props) {
-    if (!props.open) return null;
-    return ReactDOM.createPortal(
-      <>
-        <div
-          role="presentation"
-          style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(10,9,8,0.55)' }}
-          onMouseDown={(e) => {
-            if (props.pending) return;
-            e.preventDefault();
-            props.onCancel();
-          }}
-        />
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%,-50%)',
-            zIndex: 1151,
-            boxSizing: 'border-box',
-            width: 'min(520px, calc(100vw - 32px))',
-            maxHeight: 'calc(100vh - 32px)',
-            overflow: 'auto',
-            background: 'var(--surface)',
-            border: '1px solid var(--border-hi)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 16,
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{props.title || 'Confirm action'}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>{props.description || 'This action may change local state.'}</div>
-          <pre style={{ maxHeight: 180, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 10, margin: 0, fontSize: 11, fontFamily: 'var(--font-mono)' }}>{JSON.stringify(props.payload || {}, null, 2)}</pre>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button type="button" className="btn btn-sm btn-ghost" onClick={props.onCancel}>Cancel</button>
-            <button type="button" className="btn btn-sm btn-secondary" onClick={props.onConfirm}>{props.pending ? 'Running...' : 'Confirm'}</button>
-          </div>
-        </div>
-      </>,
-      document.body,
-    );
-  };
+  const WriteModal = ConfirmWriteModal || FallbackWriteModal;
   const [active, setActive] = useState(() => {
     const saved = localStorage.getItem('shogun-active') || 'home';
     return REMOVED_NAV_IDS.has(saved) ? 'home' : saved;
@@ -128,9 +86,11 @@ export function MainApp(): React.ReactElement {
     activeChat, chats, dragId, dragOver, chatGroupsOpen,
     setActiveChat, setChats, setDragId, setDragOver, setChatGroupsOpen,
   } = useChatHistory();
-  const dragIdRef = useRef<any>(null);
-  const dragOverRef = useRef<any>(null);
-  const suppressChatRowClickRef = useRef(false);
+  // Chat drag/drop cluster
+  const {
+    suppressChatRowClickRef,
+    onChatRowPointerDown,
+  } = useChatDrag(setChats, setDragId, setDragOver);
   // Tweaks cluster
   const { tweaks, setTweaks } = useTweaks();
   // Share controls cluster (includes editMode + favorited)
@@ -193,9 +153,8 @@ export function MainApp(): React.ReactElement {
   // Sidebar Memory nav badge — count of HIGH-priority items from the last
   // 7 days. Updated by ScreenHome's brief.get callback via a window event.
   const [memoryHighUnreadCount, setMemoryHighUnreadCount] = useState(0);
-  // Sidebar layout cluster
-  const { sidebarCollapsed, sidebarWidth, sidebarResizeHint, setSidebarCollapsed, setSidebarWidth, setSidebarResizeHint } = useSidebarLayout();
-  const resizeStateRef = useRef({ active: false, moved: false, startX: 0, startWidth: 240 });
+  // Sidebar layout cluster (includes beginSidebarResize + resizeStateRef)
+  const { sidebarCollapsed, sidebarWidth, sidebarResizeHint, setSidebarCollapsed, setSidebarResizeHint, resizeStateRef, beginSidebarResize } = useSidebarLayout();
   // Meeting HUD cluster
   const { meetingHud, meetingHudTick, setMeetingHud, setMeetingHudTick } = useMeetingHud();
   const navHistRef = useRef<any>(null);
@@ -860,230 +819,26 @@ export function MainApp(): React.ReactElement {
     navHistRef.current = { entries: next, cursor: next.length - 1 };
   }, [active]);
 
-  const toggleFav = useCallback((id: any) => setChats(cs => cs.map(c => c.id===id ? {...c, favorite: !c.favorite} : c)), [setChats]);
-  const openChatMenuAt = useCallback((chatId: any, x: any, y: any) => {
-    const vw = window.innerWidth || 1280;
-    const vh = window.innerHeight || 800;
-    let menuW = 248;
-    const menuH = 220;
-    const edgePad = 8;
-    let minX = edgePad;
-    let maxX = vw - menuW - edgePad;
-    let minY = edgePad;
-    let maxY = vh - menuH - edgePad;
-    const sidebarEl = document.querySelector('.sidebar');
-    if (sidebarEl && typeof sidebarEl.getBoundingClientRect === 'function') {
-      const r = sidebarEl.getBoundingClientRect();
-      const availableW = Math.max(180, Math.floor(r.width) - edgePad * 2);
-      menuW = Math.min(menuW, availableW);
-      minX = Math.max(edgePad, Math.floor(r.left) + edgePad);
-      maxX = Math.min(vw - menuW - edgePad, Math.floor(r.right) - menuW - edgePad);
-      minY = Math.max(edgePad, Math.floor(r.top) + edgePad);
-      maxY = Math.min(vh - menuH - edgePad, Math.floor(r.bottom) - menuH - edgePad);
-    }
-    if (maxX < minX) maxX = minX;
-    if (maxY < minY) maxY = minY;
-    const clampedX = Math.max(minX, Math.min(x, maxX));
-    const clampedY = Math.max(minY, Math.min(y, maxY));
-    setChatMenu({ open:true, chatId, x:clampedX, y:clampedY, width:menuW });
-  }, [setChatMenu]);
-  const closeChatMenu = useCallback(() => setChatMenu({ open:false, chatId:null, x:0, y:0, width:240 }), [setChatMenu]);
-  const openRenameModal = useCallback((id: any) => {
-    const current = chats.find((c) => c.id === id);
-    if (!current) return;
-    setChatRenameModal({ open:true, chatId:id, value:current.title || '' });
-  }, [chats, setChatRenameModal]);
-  const submitRenameModal = useCallback(() => {
-    const id = chatRenameModal.chatId;
-    const trimmed = String(chatRenameModal.value || '').trim();
-    if (!id || !trimmed) return;
-    setChats((cs) => cs.map((c) => (c.id === id ? { ...c, title: trimmed } : c)));
-    setChatRenameModal({ open:false, chatId:null, value:'' });
-    pushToast('チャット名を更新しました', 'success');
-  }, [chatRenameModal, setChatRenameModal, setChats]);
-  const openDeleteModal = useCallback((id: any) => {
-    const target = chats.find((c) => c.id === id);
-    if (!target) return;
-    setChatDeleteModal({ open:true, chatId:id });
-  }, [chats, setChatDeleteModal]);
-  const confirmDeleteChat = useCallback(() => {
-    const id = chatDeleteModal.chatId;
-    if (!id) return;
-    setChats((cs) => {
-      const next = cs.filter((c) => c.id !== id);
-      if (activeChat === id) {
-        setActiveChat(next[0] ? next[0].id : null);
-      }
-      return next;
-    });
-    setChatDeleteModal({ open:false, chatId:null });
-    pushToast('チャットを削除しました', 'success');
-  }, [activeChat, chatDeleteModal.chatId, setActiveChat, setChatDeleteModal, setChats]);
-  const openWorkModal = useCallback((id: any) => {
-    const target = chats.find((c) => c.id === id);
-    if (!target) return;
-    setChatWorkModal({ open:true, chatId:id, query:'' });
-  }, [chats, setChatWorkModal]);
-  const assignChatToWork = useCallback((workId: any, workName: any) => {
-    let id = chatWorkModal.chatId;
-    const newChat = !id;
-    if (newChat) {
-      id = `c${Date.now()}`;
-      const item = { id, title: 'New Chat', time: '', when: 'TODAY', jp: '今日', favorite: false, workProjectId: workId, workProjectName: workName };
-      setChats((prev) => [item, ...prev]);
-      setActiveChat(id);
-    } else {
-      setChats((cs) => cs.map((c) => (c.id === id ? { ...c, workProjectId:workId, workProjectName:workName } : c)));
-    }
-    setChatWorkModal({ open:false, chatId:null, query:'' });
-    setActive(newChat ? 'chat' : 'work');
-    pushToast(`Workに追加: ${workName}`, 'success');
-  }, [chatWorkModal.chatId, setActiveChat, setChatWorkModal, setChats]);
-  const createAndAssignWork = useCallback(() => {
-    const name = String(chatWorkModal.query || '').trim();
-    if (!name) return;
-    const id = `w-${Date.now()}`;
-    setWorkProjects((prev) => [...prev, { id, name }]);
-    assignChatToWork(id, name);
-  }, [assignChatToWork, chatWorkModal.query]);
-  const toggleWorkArchiveForChat = useCallback((id: any) => {
-    const target = chats.find((c) => c.id === id);
-    if (!target || !target.workProjectId) return;
-    let nextArchived = false;
-    setWorkProjects((prev) => prev.map((p) => {
-      if (p.id !== target.workProjectId) return p;
-      nextArchived = p.archived !== true;
-      return { ...p, archived: nextArchived };
-    }));
-    pushToast(nextArchived ? 'Workをアーカイブしました' : 'Workを復元しました', 'success');
-  }, [chats]);
-  const runChatMenuAction = useCallback((action: any, id: any) => {
-    if (!id) return;
-    if (action === 'pin') {
-      toggleFav(id);
-      pushToast('Favoriteを更新しました', 'success');
-    } else if (action === 'rename') {
-      openRenameModal(id);
-    } else if (action === 'work') {
-      openWorkModal(id);
-    } else if (action === 'workArchive') {
-      toggleWorkArchiveForChat(id);
-    } else if (action === 'delete') {
-      openDeleteModal(id);
-    }
-    closeChatMenu();
-  }, [closeChatMenu, openDeleteModal, openRenameModal, openWorkModal, toggleFav, toggleWorkArchiveForChat]);
-  useEffect(() => {
-    if (!chatMenu.open) return undefined;
-    const onKey = (e: any) => {
-      if (e.key === 'Escape') closeChatMenu();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [chatMenu.open, closeChatMenu]);
-  const clearChatDrag = useCallback(() => {
-    dragIdRef.current = null;
-    dragOverRef.current = null;
-    setDragId(null);
-    setDragOver(null);
-  }, [setDragId, setDragOver]);
-  /** HTML5 drag/drop is unreliable in Tauri/WKWebView; reorder uses pointer events instead. */
-  const applyChatDragReorder = useCallback(() => {
-    const did = dragIdRef.current;
-    const over = dragOverRef.current;
-    if (!did || !over) return;
-    setChats((cs) => {
-      const src = cs.find((c) => c.id === did);
-      if (!src) return cs;
-      const rest = cs.filter((c) => c.id !== did);
-      if (over.id === null) {
-        const moved = { ...src, favorite: over.pos === 'fav' };
-        return [...rest, moved];
-      }
-      const target = rest.find((c) => c.id === over.id);
-      if (!target) return cs;
-      const moved = { ...src, favorite: target.favorite };
-      const idx = rest.findIndex((c) => c.id === over.id);
-      const insertAt = over.pos === 'before' ? idx : idx + 1;
-      const out = [...rest];
-      out.splice(insertAt, 0, moved);
-      return out;
-    });
-  }, [setChats]);
-  const updateDragOverFromPoint = useCallback((clientX: any, clientY: any) => {
-    const did = dragIdRef.current;
-    let root;
-    try {
-      root = document.elementFromPoint(clientX, clientY);
-    } catch (_) {
-      return;
-    }
-    if (!root) return;
-    const row = root.closest?.('[data-chat-row]');
-    if (row) {
-      const rid = row.getAttribute('data-chat-row');
-      if (rid === did) {
-        dragOverRef.current = null;
-        setDragOver(null);
-        return;
-      }
-      if (rid) {
-        const rect = row.getBoundingClientRect();
-        const pos = clientY - rect.top < rect.height / 2 ? 'before' : 'after';
-        const next = { id: rid, pos };
-        dragOverRef.current = next;
-        setDragOver(next);
-        return;
-      }
-    }
-    const bucket = root.closest?.('[data-chat-bucket]');
-    if (bucket) {
-      const b = bucket.getAttribute('data-chat-bucket');
-      if (b === 'fav' || b === 'chats') {
-        const next = { id: null, pos: b };
-        dragOverRef.current = next;
-        setDragOver(next);
-      }
-    }
-  }, [setDragOver]);
-  const CHAT_DRAG_THRESHOLD_PX = 6;
-  const onChatRowPointerDown = useCallback(
-    (id: any) => (e: any) => {
-      if (e.button !== 0) return;
-      if (e.target.closest?.('button')) return;
-      const sx = e.clientX;
-      const sy = e.clientY;
-      let armed = false;
-      const move = (ev: any) => {
-        if (!armed) {
-          if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < CHAT_DRAG_THRESHOLD_PX) return;
-          armed = true;
-          dragIdRef.current = id;
-          setDragId(id);
-          dragOverRef.current = null;
-          setDragOver(null);
-          document.body.classList.add('chat-reorder-active');
-        }
-        updateDragOverFromPoint(ev.clientX, ev.clientY);
-      };
-      const finish = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', finish);
-        window.removeEventListener('pointercancel', finish);
-        document.body.classList.remove('chat-reorder-active');
-        if (armed) {
-          applyChatDragReorder();
-          suppressChatRowClickRef.current = true;
-        }
-        clearChatDrag();
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', finish);
-      window.addEventListener('pointercancel', finish);
-    },
-    [applyChatDragReorder, clearChatDrag, setDragId, setDragOver, updateDragOverFromPoint],
+  // Chat actions cluster (menu, rename, delete, work assignment) — moved to useChatActions hook
+  const {
+    openChatMenuAt,
+    closeChatMenu,
+    submitRenameModal,
+    confirmDeleteChat,
+    assignChatToWork,
+    createAndAssignWork,
+    runChatMenuAction,
+  } = useChatActions(
+    chats, setChats,
+    activeChat, setActiveChat,
+    setActive,
+    workProjects, setWorkProjects,
+    chatMenu, setChatMenu,
+    chatRenameModal, setChatRenameModal,
+    chatDeleteModal, setChatDeleteModal,
+    chatWorkModal, setChatWorkModal,
+    pushToast,
   );
-
   useEffect(() => {
     document.body.classList.toggle('dot-grid', tweaks.dotGrid);
     document.body.setAttribute('data-lang', tweaks.language);
@@ -1367,18 +1122,6 @@ export function MainApp(): React.ReactElement {
     window.__SHOGUN_SHELL_ACTIVE_CHAT__ = activeChat;
   }
 
-  const fmtHudElapsed = (startedAt: any) => {
-    void meetingHudTick;
-    if (!startedAt) return '';
-    const ms = Date.now() - startedAt;
-    const s = Math.floor(ms / 1000);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-    return `${m}:${String(sec).padStart(2, '0')}`;
-  };
-
   const dismissMeetingHud = () => {
     const M = MeetingMediaRecording;
     if (!M || typeof M.stop !== 'function') {
@@ -1391,45 +1134,6 @@ export function MainApp(): React.ReactElement {
     } else {
       setMeetingHud(null);
     }
-  };
-
-  const beginSidebarResize = (e: any) => {
-    if (!e || typeof e.clientX !== 'number') return;
-    const startX = e.clientX;
-    const startWidth = sidebarWidth;
-    resizeStateRef.current = { active: true, moved: false, startX, startWidth };
-    setSidebarResizeHint(true);
-    const prevBodySelect = document.body.style.userSelect;
-    const prevBodyCursor = document.body.style.cursor;
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'col-resize';
-
-    const onMove = (ev: any) => {
-      if (!resizeStateRef.current.active || !ev || typeof ev.clientX !== 'number') return;
-      const dx = ev.clientX - resizeStateRef.current.startX;
-      if (Math.abs(dx) > 3) resizeStateRef.current.moved = true;
-      const next = Math.max(
-        SIDEBAR_MIN_WIDTH,
-        Math.min(SIDEBAR_MAX_WIDTH, Math.round(resizeStateRef.current.startWidth + dx)),
-      );
-      setSidebarWidth(next);
-      if (sidebarCollapsed && next > SIDEBAR_MIN_WIDTH) setSidebarCollapsed(false);
-    };
-    const endResize = () => {
-      const moved = resizeStateRef.current.moved;
-      resizeStateRef.current.active = false;
-      document.body.style.userSelect = prevBodySelect;
-      document.body.style.cursor = prevBodyCursor;
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', endResize);
-      window.removeEventListener('pointercancel', endResize);
-      if (!moved) setSidebarCollapsed((v) => !v);
-      setSidebarResizeHint(false);
-    };
-
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', endResize);
-    window.addEventListener('pointercancel', endResize);
   };
 
   // Include memory_debug nav entry only when the dev gate returns available.
@@ -1452,130 +1156,26 @@ export function MainApp(): React.ReactElement {
         ...({ '--sidebar-w': sidebarCollapsed ? '0px' : `${sidebarWidth}px` } as any),
       }}
     >
-      {bioGate.ready && bioGate.open && (
-        <div
-          className="bio-lock-overlay"
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 2000,
-            background: 'rgba(10,9,8,0.92)',
-            backdropFilter: 'blur(8px)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 20,
-          }}
-        >
-          <Kamon size={56} color="var(--gold)" />
-          <div style={{ fontSize: 18, fontWeight: 600 }} className="en-only">
-            Unlock SHOGUN
-          </div>
-          <div style={{ fontSize: 16, fontWeight: 600 }} className="jp">
-            SHOGUN を解除
-          </div>
-          <div className="s-field-hint" style={{ textAlign: 'center', maxWidth: 320, padding: '0 20px' }}>
-            <span className="en-only">Continue with Touch ID or Face ID.</span>
-            <span className="jp">Touch ID または Face ID で続行してください。</span>
-          </div>
-          <button
-            className="btn btn-secondary"
-            type="button"
-            onClick={async () => {
-              const r = await executeAction(
-                'auth.biometric.authenticate',
-                { reason: 'Unlock SHOGUN' },
-                { silentError: true },
-              );
-              if (r.ok && r.data?.ok) {
-                setBioGate((g) => ({ ...g, open: false }));
-              } else {
-                pushToast(r.data?.message || '認証に失敗しました', 'error');
-              }
-            }}
-          >
-            <span className="en-only">Unlock with biometrics</span>
-            <span className="jp">生体認証で解除</span>
-          </button>
-        </div>
-      )}
-      {meetingHud && (
-        <div className="shogun-meeting-hud-host" role="status" aria-live="polite">
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '7px 6px 7px 14px',
-              borderRadius: 999,
-              border: '1px solid var(--border-hi)',
-              background: 'color-mix(in srgb, var(--surface) 92%, #0a0a0a)',
-              boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
-              maxWidth: '100%',
-              width: '100%',
-              justifyContent: 'center',
-              boxSizing: 'border-box',
-            }}
-          >
-            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexShrink: 0 }} aria-hidden="true">
-              {[0, 1, 2].map((i) => (
-                <span
-                  key={i}
-                  style={{
-                    width: 5,
-                    height: 5,
-                    borderRadius: 999,
-                    background: 'var(--success)',
-                    animation: 'mtgStripDotPulse 1.25s ease-in-out infinite',
-                    animationDelay: `${i * 0.2}s`,
-                  }}
-                />
-              ))}
-            </span>
-            <span
-              style={{
-                fontSize: 14,
-                fontWeight: 500,
-                letterSpacing: '-0.02em',
-                color: 'var(--text)',
-                minWidth: 0,
-                flex: '1 1 auto',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                fontFamily: 'var(--font-sans, system-ui, sans-serif)',
-              }}
-            >
-              {meetingHud.title || 'Untitled'}
-            </span>
-            <span className="t-mono" style={{ fontSize: 11, color: 'var(--text-mute)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-              {fmtHudElapsed(meetingHud.startedAt)}
-            </span>
-            <button
-              type="button"
-              onClick={dismissMeetingHud}
-              aria-label="Stop recording"
-              title="録音を終了"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 30,
-                height: 30,
-                borderRadius: 999,
-                border: 'none',
-                background: 'transparent',
-                color: 'var(--text-mute)',
-                cursor: 'pointer',
-                flexShrink: 0,
-              }}
-            >
-              <Icon name="x" size={14} />
-            </button>
-          </div>
-        </div>
-      )}
+      <BioLockOverlay
+        open={bioGate.ready && bioGate.open}
+        onUnlock={async () => {
+          const r = await executeAction(
+            'auth.biometric.authenticate',
+            { reason: 'Unlock SHOGUN' },
+            { silentError: true },
+          );
+          if (r.ok && r.data?.ok) {
+            setBioGate((g) => ({ ...g, open: false }));
+          } else {
+            pushToast(r.data?.message || '認証に失敗しました', 'error');
+          }
+        }}
+      />
+      <MeetingHud
+        meetingHud={meetingHud}
+        meetingHudTick={meetingHudTick}
+        onDismiss={dismissMeetingHud}
+      />
       {/* Topbar */}
       <TopBar
         active={active}
@@ -1875,38 +1475,8 @@ export function MainApp(): React.ReactElement {
 
       {/* System floating menu removed */}
 
-      {/* Tweaks */}
-      <div id="tweaks-panel" className={editMode?'show':''}>
-        <h6>TWEAKS · 調整 <Kamon size={12} color="var(--gold)"/></h6>
-        <div className="tweak-row">
-          <label>Language</label>
-          <select value={tweaks.language} onChange={e=>update('language', e.target.value)}>
-            <option value="en">English</option>
-            <option value="jp">日本語</option>
-            <option value="bi">Bilingual</option>
-          </select>
-        </div>
-        <div className="tweak-row">
-          <label>Accent density</label>
-          <select value={tweaks.accentDensity} onChange={e=>update('accentDensity', e.target.value)}>
-            <option value="minimal">Minimal</option>
-            <option value="standard">Standard</option>
-            <option value="rich">Rich</option>
-          </select>
-        </div>
-        <div className="tweak-row">
-          <label>Gold intensity</label>
-          <select value={tweaks.goldIntensity} onChange={e=>update('goldIntensity', e.target.value)}>
-            <option value="muted">Muted</option>
-            <option value="standard">Standard</option>
-            <option value="bright">Bright</option>
-          </select>
-        </div>
-        <div className="tweak-row">
-          <label>Dot-grid background</label>
-          <div className={'switch '+(tweaks.dotGrid?'on':'')} onClick={()=>update('dotGrid', !tweaks.dotGrid)}/>
-        </div>
-      </div>
+      {/* Tweaks panel */}
+      <TweaksPanel editMode={editMode} tweaks={tweaks} onUpdate={update} />
 
     </div>
   );
