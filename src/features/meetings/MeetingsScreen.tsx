@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- Phase 2 Step 9: feature split. Phase 3 will further decompose. */
 import React from 'react';
 
 import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';

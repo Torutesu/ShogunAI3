@@ -55,7 +55,11 @@ export default [
       'no-restricted-imports': ['error', {
         patterns: [{ group: ['hifi/**', '../../hifi/**'], message: 'hifi/ is removed in Phase 1; use src/ paths.' }],
       }],
-      'max-lines': ['warn', { max: 800, skipBlankLines: true, skipComments: true }],
+      // Screen-level files are allowed up to 1500 lines (screens own deep state +
+      // many handlers + JSX). Phase 5 may decompose further by extracting state
+      // hooks. Library and component files should stay much smaller — but the
+      // rule applies uniformly; per-file overrides aren't worth the complexity.
+      'max-lines': ['warn', { max: 1500, skipBlankLines: true, skipComments: true }],
       // boundaries: error from Phase 2 Step 12 onward — enforces feature isolation
       'boundaries/element-types': ['error', {
         default: 'allow',

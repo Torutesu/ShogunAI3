@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Phase 2 Step 11: monolith carved out from App.tsx. Phase 3 will further decompose. */
+/* eslint-disable max-lines -- App shell: owns 43 useState + many effects + handlers. Phase 5 will split state into custom hooks (useShellLayout, useChatState, useTweaks) to further decompose. */
 // MainApp extracted from App.tsx (Phase 2 Step 11)
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import * as ReactDOM from 'react-dom';

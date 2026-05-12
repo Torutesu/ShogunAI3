@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- Phase 2 Step 8: feature split. Will tighten in Phase 3 with finer component extraction. */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ShogunUserTimezone } from '@/shared/lib/user-timezone';
 import { BriefTelemetry } from '@/shared/lib/brief-telemetry';
