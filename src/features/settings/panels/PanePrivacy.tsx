@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- Phase 2 Step 10: feature split. Phase 3 will further decompose. */
 import React, { useState } from 'react';
 import { Icon } from '@/shared/icons';
 import { Pane } from '../components/Pane';
@@ -10,21 +9,22 @@ import {
   normalizePrivacyFromSettings,
   notifyPrivacySettingsChanged,
   filterPrivacyRows,
-  timeBlockMinutesToHHMM,
-  hhmmToMinutes,
-  newQuietBlock,
 } from '../lib/privacy';
 import {
   PRIVACY_DEFAULT_APPS,
   PRIVACY_DEFAULT_SITES,
   DEFAULT_PAYMENT_DOMAINS,
-  DAY_LABELS,
-  FULL_DAY_NAMES,
   EMPTY_SETTINGS_SECURITY,
   IMPORT_CONFIRM_TOKEN,
 } from '../lib/defaults';
 import { PRODUCT } from '../lib/defaults';
 import { SettingsHydrationContext } from '../types';
+import { PaymentScreensSection } from './PanePrivacy/PaymentScreensSection';
+import { IncognitoSection } from './PanePrivacy/IncognitoSection';
+import { TimeBlocksSection } from './PanePrivacy/TimeBlocksSection';
+import { AppsTab } from './PanePrivacy/AppsTab';
+import { WebsitesTab } from './PanePrivacy/WebsitesTab';
+import { MemoryDataSection } from './PanePrivacy/MemoryDataSection';
 
 export function PanePrivacy() {
   const { run, toast } = useRuntimeActions();
@@ -45,8 +45,6 @@ export function PanePrivacy() {
     DEFAULT_PAYMENT_DOMAINS.map((d) => ({ ...d })),
   );
   const [paymentDraft, setPaymentDraft] = useState('');
-  // NOTE: addPaymentDomain was moved below persistPrivacy to fix TDZ
-  // (Babel-in-browser allowed forward reference; esbuild/strict ESM does not).
   const [incognitoEnabled, setIncognitoEnabled] = useState(true);
   const [incognitoBrowsers, setIncognitoBrowsers] = useState({
     safari: true, chrome: true, arc: true, firefox: true, edge: true,
@@ -58,11 +56,13 @@ export function PanePrivacy() {
   const [appFilter, setAppFilter] = useState('all');
   const [siteFilter, setSiteFilter] = useState('all');
   const [siteDraft, setSiteDraft] = useState('');
-
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
-
   const [bioLock, setBioLock] = useState(!!(secSecurity as any).biometricLockEnabled);
   const [bioStatus, setBioStatus] = useState<any>(null);
+  const [busyExport, setBusyExport] = useState(false);
+  const [busyImport, setBusyImport] = useState(false);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
+  const [importConfirmText, setImportConfirmText] = useState('');
 
   const persistPrivacy = React.useCallback(
     async (nextApps: any[], nextSites: any[], overrides?: any) => {
@@ -105,7 +105,6 @@ export function PanePrivacy() {
     ],
   );
 
-  // Moved here from above persistPrivacy declaration to satisfy TDZ.
   const addPaymentDomain = React.useCallback(async () => {
     let host = (paymentDraft.trim().toLowerCase().replace(/^https?:\/\//i, '').split('/')[0] as string).trim();
     if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/i.test(host)) {
@@ -182,11 +181,6 @@ export function PanePrivacy() {
 
   const filteredApps = filterPrivacyRows(apps, appSearch, appFilter, (r) => `${r.name} ${r.icon || ''}`);
   const filteredSites = filterPrivacyRows(sites, siteSearch, siteFilter, (r) => `${r.host} ${r.label || ''}`);
-
-  const [busyExport, setBusyExport] = useState(false);
-  const [busyImport, setBusyImport] = useState(false);
-  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
-  const [importConfirmText, setImportConfirmText] = useState('');
 
   const handleExport = React.useCallback(async () => {
     setBusyExport(true);
@@ -467,253 +461,37 @@ export function PanePrivacy() {
           アプリ・サイトの除外はローカルに保存されます。macOS ではキャプチャ取り込みが、除外アプリが最前面のとき、または AX テキスト／URL が除外サイトに該当するときにスキップされます。
         </span>
       </div>
-      <div className="s-card" style={{ marginBottom: 14 }}>
-        <Row
-          title="Payment screens"
-          desc="Skip captures when the screen looks like a payment page (URL or card-shaped digits next to a CVV label)."
-        >
-          <Toggle
-            on={paymentEnabled}
-            onClick={async () => {
-              const next = !paymentEnabled;
-              setPaymentEnabled(next);
-              await persistPrivacy(apps, sites, { paymentEnabled: next });
-            }}
-          />
-        </Row>
-        <Row
-          title="Also detect card-number patterns"
-          desc="Heuristic: 13–19 digit runs co-occurring with a CVV/CVC label. Disable if you see false positives."
-          last
-        >
-          <Toggle
-            on={paymentDetectCard}
-            onClick={async () => {
-              const next = !paymentDetectCard;
-              setPaymentDetectCard(next);
-              await persistPrivacy(apps, sites, { paymentDetectCard: next });
-            }}
-          />
-        </Row>
-        <div style={{ padding: '0 16px 14px' }}>
-          <div className="s-field-hint" style={{ marginBottom: 8, fontSize: 11 }}>
-            Payment domains (suffix-matched, e.g. <code>stripe.com</code> also covers <code>checkout.stripe.com</code>):
-          </div>
-          {paymentDomains.length === 0 ? (
-            <div className="s-field-hint" style={{ padding: 8 }}>No domains.</div>
-          ) : (
-            <div className="s-card" style={{ marginBottom: 8 }}>
-              {paymentDomains.map((d, i, arr) => (
-                <div key={d.id} className={'s-row' + (i === arr.length - 1 ? ' last' : '')}>
-                  <div style={{ flex: 1, fontSize: 13 }}>
-                    <div style={{ fontWeight: 500 }}>{d.host}</div>
-                    {d.label && d.label !== d.host ? (
-                      <div className="s-field-hint" style={{ fontSize: 11 }}>{d.label}</div>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    style={{ marginRight: 8 }}
-                    title="Remove from list"
-                    onClick={async () => {
-                      const next = paymentDomains.filter((x) => x.id !== d.id);
-                      setPaymentDomains(next);
-                      await persistPrivacy(apps, sites, { paymentDomains: next });
-                    }}
-                  >
-                    ×
-                  </button>
-                  <Toggle
-                    on={d.enabled}
-                    onClick={async () => {
-                      const next = paymentDomains.map((x) =>
-                        x.id === d.id ? { ...x, enabled: !x.enabled } : x,
-                      );
-                      setPaymentDomains(next);
-                      await persistPrivacy(apps, sites, { paymentDomains: next });
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="row" style={{ gap: 8 }}>
-            <input
-              className="s-input"
-              style={{ flex: 1 }}
-              placeholder="e.g. checkout.example.com"
-              value={paymentDraft}
-              onChange={(e) => setPaymentDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void addPaymentDomain();
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn-sm btn-secondary"
-              onClick={() => void addPaymentDomain()}
-            >
-              Add domain
-            </button>
-          </div>
-        </div>
-      </div>
-      <div className="s-card" style={{ marginBottom: 14 }}>
-        <Row
-          title="Private browsing"
-          desc="Skip captures when a supported browser's window is in incognito / private mode (detected from the window title)."
-        >
-          <Toggle
-            on={incognitoEnabled}
-            onClick={async () => {
-              const next = !incognitoEnabled;
-              setIncognitoEnabled(next);
-              await persistPrivacy(apps, sites, { incognitoEnabled: next });
-            }}
-          />
-        </Row>
-        {[
-          { key: 'safari', label: 'Safari (and Technology Preview)' },
-          { key: 'chrome', label: 'Chrome / Chromium / Brave / Opera / Vivaldi' },
-          { key: 'arc', label: 'Arc' },
-          { key: 'firefox', label: 'Firefox (and Developer / Nightly)' },
-          { key: 'edge', label: 'Microsoft Edge' },
-        ].map((row, i, arr) => (
-          <Row
-            key={row.key}
-            title={row.label}
-            desc={`Match incognito titles for ${row.label}.`}
-            last={i === arr.length - 1}
-          >
-            <Toggle
-              on={!!(incognitoBrowsers as any)[row.key]}
-              onClick={async () => {
-                const next = { ...incognitoBrowsers, [row.key]: !(incognitoBrowsers as any)[row.key] };
-                setIncognitoBrowsers(next);
-                await persistPrivacy(apps, sites, { incognitoBrowsers: next });
-              }}
-            />
-          </Row>
-        ))}
-      </div>
-      <div className="s-card" style={{ marginBottom: 14, padding: '12px 16px 14px' }}>
-        <div className="row" style={{ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>Quiet hours</div>
-          <button
-            type="button"
-            className="btn btn-sm btn-secondary"
-            onClick={async () => {
-              const next = timeBlocks.concat([newQuietBlock()]);
-              setTimeBlocks(next);
-              await persistPrivacy(apps, sites, { timeBlocks: next });
-            }}
-          >
-            + Add quiet block
-          </button>
-        </div>
-        <div className="s-field-hint" style={{ marginBottom: 10, fontSize: 11 }}>
-          Captures are skipped during these windows. Cross-midnight ranges (e.g. 22:00–07:00) are supported and applied based on the selected days.
-        </div>
-        {timeBlocks.length === 0 ? (
-          <div className="s-field-hint" style={{ padding: 8 }}>No quiet blocks configured.</div>
-        ) : (
-          <div className="s-card">
-            {timeBlocks.map((tb, i, arr) => (
-              <div key={tb.id} className={'s-row' + (i === arr.length - 1 ? ' last' : '')} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="s-input"
-                    style={{ flex: 1 }}
-                    placeholder="Label (optional)"
-                    value={tb.label}
-                    onChange={(e) => {
-                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, label: e.target.value } : x);
-                      setTimeBlocks(next);
-                      pendingTimeBlocksSaveRef.current = next;
-                    }}
-                    onBlur={async () => {
-                      const next = pendingTimeBlocksSaveRef.current ?? timeBlocks;
-                      pendingTimeBlocksSaveRef.current = null;
-                      await persistPrivacy(apps, sites, { timeBlocks: next });
-                    }}
-                  />
-                  <input
-                    type="time"
-                    className="s-input"
-                    style={{ width: 110 }}
-                    value={timeBlockMinutesToHHMM(tb.startMinute)}
-                    onChange={async (e) => {
-                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, startMinute: hhmmToMinutes(e.target.value) } : x);
-                      setTimeBlocks(next);
-                      await persistPrivacy(apps, sites, { timeBlocks: next });
-                    }}
-                  />
-                  <span style={{ color: 'var(--text-dim)' }}>–</span>
-                  <input
-                    type="time"
-                    className="s-input"
-                    style={{ width: 110 }}
-                    value={timeBlockMinutesToHHMM(tb.endMinute)}
-                    onChange={async (e) => {
-                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, endMinute: hhmmToMinutes(e.target.value) } : x);
-                      setTimeBlocks(next);
-                      await persistPrivacy(apps, sites, { timeBlocks: next });
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    title="Remove quiet block"
-                    onClick={async () => {
-                      const next = timeBlocks.filter((x) => x.id !== tb.id);
-                      setTimeBlocks(next);
-                      await persistPrivacy(apps, sites, { timeBlocks: next });
-                    }}
-                  >
-                    ×
-                  </button>
-                  <Toggle
-                    on={tb.enabled}
-                    onClick={async () => {
-                      const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, enabled: !x.enabled } : x);
-                      setTimeBlocks(next);
-                      await persistPrivacy(apps, sites, { timeBlocks: next });
-                    }}
-                  />
-                </div>
-                <div className="row" style={{ gap: 4, marginTop: 8 }}>
-                  {DAY_LABELS.map((lbl, dayIdx) => {
-                    const bit = 1 << dayIdx;
-                    const on = (tb.days & bit) !== 0;
-                    return (
-                      <button
-                        key={dayIdx}
-                        type="button"
-                        className="btn btn-sm"
-                        aria-label={FULL_DAY_NAMES[dayIdx]}
-                        aria-pressed={on}
-                        style={{ minWidth: 28, height: 28, padding: 0, background: on ? 'var(--accent)' : 'var(--surface-2)', color: on ? 'var(--on-accent)' : 'inherit' }}
-                        onClick={async () => {
-                          const nextDays = on ? tb.days & ~bit : tb.days | bit;
-                          const next = timeBlocks.map((x) => x.id === tb.id ? { ...x, days: nextDays & 0x7F } : x);
-                          setTimeBlocks(next);
-                          await persistPrivacy(apps, sites, { timeBlocks: next });
-                        }}
-                      >
-                        {lbl}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <PaymentScreensSection
+        apps={apps}
+        sites={sites}
+        paymentEnabled={paymentEnabled}
+        setPaymentEnabled={setPaymentEnabled}
+        paymentDetectCard={paymentDetectCard}
+        setPaymentDetectCard={setPaymentDetectCard}
+        paymentDomains={paymentDomains}
+        setPaymentDomains={setPaymentDomains}
+        paymentDraft={paymentDraft}
+        setPaymentDraft={setPaymentDraft}
+        persistPrivacy={persistPrivacy}
+        addPaymentDomain={addPaymentDomain}
+      />
+      <IncognitoSection
+        apps={apps}
+        sites={sites}
+        incognitoEnabled={incognitoEnabled}
+        setIncognitoEnabled={setIncognitoEnabled}
+        incognitoBrowsers={incognitoBrowsers}
+        setIncognitoBrowsers={setIncognitoBrowsers}
+        persistPrivacy={persistPrivacy}
+      />
+      <TimeBlocksSection
+        apps={apps}
+        sites={sites}
+        timeBlocks={timeBlocks}
+        setTimeBlocks={setTimeBlocks}
+        pendingTimeBlocksSaveRef={pendingTimeBlocksSaveRef}
+        persistPrivacy={persistPrivacy}
+      />
       <div className="row" style={{ gap: 4, background: 'var(--surface)', border: '1px solid var(--border)', padding: 3, borderRadius: 'var(--radius-md)', width: 'fit-content', marginBottom: 14 }}>
         <button
           type="button"
@@ -751,207 +529,32 @@ export function PanePrivacy() {
         </select>
       </div>
       {tab === 'apps' ? (
-        <div className="s-card">
-          {filteredApps.length === 0 ? (
-            <div className="s-field-hint" style={{ padding: 16 }}>No applications match this search.</div>
-          ) : (
-            filteredApps.map((a, i, arr) => (
-              <div key={a.id} className={'s-row' + (i === arr.length - 1 ? ' last' : '')}>
-                <div style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, marginRight: 12 }}>{a.icon}</div>
-                <div style={{ flex: 1, fontSize: 13 }}>
-                  {a.name}
-                  {a.path ? (
-                    <div className="s-field-hint" style={{ fontSize: 10, marginTop: 2 }}>{a.path}</div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-ghost"
-                  style={{ marginRight: 8 }}
-                  title="Remove from list"
-                  onClick={() => void removeAppRow(a.id)}
-                >
-                  ×
-                </button>
-                <Toggle
-                  on={a.enabled}
-                  onClick={() => void toggleApp(a.id, !a.enabled)}
-                />
-              </div>
-            ))
-          )}
-        </div>
+        <AppsTab
+          filteredApps={filteredApps}
+          onPickApp={onPickApp}
+          removeAppRow={removeAppRow}
+          toggleApp={toggleApp}
+        />
       ) : (
-        <>
-          <div className="s-card">
-            {filteredSites.length === 0 ? (
-              <div className="s-field-hint" style={{ padding: 16 }}>No sites match this search.</div>
-            ) : (
-              filteredSites.map((s, i, arr) => (
-                <div key={s.id} className={'s-row' + (i === arr.length - 1 ? ' last' : '')}>
-                  <div style={{ flex: 1, fontSize: 13 }}>
-                    <div style={{ fontWeight: 500 }}>{s.host}</div>
-                    {s.label && s.label !== s.host ? (
-                      <div className="s-field-hint" style={{ fontSize: 11 }}>{s.label}</div>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-ghost"
-                    style={{ marginRight: 8 }}
-                    title="Remove from list"
-                    onClick={() => void removeSiteRow(s.id)}
-                  >
-                    ×
-                  </button>
-                  <Toggle on={s.enabled} onClick={() => void toggleSite(s.id, !s.enabled)} />
-                </div>
-              ))
-            )}
-          </div>
-          <div className="row" style={{ gap: 8, marginTop: 12 }}>
-            <input
-              className="s-input"
-              style={{ flex: 1 }}
-              placeholder="e.g. bank.example.com"
-              value={siteDraft}
-              onChange={(e) => setSiteDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void addSiteRow();
-                }
-              }}
-            />
-            <button type="button" className="btn btn-sm btn-secondary" onClick={() => void addSiteRow()}>
-              Add site
-            </button>
-          </div>
-        </>
+        <WebsitesTab
+          filteredSites={filteredSites}
+          siteDraft={siteDraft}
+          setSiteDraft={setSiteDraft}
+          addSiteRow={addSiteRow}
+          removeSiteRow={removeSiteRow}
+          toggleSite={toggleSite}
+        />
       )}
-      {tab === 'apps' ? (
-        <div className="s-field-hint" style={{ marginTop: 14, textAlign: 'center' }}>
-          Can&apos;t find your app?{' '}
-          <button
-            type="button"
-            className="s-link"
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              font: 'inherit',
-              cursor: 'pointer',
-              color: 'inherit',
-            }}
-            onClick={() => void onPickApp()}
-          >
-            Select .app manually…
-          </button>
-          <span className="jp" style={{ display: 'block', fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>
-            macOS アプリではフォルダから .app を選べます（ブラウザではキャンセル扱い）。
-          </span>
-        </div>
-      ) : null}
-
-      {/* Memory data export / import */}
-      <div className="s-card" style={{ marginTop: 14 }}>
-        <div className="row" style={{ alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>Memory data</div>
-        </div>
-        <div className="s-field-hint" style={{ marginBottom: 10, fontSize: 12 }}>
-          Export your memories to a file you control, or import a previously-exported file.
-          <span className="jp" style={{ display: 'block', fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
-            Memory データをファイルにエクスポート、または以前のエクスポートをインポートできます。
-          </span>
-        </div>
-        <div className="row" style={{ gap: 8 }}>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleExport}
-            disabled={busyExport}
-          >
-            {busyExport ? 'Exporting…' : 'Export memory…'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => { setImportConfirmOpen(true); setImportConfirmText(''); }}
-            disabled={busyImport}
-          >
-            {busyImport ? 'Importing…' : 'Import memory…'}
-          </button>
-        </div>
-      </div>
-
-      {/* Import REPLACE confirmation overlay */}
-      {importConfirmOpen ? (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 1200,
-            background: 'rgba(10,9,8,0.65)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) { setImportConfirmOpen(false); setImportConfirmText(''); } }}
-        >
-          <div
-            style={{
-              background: 'var(--surface)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-md)', padding: 24, maxWidth: 400, width: '90%',
-              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>Import memory — confirm</div>
-            <div className="s-field-hint" style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.55 }}>
-              This will <strong>delete all existing memories</strong> and replace them with the contents of the selected file.
-              This action cannot be undone.
-            </div>
-            <div style={{ fontSize: 12, marginBottom: 8 }}>
-              Type <code>{IMPORT_CONFIRM_TOKEN}</code> to confirm:
-            </div>
-            <input
-              className="s-input"
-              style={{ width: '100%', marginBottom: 14, boxSizing: 'border-box' }}
-              placeholder={IMPORT_CONFIRM_TOKEN}
-              value={importConfirmText}
-              onChange={(e) => setImportConfirmText(e.target.value)}
-              autoFocus
-              autoComplete="off"
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              aria-label={`Type ${IMPORT_CONFIRM_TOKEN} to confirm`}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && importConfirmText === IMPORT_CONFIRM_TOKEN) {
-                  void handleImportConfirm();
-                }
-                if (e.key === 'Escape') {
-                  setImportConfirmOpen(false);
-                  setImportConfirmText('');
-                }
-              }}
-            />
-            <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => { setImportConfirmOpen(false); setImportConfirmText(''); }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger-ghost"
-                disabled={importConfirmText !== IMPORT_CONFIRM_TOKEN}
-                onClick={() => void handleImportConfirm()}
-              >
-                Replace memories
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <MemoryDataSection
+        busyExport={busyExport}
+        busyImport={busyImport}
+        importConfirmOpen={importConfirmOpen}
+        importConfirmText={importConfirmText}
+        setImportConfirmOpen={setImportConfirmOpen}
+        setImportConfirmText={setImportConfirmText}
+        handleExport={handleExport}
+        handleImportConfirm={handleImportConfirm}
+      />
     </Pane>
   );
 }
