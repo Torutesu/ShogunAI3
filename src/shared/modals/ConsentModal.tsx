@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 
 export function ConsentModal(props: any) {
   const initialLang = props.initialLang === 'ja' ? 'ja' : 'en';
   const termsVersion = String(props.termsVersion || '');
   const privacyVersion = String(props.privacyVersion || '');
   const onAccept = props.onAccept || function noop() {};
-  const onDecline = props.onDecline || function noop() {};
+  const onDecline = useMemo(() => props.onDecline || function noop() {}, [props.onDecline]);
   const loadDocs = props.loadDocs; // (lang) => Promise<{terms, privacy}>
   const renderMarkdown = props.renderMarkdown; // (text) => htmlString
 

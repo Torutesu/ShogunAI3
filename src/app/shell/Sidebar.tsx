@@ -110,7 +110,6 @@ export function Sidebar({
                         aria-label="Toggle Favorite"
                       >
                         <span className="chat-subgroup-toggle" aria-hidden="true">
-                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                           {React.createElement(Icon as any, { name: "chevronDown", size: 12, style: { transform: chatGroupsOpen.favorite ? 'rotate(0deg)' : 'rotate(-90deg)' } })}
                         </span>
                         <span className="en-only">Favorite</span>
@@ -177,7 +176,6 @@ export function Sidebar({
                         aria-label="Toggle Chats"
                       >
                         <span className="chat-subgroup-toggle" aria-hidden="true">
-                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                           {React.createElement(Icon as any, { name: "chevronDown", size: 12, style: { transform: chatGroupsOpen.chats ? 'rotate(0deg)' : 'rotate(-90deg)' } })}
                         </span>
                         <span className="en-only">Chats</span>

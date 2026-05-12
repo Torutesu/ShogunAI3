@@ -137,9 +137,10 @@ export function PanePrivacy() {
     setTimeBlocks(tb);
   }, [privacyKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const bioLockEnabled = !!(secSecurity as any).biometricLockEnabled;
   React.useEffect(() => {
-    setBioLock(!!(secSecurity as any).biometricLockEnabled);
-  }, [(secSecurity as any).biometricLockEnabled]);
+    setBioLock(bioLockEnabled);
+  }, [secSecurity, bioLockEnabled]);
 
   React.useEffect(() => {
     let cancelled = false;

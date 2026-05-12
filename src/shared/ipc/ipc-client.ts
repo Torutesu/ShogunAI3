@@ -1064,7 +1064,6 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
   // dispatch a custom DOM event so any open Settings UI can re-read the toggle.
   // In mock / browser mode __TAURI_INTERNALS__ is absent so this is a no-op.
   if (global.__TAURI_INTERNALS__) {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore — @tauri-apps/api is only present in the Tauri desktop build
     import("@tauri-apps/api/event").then(function (mod: any) {
       mod.listen("shogun-capture-state-changed", function () {

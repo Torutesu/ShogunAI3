@@ -460,7 +460,7 @@ export function MemoryScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [timelineSpan, selectedDate, summaryEnabled, batchSummarizing]);
+  }, [timelineSpan, selectedDate, timelineCursor, summaryEnabled, batchSummarizing]);
   useEffect(() => {
     if (!summaryEnabled || timelineSpan !== 'year') {
       setYearRollup(null);
@@ -486,7 +486,7 @@ export function MemoryScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [timelineSpan, selectedDate, summaryEnabled, batchSummarizing]);
+  }, [timelineSpan, selectedDate, timelineCursor, summaryEnabled, batchSummarizing]);
   useEffect(() => {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
@@ -537,11 +537,12 @@ export function MemoryScreen() {
     });
     return { bins: b, maxBin: Math.max(...b, 1) };
   }, [events]);
-  const scrubbed = timelineLoading
+  const scrubbed = useMemo(() => timelineLoading
     ? { t: '--', h: 12, src: 'note', title: '', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null }
     : events.length
       ? events[Math.min(scrubIdx, events.length - 1)]
-      : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null };
+      : { t: '--', h: 12, src: 'note', title: 'No memories', snippet: '', memoryId: null, provenance: null, sourceRaw: '', entityId: null },
+  [timelineLoading, events, scrubIdx]);
   const srcIcon = (s: any) => s==='chat'?'chat':s==='meet'?'calendar':s==='note'?'note':s==='mail'?'mail':s==='agent'?'bot':s==='code'?'terminal':'file';
   const srcLabel = (s: any) => ({chat:'Conversation',meet:'Meeting',note:'Note',mail:'Email',agent:'Agent run',code:'Code'} as any)[s]||'Event';
 
@@ -613,7 +614,7 @@ export function MemoryScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [scrubbed?.memoryId, scrubbed?.sourceRaw, scrubbed?.provenance, summaryEnabled, summaryByMemId]);
+  }, [scrubbed, summaryEnabled, summaryByMemId]);
 
   // memoryHeadDate removed — was unused in JSX (Phase 2 split).
 

@@ -283,6 +283,7 @@ export function ChatScreen() {
     if (!composerText.trim() || loading) return;
     pendingAutoSendRef.current = false;
     void sendChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sendChat is intentionally captured at call time; adding it would cause a loop
   }, [composerText, loading]);
 
   return (
