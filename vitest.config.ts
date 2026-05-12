@@ -7,6 +7,7 @@ export default defineConfig({
     // tests/e2e/ are excluded — they're driven by `npx playwright test`.
     include: ['src/**/*.test.{ts,tsx}'],
     environment: 'jsdom',
+    setupFiles: ['./vitest.setup.ts'],
   },
   resolve: {
     alias: {
