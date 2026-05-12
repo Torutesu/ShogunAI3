@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- Phase 2 Step 10: feature split. Phase 3 will further decompose. */
 import React, { useState } from 'react';
 import { Icon, IntegrationLogo } from '@/shared/icons';
 import { Pane } from '../components/Pane';
@@ -6,6 +5,8 @@ import { Row } from '../components/Row';
 import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
 import { useRuntimeActions } from '../lib/hooks';
 import { SettingsHydrationContext } from '../types';
+import { AuditLogSection } from './PaneIntegrations/AuditLogSection';
+import { OAuthNotConfiguredModal } from './PaneIntegrations/OAuthNotConfiguredModal';
 
 export function PaneIntegrations() {
   const { run } = useRuntimeActions();
@@ -218,68 +219,19 @@ export function PaneIntegrations() {
           <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: 'apple_calendar' }, { silentError: true })}>Connect</button>
         </Row>
       </div>
-      <div className="s-card" style={{ marginBottom: 10 }}>
-        <div className="row" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>Integration Security Audit</div>
-          <span className="spacer" />
-          <button
-            type="button"
-            className="btn btn-xs btn-ghost"
-            style={{ marginRight: 8, padding: '2px 8px' }}
-            onClick={exportAuditJson}
-          >
-            Export audit (JSON)
-          </button>
-          <select
-            className="s-select"
-            style={{ minWidth: 120, marginRight: 8 }}
-            value={auditFilter}
-            onChange={(e) => setAuditFilter(String(e.target.value || 'all'))}
-          >
-            <option value="all">全件</option>
-            <option value="success">成功のみ</option>
-            <option value="rejected">拒否のみ</option>
-          </select>
-          <select
-            className="s-select"
-            style={{ minWidth: 140, marginRight: 8 }}
-            value={auditProviderFilter}
-            onChange={(e) => setAuditProviderFilter(String(e.target.value || 'all'))}
-          >
-            {auditProviderOptions.map((p) => (
-              <option key={p} value={p}>
-                {p === 'all' ? 'プロバイダ: 全て' : `プロバイダ: ${p}`}
-              </option>
-            ))}
-          </select>
-          <span className="s-field-hint" style={{ margin: 0 }}>Last 20 events</span>
-        </div>
-        {filteredAuditRows.length === 0 ? (
-          <div className="s-field-hint" style={{ padding: '12px 16px' }}>
-            No audit events yet.
-          </div>
-        ) : (
-          <div style={{ maxHeight: 220, overflow: 'auto' }}>
-            {filteredAuditRows.map((r, i) => (
-              <div
-                key={`${r.ts || 'na'}-${r.event || 'evt'}-${i}`}
-                className={'s-row' + (i === filteredAuditRows.length - 1 ? ' last' : '')}
-                style={{ fontSize: 12 }}
-              >
-                <div style={{ width: 130, color: 'var(--text-dim)' }}>{fmtAuditTime(r.ts)}</div>
-                <div style={{ width: 160 }} title={String(r.event || '')}>{auditEventLabel(r.event)}</div>
-                <div style={{ width: 120, color: 'var(--text-dim)' }}>{r.provider || 'unknown'}</div>
-                <div style={{ width: 90, color: 'var(--text-dim)' }} title={String(r.via || '')}>
-                  {auditViaLabel(r.via)}
-                </div>
-                <div style={{ flex: 1, color: 'var(--text-dim)' }} title={String(r.reason || '')}>
-                  {auditReasonLabel(r.reason)}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <AuditLogSection
+        filteredAuditRows={filteredAuditRows}
+        auditFilter={auditFilter}
+        setAuditFilter={setAuditFilter}
+        auditProviderFilter={auditProviderFilter}
+        setAuditProviderFilter={setAuditProviderFilter}
+        auditProviderOptions={auditProviderOptions}
+        exportAuditJson={exportAuditJson}
+        fmtAuditTime={fmtAuditTime}
+        auditEventLabel={auditEventLabel}
+        auditReasonLabel={auditReasonLabel}
+        auditViaLabel={auditViaLabel}
+      />
       <div className="s-card" style={{ marginBottom: 10 }}>
         <Row title={<div className="row" style={{ gap: 10 }}><IntegrationLogo slug="apple_reminders" size={30} title="Apple Reminders" /><div><div style={{ fontSize: 13, fontWeight: 500 }}>Apple Reminders <span className="label label-gold" style={{ marginLeft: 4 }}>Beta</span></div><div className="s-field-hint">See your reminders and tasks in Apple Reminders</div></div></div>} last>
           <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: 'apple_reminders' }, { silentError: true })}>Connect</button>
@@ -431,64 +383,7 @@ export function PaneIntegrations() {
         </div>
       ))}
       {oauthNotConfigured && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-          }}
-          onClick={() => setOauthNotConfigured(false)}
-        >
-          <div
-            style={{
-              background: 'var(--surface)', border: '1px solid var(--border)',
-              borderRadius: 8, padding: 24, maxWidth: 520, color: 'var(--text)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ margin: '0 0 12px', fontSize: 16 }}>
-              <span className="en-only">OAuth credentials not configured</span>
-              <span className="jp">OAuth 認証情報が未設定</span>
-            </h3>
-            <p style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text-mute)' }}>
-              <span className="en-only">
-                The file <code>scripts/.env.google-oauth</code> is missing or empty. To enable in-app OAuth:
-              </span>
-              <span className="jp">
-                <code>scripts/.env.google-oauth</code> が見つかりません。アプリ内 OAuth を有効にするには:
-              </span>
-            </p>
-            <pre style={{
-              background: 'var(--surface-mute)', padding: 12, borderRadius: 4,
-              fontSize: 12, fontFamily: 'var(--font-mono)', overflowX: 'auto',
-            }}>
-{`cp scripts/.env.google-oauth.example scripts/.env.google-oauth
-# Then fill CLIENT_ID and CLIENT_SECRET from Google Cloud Console.`}
-            </pre>
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn btn-sm btn-secondary"
-                onClick={() => {
-                  navigator.clipboard?.writeText('cp scripts/.env.google-oauth.example scripts/.env.google-oauth');
-                  (window as any).SHOGUN_RUNTIME?.pushToast?.('Command copied', 'success');
-                }}
-              >
-                <span className="en-only">Copy command</span>
-                <span className="jp">コマンドをコピー</span>
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                onClick={() => setOauthNotConfigured(false)}
-              >
-                <span className="en-only">Close</span>
-                <span className="jp">閉じる</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <OAuthNotConfiguredModal onClose={() => setOauthNotConfigured(false)} />
       )}
     </Pane>
   );
