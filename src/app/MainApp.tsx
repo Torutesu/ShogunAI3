@@ -45,6 +45,7 @@ import { ChatRenameModal } from './shell/portals/ChatRenameModal';
 import { ChatMenu } from './shell/portals/ChatMenu';
 import { ChatWorkModal } from './shell/portals/ChatWorkModal';
 import { ContextPanel } from './shell/portals/ContextPanel';
+import { HistoricalImportModal } from './shell/portals/HistoricalImportModal';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -2005,191 +2006,73 @@ export function MainApp(): React.ReactElement {
         }}
       />
 
-      {historicalImport && ReactDOM.createPortal(
-        <div
-          style={{
-            position:'fixed', inset:0, zIndex:1090,
-            background:'color-mix(in srgb, var(--bg) 78%, transparent)',
-            backdropFilter:'blur(4px)',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            padding:20,
-          }}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget && !historicalImportBusy) setHistoricalImport(null);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            style={{
-              width:'min(460px, 100%)',
-              background:'var(--surface)',
-              border:'1px solid var(--border-hi)',
-              borderRadius:16,
-              boxShadow:'0 30px 60px -16px rgba(0,0,0,0.6)',
-              padding:22,
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div style={{fontSize:16, fontWeight:500, marginBottom:6}}>
-              {historicalImport.provider === 'gmail'
-                ? 'Import past Gmail'
-                : historicalImport.provider === 'slack'
-                  ? 'Import past Slack messages'
-                  : historicalImport.provider === 'notion'
-                    ? 'Import past Notion pages'
-                    : historicalImport.provider === 'github'
-                      ? 'Import past GitHub activity'
-                      : historicalImport.provider === 'linear'
-                        ? 'Import past Linear issues'
-                        : historicalImport.provider === 'google_drive'
-                          ? 'Import past Drive files'
-                          : historicalImport.provider === 'zoom'
-                            ? 'Import past Zoom recordings'
-                            : 'Import past Calendar events'}
-            </div>
-            <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.5, marginBottom:16}}>
-              How far back should SHOGUN pull history into Memory? You can change this later in Settings. Up to 1 year.
-            </div>
-
-            <div style={{display:'flex', flexDirection:'column', gap:8}}>
-              {[
-                { d: 7,   label: 'Past 7 days' },
-                { d: 30,  label: 'Past 30 days' },
-                { d: 90,  label: 'Past 3 months' },
-                { d: 180, label: 'Past 6 months' },
-                { d: 365, label: 'Past 1 year (max)' },
-              ].map((opt) => {
-                const selected = historicalImport.days === opt.d;
-                return (
-                  <button
-                    key={opt.d}
-                    type="button"
-                    disabled={historicalImportBusy}
-                    onClick={() => setHistoricalImport((prev: any) => (prev ? { ...prev, days: opt.d } : prev))}
-                    style={{
-                      display:'flex', alignItems:'center', gap:10,
-                      padding:'10px 12px',
-                      borderRadius:10,
-                      border: selected
-                        ? '1px solid color-mix(in srgb, var(--gold) 65%, var(--border))'
-                        : '1px solid var(--border)',
-                      background: selected
-                        ? 'color-mix(in srgb, var(--gold) 8%, var(--surface))'
-                        : 'var(--surface)',
-                      color:'var(--text)',
-                      fontSize:13,
-                      cursor: historicalImportBusy ? 'default' : 'pointer',
-                      fontFamily:'inherit',
-                      textAlign:'left',
-                    }}
-                  >
-                    <span style={{
-                      width:14, height:14, borderRadius:'50%',
-                      border:'1px solid ' + (selected ? 'var(--gold)' : 'var(--border-hi)'),
-                      background: selected ? 'var(--gold)' : 'transparent',
-                      flexShrink:0,
-                    }}/>
-                    <span>{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="row" style={{marginTop:18, gap:8, justifyContent:'flex-end'}}>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                disabled={historicalImportBusy}
-                onClick={async () => {
-                  const provider = historicalImport.provider;
-                  setHistoricalImportBusy(true);
-                  await executeAction(
-                    'settings.save',
-                    { section: provider, historicalSyncDays: 0 },
-                    { silentError: true },
-                  );
-                  setHistoricalImportBusy(false);
-                  setHistoricalImport(null);
-                }}
-              >
-                Skip
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                disabled={historicalImportBusy}
-                onClick={async () => {
-                  const { provider, days } = historicalImport;
-                  const providerLabels = {
-                    gmail: 'Gmail',
-                    google_calendar: 'Calendar',
-                    google_drive: 'Drive',
-                    slack: 'Slack',
-                    notion: 'Notion',
-                    github: 'GitHub',
-                    linear: 'Linear',
-                    zoom: 'Zoom',
-                  };
-                  const actionKeys = {
-                    gmail: 'gmail.sync',
-                    google_calendar: 'calendar.sync',
-                    google_drive: 'drive.sync',
-                    slack: 'slack.sync',
-                    notion: 'notion.sync',
-                    github: 'github.sync',
-                    linear: 'linear.sync',
-                    zoom: 'zoom.sync',
-                  };
-                  const label = (providerLabels as any)[provider] || provider;
-                  const actionKey = (actionKeys as any)[provider] || `${provider}.sync`;
-                  setHistoricalImportBusy(true);
-                  pushToast(`${label}: importing past ${days} days…`, 'info');
-                  const syncPayload = provider === 'google_calendar'
-                    ? { calendarId: 'primary', days }
-                    : { days };
-                  const res = await executeAction(actionKey, syncPayload, { silentError: true });
-                  if (res && res.ok) {
-                    const n = (res.data && res.data.ingested) || 0;
-                    const skipped = (res.data && res.data.skipped) || 0;
-                    const msgSuffix = skipped > 0
-                      ? ` (${skipped} already in memory)`
-                      : '';
-                    pushToast(
-                      `${label}: imported ${n} item(s)${msgSuffix}`,
-                      'success',
-                    );
-                  } else {
-                    const msg = (res && res.error && res.error.message) || 'Import failed';
-                    pushToast(msg, 'error');
-                  }
-                  await executeAction(
-                    'settings.save',
-                    { section: provider, historicalSyncDays: days },
-                    { silentError: true },
-                  );
-                  setHistoricalImportBusy(false);
-                  setHistoricalImport(null);
-                  setHistoricalImportProgress(null);
-                  window.dispatchEvent(new CustomEvent('shogun-memory-index-changed'));
-                }}
-              >
-                {historicalImportBusy ? (
-                  historicalImportProgress &&
-                  historicalImportProgress.provider === historicalImport.provider
-                    ? (
-                        historicalImportProgress.total != null && historicalImportProgress.total > 0
-                          ? `Importing… ${historicalImportProgress.current}/${historicalImportProgress.total}`
-                          : `Importing… ${historicalImportProgress.current}`
-                      )
-                    : 'Importing…'
-                ) : 'Import'}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <HistoricalImportModal
+        historicalImport={historicalImport}
+        historicalImportBusy={historicalImportBusy}
+        historicalImportProgress={historicalImportProgress}
+        onClose={() => setHistoricalImport(null)}
+        onDaysChange={(days) => setHistoricalImport((prev: any) => (prev ? { ...prev, days } : prev))}
+        onSkip={async () => {
+          const provider = historicalImport!.provider;
+          setHistoricalImportBusy(true);
+          await executeAction(
+            'settings.save',
+            { section: provider, historicalSyncDays: 0 },
+            { silentError: true },
+          );
+          setHistoricalImportBusy(false);
+          setHistoricalImport(null);
+        }}
+        onImport={async () => {
+          const { provider, days } = historicalImport!;
+          const providerLabels: Record<string, string> = {
+            gmail: 'Gmail',
+            google_calendar: 'Calendar',
+            google_drive: 'Drive',
+            slack: 'Slack',
+            notion: 'Notion',
+            github: 'GitHub',
+            linear: 'Linear',
+            zoom: 'Zoom',
+          };
+          const actionKeys: Record<string, string> = {
+            gmail: 'gmail.sync',
+            google_calendar: 'calendar.sync',
+            google_drive: 'drive.sync',
+            slack: 'slack.sync',
+            notion: 'notion.sync',
+            github: 'github.sync',
+            linear: 'linear.sync',
+            zoom: 'zoom.sync',
+          };
+          const label = providerLabels[provider] || provider;
+          const actionKey = actionKeys[provider] || `${provider}.sync`;
+          setHistoricalImportBusy(true);
+          pushToast(`${label}: importing past ${days} days…`, 'info');
+          const syncPayload = provider === 'google_calendar'
+            ? { calendarId: 'primary', days }
+            : { days };
+          const res = await executeAction(actionKey, syncPayload, { silentError: true });
+          if (res && res.ok) {
+            const n = (res.data && res.data.ingested) || 0;
+            const skipped = (res.data && res.data.skipped) || 0;
+            const msgSuffix = skipped > 0 ? ` (${skipped} already in memory)` : '';
+            pushToast(`${label}: imported ${n} item(s)${msgSuffix}`, 'success');
+          } else {
+            const msg = (res && res.error && res.error.message) || 'Import failed';
+            pushToast(msg, 'error');
+          }
+          await executeAction(
+            'settings.save',
+            { section: provider, historicalSyncDays: days },
+            { silentError: true },
+          );
+          setHistoricalImportBusy(false);
+          setHistoricalImport(null);
+          setHistoricalImportProgress(null);
+          window.dispatchEvent(new CustomEvent('shogun-memory-index-changed'));
+        }}
+      />
 
       {pasteTokenModal && ReactDOM.createPortal(
         <div
