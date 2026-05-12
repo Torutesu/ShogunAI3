@@ -12,6 +12,11 @@ import '@/shared/tokens/app.css';
 // directly by the files that need them.
 import '@/shared/lib/legal-versions';
 import '@/shared/ipc/runtime-actions';
+// Phase 2.1.4 (cloud-mirror): memory-search.js installs window.ShogunMemorySearch
+// for action-registry.ts's "memory.search" merge layer. Kept as a side-effect
+// import for now — the IIFE shape is from the cloud-mirror branch; Phase 8 can
+// ESM-ify it and remove the window binding.
+import '@/shared/ipc/memory-search';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

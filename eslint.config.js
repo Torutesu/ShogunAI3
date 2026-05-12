@@ -6,6 +6,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import importPlugin from 'eslint-plugin-import';
 import unusedImports from 'eslint-plugin-unused-imports';
 import boundaries from 'eslint-plugin-boundaries';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 import globals from 'globals';
 
 export default [
@@ -32,6 +33,7 @@ export default [
       import: importPlugin,
       'unused-imports': unusedImports,
       boundaries,
+      'jsx-a11y': jsxA11y,
     },
     settings: {
       react: { version: 'detect' },
@@ -69,6 +71,32 @@ export default [
       // hooks. Library and component files should stay much smaller — but the
       // rule applies uniformly; per-file overrides aren't worth the complexity.
       'max-lines': ['warn', { max: 1500, skipBlankLines: true, skipComments: true }],
+      // jsx-a11y recommended set, as warnings for now (Phase 7 Step 4 baseline).
+      // Move individual rules to 'error' once they're at zero violations.
+      'jsx-a11y/alt-text': 'warn',
+      'jsx-a11y/anchor-has-content': 'warn',
+      'jsx-a11y/anchor-is-valid': 'warn',
+      'jsx-a11y/aria-props': 'error',
+      'jsx-a11y/aria-proptypes': 'error',
+      'jsx-a11y/aria-role': 'error',
+      'jsx-a11y/aria-unsupported-elements': 'error',
+      'jsx-a11y/click-events-have-key-events': 'warn',
+      'jsx-a11y/heading-has-content': 'warn',
+      'jsx-a11y/iframe-has-title': 'warn',
+      'jsx-a11y/img-redundant-alt': 'warn',
+      'jsx-a11y/interactive-supports-focus': 'warn',
+      'jsx-a11y/label-has-associated-control': 'warn',
+      'jsx-a11y/no-access-key': 'warn',
+      'jsx-a11y/no-autofocus': 'warn',
+      'jsx-a11y/no-distracting-elements': 'warn',
+      'jsx-a11y/no-noninteractive-element-interactions': 'off',  // too noisy without ARIA story
+      'jsx-a11y/no-noninteractive-tabindex': 'warn',
+      'jsx-a11y/no-redundant-roles': 'warn',
+      'jsx-a11y/no-static-element-interactions': 'off',  // common pattern in this codebase
+      'jsx-a11y/role-has-required-aria-props': 'error',
+      'jsx-a11y/role-supports-aria-props': 'error',
+      'jsx-a11y/scope': 'warn',
+      'jsx-a11y/tabindex-no-positive': 'warn',
       // boundaries: error from Phase 2 Step 12 onward — enforces feature isolation
       'boundaries/element-types': ['error', {
         default: 'allow',

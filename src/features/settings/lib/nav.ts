@@ -4,6 +4,7 @@ export const SETTINGS_NAV = [
   {id:'appearance',   label:'Appearance',         jp:'外観', icon:'eye'},
   {id:'privacy',      label:'Privacy Controls',   jp:'守秘', icon:'shield'},
   {id:'data',         label:'Data Controls',      jp:'資料', icon:'memory'},
+  {id:'cloud_mirror', label:'Cloud Mirror',       jp:'雲',   icon:'link'},
   {id:'hummingbird',  label:'Hummingbird',        jp:'鳥',   icon:'zap'},
   {id:'meetings',     label:'Meetings',           jp:'会議', icon:'calendar'},
   {id:'chat',         label:'Chat',               jp:'対話', icon:'chat'},

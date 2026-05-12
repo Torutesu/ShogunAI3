@@ -45,6 +45,7 @@ export function MtgChatDock({
                     key={row.id}
                     type="button"
                     role="option"
+                    aria-selected={false}
                     className="mtg-recipe-row"
                     onMouseDown={function (e) { e.preventDefault(); }}
                     onClick={function () { runDockSlashItem(row); }}

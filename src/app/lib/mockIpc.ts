@@ -800,6 +800,14 @@ export function mockIpcInvoke(command: string, payload: any): any {
       return { ok: true, data: { stub: true } };
     case 'mirror_reset_stuck':
       return { ok: true, data: { reset: 0, stub: true } };
+    case 'mirror_search_blobs':
+      return { ok: true, data: { hits: [], total: 0, stub: true } };
+    case 'mirror_list_devices':
+      return { ok: true, data: { devices: [], stub: true } };
+    case 'mirror_rename_device':
+      return { ok: true, data: { stub: true } };
+    case 'mirror_delete_device':
+      return { ok: true, data: { stub: true } };
     default:
       return { ok: true, data: { command, payload: echo, mock: true } };
   }

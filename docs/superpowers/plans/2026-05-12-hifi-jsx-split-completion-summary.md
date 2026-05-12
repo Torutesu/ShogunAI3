@@ -1,6 +1,6 @@
 # Hi-Fi UI JSX 分割 — プロジェクト完了サマリ
 
-> 2026-04-18 着工、2026-05-12 完了。Phase 0〜6 通算 6 phase / 30 step / 30 PR / 約 25 日。
+> 2026-04-18 着工、2026-05-12 完了。Phase 0〜7 通算 7 phase / 35 step / 34 PR / 約 25 日。
 
 ## Mission
 
@@ -10,19 +10,21 @@ Babel-in-browser でロードされていた 22,000 行の単一 JSX 群 (`hifi/
 
 | 指標 | 着工時 | 完了時 |
 |---|---|---|
-| 配置 | 1 file in `hifi/` | **64 files** in `src/{app,features,shared,hooks}/` |
-| 最大単一ファイル | 4,844 行 | **1,914 行** (MainApp.tsx) ↓60% |
-| ビルド | Babel-in-browser (ロード時パース) | **Vite + esbuild** (1.3 秒で 800KB バンドル) |
+| 配置 | 1 file in `hifi/` | **64+ files** in `src/{app,features,shared,hooks}/` |
+| 最大単一ファイル | 4,844 行 | **1,492 行** (MainApp.tsx) ↓69% |
+| ビルド | Babel-in-browser (ロード時パース) | **Vite + esbuild** (1.3 秒、初期 JS 332KB) |
+| 初期 JS バンドル | 752KB 単一 | **332KB** + lazy chunks (Phase 7 Step 3) |
 | TS 型チェック | (none) | **0 errors**, strict + checkJs |
-| ESLint | (none) | **0 errors, 0 warnings** (`--max-warnings 0`) |
+| ESLint | (none) | **0 errors, 50 a11y warnings (baseline)** |
 | `// @ts-nocheck` | — | **0** |
-| `eslint-disable max-lines` | — | **1** (MainApp、Phase 6+ 候補) |
+| `eslint-disable max-lines` | — | **0** (Phase 7 Step 1 で除去) |
 | window 互換シム | 多数 | **1** (SHOGUN_LEGAL_VERSIONS、e2e 用に意図保持) |
 | Vitest tests | 0 | **311** (lib 199 + RTL 86 + その他 26) |
 | Playwright e2e | 3 spec | **68 tests / 10 specs** |
 | 循環依存 | (unknown) | **0** (madge 強制) |
 | Feature 間 import | 暗黙許容 | **ESLint error で禁止** |
 | Custom hooks | 0 | **11** in `src/app/hooks/` |
+| jsx-a11y 監査 | (none) | **設置済** (ARIA correctness は error) |
 
 ## Phase ロードマップ
 
@@ -45,8 +47,14 @@ Phase 5  ─── State hooks + lint cleanup (PR #85-87)
    │       11 custom hooks 抽出、inline <style> → CSS
    │       ESLint 0 errors、RTL tests 86 件
 Phase 6  ─── 最終仕上げ (PR #88-89, #90)
-           GranolaOverlay 分解、exhaustive-deps 0 warnings
-           ESLint --max-warnings 0 強制
+   │       GranolaOverlay 分解、exhaustive-deps 0 warnings
+   │       ESLint --max-warnings 0 強制
+Phase 7  ─── 仕上げ＋パフォーマンス＋a11y (PR #91-94)
+           Step 1: MainApp 1913→1483、eslint-disable 除去
+           Step 2: README 全面書き換え
+           Step 3: vendor split + React.lazy で 752KB→332KB
+           Step 4: jsx-a11y plugin baseline (ARIA は error)
+           Step 5: 追加分解は不要（全ファイル 1500 行以下）
 ```
 
 ## 重要な意思決定と教訓
@@ -72,7 +80,7 @@ Phase 0 では各 task で 3 段階レビュー (implementer / spec compliance /
 
 すべて 15+ ブランチへ cherry-pick で伝播済。
 
-## PR チェーン (30 PR)
+## PR チェーン (34 PR)
 
 ```
 main
@@ -103,14 +111,22 @@ main
                                                                                                  └─ #87  Phase 5 Step 3 RTL tests
                                                                                                      └─ #88  Phase 6 Step 1 GranolaOverlay
                                                                                                          └─ #89  Phase 6 Step 2 exhaustive-deps
-                                                                                                             └─ #90  Phase 6 Step 3 (this doc)
+                                                                                                             └─ #90  Phase 6 Step 3 完了サマリ
+                                                                                                                 └─ #91  Phase 7 Step 1 MainApp 仕上げ
+                                                                                                                     └─ #92  Phase 7 Step 2 README
+                                                                                                                         └─ #93  Phase 7 Step 3 bundle 分割
+                                                                                                                             └─ #94  Phase 7 Step 4 jsx-a11y (this doc 更新)
 ```
 
 ## 残課題（任意・将来）
 
-- MainApp.tsx (1914 行) を更に細分化して `eslint-disable max-lines` を除去
-- Tauri 実機 smoke 取得 (Phase 0 Task 6 の手動作業)
-- 配布用 README 更新（新しい dev フロー、ビルド手順）
+- Phase 7 Step 4 で baseline 化した jsx-a11y 警告 50 件を 0 に削る (Phase 8 候補)
+  - 29 `click-events-have-key-events` — 非インタラクティブ要素の click handler
+  - 9 `label-has-associated-control` — フォーム label
+  - 8 `no-autofocus` — `autoFocus` prop
+  - 4 `interactive-supports-focus` — focus できないインタラクティブ要素
+- Tauri 実機 smoke 取得 (Phase 0 Task 6 の手動作業 / 0.4.1 で signed build 検証済)
+- (オプション) MainApp.tsx (1492 行) を更に細分化して buffer を確保
 - (オプション) Memory/Meetings/Home Screen を更に分解
 - (オプション) GranolaOverlay 1137 行の更なる分解
 
