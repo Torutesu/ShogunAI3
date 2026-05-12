@@ -40,6 +40,7 @@ import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
 import { ShareModal } from './shell/ShareModal';
 import { TopBar } from './shell/TopBar';
 import { Sidebar } from './shell/Sidebar';
+import { ChatDeleteModal } from './shell/portals/ChatDeleteModal';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -1995,21 +1996,12 @@ export function MainApp(): React.ReactElement {
         document.body,
       )}
 
-      {chatDeleteModal.open && ReactDOM.createPortal(
-        <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatDeleteModal({ open:false, chatId:null })}>
-          <div className="chat-dialog" role="dialog" aria-modal="true" aria-label="チャット削除確認" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="chat-dialog-title">チャットを削除</div>
-            <div className="chat-dialog-desc">
-              {chatDeleteTarget ? `「${chatDeleteTarget.title}」を削除してもよろしいですか？` : 'このチャットを削除してもよろしいですか？'}
-            </div>
-            <div className="chat-dialog-actions">
-              <button type="button" className="chat-dialog-btn ghost" onClick={() => setChatDeleteModal({ open:false, chatId:null })}>Cancel</button>
-              <button type="button" className="chat-dialog-btn danger" onClick={confirmDeleteChat}>削除</button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+      <ChatDeleteModal
+        open={chatDeleteModal.open}
+        chatDeleteTarget={chatDeleteTarget}
+        onClose={() => setChatDeleteModal({ open:false, chatId:null })}
+        onConfirm={confirmDeleteChat}
+      />
 
       {chatRenameModal.open && ReactDOM.createPortal(
         <div className="chat-modal-backdrop" role="presentation" onMouseDown={() => setChatRenameModal({ open:false, chatId:null, value:'' })}>
