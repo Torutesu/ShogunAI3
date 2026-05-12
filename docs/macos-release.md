@@ -2,6 +2,19 @@
 
 This document outlines Developer ID signing, notarization, and shipping. Replace team IDs and certificate names with your own.
 
+## Unsigned path (no Apple Developer account)
+
+If you don't have an Apple Developer enrollment yet, you can still ship beta builds:
+
+- **Local build**: `npm run build:desktop` → `src-tauri/target/release/bundle/dmg/Shogun AI_<version>_aarch64.dmg`
+- **CI**: `.github/workflows/release-macos.yml` auto-detects missing `APPLE_CERTIFICATE` and falls back to unsigned. Tag `v*` push still creates a draft Release; the body explains the Gatekeeper bypass to users.
+- **Limitations**:
+  - First launch shows "App could not be verified" — users must right-click → Open (macOS 14) or use System Settings → Privacy & Security → Open Anyway (macOS 15+)
+  - Not recommended for general public distribution; suitable for closed beta / friends-and-family
+  - Tauri auto-updater may refuse to apply unsigned updates — users will need to re-download new builds manually
+
+Skip §3-§7 below until you enroll in the Apple Developer Program.
+
 ## Prerequisites
 
 - Enrolled in the Apple Developer Program
