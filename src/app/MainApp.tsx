@@ -42,6 +42,7 @@ import { TopBar } from './shell/TopBar';
 import { Sidebar } from './shell/Sidebar';
 import { ChatDeleteModal } from './shell/portals/ChatDeleteModal';
 import { ChatRenameModal } from './shell/portals/ChatRenameModal';
+import { ChatMenu } from './shell/portals/ChatMenu';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const window: any;
@@ -1957,45 +1958,17 @@ export function MainApp(): React.ReactElement {
         document.body,
       )}
 
-      {chatMenu.open && ReactDOM.createPortal(
-        <>
-          <div
-            role="presentation"
-            style={{ position:'fixed', inset:0, zIndex:1090 }}
-            onMouseDown={closeChatMenu}
-          />
-          <div
-            className="chat-row-menu"
-            style={{ left: chatMenu.x, top: chatMenu.y, width: chatMenu.width }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('pin', chatMenu.chatId)}>
-              <Icon name="pin" size={16}/>
-              <span>{chatMenuTarget?.favorite ? 'Favoriteから外す' : 'Favoriteに追加'}</span>
-            </button>
-            <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('rename', chatMenu.chatId)}>
-              <Icon name="edit" size={16}/>
-              <span>名前を変更</span>
-            </button>
-            <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('work', chatMenu.chatId)}>
-              <Icon name="folder" size={16}/>
-              <span>Workに追加</span>
-            </button>
-            {chatMenuTargetWork && (
-              <button type="button" className="chat-row-menu-item" onClick={() => runChatMenuAction('workArchive', chatMenu.chatId)}>
-                <Icon name={chatMenuTargetWork.archived === true ? 'eye' : 'folder'} size={16}/>
-                <span>{chatMenuTargetWork.archived === true ? 'Workを復元' : 'Workをアーカイブ'}</span>
-              </button>
-            )}
-            <div className="chat-row-menu-sep"/>
-            <button type="button" className="chat-row-menu-item danger" onClick={() => runChatMenuAction('delete', chatMenu.chatId)}>
-              <Icon name="trash" size={16}/>
-              <span>削除</span>
-            </button>
-          </div>
-        </>,
-        document.body,
-      )}
+      <ChatMenu
+        open={chatMenu.open}
+        chatId={chatMenu.chatId}
+        x={chatMenu.x}
+        y={chatMenu.y}
+        width={chatMenu.width}
+        chatMenuTarget={chatMenuTarget}
+        chatMenuTargetWork={chatMenuTargetWork}
+        onClose={closeChatMenu}
+        onAction={runChatMenuAction}
+      />
 
       <ChatDeleteModal
         open={chatDeleteModal.open}
