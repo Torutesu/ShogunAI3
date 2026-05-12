@@ -7,7 +7,7 @@
     "frontendDist": "../web-dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build:web-dist && npx tauri icon ../public/assets/app-icon-mac-1024.png"
+    "beforeBuildCommand": "npm run build:web-dist && npx tauri icon public/assets/app-icon-mac-1024.png"
   },
   "app": {
     "windows": [
