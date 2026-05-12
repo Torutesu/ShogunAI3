@@ -5,6 +5,7 @@ import { PaneSystem } from './PaneSystem';
 import { PaneAppearance } from './PaneAppearance';
 import { PanePrivacy } from './PanePrivacy';
 import { PaneData } from './PaneData';
+import { PaneCloudMirror } from './PaneCloudMirror';
 import { PaneHummingbird } from './PaneHummingbird';
 import { PaneMeetings } from './PaneMeetings';
 import { PaneChat } from './PaneChat';
@@ -19,6 +20,7 @@ import { PaneKiokuLessons } from './PaneKiokuLessons';
 
 export {
   PaneGeneral, PaneSystem, PaneAppearance, PanePrivacy, PaneData,
+  PaneCloudMirror,
   PaneHummingbird, PaneMeetings, PaneChat, PaneLLM, PaneIntegrations,
   PaneShortcuts, PaneTeam, PaneSupport, PaneKiokuGraph, PaneKiokuPatterns,
   PaneKiokuLessons,
@@ -30,6 +32,7 @@ export const PANES: Record<string, React.ComponentType> = {
   appearance: PaneAppearance,
   privacy: PanePrivacy,
   data: PaneData,
+  cloud_mirror: PaneCloudMirror,
   hummingbird: PaneHummingbird,
   meetings: PaneMeetings,
   chat: PaneChat,

@@ -165,6 +165,11 @@ import { ShogunIpcClient } from './ipc-client';
         syncNow: (input: any) => call("mirror_sync_now", input || {}, WRITE),
         disable: (input: any) => call("mirror_disable", input || {}, WRITE),
         resetStuck: (input: any) => call("mirror_reset_stuck", input || {}, WRITE),
+        // Phase 2.1.4: search blobs + device management.
+        searchBlobs: (input: any) => call("mirror_search_blobs", input || {}, READ),
+        listDevices: (input: any) => call("mirror_list_devices", input || {}, READ),
+        renameDevice: (input: any) => call("mirror_rename_device", input, WRITE),
+        deleteDevice: (input: any) => call("mirror_delete_device", input, WRITE),
       },
     };
   }

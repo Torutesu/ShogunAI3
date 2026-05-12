@@ -1,6 +1,12 @@
-/* global window */
+// @ts-nocheck
 /**
  * memory-search.js — Phase 2.1.4 split-architecture search merge.
+ *
+ * NOTE (Hi-Fi merge): This module came in from the cloud-mirror branch as an
+ * IIFE that installs `window.ShogunMemorySearch`. Hi-Fi ESM rewrite kept it
+ * as-is to avoid touching cloud-mirror behavior; @ts-nocheck silences checkJs
+ * complaints about the loose JSDoc types. Phase 8 should ESM-ify this and
+ * remove the window binding.
  *
  * Orchestrates local + cloud search. When cloud_mirror is enabled and unlocked,
  * dispatches BOTH paths in parallel via Promise.all (each wrapped in a
@@ -288,7 +294,7 @@
     } else if (!cloudResult.ok) {
       cloudStatus = cloudResult.reason || "cloud-failed";
       try {
-        // eslint-disable-next-line no-console
+         
         console.warn("[memory-search] cloud path failed:", cloudResult.reason);
       } catch (_e) { /* ignore */ }
     } else if (cloudResult.value && !cloudResult.value.ok) {
