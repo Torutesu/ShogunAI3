@@ -443,7 +443,9 @@ export function MainApp(): React.ReactElement {
               new CustomEvent('shogun-meeting-detected', {
                 detail: {
                   title: p.title || p.summary || 'Meeting',
-                  eventId: p.eventId || p.id || 'video-' + String(Date.now()),
+                  eventId: p.eventId || p.meeting_id || p.id || 'video-' + String(Date.now()),
+                  meeting_id: p.meeting_id || null,
+                  auto_started: !!p.auto_started,
                   provider,
                   source: 'native',
                   url: p.url || p.meetingUrl || null,

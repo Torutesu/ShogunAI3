@@ -10,12 +10,14 @@ UIボタンと ActionRegistry / Runtime の対応表。
 
 - `integrations.connect` → most cloud/OAuth providers: **`notImplemented`** (warn). **Gmail**: if Keychain has **`gmail`** credentials → marks connected; else returns **`needsCredentials`** (no `notImplemented`). Local tools **Arc / Raycast / Obsidian**: saves `connected` in settings (success path).
 - `integrations.toggle` → persists **`connected`** per provider in `settings.sections.integrations.providers` (no `notImplemented`).
-- `capture.pause` / `capture.resume` → **`honestPreferenceOnly`** (info toast). Writes **`sections.capture.paused`** (only) — resume is `paused: false`, pause is `paused: true`. Missing / absent `paused` is treated as **`true`** (privacy-first default on fresh installs; user must resume once). Legacy `pipelineAvailable` keys in existing settings.json are ignored. On **macOS** with `paused: false`, a background sampler ingests frontmost app name into memory (no screenshots). If `sections.capture.axRichCapture` is true and Accessibility is permitted, the sampler prefers a short **AX** snapshot (role/title/value/window) and falls back to the app name. **`sections.privacy.excludedApps`** / **`excludedSites`** (enabled rows) skip sampler ingests when the frontmost app name matches or when AX text / parsed URLs reference an excluded host. Optional **`sections.capture.sampleIntervalSecs`** (4–600, default 8) sets the sampler sleep; **`sections.capture.axMinIntervalSecs`** (0–600, default 0) adds a minimum gap between **changed** AX ingests (hash dedup unchanged). When `axRichCapture` is on but Accessibility trust is missing, the sampler emits Tauri event **`shogun-capture-ax-not-trusted`** (`{ message }`) at most once per 120 s; the shell surfaces it as a warn toast with instructions to open System Settings.
-- `permissions.manage` → optional **`target`**: `"accessibility"` opens **Privacy → Accessibility**; default / `"screen_capture"` opens **Screen Recording**.
+- `capture.pause` / `capture.resume` → **`honestPreferenceOnly`** (info toast). Writes **`sections.capture.paused`**. Missing `paused` defaults to **`false`** (capture runs on fresh install). macOS captures app focus, AX tree, and keyboard/mouse events — **no screenshots**. **`capture.live_events`** / **`capture.status`** expose the live tail and permission snapshot. **`onboarding.complete`** marks setup done and resumes capture.
+- `permissions.manage` → optional **`target`**: `"accessibility"` (default), `"input_monitoring"`, or legacy `"screen_capture"`.
 - **`app_privacy_pick_app`** / ActionRegistry **`privacy.pick_app`**: macOS **native `.app` file picker** (returns `name`, `path`, or `cancelled`). Not available off-macOS.
 - **`app_integration_import_credentials`** (invoke) / ActionRegistry **`integrations.import_credentials`**: external agent stores per-provider JSON in Keychain (`accessToken`, optional `refreshToken`, `expiresAt`, `scopes`, **`oauthClientId`** + optional **`oauthClientSecret`** for Google token refresh). On success emits **`credentials-imported`** with `{ saved, provider, via: "invoke" }`. **`integrations.credentials_status`** returns **`configured`**, **`tokenRefreshReady`** (**`google_calendar`** and **`gmail`**: `refreshToken` + `oauthClientId` present).
 - **Deep link** (same outcome as import, desktop): `shogun-ai://credentials/import?provider=…&access_token=…` (optional snake_case or camelCase query keys; optional `oauth_client_id` / `oauth_client_secret`). Emits Tauri event **`credentials-imported`** (`via: "deep-link"`). Prefer **invoke** over URLs for secrets.
 - **`shogun_google_calendar_sync`** / **`calendar.sync`**: lists near-future events with the imported Bearer token and **`memory.ingest`** each as a calendar memory (errors if token missing). Proactively refreshes the access token when **`expiresAt`** is near or on **401** if `oauthClientId` + `refreshToken` are stored. Background job: when **`sections.integrations.googleCalendarAutoSync`** is true and Keychain has credentials, syncs every **`googleCalendarSyncIntervalMins`** (5–1440, default 15).
+- **`shogun_apple_calendar_sync`** / **`apple_calendar.sync`**: macOS only — reads Calendar.app events (past 7d / next 30d) via AppleScript, **`memory.ingest`** with **`source: apple_calendar`**. Requires Automation permission for Calendar; **`integrations.connect`** probes access first.
+- **`shogun_apple_reminders_sync`** / **`apple_reminders.sync`**: macOS only — reads incomplete Reminders.app items via AppleScript, **`memory.ingest`** with **`source: apple_reminders`**. Requires Automation permission for Reminders.
 - **`shogun_gmail_sync`** / **`gmail.sync`**: lists recent inbox message ids with Keychain provider **`gmail`**, fetches metadata per message, **`memory.ingest`** each with **`provenance: connector`**, **`source: gmail`**, **`entity_id`** = message id. Same Google OAuth refresh behavior as Calendar when **`expiresAt`** / **401** and refresh fields are present. Requires Gmail API scope (e.g. **`gmail.readonly`**).
 - **`app_diagnostics_report`** / **`diagnostics.report`**: writes JSON file plus returns **`summary`** (`capture`, `macosAccessibilityTrusted`, **`integrations.google_calendar`**, **`integrations.calendarAutoSync`**).
 - **`app_updates_check`** / **`updates.check`**: Tauri updater — returns **`available`**, optional **`version`**, **`body`**, **`currentVersion`**. Fails if endpoints are misconfigured or unreachable.
@@ -118,10 +120,20 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `integrations.credentials_status`
 - `integrations.toggle`
 - `oauth.google.start`
+- `oauth.google.app_status`
+- `oauth.google.app_set`
+- `agent.run_now`
+- `hummingbird.context`
+- `claude.sync`
 - `calendar.sync`
+- `apple_calendar.sync`
+- `apple_reminders.sync`
 - `gmail.sync`
 - `capture.pause`
 - `capture.resume`
+- `capture.live_events`
+- `capture.status`
+- `onboarding.complete`
 - `permissions.manage`
 - `privacy.pick_app`
 - `diagnostics.report`
@@ -176,6 +188,9 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `linear.sync`
 - `drive.sync`
 - `zoom.sync`
+- `outlook.sync`
+- `figma.sync`
+- `claude.sync`
 - `entity.query`
 - `brief.get`
 - `chat.complete`

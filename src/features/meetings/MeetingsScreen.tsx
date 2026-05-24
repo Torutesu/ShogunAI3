@@ -265,15 +265,16 @@ export function MeetingsScreen() {
     };
   }, []);
 
-  const openGranolaMinutesForDetectedMeeting = useCallback(function (title: any, eventId: any) {
+  const openGranolaMinutesForDetectedMeeting = useCallback(function (title: any, eventId: any, meetingId?: any) {
     const L = mnl();
-    const key = 'cal-' + String(eventId != null ? eventId : Date.now());
-    const storageKey = L ? L.storageHash({ cal: key, t: title }) : key;
+    const key = meetingId ? 'mtg-' + String(meetingId) : 'cal-' + String(eventId != null ? eventId : Date.now());
+    const storageKey = L ? L.storageHash({ cal: key, t: title, mid: meetingId || '' }) : key;
     setGranolaPane('minutes');
     setGranolaMenuOpen(false);
     setGranola({
       key,
       storageKey,
+      backendMeetingId: meetingId || null,
       title: title || 'Meeting',
       titleJp: '\u8b70\u4e8b\u9332',
       dateLabel: 'Today',
@@ -281,10 +282,14 @@ export function MeetingsScreen() {
       authorLabel: 'Me',
       authorLabelJp: '\u81ea\u5206',
       body: '',
-      tag: 'MTG',
+      tag: meetingId ? 'LIVE' : 'MTG',
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
-    toastM('\u4e88\u5b9a\u304b\u3089\u30df\u30fc\u30c6\u30a3\u30f3\u30b0\u3092\u691c\u77e5\u3057\u307e\u3057\u305f\uff08\u8b70\u4e8b\u9332\uff09', 'success');
+    if (meetingId) {
+      toastM('\u30d3\u30c7\u30aa\u4f1a\u8b70\u3092\u691c\u77e5\u2014\u9332\u97f3\u3092\u958b\u59cb\u3057\u307e\u3057\u305f', 'success');
+    } else {
+      toastM('\u4e88\u5b9a\u304b\u3089\u30df\u30fc\u30c6\u30a3\u30f3\u30b0\u3092\u691c\u77e5\u3057\u307e\u3057\u305f\uff08\u8b70\u4e8b\u9332\uff09', 'success');
+    }
   }, []);
 
   useEffect(function () {
@@ -294,7 +299,7 @@ export function MeetingsScreen() {
       if ((window as any).SHOGUN_RUNTIME && typeof (window as any).SHOGUN_RUNTIME.setActiveScreen === 'function') {
         (window as any).SHOGUN_RUNTIME.setActiveScreen('meetings');
       }
-      openGranolaMinutesForDetectedMeeting(d.title, d.eventId);
+      openGranolaMinutesForDetectedMeeting(d.title, d.eventId, d.meeting_id || null);
     };
     window.addEventListener('shogun-meeting-detected', onDetected);
     return function () {

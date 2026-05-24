@@ -76,6 +76,36 @@ pub fn default_embedding_model(provider: LlmProvider) -> Option<&'static str> {
     }
 }
 
+/// Heuristic: whether the configured chat model accepts image blocks.
+pub fn model_supports_vision(provider: LlmProvider, model: &str) -> bool {
+    let m = model.trim().to_lowercase();
+    if m.is_empty() {
+        return false;
+    }
+    if m.contains("embedding") || m.contains("whisper") || m.contains("tts") {
+        return false;
+    }
+    match provider {
+        LlmProvider::Anthropic => {
+            m.contains("claude-3")
+                || m.contains("claude-sonnet")
+                || m.contains("claude-opus")
+                || m.contains("claude-haiku")
+        }
+        LlmProvider::OpenAI => {
+            m.contains("gpt-4o")
+                || m.contains("gpt-4-turbo")
+                || m.contains("gpt-4.1")
+                || m.contains("gpt-5")
+                || m.starts_with("o1")
+                || m.starts_with("o3")
+                || m.starts_with("o4")
+        }
+        LlmProvider::Gemini => m.contains("gemini"),
+        LlmProvider::Custom => true,
+    }
+}
+
 /// Trusted hosts known to belong to each provider. Localhost is always
 /// allowed (for local LLMs / self-hosted proxies).
 pub fn allowlist() -> &'static [&'static str] {
@@ -151,6 +181,66 @@ pub fn chat_headers(provider: LlmProvider, key: &str) -> Vec<(&'static str, Stri
     }
 }
 
+/// Build multimodal user content blocks when `images` is non-empty.
+pub fn user_message_with_images(
+  provider: LlmProvider,
+  text: &str,
+  images: &[Value],
+) -> Value {
+  if images.is_empty() {
+    return json!({ "role": "user", "content": text });
+  }
+  if provider == LlmProvider::Anthropic {
+    let mut parts: Vec<Value> = Vec::new();
+    if !text.trim().is_empty() {
+      parts.push(json!({ "type": "text", "text": text }));
+    }
+    for img in images {
+      let mime = img
+        .get("mimeType")
+        .or_else(|| img.get("mime"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("image/jpeg");
+      let b64 = img.get("base64").and_then(|v| v.as_str()).unwrap_or("");
+      if b64.is_empty() {
+        continue;
+      }
+      parts.push(json!({
+        "type": "image",
+        "source": { "type": "base64", "media_type": mime, "data": b64 }
+      }));
+    }
+    if parts.is_empty() {
+      return json!({ "role": "user", "content": text });
+    }
+    json!({ "role": "user", "content": parts })
+  } else {
+    let mut parts: Vec<Value> = Vec::new();
+    if !text.trim().is_empty() {
+      parts.push(json!({ "type": "text", "text": text }));
+    }
+    for img in images {
+      let mime = img
+        .get("mimeType")
+        .or_else(|| img.get("mime"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("image/jpeg");
+      let b64 = img.get("base64").and_then(|v| v.as_str()).unwrap_or("");
+      if b64.is_empty() {
+        continue;
+      }
+      parts.push(json!({
+        "type": "image_url",
+        "image_url": { "url": format!("data:{};base64,{}", mime, b64) }
+      }));
+    }
+    if parts.is_empty() {
+      return json!({ "role": "user", "content": text });
+    }
+    json!({ "role": "user", "content": parts })
+  }
+}
+
 /// Build the request body for chat completion. Anthropic has a distinct
 /// shape (`system` lifted to top-level, no `temperature` default, no
 /// `messages[role=system]`), so we split here. For OpenAI / Gemini / Custom
@@ -166,15 +256,27 @@ pub fn chat_body(
         let mut user_assistant: Vec<Value> = Vec::new();
         for m in messages {
             let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-            let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+            let content_val = m.get("content").cloned().unwrap_or(json!(""));
             if role == "system" {
-                if !content.is_empty() {
-                    system_parts.push(content.to_string());
+                if let Some(content) = content_val.as_str() {
+                    if !content.is_empty() {
+                        system_parts.push(content.to_string());
+                    }
+                } else if let Some(arr) = content_val.as_array() {
+                    for block in arr {
+                        if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                            if let Some(t) = block.get("text").and_then(|x| x.as_str()) {
+                                if !t.is_empty() {
+                                    system_parts.push(t.to_string());
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 user_assistant.push(json!({
                     "role": if role == "assistant" { "assistant" } else { "user" },
-                    "content": content,
+                    "content": content_val,
                 }));
             }
         }

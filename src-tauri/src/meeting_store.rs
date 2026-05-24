@@ -488,30 +488,115 @@ pub fn get_meeting_detail(meeting_id: &str) -> Result<Option<Value>, String> {
 
 /// Memory-search compatible rows (`source: meeting`) for unified `shogun_memory_search`.
 pub fn search_meeting_memory_hits(query: &str, limit: usize) -> Result<Vec<Value>, String> {
-  let raw = search_meetings_fts(query, limit)?;
-  let mut out = Vec::new();
-  for r in raw {
-    let id = r
-      .get("meeting_id")
-      .and_then(|x| x.as_str())
-      .unwrap_or("")
-      .to_string();
-    let title = r
-      .get("title")
-      .and_then(|x| x.as_str())
-      .unwrap_or("Meeting")
-      .to_string();
-    let started = r.get("started_at").and_then(|x| x.as_u64()).unwrap_or(0);
-    out.push(json!({
-      "id": format!("meet_{}", id),
+  search_timeline_hits(query, limit, None, None)
+}
+
+/// Timeline rows from meetings + transcript + notes. Optional time window in epoch ms.
+pub fn search_timeline_hits(
+  query: &str,
+  limit: usize,
+  start_ms: Option<u64>,
+  end_ms: Option<u64>,
+) -> Result<Vec<Value>, String> {
+  let q = query.trim();
+  let lim = limit.clamp(1, 200) as i64;
+  let conn = memory_store::open_conn()?;
+
+  let (rows, use_query) = if q.is_empty() {
+    let mut stmt = conn
+      .prepare(
+        r#"SELECT m.id, m.started_at, m.title, NULL AS match_snippet
+           FROM meetings m
+           WHERE (?1 IS NULL OR m.started_at >= ?1)
+             AND (?2 IS NULL OR m.started_at <= ?2)
+           ORDER BY m.started_at DESC
+           LIMIT ?3"#,
+      )
+      .map_err(|e| e.to_string())?;
+    let start_i = start_ms.map(|v| v as i64);
+    let end_i = end_ms.map(|v| v as i64);
+    let mapped = stmt
+      .query_map(params![start_i, end_i, lim], |r| {
+        Ok((
+          r.get::<_, String>(0)?,
+          r.get::<_, i64>(1)? as u64,
+          r.get::<_, Option<String>>(2)?,
+          r.get::<_, Option<String>>(3)?,
+        ))
+      })
+      .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in mapped {
+      out.push(row.map_err(|e| e.to_string())?);
+    }
+    (out, false)
+  } else {
+    let needle = format!("%{}%", q);
+    let mut stmt = conn
+      .prepare(
+        r#"SELECT DISTINCT m.id, m.started_at, m.title,
+                  COALESCE(
+                    (SELECT s.text FROM meeting_transcript_segments s
+                     WHERE s.meeting_id = m.id AND s.text LIKE ?1
+                     ORDER BY s.start_ms LIMIT 1),
+                    (SELECT b.content FROM meeting_note_blocks b
+                     WHERE b.meeting_id = m.id AND b.content LIKE ?1
+                     ORDER BY b.ord LIMIT 1),
+                    m.title
+                  ) AS match_snippet
+           FROM meetings m
+           LEFT JOIN meeting_transcript_segments s ON s.meeting_id = m.id
+           LEFT JOIN meeting_note_blocks b ON b.meeting_id = m.id
+           WHERE (m.title LIKE ?1 OR s.text LIKE ?1 OR b.content LIKE ?1)
+             AND (?2 IS NULL OR m.started_at >= ?2)
+             AND (?3 IS NULL OR m.started_at <= ?3)
+           ORDER BY m.started_at DESC
+           LIMIT ?4"#,
+      )
+      .map_err(|e| e.to_string())?;
+    let start_i = start_ms.map(|v| v as i64);
+    let end_i = end_ms.map(|v| v as i64);
+    let mapped = stmt
+      .query_map(params![needle, start_i, end_i, lim], |r| {
+        Ok((
+          r.get::<_, String>(0)?,
+          r.get::<_, i64>(1)? as u64,
+          r.get::<_, Option<String>>(2)?,
+          r.get::<_, Option<String>>(3)?,
+        ))
+      })
+      .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in mapped {
+      out.push(row.map_err(|e| e.to_string())?);
+    }
+    (out, true)
+  };
+
+  let mut hits = Vec::new();
+  for (id, started, title, snippet) in rows {
+    let title = title.unwrap_or_else(|| "Meeting".to_string());
+    let snippet_text = snippet
+      .filter(|s| !s.trim().is_empty())
+      .unwrap_or_else(|| title.clone());
+    let preview = if use_query {
+      snippet_text.chars().take(240).collect::<String>()
+    } else {
+      format!("Meeting · {}", title)
+    };
+    hits.push(json!({
+      "id": format!("meet_{id}"),
+      "meeting_id": id,
       "title": title,
-      "snippet": format!("Meeting match · {}", query.chars().take(80).collect::<String>()),
+      "snippet": preview,
       "source": "meeting",
       "kinds": ["meeting"],
       "created_at": started,
+      "provenance": "meeting",
+      "content_type": "meeting",
     }));
   }
-  Ok(out)
+  Ok(hits)
 }
 
 pub fn search_meetings_fts(query: &str, limit: usize) -> Result<Vec<Value>, String> {

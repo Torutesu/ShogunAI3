@@ -92,13 +92,61 @@ fn ensure_shape(mut v: Value) -> Value {
       .entry("memory".to_string())
       .or_insert_with(|| json!({}));
     if let Some(o) = mem.as_object_mut() {
-      // Memory Digest (Phase 1): feature flag for summary generation and display.
-      o.entry("enableMemorySummary".to_string()).or_insert(json!(true));
-      // Auto-generate day + week rollups in the background so the Home
-      // "Memory digest" card is populated when the user opens the app.
-      o.entry("autoDigest".to_string()).or_insert(json!(true));
+      o.entry("enableMemorySummary".to_string())
+        .or_insert(json!(false));
+      o.entry("autoDigest".to_string()).or_insert(json!(false));
       o.entry("autoDigestIntervalMins".to_string()).or_insert(json!(360));
       o.entry("autoDigestLang".to_string()).or_insert(json!("en"));
+      o.entry("semanticRerank".to_string()).or_insert(json!(false));
+    }
+    let cap = sections
+      .entry("capture".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = cap.as_object_mut() {
+      o.entry("axRichCapture".to_string()).or_insert(json!(true));
+      o.entry("sampleIntervalSecs".to_string()).or_insert(json!(4));
+      o.entry("axMinIntervalSecs".to_string()).or_insert(json!(0));
+      o.entry("paused".to_string()).or_insert(json!(false));
+      o.entry("retentionDays".to_string()).or_insert(json!(30));
+    }
+    let onboarding = sections
+      .entry("onboarding".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = onboarding.as_object_mut() {
+      o.entry("complete".to_string()).or_insert(json!(false));
+    }
+    let kioku_graph = sections
+      .entry("kioku_graph".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = kioku_graph.as_object_mut() {
+      o.entry("capture_to_mem_captures".to_string())
+        .or_insert(json!(true));
+      o.entry("worker_enabled".to_string())
+        .or_insert(json!(true));
+      o.entry("read_path".to_string())
+        .or_insert(json!("graph"));
+      o.entry("poll_interval_secs".to_string())
+        .or_insert(json!(30));
+      o.entry("max_jobs_per_tick".to_string())
+        .or_insert(json!(5));
+    }
+    let kioku_cost = sections
+      .entry("kioku_cost".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = kioku_cost.as_object_mut() {
+      o.entry("monthly_cap_usd".to_string())
+        .or_insert(json!(10.0));
+      o.entry("cap_action".to_string())
+        .or_insert(json!("pause_extraction"));
+      o.entry("fallback_model".to_string())
+        .or_insert(json!("claude-haiku-4-5"));
+    }
+    let llm = sections
+      .entry("llm".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = llm.as_object_mut() {
+      o.entry("extractionModel".to_string())
+        .or_insert(json!("claude-haiku-4-5"));
     }
   }
   v

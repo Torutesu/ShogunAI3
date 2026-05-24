@@ -426,7 +426,18 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
       case "app_integration_import_credentials":
       case "app_integration_credentials_status":
       case "shogun_google_calendar_sync":
-      case "shogun_gmail_sync": {
+      case "shogun_gmail_sync":
+      case "shogun_slack_sync":
+      case "shogun_notion_sync":
+      case "shogun_github_sync":
+      case "shogun_linear_sync":
+      case "shogun_drive_sync":
+      case "shogun_zoom_sync":
+      case "shogun_outlook_sync":
+      case "shogun_figma_sync":
+      case "shogun_claude_sync":
+      case "shogun_apple_calendar_sync":
+      case "shogun_apple_reminders_sync": {
         const C = ShogunIntegrationConnectors;
         if (C && typeof C.mockIntegrationPayload === "function") {
           const payload = C.mockIntegrationPayload(command, echo);
@@ -513,10 +524,34 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
           paused: false,
           honestPreferenceOnly: true,
           message:
-            "Capture sampling resumed. On macOS, frontmost app is sampled periodically into memory (no screenshots).",
+            "Capture resumed. macOS records app focus, AX context, and input events locally (no screenshots).",
           stub: false,
           echo: echo,
         };
+      case "shogun_capture_live_events":
+        return {
+          events: [],
+          eventsPerMinute: 0,
+          stub: false,
+          echo: echo,
+        };
+      case "shogun_capture_status":
+        return {
+          paused: false,
+          permissions: {
+            accessibilityTrusted: false,
+            screenCaptureGranted: false,
+            inputMonitoringGranted: false,
+          },
+          inputTapRunning: false,
+          eventsPerMinute: 0,
+          stub: false,
+          echo: echo,
+        };
+      case "app_onboarding_complete":
+        mergeMockSettingsSection("onboarding", { complete: true });
+        mergeMockSettingsSection("capture", { paused: false });
+        return { complete: true, stub: false, echo: echo };
       case "shogun_memory_search": {
         const q = String((echo && echo.query) || "");
         const semantic = !!(echo && echo.semantic);
@@ -834,7 +869,7 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
       case "app_permissions_manage":
         return {
           opened: true,
-          note: "Opened System Settings (Screen Recording) when supported.",
+          note: "Opened System Settings for the requested privacy pane when supported.",
           stub: false,
           echo: echo,
         };
@@ -967,6 +1002,22 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
           echo: echo,
         };
       }
+      case "shogun_meeting_recipe_run": {
+        const rid = String((echo && echo.recipe_id) || "rec-coach-me");
+        const notes = String((echo && echo.notes) || "").trim();
+        const tx = String((echo && echo.transcript) || "").trim();
+        const body = notes || tx;
+        if (!body) {
+          return { text: "", stub: true, recipe_id: rid, echo: echo };
+        }
+        return {
+          recipe_id: rid,
+          meeting_id: String((echo && echo.meeting_id) || ""),
+          text: "## Recipe (Hi-Fi mock)\n\n" + body.slice(0, 2000) + "\n\n_Desktop uses your LLM key for full recipe output._",
+          stub: true,
+          echo: echo,
+        };
+      }
       case "shogun_oauth_google_start": {
         // Mock: simulate a successful in-app OAuth flow without the actual
         // browser round-trip. Real backend launches a localhost server +
@@ -985,8 +1036,6 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
       case "shogun_memory_export":
         return { exported: 0, path: "/mock/memory.shogun-memory.jsonl", stub: true, echo };
       case "shogun_memory_import": {
-        // Mirrors `src-tauri/src/memory_export.rs::CONFIRM_TOKEN`.
-        // CONFIRM_TOKEN mirrors src-tauri/src/memory_export.rs::CONFIRM_TOKEN
         const confirmToken = "REPLACE";
         if ((echo && echo.confirm) !== confirmToken) {
           throw createError(
@@ -1021,6 +1070,30 @@ import { ShogunIntegrationConnectors } from '@/shared/lib/integration-connectors
         return { device: { device_id: echo?.device_id || "stub_device", device_name: echo?.new_name || "Renamed Stub", registered_at: "2026-04-01T00:00:00Z" }, stub: true };
       case "mirror_delete_device":
         return { tombstoned_blobs: 5, stub: true };
+      case "shogun_oauth_google_app_status":
+        return { configured: false, stub: true, echo: echo };
+      case "shogun_oauth_google_app_set":
+        return { saved: true, configured: true, stub: true, echo: echo };
+      case "shogun_agent_run_now": {
+        const agentId = String((echo && (echo.agentId || echo.agent_id)) || "").trim();
+        return {
+          agentId: agentId,
+          ok: true,
+          ingested: agentId === "inbox-triage" ? 3 : 2,
+          summary: agentId ? agentId + " completed (mock)" : "done",
+          stub: true,
+          echo: echo,
+        };
+      }
+      case "shogun_hummingbird_context":
+        return {
+          enabled: true,
+          mode: "any_app",
+          frontmostApp: "Mock App",
+          axSnapshot: "role=AXWindow\ntitle=Preview document",
+          stub: true,
+          echo: echo,
+        };
       default:
         return {
           stub: true,

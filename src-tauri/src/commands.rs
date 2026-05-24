@@ -1,9 +1,10 @@
 //! IPC handlers aligned with `hifi/lib/shogun-api.js` invoke names.
 
 use crate::{
-  auth, biometric, brief, brief_actions, dead_letter, embed_backfill, github, gmail,
+  apple_local, auth, biometric, brief, brief_actions, dead_letter, embed_backfill, github, gmail,
   google_calendar, google_drive, integration_secrets, integrations, linear, llm, macos_ax,
-  memory_export, memory_store, mirror, notion, secrets, settings_store, slack, zoom,
+  claude, figma, memory_export, memory_store, mirror, notion, outlook, secrets, settings_store,
+  slack, zoom,
 };
 use crate::paths;
 use crate::schedule_queue;
@@ -164,15 +165,82 @@ pub async fn shogun_brief_get(
   payload: Value,
 ) -> Result<Value, String> {
   let settings = settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
-  if brief::should_use_v2(&settings, &payload) {
-    let user_tz = payload
-      .get("user_tz")
-      .and_then(|v| v.as_str())
-      .unwrap_or("UTC");
-    let ms = ts();
-    return Ok(brief::morning_brief_v2_stub(ms, user_tz, &payload));
-  }
-  llm::brief_generate(&payload, Some(&*ring)).await
+  let user_tz = payload
+    .get("user_tz")
+    .and_then(|v| v.as_str())
+    .unwrap_or("UTC");
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en");
+  let memory_digest = brief::build_memory_digest(lang);
+  let use_v2 = brief::should_use_v2(&settings, &payload);
+  let has_llm = crate::secrets::get_llm_api_key()
+    .ok()
+    .flatten()
+    .map(|k| !k.trim().is_empty())
+    .unwrap_or(false);
+
+  let raw_brief = if use_v2 || has_llm {
+    if has_llm {
+      match brief::morning_brief_v2_generate(user_tz, &payload).await {
+        Ok(v) => v,
+        Err(e) => {
+          log::warn!("brief v2 LLM failed, using heuristic: {}", e);
+          brief::morning_brief_v2_heuristic(user_tz, &payload)
+        }
+      }
+    } else {
+      brief::morning_brief_v2_heuristic(user_tz, &payload)
+    }
+  } else {
+    let v1 = llm::brief_generate(&payload, Some(&*ring)).await?;
+    let sections = v1.get("sections").cloned().unwrap_or_else(|| json!([]));
+    let items: Vec<Value> = sections
+      .as_array()
+      .unwrap_or(&vec![])
+      .iter()
+      .enumerate()
+      .map(|(i, s)| {
+        json!({
+          "id": format!("sec_{}", i + 1),
+          "priority": i + 1,
+          "category": "memory",
+          "what": s.get("title").and_then(|v| v.as_str()).unwrap_or("Section"),
+          "why_now": s.get("body").and_then(|v| v.as_str()).unwrap_or(""),
+          "related_context": [],
+          "next_action": { "type": "ignore" },
+          "confidence": 0.7
+        })
+      })
+      .collect();
+    json!({
+      "version": "2.0",
+      "generated_at": chrono::Utc::now().to_rfc3339(),
+      "summary": {
+        "headline": if items.is_empty() { "Memory brief" } else { "From your recent Memory" },
+        "posture": "focus"
+      },
+      "items": items,
+      "deferred": [],
+      "memory_digest": memory_digest.clone(),
+      "stub": false
+    })
+  };
+
+  let digest = raw_brief
+    .get("memory_digest")
+    .cloned()
+    .unwrap_or(memory_digest);
+  let items = raw_brief.get("items").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+  let skipped = items == 0
+    && digest
+      .get("highlights")
+      .and_then(|h| h.as_array())
+      .map(|a| a.is_empty())
+      .unwrap_or(true);
+  let ui = brief::normalize_brief_for_ui(&raw_brief);
+  Ok(brief::wrap_brief_get_response(ui, digest, skipped))
 }
 
 #[tauri::command]
@@ -617,6 +685,16 @@ pub fn shogun_stats(payload: Value) -> Result<Value, String> {
   {
     let settings = settings_store::load().unwrap_or_else(|_| json!({}));
     out["settings"] = settings;
+    let coverage = memory_store::stats_app_coverage(8).unwrap_or_default();
+    let max = coverage.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+    out["appCoverage"] = json!(
+      coverage
+        .into_iter()
+        .map(|(name, count)| json!([name, count, (count * 100 / max) as i64]))
+        .collect::<Vec<_>>()
+    );
+    out["captureStatus"] = crate::macos_permissions::status_snapshot();
+    out["eventsPerMinute"] = json!(crate::capture_events::events_last_minute());
   }
   if payload
     .get("stage")
@@ -629,17 +707,14 @@ pub fn shogun_stats(payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn app_open_hummingbird(payload: Value) -> Result<Value, String> {
-  let ok = Command::new("open")
-    .args(["-a", "Hummingbird"])
-    .status()
-    .map(|s| s.success())
-    .unwrap_or(false);
-  if ok {
-    Ok(json!({ "opened": true, "stub": false, "echo": payload }))
-  } else {
-    Err("Could not open Hummingbird. Install it or use it from /Applications.".to_string())
-  }
+pub fn app_open_hummingbird(app: AppHandle, payload: Value) -> Result<Value, String> {
+  crate::hummingbird::emit_open("invoke");
+  Ok(json!({
+    "opened": true,
+    "mode": "in_app_overlay",
+    "stub": false,
+    "echo": payload
+  }))
 }
 
 #[tauri::command]
@@ -762,12 +837,12 @@ pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
     .and_then(|p| p.as_str())
     .unwrap_or("");
   let slug = integrations::normalize_provider(raw);
-  if slug == "gmail" {
-    let configured = integration_secrets::get_credentials("gmail")?.is_some();
+  if integrations::supports_google_oauth(&slug) || slug == "gmail" || slug == "google_calendar" {
+    let configured = integration_secrets::get_credentials(&slug)?.is_some();
     if configured {
       settings_store::upsert_integration_provider(
         &slug,
-        &json!({ "connected": true, "mode": "oauth_via_agent" }),
+        &json!({ "connected": true, "mode": "oauth_in_app" }),
       )?;
       return Ok(json!({
         "connected": true,
@@ -779,8 +854,39 @@ pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
     return Ok(json!({
       "connected": false,
       "needsCredentials": true,
+      "needsOAuth": true,
       "provider": slug,
-      "message": "Gmail requires OAuth tokens imported via app_integration_import_credentials (provider: gmail). Scopes must include https://www.googleapis.com/auth/gmail.readonly (or broader Gmail).",
+      "message": format!(
+        "{} requires Google OAuth. Click Connect to start the in-app consent flow, or import tokens via app_integration_import_credentials.",
+        slug
+      ),
+      "stub": false,
+      "echo": payload,
+    }));
+  }
+  if integrations::supports_token_import(&slug) {
+    let configured = integration_secrets::get_credentials(&slug)?.is_some();
+    if configured {
+      settings_store::upsert_integration_provider(
+        &slug,
+        &json!({ "connected": true, "mode": "token_import" }),
+      )?;
+      return Ok(json!({
+        "connected": true,
+        "provider": slug,
+        "stub": false,
+        "echo": payload,
+      }));
+    }
+    return Ok(json!({
+      "connected": false,
+      "needsCredentials": true,
+      "needsPasteToken": true,
+      "provider": slug,
+      "message": format!(
+        "{} requires an API token. Paste it in the token dialog or import via app_integration_import_credentials.",
+        slug
+      ),
       "stub": false,
       "echo": payload,
     }));
@@ -797,9 +903,39 @@ pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
       "echo": payload,
     }));
   }
+  if integrations::supports_apple_local(&slug) {
+    #[cfg(target_os = "macos")]
+    {
+      if slug == "apple_calendar" {
+        apple_local::probe_calendar()?;
+      } else if slug == "apple_reminders" {
+        apple_local::probe_reminders()?;
+      }
+      settings_store::upsert_integration_provider(
+        &slug,
+        &json!({ "connected": true, "mode": "local_macos" }),
+      )?;
+      return Ok(json!({
+        "connected": true,
+        "provider": slug,
+        "stub": false,
+        "echo": payload,
+      }));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+      return Err(format!(
+        "{} is only available on macOS.",
+        slug.replace('_', " ")
+      ));
+    }
+  }
   Ok(json!({
     "notImplemented": true,
-    "message": "Third-party integrations (OAuth, calendar, mail) are not available in v1. This build is local-only; connect Arc, Raycast, or Obsidian for local-only toggles.",
+    "message": format!(
+      "Integration \"{}\" is not wired yet. Supported: Gmail, Google Calendar, Google Drive, Slack, Notion, GitHub, Linear, Zoom, Outlook, Figma, Claude, Apple Calendar, Apple Reminders, Arc, Raycast, Obsidian.",
+      slug
+    ),
     "stub": false,
     "echo": payload,
   }))
@@ -851,10 +987,15 @@ pub(crate) fn persist_integration_credentials_inner(payload: &Value) -> Result<S
   }
 
   integration_secrets::set_credentials(&slug, &doc)?;
-  if slug == "google_calendar" || slug == "gmail" {
+  if integrations::supports_google_oauth(&slug) {
     settings_store::upsert_integration_provider(
       &slug,
-      &json!({ "connected": true, "mode": "oauth_via_agent" }),
+      &json!({ "connected": true, "mode": "oauth_in_app" }),
+    )?;
+  } else if integrations::supports_token_import(&slug) {
+    settings_store::upsert_integration_provider(
+      &slug,
+      &json!({ "connected": true, "mode": "token_import" }),
     )?;
   }
   Ok(slug)
@@ -881,8 +1022,12 @@ pub fn app_integration_credentials_status(payload: Value) -> Result<Value, Strin
     .and_then(|p| p.as_str())
     .unwrap_or("google_calendar");
   let slug = integrations::normalize_provider(raw);
+  let configured = if integrations::supports_apple_local(&slug) {
+    integrations::provider_connected_in_settings(&slug)?
+  } else {
+    integration_secrets::get_credentials(&slug)?.is_some()
+  };
   let creds = integration_secrets::get_credentials(&slug)?;
-  let configured = creds.is_some();
   let token_refresh_ready = match creds.as_ref() {
     Some(doc) if slug == "google_calendar" => google_calendar::credentials_can_refresh(doc),
     Some(doc) if slug == "gmail" => crate::google_oauth::credentials_can_refresh(doc),
@@ -921,15 +1066,14 @@ pub async fn shogun_oauth_google_start(
     .get("provider")
     .and_then(|v| v.as_str())
     .ok_or_else(|| "oauth_invalid_provider".to_string())?;
-  if provider != "gmail" && provider != "google_calendar" {
+  if provider != "gmail" && provider != "google_calendar" && provider != "google_drive" {
     return Err("oauth_invalid_provider".into());
   }
 
   let tokens = crate::oauth_flow::run(None).await.map_err(String::from)?;
 
-  // Save tokens for BOTH providers — a single Google OAuth grants both
-  // scopes in one consent, matching scripts/oauth-google.mjs's behavior.
-  for save_provider in ["gmail", "google_calendar"] {
+  // Save tokens for Google providers — a single OAuth consent grants all scopes.
+  for save_provider in ["gmail", "google_calendar", "google_drive"] {
     let mut save_payload = json!({
       "provider": save_provider,
       "accessToken": tokens.access_token,
@@ -961,6 +1105,58 @@ pub async fn shogun_oauth_google_start(
     "expiresAt": tokens.expires_at,
     "refreshTokenPresent": tokens.refresh_token.is_some(),
   }))
+}
+
+#[tauri::command]
+pub fn shogun_oauth_google_app_status(payload: Value) -> Result<Value, String> {
+  let configured = crate::oauth_flow::load_oauth_credentials().is_ok();
+  Ok(json!({
+    "configured": configured,
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub fn shogun_oauth_google_app_set(payload: Value) -> Result<Value, String> {
+  let client_id = payload
+    .get("clientId")
+    .or_else(|| payload.get("client_id"))
+    .and_then(|v| v.as_str())
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "clientId is required".to_string())?;
+  let client_secret = payload
+    .get("clientSecret")
+    .or_else(|| payload.get("client_secret"))
+    .and_then(|v| v.as_str())
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+    .ok_or_else(|| "clientSecret is required".to_string())?;
+  crate::integration_secrets::set_credentials(
+    crate::oauth_flow::GOOGLE_OAUTH_APP_PROVIDER,
+    &json!({ "clientId": client_id, "clientSecret": client_secret }),
+  )?;
+  Ok(json!({
+    "saved": true,
+    "configured": true,
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub async fn shogun_agent_run_now(payload: Value) -> Result<Value, String> {
+  crate::agents::run_now_with_payload(&payload).await
+}
+
+#[tauri::command]
+pub fn shogun_hummingbird_context(payload: Value) -> Result<Value, String> {
+  let mut ctx = crate::hummingbird::capture_context();
+  if let Some(obj) = ctx.as_object_mut() {
+    obj.insert("echo".to_string(), payload);
+  }
+  Ok(ctx)
 }
 
 #[tauri::command]
@@ -1067,7 +1263,63 @@ pub async fn shogun_drive_sync(payload: Value) -> Result<Value, String> {
   google_drive::sync_drive_to_memory(days, max_files).await
 }
 
-/// Export the full settings document as JSON to a user-picked file. Skips
+#[tauri::command]
+pub async fn shogun_outlook_sync(payload: Value) -> Result<Value, String> {
+  let days = payload
+    .get("days")
+    .and_then(|d| d.as_u64())
+    .map(|d| d.min(366) as u32);
+  let max_messages = payload
+    .get("maxMessages")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(100)
+    .clamp(1, 500) as usize;
+  outlook::sync_mail_to_memory(days, max_messages).await
+}
+
+#[tauri::command]
+pub async fn shogun_figma_sync(payload: Value) -> Result<Value, String> {
+  let max_files = payload
+    .get("maxFiles")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(50)
+    .clamp(1, 200) as usize;
+  figma::sync_files_to_memory(max_files).await
+}
+
+#[tauri::command]
+pub async fn shogun_claude_sync(payload: Value) -> Result<Value, String> {
+  let max_items = payload
+    .get("maxItems")
+    .and_then(|m| m.as_u64())
+    .unwrap_or(20)
+    .clamp(1, 100) as usize;
+  claude::sync_context_to_memory(max_items).await
+}
+
+#[tauri::command]
+pub fn shogun_apple_calendar_sync(payload: Value) -> Result<Value, String> {
+  let max_events = payload
+    .get("maxResults")
+    .or_else(|| payload.get("maxEvents"))
+    .and_then(|m| m.as_u64())
+    .unwrap_or(50)
+    .clamp(1, 500) as usize;
+  apple_local::sync_calendar_to_memory(max_events)
+}
+
+#[tauri::command]
+pub fn shogun_apple_reminders_sync(payload: Value) -> Result<Value, String> {
+  let max_items = payload
+    .get("maxItems")
+    .or_else(|| payload.get("maxResults"))
+    .and_then(|m| m.as_u64())
+    .unwrap_or(80)
+    .clamp(1, 300) as usize;
+  apple_local::sync_reminders_to_memory(max_items)
+}
+
+/// Export the full settings document as JSON to a user-picked file.
 /// credential secrets (those live in Keychain / integration_secrets, not in
 /// settings.json, so the settings file is already safe to share).
 #[tauri::command]
@@ -1290,7 +1542,56 @@ pub fn app_capture_resume(payload: Value) -> Result<Value, String> {
   Ok(json!({
     "paused": false,
     "honestPreferenceOnly": true,
-    "message": "Capture sampling resumed. On macOS, frontmost app is sampled periodically into memory (no screenshots).",
+    "message": "Capture resumed. macOS records app focus, AX context, and input events locally (no screenshots).",
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub fn shogun_capture_live_events(payload: Value) -> Result<Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(40) as usize;
+  Ok(json!({
+    "events": crate::capture_events::list_recent(limit),
+    "eventsPerMinute": crate::capture_events::events_last_minute(),
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub fn shogun_capture_status(payload: Value) -> Result<Value, String> {
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  let paused = settings
+    .pointer("/sections/capture/paused")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  Ok(json!({
+    "paused": paused,
+    "permissions": crate::macos_permissions::status_snapshot(),
+    "inputTapRunning": crate::macos_input::tap_running(),
+    "eventsPerMinute": crate::capture_events::events_last_minute(),
+    "stub": false,
+    "echo": payload,
+  }))
+}
+
+#[tauri::command]
+pub fn app_onboarding_complete(payload: Value) -> Result<Value, String> {
+  let doc = settings_store::save_patch(&json!({
+    "section": "onboarding",
+    "complete": true,
+  }))?;
+  let _ = settings_store::save_patch(&json!({
+    "section": "capture",
+    "paused": false,
+  }))?;
+  Ok(json!({
+    "complete": true,
+    "settings": doc,
     "stub": false,
     "echo": payload,
   }))
@@ -1303,21 +1604,33 @@ pub fn app_permissions_manage(payload: Value) -> Result<Value, String> {
     let target = payload
       .get("target")
       .and_then(|t| t.as_str())
-      .unwrap_or("screen_capture");
-    let url = match target {
-      "accessibility" => {
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-      }
-      _ => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-    };
-    let _ = Command::new("open").arg(url).spawn();
+      .unwrap_or("accessibility");
+    if target == "screen_capture_request" {
+      let granted = crate::macos_permissions::request_screen_capture_access();
+      return Ok(json!({
+        "requested": true,
+        "granted": granted,
+        "stub": false,
+        "echo": payload,
+      }));
+    }
+    let opened = crate::macos_permissions::open_privacy_pane(target);
+    Ok(json!({
+      "opened": opened,
+      "note": "Opened System Settings for the requested privacy pane when supported.",
+      "stub": false,
+      "echo": payload,
+    }))
   }
-  Ok(json!({
-    "opened": true,
-    "note": "Opened System Settings for the requested privacy pane when supported.",
-    "stub": false,
-    "echo": payload,
-  }))
+  #[cfg(not(target_os = "macos"))]
+  {
+    Ok(json!({
+      "opened": false,
+      "note": "Privacy panes are macOS-only.",
+      "stub": false,
+      "echo": payload,
+    }))
+  }
 }
 
 /// Native file picker for a `.app` bundle (Privacy → exclude list). Cancel returns `cancelled: true`.
@@ -1498,7 +1811,25 @@ pub fn app_delete_data_range(payload: Value) -> Result<Value, String> {
     "last_hour" => now.saturating_sub(3_600_000),
     "last_day" => now.saturating_sub(86_400_000),
     "custom" => {
-      return Err("Custom range deletion is not implemented in v1.".to_string());
+      if let Some(since_ms) = payload.get("sinceMs").and_then(|v| v.as_u64()) {
+        since_ms
+      } else {
+        let hours = payload.get("hours").and_then(|v| v.as_u64()).unwrap_or(0);
+        let days = payload.get("days").and_then(|v| v.as_u64()).unwrap_or(0);
+        if hours == 0 && days == 0 {
+          return Err(
+            "Custom range requires sinceMs or a positive hours/days value.".to_string(),
+          );
+        }
+        let mut cutoff = now;
+        if days > 0 {
+          cutoff = cutoff.saturating_sub(days.saturating_mul(86_400_000));
+        }
+        if hours > 0 {
+          cutoff = cutoff.saturating_sub(hours.saturating_mul(3_600_000));
+        }
+        cutoff
+      }
     }
     _ => return Err(format!("Unknown range: {}", range)),
   };

@@ -34,6 +34,73 @@ static LAST_AX_EMPTY_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_AX_NOT_TRUSTED_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_INGEST_ERROR_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_FILTER_DROP_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
+#[cfg(target_os = "macos")]
+static LAST_VIDEO_EMIT: Mutex<Option<(String, u64)>> = Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+fn detect_video_meeting(text: &str) -> Option<(String, String)> {
+  let lower = text.to_lowercase();
+  if lower.contains("meet.google.com") || lower.contains("meet.google") {
+    let url = extract_meeting_url(&lower, "meet.google");
+    return Some(("google_meet".to_string(), url));
+  }
+  if lower.contains("zoom.us") || lower.contains("zoomgov.com") {
+    let url = extract_meeting_url(&lower, "zoom.us");
+    return Some(("zoom".to_string(), url));
+  }
+  None
+}
+
+#[cfg(target_os = "macos")]
+fn extract_meeting_url(text: &str, needle: &str) -> String {
+  for token in text.split_whitespace() {
+    if token.contains(needle) {
+      let trimmed = token
+        .trim_matches(|c: char| {
+          !c.is_ascii_alphanumeric() && c != ':' && c != '/' && c != '.' && c != '?' && c != '='
+            && c != '-' && c != '_'
+        })
+        .to_string();
+      if !trimmed.is_empty() {
+        return trimmed;
+      }
+    }
+  }
+  if needle.contains("meet.google") {
+    "https://meet.google.com".to_string()
+  } else {
+    "https://zoom.us".to_string()
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn maybe_emit_video_meeting(app: &AppHandle, text: &str, app_label: &str) {
+  let Some((provider, url)) = detect_video_meeting(text) else {
+    return;
+  };
+  let now = now_ms();
+  if let Ok(mut guard) = LAST_VIDEO_EMIT.lock() {
+    if let Some((prev_provider, prev_ms)) = guard.as_ref() {
+      if prev_provider == &provider && now.saturating_sub(*prev_ms) < 300_000 {
+        return;
+      }
+    }
+    *guard = Some((provider.clone(), now));
+  }
+  let meeting_id =
+    crate::meeting_auto::try_start_from_video_detect(app, &provider, &url, app_label);
+  let _ = app.emit(
+    "video-meeting-started",
+    json!({
+      "provider": provider,
+      "url": url,
+      "title": app_label,
+      "app": app_label,
+      "meeting_id": meeting_id,
+      "auto_started": meeting_id.is_some(),
+    }),
+  );
+}
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -124,16 +191,13 @@ fn frontmost_app_name() -> Option<String> {
 
 /// Pure check on a loaded settings document: is the sampler allowed to run?
 ///
-/// Reads only `sections.capture.paused`. Missing or `true` means the sampler
-/// stays off, which gives fresh installs a privacy-first default (the pause /
-/// resume commands are the user's explicit opt-in). The legacy
-/// `pipelineAvailable` key is intentionally ignored — it was always written in
-/// lockstep with `paused` so no existing user state relies on it alone.
+/// Reads only `sections.capture.paused`. Missing defaults to **running** for MVP
+/// ship (install → leave → search). Explicit `paused: true` stops capture.
 fn sampler_should_run_for(doc: &Value) -> bool {
   let paused = doc
     .pointer("/sections/capture/paused")
     .and_then(|v| v.as_bool())
-    .unwrap_or(true);
+    .unwrap_or(false);
   !paused
 }
 
@@ -144,6 +208,22 @@ fn pipeline_should_run() -> bool {
   sampler_should_run_for(&doc)
 }
 
+/// Public wrapper for macOS input helpers.
+pub fn pipeline_should_run_public() -> bool {
+  pipeline_should_run()
+}
+
+fn capture_retention_days() -> u64 {
+  settings_store::load()
+    .ok()
+    .and_then(|d| {
+      d.pointer("/sections/capture/retentionDays")
+        .and_then(|v| v.as_u64())
+    })
+    .unwrap_or(30)
+    .clamp(1, 3650)
+}
+
 fn ax_rich_capture_enabled() -> bool {
   settings_store::load()
     .ok()
@@ -151,18 +231,20 @@ fn ax_rich_capture_enabled() -> bool {
       d.pointer("/sections/capture/axRichCapture")
         .and_then(|v| v.as_bool())
     })
-    .unwrap_or(false)
+    .unwrap_or(true)
 }
 
-/// Seconds between sampler wakeups (macOS capture loop). Clamped 4–600, default 8.
-fn sample_interval_secs() -> u64 {
+/// Seconds between sampler wakeups when no input event fired (idle fallback).
+/// Clamped 4–600, default 5 (screenpipe-style passive capture).
+fn idle_sample_interval_secs() -> u64 {
   settings_store::load()
     .ok()
     .and_then(|d| {
       d.pointer("/sections/capture/sampleIntervalSecs")
+        .or_else(|| d.pointer("/sections/capture/idleSampleIntervalSecs"))
         .and_then(|v| v.as_u64())
     })
-    .unwrap_or(8)
+    .unwrap_or(5)
     .clamp(4, 600)
 }
 
@@ -233,7 +315,7 @@ pub fn filters_from_settings(doc: &Value) -> PrivacyFilters {
   }
 }
 
-fn load_privacy_filters() -> PrivacyFilters {
+pub fn load_privacy_filters() -> PrivacyFilters {
   settings_store::load()
     .ok()
     .as_ref()
@@ -337,6 +419,63 @@ fn host_suffix_match(actual: &str, excluded: &str) -> bool {
     && actual.ends_with(excluded)
 }
 
+fn capture_entity_id(prefix: &str, content: &str) -> String {
+  format!("{prefix}:{:016x}", fnv_hash(content))
+}
+
+fn build_ax_capture_text() -> Option<String> {
+  let mut parts: Vec<String> = Vec::new();
+  if let Some(focus) = macos_ax::focused_ax_snapshot() {
+    let t = focus.trim();
+    if !t.is_empty() {
+      parts.push(t.to_string());
+    }
+  }
+  if let Some(tree) = macos_ax::focused_ax_tree(3, 48, 4_000) {
+    let t = tree.trim();
+    if !t.is_empty() {
+      parts.push(t.to_string());
+    }
+  }
+  if parts.is_empty() {
+    None
+  } else {
+    Some(parts.join("\n\n"))
+  }
+}
+
+fn snippet_with_spatial(base: &str, spatial: Option<&str>) -> String {
+  let spatial = spatial.map(str::trim).filter(|s| !s.is_empty());
+  match spatial {
+    Some(s) => format!("spatial={s}\n\n{base}"),
+    None => base.to_string(),
+  }
+}
+
+fn upsert_capture_row(
+  app: &str,
+  source: &str,
+  title: &str,
+  snippet: &str,
+  entity_id: &str,
+  kinds: &[&str],
+  live_kind: &str,
+  live_detail: &str,
+) {
+  crate::capture_events::record_live(app, live_kind, live_detail);
+  let kinds_json: Vec<&str> = kinds.to_vec();
+  let payload = json!({
+    "title": title,
+    "snippet": snippet,
+    "source": source,
+    "kinds": kinds_json,
+    "entity_id": entity_id,
+  });
+  if let Err(e) = memory_store::ingest_capture_upsert(&payload) {
+    maybe_log_ingest_error(source, &e);
+  }
+}
+
 fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
   let sig = fnv_hash(app);
   if let Ok(mut last) = LAST_SIG.lock() {
@@ -346,10 +485,6 @@ fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
     *last = Some(sig);
   }
 
-  // Phase 2 Stage 2 (T4): when the kioku_graph flag is on, route captures
-  // through `mem_captures` + `extraction_jobs` instead of writing them to
-  // `mem_items`. The flag defaults OFF; production flips it after Stage 2
-  // validation per `migration-plan.md` §Stage 2.
   let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
   if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
     let snippet = format!("Frontmost app (capture sampler): {}", app);
@@ -360,7 +495,7 @@ fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
       window_title: Some(app.to_string()),
       url: None,
       captured_at_ms: now_ms() as i64,
-      spatial_context_json,
+      spatial_context_json: spatial_context_json.clone(),
       ..Default::default()
     };
     match memory_store::open_conn() {
@@ -374,20 +509,25 @@ fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
     return;
   }
 
-  let title = format!("Focus · {}", app);
-  let snippet = format!("Frontmost app (capture sampler): {}", app);
-  let payload = json!({
-    "title": title,
-    "snippet": snippet,
-    "source": "capture_sampler",
-    "kinds": ["screen"],
-  });
-  if let Err(e) = memory_store::ingest(&payload) {
-    maybe_log_ingest_error("capture_sampler", &e);
-  }
+  let entity = capture_entity_id("app", app);
+  let snippet = snippet_with_spatial(
+    &format!("Frontmost app: {app}"),
+    spatial_context_json.as_deref(),
+  );
+  upsert_capture_row(
+    app,
+    "capture_sampler",
+    &format!("Focus · {app}"),
+    &snippet,
+    &entity,
+    &["screen", "focus"],
+    "app",
+    app,
+  );
 }
 
-fn maybe_ingest_ax(text: &str, spatial_context_json: Option<String>) {
+fn maybe_ingest_ax(app: &AppHandle, text: &str, app_label: &str, spatial_context_json: Option<String>) {
+  maybe_emit_video_meeting(app, text, app_label);
   let sig = fnv_hash(text);
   if let Ok(last_sig) = LAST_AX_SIG.lock() {
     if *last_sig == Some(sig) {
@@ -414,19 +554,18 @@ fn maybe_ingest_ax(text: &str, spatial_context_json: Option<String>) {
       *last_t = Some(now_ms());
     }
   }
-  let snippet = text.chars().take(2000).collect::<String>();
+  let snippet_body = text.chars().take(4000).collect::<String>();
 
-  // Phase 2 Stage 2 (T4): same flag-gated branch as `maybe_ingest_focus`.
   let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
   if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
     let input = crate::mem_captures::CaptureInput {
       kind: "screen_ax".into(),
-      raw_text: Some(snippet),
+      raw_text: Some(snippet_body.clone()),
       app_bundle_id: None,
       window_title: None,
       url: None,
       captured_at_ms: now_ms() as i64,
-      spatial_context_json,
+      spatial_context_json: spatial_context_json.clone(),
       ..Default::default()
     };
     match memory_store::open_conn() {
@@ -440,23 +579,91 @@ fn maybe_ingest_ax(text: &str, spatial_context_json: Option<String>) {
     return;
   }
 
-  let payload = json!({
-    "title": "Focus · AX",
-    "snippet": snippet,
-    "source": "capture_ax",
-    "kinds": ["screen", "accessibility"],
-  });
-  if let Err(e) = memory_store::ingest(&payload) {
-    maybe_log_ingest_error("capture_ax", &e);
+  let entity = capture_entity_id("ax", text);
+  let snippet = snippet_with_spatial(&snippet_body, spatial_context_json.as_deref());
+  let preview = snippet.lines().next().unwrap_or("AX snapshot").chars().take(80).collect::<String>();
+  upsert_capture_row(
+    app_label,
+    "capture_ax",
+    &format!("Focus · {app_label}"),
+    &snippet,
+    &entity,
+    &["screen", "accessibility"],
+    "ax",
+    &preview,
+  );
+}
+
+fn run_capture_tick(app: &AppHandle) {
+  let filters = load_privacy_filters();
+  #[cfg(target_os = "macos")]
+  {
+    let frontmost = frontmost_app_name();
+    let app_label = frontmost.clone().unwrap_or_else(|| "unknown".to_string());
+    if let Some(ref name) = frontmost {
+      if app_excluded(&filters, name) {
+        return;
+      }
+    }
+    let spatial_for_ingest = if ax_rich_capture_enabled() {
+      crate::spatial::capture_spatial_context()
+    } else {
+      None
+    };
+    if ax_rich_capture_enabled() {
+      if macos_ax::accessibility_trust_status() == Some(false) {
+        maybe_warn_ax_not_trusted(app);
+      }
+      if let Some(ax) = build_ax_capture_text() {
+        let t = ax.trim();
+        if !t.is_empty() {
+          if ax_text_excluded(&filters, t) {
+            return;
+          }
+          maybe_ingest_ax(app, t, &app_label, spatial_for_ingest.clone());
+          return;
+        }
+        maybe_log_ax_snapshot_empty();
+      } else {
+        maybe_log_ax_snapshot_empty();
+      }
+    }
+    if let Some(name) = frontmost {
+      maybe_ingest_focus(&name, spatial_for_ingest);
+    }
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (&filters, app);
   }
 }
 
+fn start_retention_cleanup_thread() {
+  std::thread::spawn(|| loop {
+    std::thread::sleep(Duration::from_secs(3600));
+    let days = capture_retention_days();
+    match memory_store::cleanup_capture_retention(days) {
+      Ok(n) if n > 0 => log::info!("capture: retention cleanup removed {n} rows"),
+      Err(e) => log::warn!("capture: retention cleanup failed: {e}"),
+      _ => {}
+    }
+  });
+}
+
 pub fn start_background_sampler(app: AppHandle) {
+  crate::macos_input::start_if_macos();
+  start_retention_cleanup_thread();
+
   std::thread::spawn(move || loop {
+    let wake = crate::macos_input::take_sampler_wake();
     let wait = if pipeline_should_run() {
-      sample_interval_secs()
+      if wake {
+        1
+      } else {
+        idle_sample_interval_secs()
+      }
     } else {
-      8
+      4
     };
     std::thread::sleep(Duration::from_secs(wait));
     if !pipeline_should_run() {
@@ -509,7 +716,7 @@ pub fn start_background_sampler(app: AppHandle) {
                 }
                 continue;
               }
-              maybe_ingest_ax(t, spatial_for_ingest.clone());
+              maybe_ingest_ax(&app, t, app_name, spatial_for_ingest.clone());
               continue;
             }
             maybe_log_ax_snapshot_empty();
@@ -535,6 +742,19 @@ mod tests {
 
   fn doc_with_privacy(privacy: Value) -> Value {
     json!({ "sections": { "privacy": privacy } })
+  }
+
+  #[test]
+  fn snippet_with_spatial_prefixes_json() {
+    let out = snippet_with_spatial("Frontmost app: Safari", Some(r#"{"quadrant":"NE"}"#));
+    assert!(out.starts_with("spatial="));
+    assert!(out.contains("Frontmost app: Safari"));
+  }
+
+  #[test]
+  fn snippet_with_spatial_empty_is_unchanged() {
+    assert_eq!(snippet_with_spatial("hello", None), "hello");
+    assert_eq!(snippet_with_spatial("hello", Some("  ")), "hello");
   }
 
   #[test]
@@ -765,11 +985,10 @@ mod tests {
   }
 
   #[test]
-  fn sampler_off_on_fresh_install() {
-    // No capture section at all — privacy-first default wins.
-    assert!(!sampler_should_run_for(&json!({})));
-    assert!(!sampler_should_run_for(&json!({ "sections": {} })));
-    assert!(!sampler_should_run_for(
+  fn sampler_on_on_fresh_install() {
+    assert!(sampler_should_run_for(&json!({})));
+    assert!(sampler_should_run_for(&json!({ "sections": {} })));
+    assert!(sampler_should_run_for(
       &json!({ "sections": { "capture": {} } })
     ));
   }
@@ -797,8 +1016,8 @@ mod tests {
 
   #[test]
   fn sampler_off_when_paused_is_non_bool() {
-    // Unparseable value → treat as missing → privacy-first default (off).
-    assert!(!sampler_should_run_for(
+    // Unparseable value → treat as missing → MVP default (on).
+    assert!(sampler_should_run_for(
       &json!({ "sections": { "capture": { "paused": "yes" } } })
     ));
   }

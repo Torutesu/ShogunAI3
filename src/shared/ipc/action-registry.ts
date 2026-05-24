@@ -42,6 +42,10 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
     register("dead_letter.delete", (payload) => api.deadLetterDelete(payload));
     register("integrations.connect", (payload) => api.integrationConnect(payload));
     register("oauth.google.start", (payload) => api.oauthGoogleStart(payload));
+    register("oauth.google.app_status", (payload) => api.oauthGoogleAppStatus(payload));
+    register("oauth.google.app_set", (payload) => api.oauthGoogleAppSet(payload));
+    register("agent.run_now", (payload) => api.agentRunNow(payload));
+    register("hummingbird.context", (payload) => api.hummingbirdContext(payload));
     register("integrations.import_credentials", (payload) =>
       api.integrationImportCredentials(payload),
     );
@@ -57,8 +61,16 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
     register("linear.sync", (payload) => api.linearSync(payload));
     register("drive.sync", (payload) => api.driveSync(payload));
     register("zoom.sync", (payload) => api.zoomSync(payload));
+    register("outlook.sync", (payload) => api.outlookSync(payload));
+    register("figma.sync", (payload) => api.figmaSync(payload));
+    register("claude.sync", (payload) => api.claudeSync(payload));
+    register("apple_calendar.sync", (payload) => api.appleCalendarSync(payload));
+    register("apple_reminders.sync", (payload) => api.appleRemindersSync(payload));
     register("capture.pause", () => api.capturePause({ reason: "user_request" }));
     register("capture.resume", () => api.captureResume({ reason: "user_request" }));
+    register("capture.live_events", (payload) => api.captureLiveEvents(payload));
+    register("capture.status", (payload) => api.captureStatus(payload));
+    register("onboarding.complete", (payload) => api.onboardingComplete(payload));
     register("permissions.manage", (payload) => api.permissionsManage(payload));
     register("privacy.pick_app", (payload) => api.privacyPickApp(payload));
     register("diagnostics.report", (payload) => api.diagnosticsReport(payload));
@@ -68,14 +80,13 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
     register("data.delete_all", () => api.accountDeleteAll({}));
     register("account.delete", () => api.accountDeleteSelf({}));
     register("memory.search", (payload) => {
-      // Phase 2.1.4: route through the local+cloud merge layer when available.
-      // Falls back to local-only if memory-search.js wasn't loaded.
       const merge = global.ShogunMemorySearch;
       if (merge && typeof merge.runMemorySearchMerged === "function") {
         return merge.runMemorySearchMerged(api, payload);
       }
       return api.memorySearch(payload);
     });
+    register("memory.timelineSearch", (payload) => api.memoryTimelineSearch(payload));
     register("memory.fetch", (payload) => api.memoryFetch(payload));
     register("memory.ingest", (payload) => api.memoryIngest(payload));
     register("memory.delete", (payload) => api.memoryDelete(payload));

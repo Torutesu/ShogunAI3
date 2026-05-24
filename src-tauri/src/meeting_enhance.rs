@@ -171,3 +171,56 @@ Respond with JSON only.",
   });
   Ok(note)
 }
+
+/// Granola / localStorage meeting notes — LLM minutes without a SQLite meeting row.
+pub async fn enhance_granola_notes(payload: &Value) -> Result<Value, String> {
+  let title = payload
+    .get("title")
+    .and_then(|v| v.as_str())
+    .unwrap_or("Meeting");
+  let notes = payload.get("notes").and_then(|v| v.as_str()).unwrap_or("");
+  let transcript = payload
+    .get("transcript")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  let summary = payload.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+  let storage_key = payload
+    .get("storageKey")
+    .or_else(|| payload.get("storage_key"))
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+
+  let system = "You are SHOGUN meeting notes assistant. Produce clear meeting minutes in Markdown. \
+Include: title, date line, attendees (if known), summary, decisions, action items with owners when stated, and open questions. \
+Use only facts from the provided notes and transcript — do not invent attendees or decisions.";
+  let user_msg = format!(
+    "# Meeting: {title}\n\n## User notes\n{notes}\n\n## Transcript\n{transcript}\n\n## Prior summary\n{summary}\n\nWrite minutes in Markdown.",
+    title = title,
+    notes = notes.chars().take(8_000).collect::<String>(),
+    transcript = transcript.chars().take(12_000).collect::<String>(),
+    summary = summary.chars().take(4_000).collect::<String>(),
+  );
+  let llm_payload = json!({
+    "messages": [
+      { "role": "system", "content": system },
+      { "role": "user", "content": user_msg }
+    ]
+  });
+  let out = llm::chat_complete(&llm_payload, None).await?;
+  let md = out
+    .get("message")
+    .and_then(|m| m.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+  if md.is_empty() {
+    return Err("LLM returned empty minutes".to_string());
+  }
+  Ok(json!({
+    "minutesMarkdown": md,
+    "minutes": md,
+    "markdown": md,
+    "storageKey": storage_key,
+    "stub": false,
+  }))
+}

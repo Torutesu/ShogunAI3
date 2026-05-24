@@ -53,7 +53,10 @@ pub struct OauthTokens {
 const REDIRECT_URI: &str = "http://localhost:8723/callback";
 const PORT: u16 = 8723;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(180);
-const SCOPES: &str = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly";
+const SCOPES: &str = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.readonly";
+
+/// Keychain provider for production OAuth app credentials (client id + secret).
+pub const GOOGLE_OAUTH_APP_PROVIDER: &str = "google_oauth_app";
 
 /// Parse `scripts/.env.google-oauth`. Returns (CLIENT_ID, CLIENT_SECRET).
 pub fn parse_env(text: &str) -> Result<(String, String), OauthError> {
@@ -98,6 +101,43 @@ pub fn load_env_from_disk() -> Result<(String, String), OauthError> {
   let text = std::fs::read_to_string(&env_path)
     .map_err(|e| OauthError::Internal(format!("read env: {}", e)))?;
   parse_env(&text)
+}
+
+/// Resolve Google OAuth app credentials for dev and production builds.
+/// Order: runtime env → compile-time env → Keychain (`google_oauth_app`) → dev file.
+pub fn load_oauth_credentials() -> Result<(String, String), OauthError> {
+  if let Ok(id) = std::env::var("SHOGUN_GOOGLE_CLIENT_ID") {
+    if let Ok(sec) = std::env::var("SHOGUN_GOOGLE_CLIENT_SECRET") {
+      let id = id.trim();
+      let sec = sec.trim();
+      if !id.is_empty() && !sec.is_empty() {
+        return Ok((id.to_string(), sec.to_string()));
+      }
+    }
+  }
+  let compile_id = option_env!("SHOGUN_GOOGLE_CLIENT_ID").unwrap_or("").trim();
+  let compile_sec = option_env!("SHOGUN_GOOGLE_CLIENT_SECRET").unwrap_or("").trim();
+  if !compile_id.is_empty() && !compile_sec.is_empty() {
+    return Ok((compile_id.to_string(), compile_sec.to_string()));
+  }
+  if let Ok(Some(doc)) = crate::integration_secrets::get_credentials(GOOGLE_OAUTH_APP_PROVIDER) {
+    let id = doc
+      .get("clientId")
+      .or_else(|| doc.get("client_id"))
+      .and_then(|v| v.as_str())
+      .unwrap_or("")
+      .trim();
+    let sec = doc
+      .get("clientSecret")
+      .or_else(|| doc.get("client_secret"))
+      .and_then(|v| v.as_str())
+      .unwrap_or("")
+      .trim();
+    if !id.is_empty() && !sec.is_empty() {
+      return Ok((id.to_string(), sec.to_string()));
+    }
+  }
+  load_env_from_disk()
 }
 
 /// Mask a secret string for safe logging. ≤ 8 chars → all asterisks.
@@ -274,7 +314,7 @@ pub async fn run(token_endpoint_override: Option<&str>) -> Result<OauthTokens, O
     Err(_) => return Err(OauthError::AlreadyInProgress),
   };
 
-  let (client_id, client_secret) = load_env_from_disk()?;
+  let (client_id, client_secret) = load_oauth_credentials()?;
   log::debug!(
     "oauth: loaded env client_id={} (client_secret masked)",
     mask_secret(&client_id),
@@ -432,6 +472,7 @@ OTHER=ignored
     assert!(url.contains("scope="));
     assert!(url.contains("gmail.readonly"));
     assert!(url.contains("calendar.readonly"));
+    assert!(url.contains("drive.readonly"));
   }
 
   #[test]

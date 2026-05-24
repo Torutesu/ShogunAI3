@@ -111,7 +111,21 @@ pub async fn chat_complete(
   if messages_in.is_empty() {
     return Err("messages must not be empty".to_string());
   }
+  let has_images = messages_in.iter().any(|m| {
+    m.get("role").and_then(|r| r.as_str()) == Some("user")
+      && m.get("images")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+  });
+  if has_images && !crate::llm_providers::model_supports_vision(provider, &model) {
+    return Err(format!(
+      "vision_not_supported: Model \"{}\" does not support image input. Choose a vision-capable model in Settings → Model & API (e.g. gpt-4o, claude-sonnet, gemini-2.5-flash).",
+      model
+    ));
+  }
   let mut messages: Vec<Value> = Vec::new();
+  let mut memory_assembly_hits: Vec<context_assembly::Hit> = Vec::new();
   // Phase 2 Stage 3 (T8.3): user-defined KIOKU rules ride at the very top of
   // every system prompt so the model can't override them via later context.
   // Returns None when no rules are configured — quiet no-op for fresh installs.
@@ -151,6 +165,7 @@ pub async fn chat_complete(
         excluded_provenances: None,
       })
       .await?;
+      memory_assembly_hits = hits.clone();
       let block = context_assembly::format_hits_draft_context(
         &hits,
         context_assembly::SYSTEM_PROMPT_BUDGET_CHARS,
@@ -227,6 +242,16 @@ pub async fn chat_complete(
   for m in messages_in {
     let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
     let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+    if role == "user" {
+      if let Some(imgs) = m.get("images").and_then(|v| v.as_array()).filter(|a| !a.is_empty()) {
+        messages.push(crate::llm_providers::user_message_with_images(
+          provider,
+          content,
+          imgs,
+        ));
+        continue;
+      }
+    }
     messages.push(json!({ "role": role, "content": content }));
   }
   let body = crate::llm_providers::chat_body(provider, &model, &messages, max_tokens);
@@ -247,6 +272,18 @@ pub async fn chat_complete(
   let text = resp.text().await.map_err(|e| e.to_string())?;
   if !status.is_success() {
     let snippet: String = text.chars().take(800).collect();
+    let lower = snippet.to_lowercase();
+    if has_images
+      && (lower.contains("image")
+        || lower.contains("vision")
+        || lower.contains("multimodal")
+        || lower.contains("content type"))
+    {
+      return Err(format!(
+        "vision_not_supported: The API rejected image input for model \"{}\". {}",
+        model, snippet.chars().take(240).collect::<String>()
+      ));
+    }
     return Err(format!("LLM API error {}: {}", status, snippet));
   }
   let v: Value = serde_json::from_str(&text).map_err(|e| {
@@ -280,6 +317,7 @@ pub async fn chat_complete(
   }
   Ok(json!({
     "message": content,
+    "memoryAssemblyHits": context_assembly::hits_to_json(&memory_assembly_hits),
     "echo": payload,
     "stub": false,
   }))

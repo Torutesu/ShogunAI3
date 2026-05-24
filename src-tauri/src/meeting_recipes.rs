@@ -42,33 +42,61 @@ fn resolve_recipe_id(raw: &str) -> Option<RecipeId> {
   }
 }
 
+fn inline_notes(payload: &Value) -> String {
+  payload
+    .get("notes")
+    .or_else(|| payload.get("body"))
+    .and_then(|x| x.as_str())
+    .unwrap_or("")
+    .to_string()
+}
+
+fn inline_transcript(payload: &Value) -> String {
+  payload
+    .get("transcript")
+    .and_then(|x| x.as_str())
+    .unwrap_or("")
+    .to_string()
+}
+
 pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
   let recipe_raw = payload
     .get("recipe_id")
     .and_then(|x| x.as_str())
     .unwrap_or("");
+  let rid = resolve_recipe_id(recipe_raw).ok_or_else(|| "unknown recipe_id".to_string())?;
+
   let meeting_id = payload
     .get("meeting_id")
     .and_then(|x| x.as_str())
-    .ok_or_else(|| "meeting_id is required".to_string())?;
-  let rid = resolve_recipe_id(recipe_raw).ok_or_else(|| "unknown recipe_id".to_string())?;
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty());
 
-  let transcript = meeting_store::list_transcript_final(meeting_id)?;
-  let tr_text: String = transcript
-    .iter()
-    .filter_map(|s| {
-      let t = s.get("text").and_then(|x| x.as_str())?;
-      Some(t.to_string())
-    })
-    .collect::<Vec<_>>()
-    .join("\n");
-
-  let notes = meeting_store::list_note_blocks(meeting_id)?;
-  let notes_text: String = notes
-    .iter()
-    .filter_map(|b| b.get("content").and_then(|x| x.as_str()))
-    .collect::<Vec<_>>()
-    .join("\n---\n");
+  let (tr_text, notes_text) = if let Some(mid) = meeting_id {
+    let transcript = meeting_store::list_transcript_final(mid)?;
+    let tr: String = transcript
+      .iter()
+      .filter_map(|s| {
+        let t = s.get("text").and_then(|x| x.as_str())?;
+        Some(t.to_string())
+      })
+      .collect::<Vec<_>>()
+      .join("\n");
+    let notes = meeting_store::list_note_blocks(mid)?;
+    let nt: String = notes
+      .iter()
+      .filter_map(|b| b.get("content").and_then(|x| x.as_str()))
+      .collect::<Vec<_>>()
+      .join("\n---\n");
+    (tr, nt)
+  } else {
+    let tr = inline_transcript(payload);
+    let nt = inline_notes(payload);
+    if tr.trim().is_empty() && nt.trim().is_empty() {
+      return Err("meeting_id or notes/transcript is required".to_string());
+    }
+    (tr, nt)
+  };
 
   let memory_hits: Vec<Hit> = if matches!(
     rid,
@@ -160,7 +188,7 @@ pub async fn run_recipe(payload: &Value) -> Result<Value, String> {
     .to_string();
   Ok(json!({
     "recipe_id": rid.slug(),
-    "meeting_id": meeting_id,
+    "meeting_id": meeting_id.unwrap_or(""),
     "text": text,
     "stub": false,
     "echo": payload,

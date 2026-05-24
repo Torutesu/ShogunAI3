@@ -32,6 +32,8 @@ import { ShogunIpcClient } from './ipc-client';
         WRITE: WRITE,
       },
       memorySearch: (input: any) => call("shogun_memory_search", input, READ),
+      memoryTimelineSearch: (input: any) =>
+        call("shogun_memory_search", { ...(input || {}), scope: "timeline" }, READ),
       memoryFetch: (input: any) => call("shogun_memory_fetch", input, READ),
       memoryIngest: (input: any) => call("shogun_memory_ingest", input, WRITE),
       memorySummaryGet: (input: any) => call("shogun_memory_summary_get", input, READ),

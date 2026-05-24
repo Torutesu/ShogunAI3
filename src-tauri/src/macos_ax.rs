@@ -105,6 +105,9 @@ mod imp {
     ) -> AXError;
     fn CFGetTypeID(cf: CFTypeRef) -> usize;
     fn CFStringGetTypeID() -> usize;
+    fn CFArrayGetTypeID() -> usize;
+    fn CFArrayGetCount(array: CFTypeRef) -> isize;
+    fn CFArrayGetValueAtIndex(array: CFTypeRef, idx: isize) -> CFTypeRef;
     /// Returns whether this process is trusted for accessibility (System Settings).
     fn AXIsProcessTrusted() -> u8;
     /// AXValue is an opaque container for CGPoint / CGSize / etc.
@@ -220,6 +223,133 @@ mod imp {
     }
   }
 
+  pub fn is_secure_focus() -> bool {
+    unsafe {
+      let system = AXUIElementCreateSystemWide();
+      if system.is_null() {
+        return false;
+      }
+      let attr = CFString::new("AXFocusedUIElement");
+      let mut focused_raw: CFTypeRef = std::ptr::null();
+      let err = AXUIElementCopyAttributeValue(
+        system,
+        attr.as_concrete_TypeRef(),
+        &mut focused_raw,
+      );
+      let secure = if err != AX_ERROR_SUCCESS || focused_raw.is_null() {
+        false
+      } else {
+        let focused = focused_raw as AXUIElementRef;
+        read_string_attr(focused, "AXRole").as_deref() == Some("AXSecureTextField")
+      };
+      if !focused_raw.is_null() {
+        CFRelease(focused_raw);
+      }
+      CFRelease(system as CFTypeRef);
+      secure
+    }
+  }
+
+  fn append_tree_node(
+    out: &mut String,
+    element: AXUIElementRef,
+    depth: u32,
+    max_depth: u32,
+    state: &mut TreeWalkState,
+  ) {
+    if depth > max_depth || state.nodes >= state.max_nodes || out.len() >= state.max_chars {
+      return;
+    }
+    state.nodes += 1;
+    let fields = read_focused_fields(element);
+    if fields.role == "AXSecureTextField" {
+      return;
+    }
+    let indent = "  ".repeat(depth as usize);
+    let _ = std::fmt::Write::write_fmt(
+      out,
+      format_args!(
+        "{indent}- role={} title={} value={}\n",
+        fields.role,
+        clip_tree(&fields.title, 80),
+        clip_tree(&fields.value, 120),
+      ),
+    );
+    if out.len() >= state.max_chars {
+      return;
+    }
+    unsafe {
+      let children_ref = match copy_attr(element, "AXChildren") {
+        Some(c) => c,
+        None => return,
+      };
+      if CFGetTypeID(children_ref) != CFArrayGetTypeID() {
+        CFRelease(children_ref);
+        return;
+      }
+      let count = CFArrayGetCount(children_ref);
+      for i in 0..count {
+        let child = CFArrayGetValueAtIndex(children_ref, i);
+        if child.is_null() {
+          continue;
+        }
+        append_tree_node(out, child as AXUIElementRef, depth + 1, max_depth, state);
+        if state.nodes >= state.max_nodes || out.len() >= state.max_chars {
+          break;
+        }
+      }
+      CFRelease(children_ref);
+    }
+  }
+
+  struct TreeWalkState {
+    nodes: u32,
+    max_nodes: u32,
+    max_chars: usize,
+  }
+
+  fn clip_tree(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+  }
+
+  pub fn focused_ax_tree(max_depth: u32, max_nodes: u32, max_chars: usize) -> Option<String> {
+    unsafe {
+      let system = AXUIElementCreateSystemWide();
+      if system.is_null() {
+        return None;
+      }
+      let attr = CFString::new("AXFocusedUIElement");
+      let mut focused_raw: CFTypeRef = std::ptr::null();
+      let err = AXUIElementCopyAttributeValue(
+        system,
+        attr.as_concrete_TypeRef(),
+        &mut focused_raw,
+      );
+      let out = if err != AX_ERROR_SUCCESS || focused_raw.is_null() {
+        None
+      } else {
+        let focused = focused_raw as AXUIElementRef;
+        let mut buf = String::from("ax_tree:\n");
+        let mut state = TreeWalkState {
+          nodes: 0,
+          max_nodes,
+          max_chars,
+        };
+        append_tree_node(&mut buf, focused, 0, max_depth, &mut state);
+        if buf.len() <= "ax_tree:\n".len() {
+          None
+        } else {
+          Some(buf.chars().take(max_chars).collect())
+        }
+      };
+      if !focused_raw.is_null() {
+        CFRelease(focused_raw);
+      }
+      CFRelease(system as CFTypeRef);
+      out
+    }
+  }
+
   pub fn focused_ax_snapshot() -> Option<String> {
     unsafe {
       let system = AXUIElementCreateSystemWide();
@@ -284,6 +414,12 @@ mod imp {
 pub use imp::focused_ax_snapshot;
 
 #[cfg(target_os = "macos")]
+pub use imp::focused_ax_tree;
+
+#[cfg(target_os = "macos")]
+pub use imp::is_secure_focus;
+
+#[cfg(target_os = "macos")]
 pub use imp::focused_window_geometry;
 
 /// `Some(true/false)` on macOS (whether this app is allowed in Accessibility settings). `None` on other platforms.
@@ -295,6 +431,16 @@ pub fn accessibility_trust_status() -> Option<bool> {
 #[cfg(not(target_os = "macos"))]
 pub fn focused_ax_snapshot() -> Option<String> {
   None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focused_ax_tree(_max_depth: u32, _max_nodes: u32, _max_chars: usize) -> Option<String> {
+  None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_secure_focus() -> bool {
+  false
 }
 
 #[cfg(not(target_os = "macos"))]

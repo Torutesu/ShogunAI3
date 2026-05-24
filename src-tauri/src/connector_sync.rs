@@ -7,7 +7,8 @@
 //! `settings.sections.integrations.*AutoSync` / `*SyncIntervalMins`.
 
 use crate::{
-  github, gmail, google_drive, integration_secrets, linear, notion, settings_store, slack, zoom,
+  apple_local, github, gmail, google_drive, integration_secrets, integrations, linear, notion,
+  outlook, figma, claude, settings_store, slack, zoom,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -19,7 +20,7 @@ struct ProviderState {
   last_sync_ms: Option<u64>,
 }
 
-static STATES: Mutex<[ProviderState; 7]> = Mutex::new([
+static STATES: Mutex<[ProviderState; 12]> = Mutex::new([
   ProviderState { last_sync_ms: None }, // gmail
   ProviderState { last_sync_ms: None }, // slack
   ProviderState { last_sync_ms: None }, // notion
@@ -27,6 +28,11 @@ static STATES: Mutex<[ProviderState; 7]> = Mutex::new([
   ProviderState { last_sync_ms: None }, // linear
   ProviderState { last_sync_ms: None }, // google_drive
   ProviderState { last_sync_ms: None }, // zoom
+  ProviderState { last_sync_ms: None }, // outlook
+  ProviderState { last_sync_ms: None }, // figma
+  ProviderState { last_sync_ms: None }, // claude
+  ProviderState { last_sync_ms: None }, // apple_calendar
+  ProviderState { last_sync_ms: None }, // apple_reminders
 ]);
 
 const IDX_GMAIL: usize = 0;
@@ -36,6 +42,11 @@ const IDX_GITHUB: usize = 3;
 const IDX_LINEAR: usize = 4;
 const IDX_DRIVE: usize = 5;
 const IDX_ZOOM: usize = 6;
+const IDX_OUTLOOK: usize = 7;
+const IDX_FIGMA: usize = 8;
+const IDX_CLAUDE: usize = 9;
+const IDX_APPLE_CAL: usize = 10;
+const IDX_APPLE_REM: usize = 11;
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -108,8 +119,33 @@ fn provider_key_camel(provider: &str) -> &'static str {
     // intentionally consistent with how the frontend writes the flags.
     "google_drive" => "google_drive",
     "zoom" => "zoom",
+    "outlook" => "outlook",
+    "figma" => "figma",
+    "claude" => "claude",
+    "apple_calendar" => "apple_calendar",
+    "apple_reminders" => "apple_reminders",
     _ => "unknown",
   }
+}
+
+fn apple_auto_sync_settings(doc: &Value, provider: &str, default_mins: u64) -> (bool, u64, bool) {
+  let enabled = doc
+    .pointer(&format!(
+      "/sections/integrations/{}AutoSync",
+      provider_key_camel(provider)
+    ))
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+  let mins = doc
+    .pointer(&format!(
+      "/sections/integrations/{}SyncIntervalMins",
+      provider_key_camel(provider)
+    ))
+    .and_then(|v| v.as_u64())
+    .unwrap_or(default_mins)
+    .clamp(5, 1440);
+  let connected = integrations::provider_connected_in_settings(provider).unwrap_or(false);
+  (enabled, mins, connected)
 }
 
 async fn tick_gmail(doc: &Value) {
@@ -331,6 +367,148 @@ async fn tick_zoom(doc: &Value) {
   }
 }
 
+async fn tick_outlook(doc: &Value) {
+  let (enabled, mins, decided, window) = provider_settings(doc, "outlook", 30);
+  if !enabled || !decided {
+    return;
+  }
+  if integration_secrets::get_credentials("outlook")
+    .ok()
+    .flatten()
+    .is_none()
+  {
+    return;
+  }
+  let now = now_ms();
+  let period_ms = mins.saturating_mul(60_000);
+  let due = last_sync_ms(IDX_OUTLOOK)
+    .map(|t| now.saturating_sub(t) >= period_ms)
+    .unwrap_or(true);
+  if !due {
+    return;
+  }
+  let days = if window == 0 { Some(7) } else { Some(window) };
+  match outlook::sync_mail_to_memory(days, 80).await {
+    Ok(out) => {
+      let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+      log::info!("outlook auto-sync: ingested {} message(s)", n);
+      record_sync_ms(IDX_OUTLOOK, now_ms());
+    }
+    Err(e) => log::warn!("outlook auto-sync failed: {}", e),
+  }
+}
+
+async fn tick_figma(doc: &Value) {
+  let (enabled, mins, decided, _window) = provider_settings(doc, "figma", 120);
+  if !enabled || !decided {
+    return;
+  }
+  if integration_secrets::get_credentials("figma")
+    .ok()
+    .flatten()
+    .is_none()
+  {
+    return;
+  }
+  let now = now_ms();
+  let period_ms = mins.saturating_mul(60_000);
+  let due = last_sync_ms(IDX_FIGMA)
+    .map(|t| now.saturating_sub(t) >= period_ms)
+    .unwrap_or(true);
+  if !due {
+    return;
+  }
+  match figma::sync_files_to_memory(30).await {
+    Ok(out) => {
+      let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+      log::info!("figma auto-sync: ingested {} file(s)", n);
+      record_sync_ms(IDX_FIGMA, now_ms());
+    }
+    Err(e) => log::warn!("figma auto-sync failed: {}", e),
+  }
+}
+
+async fn tick_claude(doc: &Value) {
+  let (enabled, mins, decided, _window) = provider_settings(doc, "claude", 360);
+  if !enabled || !decided {
+    return;
+  }
+  let has_integration = integration_secrets::get_credentials("claude")
+    .ok()
+    .flatten()
+    .is_some();
+  let has_llm = crate::secrets::get_llm_api_key()
+    .ok()
+    .flatten()
+    .map(|k| k.starts_with("sk-ant-"))
+    .unwrap_or(false);
+  if !has_integration && !has_llm {
+    return;
+  }
+  let now = now_ms();
+  let period_ms = mins.saturating_mul(60_000);
+  let due = last_sync_ms(IDX_CLAUDE)
+    .map(|t| now.saturating_sub(t) >= period_ms)
+    .unwrap_or(true);
+  if !due {
+    return;
+  }
+  match claude::sync_context_to_memory(20).await {
+    Ok(out) => {
+      let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+      log::info!("claude auto-sync: ingested {} item(s)", n);
+      record_sync_ms(IDX_CLAUDE, now_ms());
+    }
+    Err(e) => log::warn!("claude auto-sync failed: {}", e),
+  }
+}
+
+fn tick_apple_calendar(doc: &Value) {
+  let (enabled, mins, connected) = apple_auto_sync_settings(doc, "apple_calendar", 60);
+  if !enabled || !connected {
+    return;
+  }
+  let now = now_ms();
+  let period_ms = mins.saturating_mul(60_000);
+  let due = last_sync_ms(IDX_APPLE_CAL)
+    .map(|t| now.saturating_sub(t) >= period_ms)
+    .unwrap_or(true);
+  if !due {
+    return;
+  }
+  match apple_local::sync_calendar_to_memory(50) {
+    Ok(out) => {
+      let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+      log::info!("apple_calendar auto-sync: ingested {} event(s)", n);
+      record_sync_ms(IDX_APPLE_CAL, now_ms());
+    }
+    Err(e) => log::warn!("apple_calendar auto-sync failed: {}", e),
+  }
+}
+
+fn tick_apple_reminders(doc: &Value) {
+  let (enabled, mins, connected) = apple_auto_sync_settings(doc, "apple_reminders", 120);
+  if !enabled || !connected {
+    return;
+  }
+  let now = now_ms();
+  let period_ms = mins.saturating_mul(60_000);
+  let due = last_sync_ms(IDX_APPLE_REM)
+    .map(|t| now.saturating_sub(t) >= period_ms)
+    .unwrap_or(true);
+  if !due {
+    return;
+  }
+  match apple_local::sync_reminders_to_memory(80) {
+    Ok(out) => {
+      let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+      log::info!("apple_reminders auto-sync: ingested {} item(s)", n);
+      record_sync_ms(IDX_APPLE_REM, now_ms());
+    }
+    Err(e) => log::warn!("apple_reminders auto-sync failed: {}", e),
+  }
+}
+
 /// Starts a single background loop that polls each connector in turn. The
 /// outer sleep is 60s; each provider self-gates on its own interval so the
 /// cadence stays correct.
@@ -347,6 +525,11 @@ pub fn spawn_background_connector_sync() {
       tick_linear(&doc).await;
       tick_drive(&doc).await;
       tick_zoom(&doc).await;
+      tick_outlook(&doc).await;
+      tick_figma(&doc).await;
+      tick_claude(&doc).await;
+      tick_apple_calendar(&doc);
+      tick_apple_reminders(&doc);
       tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
   });

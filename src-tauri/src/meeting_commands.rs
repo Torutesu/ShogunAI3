@@ -221,10 +221,15 @@ pub fn shogun_meeting_note_delete_block(payload: Value) -> Result<Value, String>
 
 #[tauri::command]
 pub async fn shogun_meeting_enhance(payload: Value) -> Result<Value, String> {
+  if payload.get("meeting_id").is_none() {
+    if payload.get("storageKey").is_some() || payload.get("storage_key").is_some() {
+      return meeting_enhance::enhance_granola_notes(&payload).await;
+    }
+  }
   let meeting_id = payload
     .get("meeting_id")
     .and_then(|x| x.as_str())
-    .ok_or_else(|| "meeting_id is required".to_string())?;
+    .ok_or_else(|| "meeting_id or storageKey is required".to_string())?;
   meeting_store::meeting_set_state(meeting_id, "enhancing")?;
   meeting_enhance::enhance_meeting_notes(meeting_id, false).await
 }

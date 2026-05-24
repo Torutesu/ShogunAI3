@@ -98,6 +98,21 @@ Ship the generated `.dmg` or a stapled `.app`. Include or link: **[`PRIVACY.md`]
 5. **Clerk**: if enabled, redirect URLs must include the app’s custom scheme (see `tauri.conf.json` / env). **Hummingbird**: `app.open_hummingbird` runs `open -a Hummingbird` — app must be installed.  
 6. **Diagnostics**: Settings → Support **Report** should write a JSON file and return a **`summary`** (capture, accessibility trust, calendar integration flags).  
 
+If the three `APPLE_API_*` optional secrets are all set, the workflow writes the `.p8` to a temp path and exports **`APPLE_API_KEY_PATH`**, **`APPLE_API_KEY`**, **`APPLE_API_ISSUER`** for Tauri's notarization step (see Tauri changelog: API key auth for `notarytool`). Otherwise the build is **signed only**; staple or re-run notarization locally per §4 if needed.
+
+For day-to-day verification, use unsigned **`ci.yml`**; use **`release-macos.yml`** only when the required secrets are configured on the repository.
+
+## 8. MVP pre-ship checklist (capture + permissions)
+
+Before distributing a build to external testers, verify on a clean macOS user account:
+
+1. **First launch onboarding** — Accessibility and Input Monitoring panes open from the setup wizard; **Start capture** enables recording.
+2. **Capture defaults** — `capture.paused` is false; AX rich capture on; events appear in **Capture → Live capture** within ~10 s of normal use.
+3. **Permissions in use** — Accessibility drives AX tree snapshots. Input Monitoring drives keyboard/mouse rows (`capture_keyboard`, `capture_mouse`). **No Screen Recording / screenshots.**
+4. **Memory search** — Query recent app/window text via **Memory** (FTS works without an API key).
+5. **Retention** — Old `capture_*` rows are purged after `retentionDays` (default 30).
+6. **Signing** — Release build uses `Entitlements.plist` (JIT + Apple Events) and `Info.plist` usage strings; run `npm run build:desktop:signed` or `release-macos.yml` before wide distribution.
+
 ## CI
 
 `.github/workflows/ci.yml` runs `check:actions`, `check:ipc-mock`, `check:rust`, `build:web-dist`, Playwright E2E, and an **unsigned** `tauri build`.

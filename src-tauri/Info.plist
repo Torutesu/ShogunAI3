@@ -4,5 +4,7 @@
 <dict>
   <key>NSFaceIDUsageDescription</key>
   <string>Shogun AI uses Face ID or Touch ID to unlock the app on this device.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Shogun AI reads the frontmost application name to record what you are working on.</string>
 </dict>
 </plist>

@@ -251,3 +251,167 @@ fn settings_use_v2(settings: &Value) -> bool {
 pub fn should_use_v2(settings: &Value, payload: &Value) -> bool {
   payload_wants_v2(payload) || settings_use_v2(settings)
 }
+
+/// UI-facing brief card (Home expects `headline`, `posture`, `items`, not nested `summary`).
+pub fn normalize_brief_for_ui(raw: &Value) -> Value {
+  let headline = raw
+    .pointer("/summary/headline")
+    .and_then(|v| v.as_str())
+    .or_else(|| raw.get("headline").and_then(|v| v.as_str()))
+    .unwrap_or("Your day from Memory");
+  let posture = raw
+    .pointer("/summary/posture")
+    .and_then(|v| v.as_str())
+    .or_else(|| raw.get("posture").and_then(|v| v.as_str()))
+    .unwrap_or("focus");
+  let items = raw.get("items").cloned().unwrap_or_else(|| json!([]));
+  let deferred_count = raw
+    .get("deferred")
+    .and_then(|d| d.as_array())
+    .map(|a| a.len())
+    .or_else(|| raw.get("deferred_count").and_then(|v| v.as_u64()).map(|n| n as usize))
+    .unwrap_or(0);
+  let mut out = json!({
+    "headline": headline,
+    "posture": posture,
+    "items": items,
+    "deferred_count": deferred_count,
+    "generated_at": raw.get("generated_at").cloned().unwrap_or(Value::Null),
+  });
+  if let Some(p) = raw.get("patterns") {
+    out["patterns"] = p.clone();
+  }
+  out
+}
+
+pub fn wrap_brief_get_response(brief_ui: Value, memory_digest: Value, skipped: bool) -> Value {
+  json!({
+    "skipped": skipped,
+    "brief": if skipped { Value::Null } else { brief_ui },
+    "memory_digest": memory_digest,
+    "stub": false,
+  })
+}
+
+/// Memory-backed v2 brief when no LLM key is available.
+pub fn morning_brief_v2_heuristic(user_tz: &str, payload: &Value) -> Value {
+  let now = Utc::now();
+  let generated_at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
+  let date = now.format("%Y-%m-%d").to_string();
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en");
+  let digest = build_memory_digest(lang);
+  let highlights = digest
+    .get("highlights")
+    .and_then(|h| h.as_array())
+    .cloned()
+    .unwrap_or_default();
+  let mut items: Vec<Value> = Vec::new();
+  for (i, h) in highlights.iter().take(6).enumerate() {
+    let title = h.get("title").and_then(|v| v.as_str()).unwrap_or("Memory item");
+    let key_points = h
+      .get("keyPoints")
+      .and_then(|v| v.as_array())
+      .map(|a| {
+        a.iter()
+          .filter_map(|x| x.as_str())
+          .collect::<Vec<_>>()
+          .join("; ")
+      })
+      .unwrap_or_default();
+    items.push(json!({
+      "id": format!("item_{:02}", i + 1),
+      "priority": i + 1,
+      "category": h.get("sourceType").and_then(|v| v.as_str()).unwrap_or("memory"),
+      "what": title,
+      "why_now": if key_points.is_empty() { "Surfaced from your local Memory highlights." } else { key_points.as_str() },
+      "related_context": [{
+        "type": "memory",
+        "title": title,
+        "uri": format!("shogun://memory/{}", h.get("targetId").and_then(|v| v.as_str()).unwrap_or(""))
+      }],
+      "next_action": {
+        "verb": "Open",
+        "label": "Search Memory",
+        "type": "open",
+        "mcp_tool": {
+          "tool_name": "shogun.memory_search",
+          "arguments": { "query": title.chars().take(80).collect::<String>(), "limit": 12 }
+        }
+      },
+      "confidence": 0.72
+    }));
+  }
+  let headline = if items.is_empty() {
+    "No highlights yet — capture work or connect integrations to populate your brief."
+  } else {
+    "Top priorities from your Memory highlights"
+  };
+  let mut out = json!({
+    "version": "2.0",
+    "generated_at": generated_at,
+    "user_tz": user_tz,
+    "date": date,
+    "summary": {
+      "headline": headline,
+      "posture": if items.len() >= 4 { "busy" } else { "focus" },
+      "total_meeting_minutes": 0,
+      "focus_blocks": []
+    },
+    "items": items,
+    "deferred": [],
+    "stub": false,
+    "echo": payload,
+    "memory_digest": digest,
+  });
+  let patterns = crate::patterns::list_for_brief(4, false).unwrap_or_default();
+  if !patterns.is_empty() {
+    out["patterns"] = Value::Array(patterns);
+  }
+  out
+}
+
+pub async fn morning_brief_v2_generate(user_tz: &str, payload: &Value) -> Result<Value, String> {
+  let lang = payload
+    .get("lang")
+    .and_then(|v| v.as_str())
+    .unwrap_or("en");
+  let digest = build_memory_digest(lang);
+  let digest_json = serde_json::to_string(&digest).unwrap_or_else(|_| "{}".to_string());
+  let user_prompt = format!(
+    "From this local SHOGUN memory digest JSON, output ONLY valid Morning Brief v2 JSON with keys: \
+version (\"2.0\"), generated_at (RFC3339), user_tz, date (YYYY-MM-DD), summary (headline, posture, total_meeting_minutes, focus_blocks), \
+items (array of priority, category, what, why_now, related_context, next_action with mcp_tool.tool_name among shogun.open_pack|shogun.memory_search|shogun.start_focus_session, time_hint optional, confidence), \
+deferred (array). No markdown fences. Max 6 items.\n\nDigest:\n{}",
+    digest_json.chars().take(12_000).collect::<String>()
+  );
+  let synthetic = json!({
+    "messages": [
+      { "role": "system", "content": "You compose concise daily briefs from local memory only. Never invent meetings or people not in the digest." },
+      { "role": "user", "content": user_prompt }
+    ]
+  });
+  let out = crate::llm::chat_complete(&synthetic, None).await?;
+  let message = out.get("message").and_then(|m| m.as_str()).unwrap_or("{}");
+  let mut brief: Value = serde_json::from_str(message).unwrap_or_else(|_| {
+    json!({
+      "version": "2.0",
+      "summary": { "headline": "Brief unavailable", "posture": "focus" },
+      "items": [],
+      "deferred": []
+    })
+  });
+  if brief.get("generated_at").is_none() {
+    brief["generated_at"] = json!(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+  }
+  brief["user_tz"] = json!(user_tz);
+  brief["memory_digest"] = digest.clone();
+  brief["stub"] = json!(false);
+  let patterns = crate::patterns::list_for_brief(4, false).unwrap_or_default();
+  if !patterns.is_empty() {
+    brief["patterns"] = Value::Array(patterns);
+  }
+  Ok(brief)
+}

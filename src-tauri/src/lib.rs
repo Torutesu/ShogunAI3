@@ -1,10 +1,15 @@
 mod auth;
+mod agents;
+mod apple_local;
 mod biometric;
 mod brief;
 mod brief_actions;
 mod calendar_sync;
+mod capture_events;
 mod capture_sampler;
 mod capture_tray;
+mod macos_input;
+mod macos_permissions;
 mod connector_sync;
 mod context_assembly;
 mod dead_letter;
@@ -17,6 +22,7 @@ mod gmail;
 mod google_calendar;
 mod google_drive;
 mod google_oauth;
+mod hummingbird;
 mod http_retry;
 mod integration_secrets;
 mod integrations;
@@ -24,6 +30,7 @@ mod linear;
 mod llm;
 mod llm_providers;
 mod macos_ax;
+mod meeting_auto;
 mod meeting_commands;
 mod meeting_enhance;
 mod meeting_import;
@@ -38,6 +45,7 @@ mod mirror;
 mod meeting_store;
 mod meeting_stt;
 mod memory_debug;
+mod memory_notify;
 mod memory_obs;
 mod memory_store;
 mod kioku_graph_schema;
@@ -78,6 +86,13 @@ mod notion;
 mod oauth_flow;
 mod github;
 mod zoom;
+mod outlook;
+mod figma;
+mod claude;
+
+/// Production ship profile: enable connector sync, KIOKU workers, rollups, and patterns.
+/// Individual features still respect per-section settings flags at runtime.
+const MVP_STARTUP: bool = false;
 
 fn load_dotenv() {
   let _ = dotenvy::dotenv();
@@ -146,6 +161,7 @@ pub fn run() {
         }
       }
       capture_sampler::start_background_sampler(app.handle().clone());
+      memory_notify::init(app.handle().clone());
       mirror::sync::spawn_scheduler(app.handle().clone());
       #[cfg(target_os = "macos")]
       {
@@ -167,6 +183,7 @@ pub fn run() {
       // chat / brief call doesn't pay a settings round-trip.
       kioku_rules::reload_from_settings_now();
       progress_emitter::set_app_handle(app.handle().clone());
+      hummingbird::register_app(app.handle().clone());
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -207,6 +224,10 @@ pub fn run() {
       commands::app_integration_import_credentials,
       commands::app_integration_credentials_status,
       commands::shogun_oauth_google_start,
+      commands::shogun_oauth_google_app_status,
+      commands::shogun_oauth_google_app_set,
+      commands::shogun_agent_run_now,
+      commands::shogun_hummingbird_context,
       commands::app_integration_toggle,
       commands::shogun_google_calendar_sync,
       commands::shogun_gmail_sync,
@@ -216,6 +237,11 @@ pub fn run() {
       commands::shogun_linear_sync,
       commands::shogun_drive_sync,
       commands::shogun_zoom_sync,
+      commands::shogun_outlook_sync,
+      commands::shogun_figma_sync,
+      commands::shogun_claude_sync,
+      commands::shogun_apple_calendar_sync,
+      commands::shogun_apple_reminders_sync,
       commands::shogun_dead_letter_list,
       commands::shogun_dead_letter_retry,
       commands::shogun_dead_letter_clear,
@@ -223,6 +249,9 @@ pub fn run() {
       commands::shogun_dead_letter_delete,
       commands::app_capture_pause,
       commands::app_capture_resume,
+      commands::shogun_capture_live_events,
+      commands::shogun_capture_status,
+      commands::app_onboarding_complete,
       commands::app_permissions_manage,
       commands::app_privacy_pick_app,
       commands::app_diagnostics_report,

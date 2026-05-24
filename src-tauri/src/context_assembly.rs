@@ -417,6 +417,24 @@ fn collapse_ws(s: &str) -> String {
   s.replace('\n', " ").replace('\r', " ")
 }
 
+/// JSON array for IPC responses (Chat assembly preview).
+pub fn hits_to_json(hits: &[Hit]) -> Value {
+  let rows: Vec<Value> = hits
+    .iter()
+    .map(|h| {
+      json!({
+        "id": h.id,
+        "title": h.title,
+        "snippet": h.snippet,
+        "source": h.source,
+        "provenance": h.provenance,
+        "created_at": h.created_at,
+      })
+    })
+    .collect();
+  json!(rows)
+}
+
 /// System-message block for `chat_complete` / `draft_from_payload` when the
 /// caller opted into server-side memory assembly. Each hit is one bulletted
 /// line tagged with its provenance; the whole block is clipped to

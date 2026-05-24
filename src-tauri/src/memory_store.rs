@@ -1161,6 +1161,143 @@ pub fn ingest(payload: &Value) -> Result<Value, String> {
   Ok(out)
 }
 
+/// Capture-specific ingest: upsert on `(source, entity_id)` so duplicate screen
+/// context refreshes `created_at` instead of appending rows.
+pub fn ingest_capture_upsert(payload: &Value) -> Result<Value, String> {
+  let conn = open_conn()?;
+  let title = payload
+    .get("title")
+    .and_then(|t| t.as_str())
+    .ok_or_else(|| "title is required".to_string())?;
+  let snippet = payload
+    .get("snippet")
+    .and_then(|t| t.as_str())
+    .unwrap_or("");
+  let source = payload
+    .get("source")
+    .and_then(|t| t.as_str())
+    .unwrap_or("capture");
+  let kinds = payload
+    .get("kinds")
+    .cloned()
+    .unwrap_or_else(|| json!(["screen"]));
+  let kinds_json = serde_json::to_string(&kinds).map_err(|e| e.to_string())?;
+  let provenance = payload
+    .get("provenance")
+    .and_then(|v| v.as_str())
+    .filter(|s| is_valid_provenance(s))
+    .map(String::from)
+    .unwrap_or_else(|| derive_provenance(source).to_string());
+  let entity_id = payload
+    .get("entity_id")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .map(String::from)
+    .ok_or_else(|| "entity_id is required for capture upsert".to_string())?;
+  let confidence: Option<f64> = payload
+    .get("confidence")
+    .and_then(|v| v.as_f64())
+    .filter(|c| c.is_finite())
+    .map(|c| c.clamp(0.0, 1.0));
+  let redaction: Option<String> = payload
+    .get("redaction")
+    .and_then(|v| v.as_str())
+    .filter(|s| is_valid_redaction(s))
+    .map(String::from);
+
+  static INGEST_SEQ: AtomicU64 = AtomicU64::new(0);
+  let seq = INGEST_SEQ.fetch_add(1, Ordering::Relaxed);
+  let id = format!("m_{}_{}", now_ms(), seq);
+  let created = now_ms() as i64;
+
+  let affected = conn
+    .execute(
+      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction) \
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+       ON CONFLICT(source, entity_id) DO UPDATE SET \
+         created_at = excluded.created_at, \
+         snippet = excluded.snippet, \
+         title = excluded.title, \
+         kinds_json = excluded.kinds_json",
+      params![
+        id,
+        title,
+        snippet,
+        source,
+        kinds_json,
+        created,
+        provenance,
+        entity_id,
+        confidence,
+        redaction
+      ],
+    )
+    .map_err(|e| e.to_string())?;
+  let inserted = affected == 1;
+
+  crate::memory_notify::notify_index_changed_if_capture(source);
+
+  Ok(json!({
+    "item": {
+      "id": id,
+      "title": title,
+      "snippet": snippet,
+      "source": source,
+      "kinds": kinds,
+      "created_at": created as u64,
+      "entity_id": entity_id,
+    },
+    "inserted": inserted,
+    "updated": !inserted,
+    "stub": false,
+  }))
+}
+
+/// Delete aged capture rows (`capture_%` sources). Returns rows removed.
+pub fn cleanup_capture_retention(retention_days: u64) -> Result<u64, String> {
+  if retention_days == 0 {
+    return Ok(0);
+  }
+  let conn = open_conn()?;
+  let cutoff = now_ms() as i64 - (retention_days as i64) * 86_400_000;
+  let n = conn
+    .execute(
+      "DELETE FROM mem_items WHERE source LIKE 'capture_%' AND created_at < ?1",
+      params![cutoff],
+    )
+    .map_err(|e| e.to_string())?;
+  Ok(n as u64)
+}
+
+/// Top apps from capture sources in the last 24h for the Capture UI.
+pub fn stats_app_coverage(limit: usize) -> Result<Vec<(String, i64)>, String> {
+  let conn = open_conn()?;
+  let day_ago = now_ms() as i64 - 86_400_000;
+  let cap = limit.clamp(1, 20) as i64;
+  let mut stmt = conn
+    .prepare(
+      "SELECT \
+         CASE \
+           WHEN instr(title, ' · ') > 0 THEN substr(title, instr(title, ' · ') + 3) \
+           ELSE title \
+         END AS app_label, \
+         COUNT(*) AS c \
+       FROM mem_items \
+       WHERE source LIKE 'capture_%' AND created_at >= ?1 \
+       GROUP BY app_label \
+       ORDER BY c DESC \
+       LIMIT ?2",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map(params![day_ago, cap], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+    .map_err(|e| e.to_string())?
+    .filter_map(|x| x.ok())
+    .collect();
+  Ok(rows)
+}
+
 /// Lexical / FTS search only (`query`, `kinds`, `limit`).
 pub fn search(payload: &Value) -> Result<Value, String> {
   let scope = payload
@@ -1186,6 +1323,9 @@ pub fn search(payload: &Value) -> Result<Value, String> {
       "echo": payload,
       "stub": false,
     }));
+  }
+  if scope.eq_ignore_ascii_case("timeline") {
+    return search_timeline(payload);
   }
 
   let conn = open_conn()?;
@@ -1232,11 +1372,131 @@ pub fn search(payload: &Value) -> Result<Value, String> {
   }))
 }
 
+fn timeline_content_types(payload: &Value) -> Vec<String> {
+  payload
+    .get("content_types")
+    .or_else(|| payload.get("contentTypes"))
+    .and_then(|v| v.as_array())
+    .map(|arr| {
+      arr
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.trim().to_ascii_lowercase()))
+        .filter(|s| !s.is_empty())
+        .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn timeline_wants(content_types: &[String], slug: &str) -> bool {
+  content_types.is_empty() || content_types.iter().any(|t| t == slug)
+}
+
+fn apply_time_window(hits: Vec<Value>, start_ms: Option<u64>, end_ms: Option<u64>) -> Vec<Value> {
+  if start_ms.is_none() && end_ms.is_none() {
+    return hits;
+  }
+  hits
+    .into_iter()
+    .filter(|hit| {
+      let ts = hit.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+      if let Some(s) = start_ms {
+        if ts < s {
+          return false;
+        }
+      }
+      if let Some(e) = end_ms {
+        if ts > e {
+          return false;
+        }
+      }
+      true
+    })
+    .collect()
+}
+
+fn tag_timeline_hit(mut hit: Value, content_type: &str) -> Value {
+  if let Some(map) = hit.as_object_mut() {
+    map.insert("content_type".to_string(), json!(content_type));
+  }
+  hit
+}
+
+/// Unified timeline search across `mem_items` and meetings. Payload:
+/// - `query` (optional)
+/// - `limit` (default 20)
+/// - `start_ms` / `end_ms` optional epoch-ms window
+/// - `content_types`: `memory` | `meeting` (default: both)
+pub fn search_timeline(payload: &Value) -> Result<Value, String> {
+  let query = payload
+    .get("query")
+    .and_then(|q| q.as_str())
+    .unwrap_or("")
+    .trim()
+    .to_string();
+  let limit = payload
+    .get("limit")
+    .and_then(|l| l.as_u64())
+    .unwrap_or(20)
+    .clamp(1, 200) as usize;
+  let start_ms = payload.get("start_ms").and_then(|v| v.as_u64());
+  let end_ms = payload.get("end_ms").and_then(|v| v.as_u64());
+  let content_types = timeline_content_types(payload);
+  let wide = (limit.saturating_mul(4)).min(200);
+
+  let mut merged: Vec<Value> = Vec::new();
+
+  if timeline_wants(&content_types, "memory") {
+    let mut mem_payload = payload.clone();
+    if let Some(obj) = mem_payload.as_object_mut() {
+      obj.remove("scope");
+      obj.insert("limit".to_string(), json!(wide));
+    }
+    let mem_result = search(&mem_payload)?;
+    if let Some(arr) = mem_result.get("hits").and_then(|v| v.as_array()) {
+      for hit in arr {
+        merged.push(tag_timeline_hit(hit.clone(), "memory"));
+      }
+    }
+  }
+
+  if timeline_wants(&content_types, "meeting") {
+    let meeting_hits =
+      crate::meeting_store::search_timeline_hits(&query, wide, start_ms, end_ms)?;
+    merged.extend(meeting_hits);
+  }
+
+  merged = apply_time_window(merged, start_ms, end_ms);
+  merged.sort_by(|a, b| {
+    let ta = a.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+    let tb = b.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+    tb.cmp(&ta)
+  });
+  let total = merged.len();
+  merged.truncate(limit);
+
+  Ok(json!({
+    "hits": merged,
+    "total": total,
+    "scope": "timeline",
+    "echo": payload,
+    "stub": false,
+  }))
+}
+
 /// Search with optional **semantic re-ranking** (`semantic: true`, non-empty `query`, LLM key set).
 /// Fetches a wider lexical candidate set, embeds the query once, re-orders by cosine similarity
 /// (items without `embedding` sort last).
 pub async fn search_with_semantics(payload: &Value) -> Result<Value, String> {
   let start = std::time::Instant::now();
+  let scope = payload
+    .get("scope")
+    .and_then(|s| s.as_str())
+    .unwrap_or("all");
+  if scope.eq_ignore_ascii_case("timeline") {
+    let result = search_timeline(payload)?;
+    emit_search_with_semantics_done(&result, false, start.elapsed());
+    return Ok(result);
+  }
   let semantic = payload
     .get("semantic")
     .and_then(|v| v.as_bool())
@@ -1748,9 +2008,9 @@ pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
   use super::{
-    attach_fts_highlights, decode_embedding_blob, derive_provenance, encode_embedding_blob,
-    is_transient_embed_error, is_valid_provenance, is_valid_redaction, row_to_item,
-    truncate_api_error, HL_END, HL_START,
+    apply_time_window, attach_fts_highlights, decode_embedding_blob, derive_provenance,
+    encode_embedding_blob, is_transient_embed_error, is_valid_provenance, is_valid_redaction,
+    row_to_item, timeline_wants, truncate_api_error, HL_END, HL_START,
   };
   use serde_json::json;
 
@@ -2594,5 +2854,25 @@ mod tests {
       items_local[0].get("encryptedAt").is_none(),
       "encryptedAt must be absent for un-synced row"
     );
+  }
+
+  #[test]
+  fn timeline_wants_defaults_to_all_content_types() {
+    assert!(timeline_wants(&[], "memory"));
+    assert!(timeline_wants(&[], "meeting"));
+    assert!(timeline_wants(&["memory".into()], "memory"));
+    assert!(!timeline_wants(&["memory".into()], "meeting"));
+  }
+
+  #[test]
+  fn apply_time_window_filters_by_created_at() {
+    let hits = vec![
+      json!({ "id": "a", "created_at": 100 }),
+      json!({ "id": "b", "created_at": 500 }),
+      json!({ "id": "c", "created_at": 900 }),
+    ];
+    let out = apply_time_window(hits, Some(200), Some(800));
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].get("id").and_then(|v| v.as_str()), Some("b"));
   }
 }

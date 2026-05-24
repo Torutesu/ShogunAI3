@@ -1,33 +1,112 @@
 # SHOGUN デスクトップ（Tauri）— かんたんセットアップ
 
-このガイドは **エンドユーザー向け** の最短手順です。開発者向けの詳細はリポジトリ直下の **[`README.md`](../README.md)**、UI・IPC は **[`hifi/README.md`](../hifi/README.md)** および **`hifi/action-map.md`** を参照してください。利用条件は **[`docs/TERMS_OF_SERVICE.md`](TERMS_OF_SERVICE.md)** を参照してください。
+このガイドは **エンドユーザー向け** の最短手順です。開発者向けの詳細は **[`README.md`](../README.md)**、UI・IPC は **[`hifi/README.md`](../hifi/README.md)** を参照してください。
 
 ## 1. アプリを起動
 
-macOS で SHOGUN の Tauri ビルドを起動します（配布パッケージまたは `npm run dev:desktop` での開発起動）。
+macOS で SHOGUN を起動します（配布パッケージまたは `npm run dev:desktop`）。
 
-## 2. API キーを保存
+## 2. 初回セットアップ（権限）
 
-1. **Settings（設定）** → **Model & API** を開きます。  
-2. **Base URL**（例: `https://api.openai.com/v1`）と **Chat model** / **Embedding model** を確認します。  
-3. **API key** に OpenAI 互換のキーを入力し **Save key** します。  
-   キーは **macOS Keychain** に保存され、設定ファイルには書き込まれません。
+初回起動時に **Setup ウィザード** が表示されます。
 
-## 3. Memory のベクトルが溜まる仕組み
+1. **Accessibility（アクセシビリティ）** — フォーカス中のウィンドウ・テキストを読み取るために必要  
+2. **Input Monitoring（入力監視）** — キーボード / マウス操作の記録に必要  
 
-- 会話・取り込みなどで **Memory に項目が増える**と、バックグラウンドで **`/v1/embeddings`** を呼び出し、行にベクトル（`embedding`）を書き込むことがあります。  
-- ノイズ抑制のため **`capture_sampler` / `capture_ax`** 由来の行は自動埋め込みの対象外です。  
-- 既存データにベクトルが無い場合は、**Settings → Model & API → Backfill missing vectors** でまとめて埋め込みできます。  
-  - 進捗は **N / M** 表示、**Cancel** で中断できます。  
-  - 一時的な API エラーは **指数バックオフで再試行**します（まとめには **最初のエラー文だけ** が載ります）。
+**Screen Recording（画面収録）は不要です。** SHOGUN はスクリーンショットを撮りません。
 
-## 4. 「Memory: semantic search default」の意味
+3. **Start capture** を押すと、バックグラウンドで記録が始まります。
 
-- **Settings → Model & API** の **Memory: semantic search default**（Memory 画面のチェックと同じ設定）が **オン**で、検索クエリが空でないとき、  
-  **FTS で拾った候補を埋め込みで再ランク**します（クエリごとに embeddings API を **1回**呼びます）。  
-- **オフ**のときは **語句検索（FTS）のみ**です。  
-- キーが無い場合は再ランクは行われず、語句検索のみになります。
+## 3. 放置して記録
 
-## 5. ブラウザでのプレビューについて
+Capture が **Recording** 状態なら、そのまま作業を続けてください。  
+記録されるのはテキストコンテキスト（アプリ名、ウィンドウ、AX スナップショット、入力イベント）のみです。
 
-`hifi` をブラウザだけで開いた場合は **モック IPC** が使われます。実際の `memory.db`・Keychain・埋め込みは **Tauri デスクトップ版**で確認してください。
+## 4. コンテキストで Chat（メインの使い方）
+
+記録は **検索のためだけ** ではありません。**Chat** で「さっき何してた？」「続きを教えて」と聞くと、直近のキャプチャが自動でプロンプトに入ります。
+
+1. **Memory** 画面上部の **「コンテキストで続ける」** からプリセットを選ぶか、自由入力して **Chat で聞く**
+2. または **Chat** タブを開き、**Assemble** をオンにしたまま質問する（MVP ではデフォルトでオン）
+3. 特定の記憶を選んだら **Open in Chat / チャットへ** から、そのエントリを起点に続きを相談できる
+
+**回答を得るには** Settings → Model & API で API キーが必要です。  
+Memory の語句検索（FTS）だけなら API キーなしでも使えます。
+
+## 5. Memory で検索（補助）
+
+**Memory** 画面の Search ビューやキーワードで、過去のキャプチャを探せます。
+
+- 例: 「Chrome」「Figma」「さっきの PDF」  
+- より自然な検索が必要な場合のみ、Settings → Model & API で API キーを設定し、Memory 画面の **semantic re-rank** をオンにしてください
+
+## 6. Capture 画面
+
+**Capture** タブで以下を確認できます。
+
+- **Live capture** — 直近のイベント（リアルタイム）  
+- **権限ステータス** — Accessibility / Input Monitoring  
+- **Pause / Resume** — 記録の一時停止
+
+## 7. データの保存場所
+
+Memory インデックスは **この Mac 上の SQLite**（`memory.db`）に保存されます。SHOGUN クラウドへの同期はありません。
+
+## 8. ブラウザプレビューについて
+
+`hifi` をブラウザだけで開いた場合はモック IPC です。実際の記録・検索は **Tauri デスクトップ版** で確認してください。
+
+## 9. Integrations（外部サービス連携）
+
+**Integrations** タブまたは **Settings → Integrations** から接続できます。同期されたデータは Memory に入り、Chat の文脈として使えます。
+
+### Google（OAuth）
+
+- **Gmail** / **Google Calendar** / **Google Drive** — アプリ内 OAuth で接続
+- 初回接続後、過去データの取り込み（7日〜1年）を促すダイアログが出ます
+- **本番ビルド**では Settings → Integrations の **Google OAuth app credentials** から CLIENT_ID / CLIENT_SECRET を Keychain に保存できます（開発時は `scripts/.env.google-oauth` も利用可）
+
+### Apple（macOS ローカル）
+
+- **Apple Calendar** / **Apple Reminders** — macOS の Calendar.app / Reminders.app から読み取り（OAuth 不要）
+- **Connect** で Automation 権限を確認し、**Sync to Memory** で予定・未完了リマインダを Memory に取り込み
+- 初回は **システム設定 → プライバシーとセキュリティ → オートメーション** で SHOGUN に Calendar / Reminders の操作を許可してください
+
+### トークン貼り付け
+
+Slack / Notion / GitHub / Linear / Zoom / **Outlook** / **Figma** / **Claude** は API トークンを貼り付けて接続します。
+
+- **Outlook** — Microsoft Graph の `Mail.Read` 付きアクセストークン
+- **Figma** — Personal Access Token。Settings → Integrations で **file keys**（Figma ファイル URL のキー部分）を登録するとデザインファイルのメタデータも同期
+- **Claude** — Anthropic API キー（`sk-ant-…`）。Settings → Integrations で **export notes**（プロジェクトのエクスポート文）を登録すると Memory に取り込み
+
+### 自動同期
+
+各連携で **Background sync** をオンにすると、バックグラウンドで Memory へ定期的に同期されます。
+
+## 10. Hummingbird（クイック相談）
+
+**Option キーをダブルタップ**すると、前面アプリのコンテキストを取り込んだオーバーレイが開きます。質問を入力すると Chat と同じ LLM 経路で回答します（Settings → Model & API の API キーが必要）。
+
+## 11. Chat の画像（Vision）
+
+Chat の **Attach** で画像（PNG / JPEG / WebP 等）を添付すると、vision 対応モデルへ multimodal で送信されます。
+
+- Settings → **Model & API** で API キーを設定
+- vision 対応モデル（例: GPT-4o、Claude Sonnet、Gemini 等）を選択
+
+## 12. KIOKU（記憶グラフ）
+
+Settings → **KIOKU Graph** で有効化できます（出荷デフォルトで ON）。Capture データから LLM で記憶グラフを構築します。
+
+- **Model & API** の API キーが必要
+- **KIOKU Patterns / Lessons** は作業パターンの抽出に使います
+
+## 13. Agents / Meetings
+
+- **Agents** — エージェント定義とツール連携 UI（Memory / Chat 文脈を利用）
+- **Meetings** — カレンダー連携と会議検出（Google Calendar 接続推奨）
+
+## 14. データ削除
+
+Settings → **Data Controls** で保存期間の削除（hours / days / custom 範囲）ができます。
