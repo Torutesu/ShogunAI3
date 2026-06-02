@@ -1,8 +1,8 @@
 //! Tauri commands: `shogun_meeting_*` (Granola / meetings PRD).
 
 use crate::{
-  meeting_enhance, meeting_import, meeting_mic, meeting_mcp, meeting_recipes, meeting_session,
-  meeting_store, meeting_stt, memory_store, settings_store,
+  meeting_enhance, meeting_import, meeting_lifecycle, meeting_mic, meeting_mcp, meeting_recipes,
+  meeting_session, meeting_store, meeting_stt, memory_store, settings_store,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rusqlite::params;
@@ -44,6 +44,8 @@ pub async fn shogun_meeting_start(
       app_bundle_id: app_bundle_id.clone(),
       title: title.clone(),
       live: Vec::new(),
+      last_activity_ms: started,
+      last_video_seen_ms: started,
     })?;
   Ok(json!({
     "id": id,
@@ -59,6 +61,7 @@ pub async fn shogun_meeting_start(
 
 #[tauri::command]
 pub async fn shogun_meeting_stop(
+  app: AppHandle,
   state: State<'_, meeting_session::MeetingSessionState>,
   payload: Value,
 ) -> Result<Value, String> {
@@ -66,82 +69,13 @@ pub async fn shogun_meeting_stop(
     .get("meeting_id")
     .and_then(|x| x.as_str())
     .ok_or_else(|| "meeting_id is required".to_string())?;
-  let ended = memory_store::now_ms();
-  let active = state.take_active()?;
-  if let Some(m) = active {
-    if m.id == meeting_id {
-      for seg in m.live {
-        let is_final = seg.get("is_final").and_then(|x| x.as_bool()).unwrap_or(true);
-        if !is_final {
-          continue;
-        }
-        let seg_id = seg
-          .get("segment_id")
-          .and_then(|x| x.as_str())
-          .unwrap_or("");
-        if seg_id.is_empty() {
-          continue;
-        }
-        meeting_store::insert_transcript_segment(
-          meeting_id,
-          seg_id,
-          seg.get("start_ms").and_then(|x| x.as_u64()).unwrap_or(0),
-          seg.get("end_ms").and_then(|x| x.as_u64()).unwrap_or(0),
-          seg.get("speaker").and_then(|x| x.as_str()).unwrap_or("other_1"),
-          seg.get("text").and_then(|x| x.as_str()).unwrap_or(""),
-          seg.get("confidence").and_then(|x| x.as_f64()).map(|x| x as f32),
-          true,
-        )?;
-      }
-    } else {
-      let _ = state.start(m);
-      return Err("meeting_id does not match the active session".to_string());
-    }
+  meeting_lifecycle::stop_mic_if_running(&app, &meeting_id).await?;
+  let mut out = meeting_lifecycle::persist_meeting_stop(&state, &meeting_id).await?;
+  if let Some(obj) = out.as_object_mut() {
+    obj.insert("stub".to_string(), json!(false));
+    obj.insert("echo".to_string(), payload);
   }
-  meeting_store::meeting_stop(meeting_id, ended)?;
-  let detail = meeting_store::get_meeting_detail(meeting_id)?
-    .ok_or_else(|| "meeting not found".to_string())?;
-
-  // Phase 3: auto-generate a meeting summary so it shows up in the
-  // Memory digest alongside connector items. Respects the user's
-  // autoDigestLang; failures are non-fatal (meeting still stops).
-  let auto_lang = settings_store::load()
-    .ok()
-    .and_then(|doc| {
-      doc.pointer("/sections/memory/autoDigestLang")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-    })
-    .unwrap_or_else(|| "en".to_string());
-  let summary_enabled = settings_store::load()
-    .ok()
-    .and_then(|doc| {
-      doc.pointer("/sections/memory/enableMemorySummary")
-        .and_then(|v| v.as_bool())
-    })
-    .unwrap_or(true);
-  let mut meeting_summary: Option<Value> = None;
-  if summary_enabled {
-    match crate::summarizer::summarize_meeting(meeting_id, &auto_lang).await {
-      Ok(s) => {
-        if let Err(e) = crate::summarizer_store::upsert(&s) {
-          log::warn!("meeting summary upsert failed for {}: {}", meeting_id, e);
-        } else {
-          meeting_summary = Some(s.to_json());
-        }
-      }
-      Err(e) => {
-        log::warn!("meeting summary failed for {}: {}", meeting_id, e);
-      }
-    }
-  }
-
-  Ok(json!({
-    "meeting": detail,
-    "summary": meeting_summary,
-    "stub": false,
-    "echo": payload,
-  }))
+  Ok(out)
 }
 
 #[tauri::command]

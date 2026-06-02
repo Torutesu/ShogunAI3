@@ -152,17 +152,18 @@ impl MeetingMicController {
       None
     };
 
-    if opts.live_stt {
-      if let (Some(app), Some(ref meeting_id)) = (app, &opts.meeting_id) {
-        if crate::meeting_stt::deepgram_api_key().is_some() {
-          spawn_live_stt_worker(
-            app.clone(),
-            meeting_id.clone(),
-            mic_track.clone(),
-            system_buf.clone(),
-            stop.clone(),
-          );
-        }
+    if let (Some(app_handle), Some(meeting_id)) = (app.as_ref(), opts.meeting_id.as_ref()) {
+      if opts.live_stt && crate::meeting_stt::deepgram_api_key().is_some() {
+        spawn_live_stt_worker(
+          app_handle.clone(),
+          meeting_id.clone(),
+          mic_track.clone(),
+          system_buf.clone(),
+          stop.clone(),
+        );
+      }
+      if let Some(session) = app_handle.try_state::<crate::meeting_session::MeetingSessionState>() {
+        let _ = session.touch_activity(meeting_id);
       }
     }
 

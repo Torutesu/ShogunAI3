@@ -89,6 +89,7 @@ fn maybe_emit_video_meeting(app: &AppHandle, text: &str, app_label: &str) {
   }
   let meeting_id =
     crate::meeting_auto::try_start_from_video_detect(app, &provider, &url, app_label);
+  crate::meeting_lifecycle::touch_video_activity(app);
   let _ = app.emit(
     "video-meeting-started",
     json!({

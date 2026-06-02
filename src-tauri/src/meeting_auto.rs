@@ -83,6 +83,8 @@ pub fn try_start_from_video_detect(
       app_bundle_id: Some(provider.to_string()),
       title: title.clone(),
       live: Vec::new(),
+      last_activity_ms: started,
+      last_video_seen_ms: started,
     })
     .is_err()
   {

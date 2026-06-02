@@ -307,6 +307,63 @@ export function MeetingsScreen() {
     return function () { clearInterval(id); };
   }, [audioRecSession]);
 
+  const finalizeBackendMeeting = useCallback(async function (opts?: { silent?: boolean }) {
+    const g = granolaRef.current;
+    if (!g || !g.backendMeetingId || !isNativeDesktop()) return null;
+    const mid = g.backendMeetingId;
+    const res = await runRuntimeActionM('meetings.stop', { meeting_id: mid }, { silentError: true });
+    setBackendRecActive(false);
+    if (res && res.ok && res.data) {
+      const getRes = await runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true });
+      const segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
+      if (segs.length) {
+        setGranolaDraft(function (d: any) {
+          return { ...d, transcript: formatLiveTranscript(segs) };
+        });
+      }
+    }
+    if (!opts?.silent) {
+      toastM('会議を保存して終了しました', 'success');
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
+      window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
+    } catch (_e) {}
+    return res;
+  }, []);
+
+  useEffect(function () {
+    const listenFn = typeof window !== 'undefined' && (window as any).__TAURI__?.event?.listen;
+    if (typeof listenFn !== 'function') return undefined;
+    let unlisten: (() => void) | undefined;
+    (async function () {
+      try {
+        unlisten = await listenFn('meeting-auto-stopped', function (e: any) {
+          var p = (e && e.payload) || {};
+          var mid = p.meeting_id;
+          var g = granolaRef.current;
+          if (!mid || !g || g.backendMeetingId !== mid) return;
+          setBackendRecActive(false);
+          void runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true }).then(function (getRes: any) {
+            var segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
+            if (segs.length) {
+              setGranolaDraft(function (d: any) {
+                return { ...d, transcript: formatLiveTranscript(segs) };
+              });
+            }
+          });
+          var reasonLabel = p.reason === 'video_ended' ? 'ビデオ通話終了' : '無活動';
+          toastM('会議を自動終了しました（' + reasonLabel + '）', 'info');
+          try {
+            window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
+          } catch (_e2) {}
+        });
+      } catch (_e) {}
+    })();
+    return function () {
+      if (typeof unlisten === 'function') unlisten();
+    };
+  }, []);
   const granolaTitle = granola && granola.title;
   /** Keep MediaRecorder titleRef aligned with the note title (download filename + HUD) while recording. */
   useEffect(function () {
@@ -489,8 +546,11 @@ export function MeetingsScreen() {
     toastM('\u30ed\u30fc\u30ab\u30eb\u30c6\u30f3\u30d7\u3092\u958b\u304d\u307e\u3057\u305f\uff08\u30dc\u30c3\u30c8\u672a\u4f7f\u7528\uff09', 'success');
   }, []);
 
-  const closeGranola = useCallback(() => {
+  const closeGranola = useCallback(async function () {
     const g = granola;
+    if (g && g.backendMeetingId && isNativeDesktop()) {
+      await finalizeBackendMeeting({ silent: true });
+    }
     if (g && g.storageKey && mnl() && mnl().saveNote) {
       const tit = g.title != null ? String(g.title) : '';
       mnl().saveNote(g.storageKey, { ...granolaDraftRef.current, title: tit });
@@ -503,12 +563,13 @@ export function MeetingsScreen() {
     if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting() && typeof M.abort === 'function') {
       M.abort();
     }
+    setBackendRecActive(false);
     setGranola(null);
     setGranolaMenuOpen(false);
     setGranolaTodos(null);
     setCmdBarMin(false);
     setListTick(function (x) { return x + 1; });
-  }, [granola]);
+  }, [granola, finalizeBackendMeeting]);
 
   const startNoteRecording = useCallback(async function () {
     if (!granola || !granola.storageKey) return;
@@ -545,24 +606,8 @@ export function MeetingsScreen() {
   }, [granola, backendRecActive]);
 
   const stopNoteRecording = useCallback(async function () {
-    if (backendRecActive && granola && granola.backendMeetingId && isNativeDesktop()) {
-      var sr = await runRuntimeActionM('meetings.mic.stop', {
-        meeting_id: granola.backendMeetingId,
-        transcribe: true,
-      }, { silentError: true });
-      setBackendRecActive(false);
-      if (sr && sr.ok && sr.data) {
-        var segs = Array.isArray(sr.data.segments) ? sr.data.segments : [];
-        if (segs.length) {
-          setGranolaDraft(function (d: any) { return { ...d, transcript: formatLiveTranscript(segs) }; });
-        } else if (sr.data.transcript || sr.data.system_transcript) {
-          var parts = [sr.data.transcript, sr.data.system_transcript].filter(Boolean).join('\n');
-          setGranolaDraft(function (d: any) { return { ...d, transcript: parts }; });
-        }
-      }
-      try {
-        window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
-      } catch (_e) {}
+    if (granola && granola.backendMeetingId && isNativeDesktop() && backendRecActive) {
+      await finalizeBackendMeeting();
       return;
     }
     var M = MeetingMediaRecording;
@@ -571,7 +616,7 @@ export function MeetingsScreen() {
     } else {
       toastM('録音モジュールが読み込まれていません', 'error');
     }
-  }, [granola, backendRecActive]);
+  }, [granola, backendRecActive, finalizeBackendMeeting]);
 
   const granolaKey = granola && granola.key;
   useEffect(() => {

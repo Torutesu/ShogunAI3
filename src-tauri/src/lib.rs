@@ -30,6 +30,7 @@ mod linear;
 mod llm;
 mod llm_providers;
 mod macos_ax;
+mod meeting_lifecycle;
 mod meeting_auto;
 mod meeting_commands;
 mod meeting_enhance;
@@ -185,6 +186,7 @@ pub fn run() {
       kioku_rules::reload_from_settings_now();
       progress_emitter::set_app_handle(app.handle().clone());
       hummingbird::register_app(app.handle().clone());
+      meeting_lifecycle::spawn_inactivity_watcher(app.handle().clone());
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
