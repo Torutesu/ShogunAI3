@@ -71,7 +71,14 @@ pub fn load() -> Result<Value, String> {
   }
   let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
   let v: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-  Ok(ensure_shape(v))
+  let prev_ver = v.get("settingsSchemaVersion").and_then(|x| x.as_u64());
+  let shaped = ensure_shape(v);
+  if prev_ver != shaped.get("settingsSchemaVersion").and_then(|x| x.as_u64()) {
+    if let Ok(bytes) = serde_json::to_string_pretty(&shaped) {
+      let _ = write_atomic(&path, bytes.as_bytes());
+    }
+  }
+  Ok(shaped)
 }
 
 fn ensure_shape(mut v: Value) -> Value {
@@ -141,6 +148,15 @@ fn ensure_shape(mut v: Value) -> Value {
       o.entry("fallback_model".to_string())
         .or_insert(json!("claude-haiku-4-5"));
     }
+    let mtg = sections
+      .entry("meetings".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = mtg.as_object_mut() {
+      o.entry("autoStartOnVideoDetect".to_string())
+        .or_insert(json!(true));
+      o.entry("autoStartMicOnVideoDetect".to_string())
+        .or_insert(json!(true));
+    }
     let llm = sections
       .entry("llm".to_string())
       .or_insert_with(|| json!({}));
@@ -148,6 +164,43 @@ fn ensure_shape(mut v: Value) -> Value {
       o.entry("extractionModel".to_string())
         .or_insert(json!("claude-haiku-4-5"));
     }
+  }
+  v = migrate_kioku_flags(v);
+  v
+}
+
+/// Backfill KIOKU graph flags for existing users who saved settings before
+/// Phase 2 defaults existed. Idempotent — safe to run on every load.
+fn migrate_kioku_flags(mut v: Value) -> Value {
+  let ver = v
+    .get("settingsSchemaVersion")
+    .and_then(|x| x.as_u64())
+    .unwrap_or(0);
+  if ver >= 2 {
+    return v;
+  }
+  if let Some(sections) = v.get_mut("sections").and_then(|s| s.as_object_mut()) {
+    let kioku_graph = sections
+      .entry("kioku_graph".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = kioku_graph.as_object_mut() {
+      o.entry("capture_to_mem_captures".to_string())
+        .or_insert(json!(true));
+      o.entry("worker_enabled".to_string())
+        .or_insert(json!(true));
+      o.entry("read_path".to_string())
+        .or_insert(json!("graph"));
+    }
+    let mem = sections
+      .entry("memory".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = mem.as_object_mut() {
+      o.entry("enableMemorySummary".to_string())
+        .or_insert(json!(true));
+    }
+  }
+  if let Some(obj) = v.as_object_mut() {
+    obj.insert("settingsSchemaVersion".to_string(), json!(2));
   }
   v
 }
@@ -276,6 +329,38 @@ pub fn upsert_integration_provider(slug: &str, patch: &Value) -> Result<Value, S
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn migrate_kioku_flags_backfills_legacy_doc() {
+    let legacy = json!({
+      "sections": {
+        "memory": { "enableMemorySummary": false }
+      }
+    });
+    let migrated = ensure_shape(legacy);
+    assert_eq!(
+      migrated.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
+      Some(2)
+    );
+    assert_eq!(
+      migrated
+        .pointer("/sections/kioku_graph/worker_enabled")
+        .and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert_eq!(
+      migrated
+        .pointer("/sections/kioku_graph/read_path")
+        .and_then(|v| v.as_str()),
+      Some("graph")
+    );
+    assert_eq!(
+      migrated
+        .pointer("/sections/meetings/autoStartOnVideoDetect")
+        .and_then(|v| v.as_bool()),
+      Some(true)
+    );
+  }
 
   /// `write_atomic` round-trip + no leftover tempfile after success.
   #[test]

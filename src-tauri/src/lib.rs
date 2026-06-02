@@ -34,6 +34,7 @@ mod meeting_auto;
 mod meeting_commands;
 mod meeting_enhance;
 mod meeting_import;
+mod macos_system_audio;
 mod meeting_mic;
 pub mod meeting_mcp;
 pub mod memory_mcp;

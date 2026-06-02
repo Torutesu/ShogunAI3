@@ -7,7 +7,7 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rusqlite::params;
 use serde_json::{json, Value};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 #[tauri::command]
 pub async fn shogun_meeting_start(
@@ -389,12 +389,15 @@ pub fn shogun_meeting_audio_status(
   mic: State<'_, meeting_mic::MeetingMicController>,
   payload: Value,
 ) -> Result<Value, String> {
+  let st = mic.status();
   Ok(json!({
     "deepgram_configured": meeting_stt::deepgram_api_key().is_some(),
     "default_input_device": meeting_mic::default_input_device_label(),
-    "mic_capture_running": mic.is_running(),
-    "system_audio_process_tap": false,
-    "message": "Microphone: cpal default input → PCM16 16kHz. System loopback tap not implemented.",
+    "mic_capture_running": st.get("mic_capture_running").and_then(|x| x.as_bool()).unwrap_or(false),
+    "system_audio_running": st.get("system_audio_running").and_then(|x| x.as_bool()).unwrap_or(false),
+    "system_mode": st.get("system_mode").cloned().unwrap_or(Value::Null),
+    "system_audio_process_tap": st.get("system_audio_running").and_then(|x| x.as_bool()).unwrap_or(false),
+    "message": "Mic: cpal default input. System: loopback device or ScreenCaptureKit display audio → PCM16 16kHz.",
     "stub": false,
     "echo": payload,
   }))
@@ -403,10 +406,31 @@ pub fn shogun_meeting_audio_status(
 #[tauri::command]
 pub fn shogun_meeting_mic_start(
   mic: State<'_, meeting_mic::MeetingMicController>,
+  app: AppHandle,
   payload: Value,
 ) -> Result<Value, String> {
-  mic.start()?;
-  Ok(json!({ "ok": true, "stub": false, "echo": payload }))
+  let meeting_id = payload
+    .get("meeting_id")
+    .and_then(|x| x.as_str())
+    .map(String::from);
+  let live_stt = payload.get("live_stt").and_then(|x| x.as_bool()).unwrap_or(false);
+  let capture_system = payload
+    .get("capture_system")
+    .and_then(|x| x.as_bool())
+    .unwrap_or(true);
+  let mut out = mic.start_with(
+    Some(app),
+    meeting_mic::StartOptions {
+      meeting_id,
+      live_stt,
+      capture_system,
+    },
+  )?;
+  if let Some(obj) = out.as_object_mut() {
+    obj.insert("stub".to_string(), json!(false));
+    obj.insert("echo".to_string(), payload);
+  }
+  Ok(out)
 }
 
 #[tauri::command]
@@ -417,42 +441,67 @@ pub async fn shogun_meeting_mic_stop(
 ) -> Result<Value, String> {
   let transcribe = payload.get("transcribe").and_then(|x| x.as_bool()).unwrap_or(false);
   let meeting_id = payload.get("meeting_id").and_then(|x| x.as_str()).map(String::from);
-  let speaker = payload
-    .get("speaker")
-    .and_then(|x| x.as_str())
-    .unwrap_or("self")
-    .to_string();
 
-  let pcm = mic.stop()?;
+  let stopped = mic.stop()?;
 
   let mut out = json!({
-    "pcm_bytes": pcm.len(),
-    "pcm_base64": B64.encode(&pcm),
+    "pcm_bytes": stopped.mic_pcm.len(),
+    "pcm_base64": B64.encode(&stopped.mic_pcm),
+    "system_pcm_bytes": stopped.system_pcm.len(),
+    "system_pcm_base64": B64.encode(&stopped.system_pcm),
     "stub": false,
     "echo": payload,
   });
 
   if transcribe {
-    let (text, conf) = meeting_stt::deepgram_transcribe_pcm16_16k(&pcm).await?;
-    out["transcript"] = json!(text);
-    out["confidence"] = json!(conf);
-    if let Some(ref mid) = meeting_id {
-      if !text.trim().is_empty() {
-        let dur_ms = ((pcm.len() as u64 / 2).saturating_mul(1000)).max(1) / 16000;
-        let seg_id = meeting_store::new_uuid();
-        let seg = json!({
-          "segment_id": seg_id,
-          "meeting_id": mid,
-          "start_ms": 0u64,
-          "end_ms": dur_ms,
-          "speaker": speaker,
-          "text": text,
-          "confidence": conf as f64,
-          "is_final": true,
-        });
-        let _ = session.push_live_segment(mid.as_str(), seg.clone());
-        out["segment"] = seg;
+    let mut segments: Vec<Value> = Vec::new();
+    if !stopped.mic_pcm.is_empty() {
+      if let Ok((text, conf)) = meeting_stt::deepgram_transcribe_pcm16_16k(&stopped.mic_pcm).await {
+        if !text.trim().is_empty() {
+          let dur_ms = ((stopped.mic_pcm.len() as u64 / 2).saturating_mul(1000)).max(1) / 16000;
+          let seg = json!({
+            "segment_id": meeting_store::new_uuid(),
+            "meeting_id": meeting_id,
+            "start_ms": 0u64,
+            "end_ms": dur_ms,
+            "speaker": "self",
+            "text": text,
+            "confidence": conf as f64,
+            "is_final": true,
+          });
+          if let Some(ref mid) = meeting_id {
+            let _ = session.push_live_segment(mid.as_str(), seg.clone());
+          }
+          segments.push(seg);
+        }
+        out["transcript"] = json!(text);
+        out["confidence"] = json!(conf);
       }
+    }
+    if !stopped.system_pcm.is_empty() {
+      if let Ok((text, conf)) = meeting_stt::deepgram_transcribe_pcm16_16k(&stopped.system_pcm).await {
+        if !text.trim().is_empty() {
+          let dur_ms = ((stopped.system_pcm.len() as u64 / 2).saturating_mul(1000)).max(1) / 16000;
+          let seg = json!({
+            "segment_id": meeting_store::new_uuid(),
+            "meeting_id": meeting_id,
+            "start_ms": 0u64,
+            "end_ms": dur_ms,
+            "speaker": "other",
+            "text": text,
+            "confidence": conf as f64,
+            "is_final": true,
+          });
+          if let Some(ref mid) = meeting_id {
+            let _ = session.push_live_segment(mid.as_str(), seg.clone());
+          }
+          segments.push(seg);
+          out["system_transcript"] = json!(text);
+        }
+      }
+    }
+    if !segments.is_empty() {
+      out["segments"] = json!(segments);
     }
   }
 

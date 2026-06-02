@@ -74,6 +74,7 @@ block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-local-authentication = "0.3.2"
+screencapturekit = "6.0.1"
 
 [[bin]]
 name = "shogun-mcp"

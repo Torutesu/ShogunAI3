@@ -98,23 +98,41 @@ pub fn try_start_from_video_detect(
   let _ = meeting_store::insert_note_block(&id, &bid, 0, &note, "user", &[]);
 
   let mut mic_started = false;
+  let mut system_started = false;
   if auto_start_mic_enabled() && meeting_stt::deepgram_api_key().is_some() {
     if let Some(mic) = app.try_state::<meeting_mic::MeetingMicController>() {
-      mic_started = mic.start().is_ok();
+      match mic.start_with(
+        Some(app.clone()),
+        meeting_mic::StartOptions {
+          meeting_id: Some(id.clone()),
+          live_stt: true,
+          capture_system: true,
+        },
+      ) {
+        Ok(v) => {
+          mic_started = v.get("mic_running").and_then(|x| x.as_bool()).unwrap_or(true);
+          system_started = v
+            .get("system_running")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
+        }
+        Err(e) => log::warn!("auto-start mic failed: {}", e),
+      }
     }
   }
 
-  let _ = app.emit(
-    "video-meeting-auto-started",
-    json!({
-      "meeting_id": id,
-      "provider": provider,
-      "url": url,
-      "title": title,
-      "app": app_label,
-      "mic_started": mic_started,
-    }),
-  );
+  let payload = json!({
+    "meeting_id": id,
+    "provider": provider,
+    "url": url,
+    "title": title,
+    "app": app_label,
+    "mic_started": mic_started,
+    "system_started": system_started,
+    "auto_started": true,
+  });
+  let _ = app.emit("video-meeting-started", payload.clone());
+  let _ = app.emit("video-meeting-auto-started", payload);
 
   Some(id)
 }

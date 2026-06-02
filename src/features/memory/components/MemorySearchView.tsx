@@ -21,7 +21,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
   useEffect(() => {
     let cancelled = false;
     setSearching(true);
-    runRuntimeActionA('memory.search', { query: '', limit: 60 }, { silentError: true })
+    runRuntimeActionA('memory.timelineSearch', { query: '', limit: 60 }, { silentError: true })
       .then((r: any) => {
         if (cancelled) return;
         setSearching(false);
@@ -35,7 +35,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
     if (query === '') return undefined;
     const t = setTimeout(() => {
       setSearching(true);
-      runRuntimeActionA('memory.search', { query, limit: 60 }, { silentError: true })
+      runRuntimeActionA('memory.timelineSearch', { query, limit: 60 }, { silentError: true })
         .then((r: any) => {
           setSearching(false);
           const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];

@@ -19,6 +19,25 @@ pub fn tool_definitions() -> Value {
             }
         },
         {
+            "name": "shogun.memory_search_timeline",
+            "description": "Unified timeline search across memory items and meeting transcripts. Returns ranked hits with snippets from both sources.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Free-form search terms" },
+                    "limit": { "type": "integer", "default": 25 },
+                    "start_ms": { "type": "integer", "description": "Optional epoch-ms window start" },
+                    "end_ms": { "type": "integer", "description": "Optional epoch-ms window end" },
+                    "content_types": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional filter: memory | meeting"
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
             "name": "shogun.memory_fetch",
             "description": "Retrieve full content of memory items by ID. Typically called after `shogun.memory_search` returns hits.",
             "input_schema": {

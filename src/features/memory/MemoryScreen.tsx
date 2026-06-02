@@ -491,7 +491,7 @@ export function MemoryScreen() {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
     (async () => {
-      const res = await runRuntimeActionA('memory.search', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
+      const res = await runRuntimeActionA('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
       if (cancelled) return;
       mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
     })();
@@ -499,7 +499,7 @@ export function MemoryScreen() {
   }, [memorySettingsLoaded, withSemantic, activeKinds]);
   useEffect(() => {
     const onIndexChanged = async () => {
-      const r = await runRuntimeActionA('memory.search', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
+      const r = await runRuntimeActionA('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
       mergeIndexHitsIntoRiver(r, setRawEvents, setScrubIdx);
       refreshSourceEntities();
     };
@@ -730,7 +730,7 @@ export function MemoryScreen() {
                   <div style={{display:'flex', gap:8, marginTop:8}}>
                     <button type="button" onClick={async ()=>{
                       const kinds = Object.entries(activeFilters.sources).filter(([,on])=>on).map(([x])=>x);
-                      const res = await runRuntimeActionA('memory.search', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
+                      const res = await runRuntimeActionA('memory.timelineSearch', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
                       mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
                       setFiltersOpen(false);
                     }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>

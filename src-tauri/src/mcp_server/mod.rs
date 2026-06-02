@@ -19,6 +19,7 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, String> {
         "shogun.meeting_notes" => meeting::handle_meeting_notes(args),
         "shogun.meetings_search" => meeting::handle_meetings_search(args),
         "shogun.memory_search" => memory::handle_search(args),
+        "shogun.memory_search_timeline" => memory::handle_search_timeline(args),
         "shogun.memory_fetch" => memory::handle_fetch(args),
         "shogun.memory_entities" => memory::handle_entities(args),
         "shogun.kioku_debug_stats" => kioku::handle_debug_stats(args),

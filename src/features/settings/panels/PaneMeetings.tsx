@@ -15,6 +15,8 @@ export function PaneMeetings() {
   const [excludeNoGuests, setExcludeNoGuests] = useState(true);
   const [appDetectAlerts, setAppDetectAlerts] = useState(true);
   const [autoRecord, setAutoRecord] = useState(false);
+  const [autoStartOnVideoDetect, setAutoStartOnVideoDetect] = useState(true);
+  const [autoStartMicOnVideoDetect, setAutoStartMicOnVideoDetect] = useState(true);
   const [inactivityMins, setInactivityMins] = useState('15');
   const persist = React.useCallback(
     (patch: any) =>
@@ -29,12 +31,14 @@ export function PaneMeetings() {
           excludeNoGuests,
           appDetectAlerts,
           autoRecord,
+          autoStartOnVideoDetect,
+          autoStartMicOnVideoDetect,
           inactivityMins,
           ...patch,
         },
         { silentError: true },
       ),
-    [run, notifScope, meetingLang, remindersOn, reminderMins, excludeNoGuests, appDetectAlerts, autoRecord, inactivityMins],
+    [run, notifScope, meetingLang, remindersOn, reminderMins, excludeNoGuests, appDetectAlerts, autoRecord, autoStartOnVideoDetect, autoStartMicOnVideoDetect, inactivityMins],
   );
   React.useEffect(() => {
     const m = sections.meetings;
@@ -46,6 +50,8 @@ export function PaneMeetings() {
     if (typeof m.excludeNoGuests === 'boolean') setExcludeNoGuests(m.excludeNoGuests);
     if (typeof m.appDetectAlerts === 'boolean') setAppDetectAlerts(m.appDetectAlerts);
     if (typeof m.autoRecord === 'boolean') setAutoRecord(m.autoRecord);
+    if (typeof m.autoStartOnVideoDetect === 'boolean') setAutoStartOnVideoDetect(m.autoStartOnVideoDetect);
+    if (typeof m.autoStartMicOnVideoDetect === 'boolean') setAutoStartMicOnVideoDetect(m.autoStartMicOnVideoDetect);
     if (m.inactivityMins != null) setInactivityMins(String(m.inactivityMins));
   }, [sections]);
   return (
@@ -132,6 +138,26 @@ export function PaneMeetings() {
               const next = !autoRecord;
               setAutoRecord(next);
               void persist({ autoRecord: next });
+            }}
+          />
+        </Row>
+        <Row title="Auto-Start Meeting on Video Detect" desc="When Meet/Zoom is detected from screen capture, open a live meeting note automatically">
+          <Toggle
+            on={autoStartOnVideoDetect}
+            onClick={() => {
+              const next = !autoStartOnVideoDetect;
+              setAutoStartOnVideoDetect(next);
+              void persist({ autoStartOnVideoDetect: next });
+            }}
+          />
+        </Row>
+        <Row title="Auto-Start Mic + System Audio" desc="Start microphone and remote participant audio capture when a video meeting is auto-detected (requires Deepgram key)">
+          <Toggle
+            on={autoStartMicOnVideoDetect}
+            onClick={() => {
+              const next = !autoStartMicOnVideoDetect;
+              setAutoStartMicOnVideoDetect(next);
+              void persist({ autoStartMicOnVideoDetect: next });
             }}
           />
         </Row>

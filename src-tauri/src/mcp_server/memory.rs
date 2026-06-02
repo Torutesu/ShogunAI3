@@ -29,6 +29,16 @@ pub(super) fn handle_search(args: &Value) -> Result<Value, String> {
     Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
 }
 
+pub(super) fn handle_search_timeline(args: &Value) -> Result<Value, String> {
+    let _ = require_string_field(args, "query")?;
+    let mut payload = args.clone();
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("scope".to_string(), serde_json::json!("timeline"));
+    }
+    let result = memory_store::search_timeline(&payload)?;
+    Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
+}
+
 pub(super) fn handle_entities(args: &Value) -> Result<Value, String> {
     let _ = require_string_field(args, "q")?;
     let result = memory_store::entities_from_catalog(args)?;
@@ -49,6 +59,12 @@ mod tests {
     #[test]
     fn memory_search_rejects_empty_query() {
         let err = dispatch("shogun.memory_search", &json!({"query": ""})).unwrap_err();
+        assert!(err.contains("query"), "got: {err}");
+    }
+
+    #[test]
+    fn memory_search_timeline_requires_query() {
+        let err = dispatch("shogun.memory_search_timeline", &json!({})).unwrap_err();
         assert!(err.contains("query"), "got: {err}");
     }
 
