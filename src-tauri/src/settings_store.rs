@@ -136,6 +136,8 @@ fn ensure_shape(mut v: Value) -> Value {
         .or_insert(json!(30));
       o.entry("max_jobs_per_tick".to_string())
         .or_insert(json!(5));
+      o.entry("meeting_extraction_enabled".to_string())
+        .or_insert(json!(true));
     }
     let kioku_cost = sections
       .entry("kioku_cost".to_string())
@@ -173,6 +175,7 @@ fn ensure_shape(mut v: Value) -> Value {
   }
   v = migrate_kioku_flags(v);
   v = migrate_meetings_auto_start(v);
+  v = migrate_kioku_meeting_extraction(v);
   v
 }
 
@@ -235,6 +238,28 @@ fn migrate_meetings_auto_start(mut v: Value) -> Value {
   }
   if let Some(obj) = v.as_object_mut() {
     obj.insert("settingsSchemaVersion".to_string(), json!(3));
+  }
+  v
+}
+
+/// Enable meeting → mem_captures extraction for existing installs.
+fn migrate_kioku_meeting_extraction(mut v: Value) -> Value {
+  let ver = v
+    .get("settingsSchemaVersion")
+    .and_then(|x| x.as_u64())
+    .unwrap_or(0);
+  if ver >= 4 {
+    return v;
+  }
+  if let Some(o) = v
+    .pointer_mut("/sections/kioku_graph")
+    .and_then(|s| s.as_object_mut())
+  {
+    o.entry("meeting_extraction_enabled".to_string())
+      .or_insert(json!(true));
+  }
+  if let Some(obj) = v.as_object_mut() {
+    obj.insert("settingsSchemaVersion".to_string(), json!(4));
   }
   v
 }

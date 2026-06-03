@@ -239,6 +239,10 @@ pub fn assemble_debug_stats(
   let cost = query_cost_stats(conn, settings, now_ms)?;
   let graph = query_graph_stats(conn)?;
   let rules = crate::kioku_rules::cached_rules_or_load();
+  let rules_summary = json!({
+    "count": rules.len(),
+    "titles": rules.iter().map(|r| r.title.clone()).collect::<Vec<_>>(),
+  });
 
   let flags = json!({
     "read_path": crate::context_assembly::read_path_mode(settings),
@@ -247,11 +251,15 @@ pub fn assemble_debug_stats(
       .pointer("/sections/kioku_graph/worker_enabled")
       .and_then(|v| v.as_bool())
       .unwrap_or(false),
+    "meeting_extraction_enabled": crate::meeting_kioku::meeting_extraction_enabled(),
   });
-  let rules_summary = json!({
-    "count": rules.len(),
-    "titles": rules.iter().map(|r| r.title.clone()).collect::<Vec<_>>(),
-  });
+  let meeting_captures: i64 = conn
+    .query_row(
+      "SELECT COUNT(*) FROM mem_captures WHERE type = 'audio_chunk' AND url LIKE 'meeting://%'",
+      [],
+      |r| r.get(0),
+    )
+    .unwrap_or(0);
 
   Ok(json!({
     "queue": queue,
@@ -259,6 +267,9 @@ pub fn assemble_debug_stats(
     "graph": graph,
     "rules": rules_summary,
     "flags": flags,
+    "meeting_pipeline": {
+      "captures": meeting_captures,
+    },
     "now_ms": now_ms,
   }))
 }

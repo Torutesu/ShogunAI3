@@ -16,6 +16,7 @@ export function PaneKiokuGraph() {
   const [readPath, setReadPath] = useState('legacy');
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [captureFlag, setCaptureFlag] = useState(false);
+  const [meetingExtraction, setMeetingExtraction] = useState(true);
   const [pollSecs, setPollSecs] = useState('30');
   const [maxJobs, setMaxJobs] = useState('5');
 
@@ -103,6 +104,7 @@ export function PaneKiokuGraph() {
     if (typeof g.read_path === 'string') setReadPath(g.read_path);
     if (typeof g.worker_enabled === 'boolean') setWorkerEnabled(g.worker_enabled);
     if (typeof g.capture_to_mem_captures === 'boolean') setCaptureFlag(g.capture_to_mem_captures);
+    if (typeof g.meeting_extraction_enabled === 'boolean') setMeetingExtraction(g.meeting_extraction_enabled);
     if (g.poll_interval_secs != null) setPollSecs(String(g.poll_interval_secs));
     if (g.max_jobs_per_tick != null) setMaxJobs(String(g.max_jobs_per_tick));
 
@@ -142,6 +144,7 @@ export function PaneKiokuGraph() {
       read_path: readPath,
       worker_enabled: workerEnabled,
       capture_to_mem_captures: captureFlag,
+      meeting_extraction_enabled: meetingExtraction,
       poll_interval_secs: Number(pollSecs) || 30,
       max_jobs_per_tick: Number(maxJobs) || 5,
       ...patch,
@@ -222,6 +225,8 @@ export function PaneKiokuGraph() {
         setCaptureFlag={setCaptureFlag}
         workerEnabled={workerEnabled}
         setWorkerEnabled={setWorkerEnabled}
+        meetingExtraction={meetingExtraction}
+        setMeetingExtraction={setMeetingExtraction}
         pollSecs={pollSecs}
         setPollSecs={setPollSecs}
         maxJobs={maxJobs}

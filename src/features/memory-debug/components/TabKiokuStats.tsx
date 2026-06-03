@@ -120,7 +120,13 @@ export function TabKiokuStats() {
         {statusBadge(`read_path: ${flags.read_path || "legacy"}`, flags.read_path === "graph")}
         {statusBadge("worker_enabled", !!flags.worker_enabled)}
         {statusBadge("capture_to_mem_captures", !!flags.capture_to_mem_captures)}
+        {statusBadge("meeting_extraction", !!flags.meeting_extraction_enabled)}
       </div>
+      {(data as any).meeting_pipeline && (
+        <p className="mdbg-muted" style={{ marginTop: 8 }}>
+          Meeting captures in KIOKU raw layer: {(data as any).meeting_pipeline.captures ?? 0}
+        </p>
+      )}
 
       <h3>Queue</h3>
       {sli && (

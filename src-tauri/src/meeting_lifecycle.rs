@@ -156,10 +156,19 @@ pub async fn persist_meeting_stop(
     }
   };
 
+  let kioku_ingest = match crate::meeting_kioku::ingest_meeting_to_kioku(meeting_id) {
+    Ok(v) => Some(v),
+    Err(e) => {
+      log::warn!("meeting kioku ingest failed for {}: {}", meeting_id, e);
+      None
+    }
+  };
+
   Ok(json!({
     "meeting": detail,
     "summary": meeting_summary,
     "memory_ingest": memory_ingest,
+    "kioku_ingest": kioku_ingest,
   }))
 }
 

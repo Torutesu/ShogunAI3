@@ -32,6 +32,7 @@ mod llm_providers;
 mod macos_ax;
 mod meeting_lifecycle;
 mod meeting_context_timeline;
+mod meeting_kioku;
 mod meeting_memory;
 mod meeting_auto;
 mod meeting_commands;
@@ -211,6 +212,7 @@ pub fn run() {
       commands::shogun_schedule_action,
       commands::shogun_kioku_brief_signals,
       commands::shogun_kioku_debug_stats,
+      commands::shogun_kioku_pipeline_smoke,
       commands::shogun_kioku_stage5_dry_run,
       commands::shogun_kioku_stage5_apply,
       commands::shogun_kioku_backup_db,

@@ -521,9 +521,26 @@ export function mockIpcInvoke(command: string, payload: any): any {
             by_edge_type: [],
           },
           rules: { count: 0, titles: [] },
-          flags: { read_path: 'legacy', capture_to_mem_captures: false, worker_enabled: false },
+          flags: { read_path: 'legacy', capture_to_mem_captures: false, worker_enabled: false, meeting_extraction_enabled: true },
+          meeting_pipeline: { captures: 0 },
           now_ms: Date.now(),
           stub: false,
+          echo,
+        },
+      };
+    case 'shogun_kioku_pipeline_smoke':
+      return {
+        ok: true,
+        data: {
+          ok: false,
+          worker_enabled: false,
+          meeting_extraction_enabled: true,
+          capture_to_mem_captures: false,
+          llm_key_configured: false,
+          queued_jobs: 0,
+          meeting_captures: 0,
+          read_path: 'legacy',
+          stub: true,
           echo,
         },
       };

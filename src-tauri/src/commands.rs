@@ -310,6 +310,12 @@ pub fn shogun_kioku_debug_stats(_payload: Value) -> Result<Value, String> {
   crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)
 }
 
+/// Quick KIOKU pipeline readiness check (worker, LLM key, queue depth).
+#[tauri::command]
+pub fn shogun_kioku_pipeline_smoke(_payload: Value) -> Result<Value, String> {
+  crate::meeting_kioku::pipeline_smoke()
+}
+
 /// Run `VACUUM INTO` on the live `memory.db` to produce a consistent
 /// compacted copy. Designed to be wired to the `Settings > KIOKU Graph >
 /// Backup` button so operators can grab a snapshot before

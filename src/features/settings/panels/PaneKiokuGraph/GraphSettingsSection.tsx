@@ -8,6 +8,8 @@ interface GraphSettingsSectionProps {
   setCaptureFlag: (v: boolean) => void;
   workerEnabled: boolean;
   setWorkerEnabled: (v: boolean) => void;
+  meetingExtraction: boolean;
+  setMeetingExtraction: (v: boolean) => void;
   pollSecs: string;
   setPollSecs: (v: string) => void;
   maxJobs: string;
@@ -22,6 +24,8 @@ export function GraphSettingsSection({
   setCaptureFlag,
   workerEnabled,
   setWorkerEnabled,
+  meetingExtraction,
+  setMeetingExtraction,
   pollSecs,
   setPollSecs,
   maxJobs,
@@ -45,6 +49,9 @@ export function GraphSettingsSection({
       </Row>
       <Row title="Worker enabled" desc="Background thread polls extraction_jobs and calls the BYOK extraction model. Disabled = jobs queue but never run.">
         <Toggle on={workerEnabled} onClick={() => { const next = !workerEnabled; setWorkerEnabled(next); persistGraph({ worker_enabled: next }); }} />
+      </Row>
+      <Row title="Meeting → KIOKU extraction" desc="When a backend meeting ends, enqueue transcript text into mem_captures + extraction_jobs for fact extraction.">
+        <Toggle on={meetingExtraction} onClick={() => { const next = !meetingExtraction; setMeetingExtraction(next); persistGraph({ meeting_extraction_enabled: next }); }} />
       </Row>
       <Row title="Worker poll interval (sec)" desc="Clamped 5–600 server-side. Lower values check the queue more often at the cost of CPU wake-ups.">
         <input
