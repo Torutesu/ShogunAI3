@@ -1,6 +1,7 @@
 import { Icon } from '@/shared/icons';
 import { GranolaPillMenu } from './GranolaOverlay/GranolaPillMenu';
 import { GranolaTopPanels } from './GranolaOverlay/GranolaTopPanels';
+import { MeetingPermissionBanner } from './MeetingPermissionBanner';
 import { MEETINGS_DOCK_SLASH_CATALOG } from '../lib/runtime';
 import {
   toastM,
@@ -75,6 +76,12 @@ export interface GranolaOverlayProps {
   listLocalTodos: () => void;
   startNoteRecording: () => Promise<void>;
   stopNoteRecording: () => void;
+  showPermissionBanner?: boolean;
+  recordingWithoutRemote?: boolean;
+  permissionActionBusy?: boolean;
+  onOpenScreenCaptureSettings?: () => void;
+  onRequestScreenCaptureAccess?: () => void;
+  onMicOnlyRecording?: () => void;
   injectRecipeIntoMemo: (label: string) => void;
   runPostRecSlashItem: (item: any) => void;
   runRuntimeActionM: (action: string, payload: any, opts: any) => any;
@@ -114,6 +121,12 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
     mtgDraftEmail, mtgCopyAllText, moveGranolaToTrash,
     runLocalAsk, listLocalTodos,
     startNoteRecording, stopNoteRecording,
+    showPermissionBanner,
+    recordingWithoutRemote,
+    permissionActionBusy,
+    onOpenScreenCaptureSettings,
+    onRequestScreenCaptureAccess,
+    onMicOnlyRecording,
     injectRecipeIntoMemo, runPostRecSlashItem,
     runRuntimeActionM,
   } = p;
@@ -511,6 +524,26 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
           </button>
         </div>
       </div>
+
+      {showPermissionBanner && onOpenScreenCaptureSettings && onRequestScreenCaptureAccess && onMicOnlyRecording && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 72,
+            left: 0,
+            right: 0,
+            pointerEvents: 'auto',
+          }}
+        >
+          <MeetingPermissionBanner
+            recordingWithoutRemote={recordingWithoutRemote}
+            busy={permissionActionBusy}
+            onOpenSettings={onOpenScreenCaptureSettings}
+            onRequestAccess={onRequestScreenCaptureAccess}
+            onMicOnly={onMicOnlyRecording}
+          />
+        </div>
+      )}
 
       <GranolaTopPanels
         granola={granola}

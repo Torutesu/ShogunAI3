@@ -148,6 +148,8 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
     register("auth.biometric.status", (payload) => api.authBiometricStatus(payload));
     register("auth.biometric.authenticate", (payload) => api.authBiometricAuthenticate(payload));
     register("meetings.start", (payload) => api.meetingStart(payload));
+    register("meetings.link_client_note", (payload) => api.meetingLinkClientNote(payload));
+    register("meetings.resolve_by_storage_key", (payload) => api.meetingResolveByStorageKey(payload));
     register("meetings.stop", (payload) => api.meetingStop(payload));
     register("meetings.note.append_block", (payload) => api.meetingNoteAppendBlock(payload));
     register("meetings.note.edit_block", (payload) => api.meetingNoteEditBlock(payload));

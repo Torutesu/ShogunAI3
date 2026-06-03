@@ -274,6 +274,7 @@ async fn ingest_meeting(
     None,
     Some("us.zoom.xos"),
     Some(&topic),
+    None,
   )?;
 
   if !result.utterances.is_empty() {

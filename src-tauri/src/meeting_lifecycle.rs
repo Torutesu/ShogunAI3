@@ -145,9 +145,21 @@ pub async fn persist_meeting_stop(
     }
   }
 
+  let memory_ingest = match crate::meeting_memory::ingest_meeting_to_memory(
+    meeting_id,
+    meeting_summary.as_ref(),
+  ) {
+    Ok(v) => Some(v),
+    Err(e) => {
+      log::warn!("meeting memory ingest failed for {}: {}", meeting_id, e);
+      None
+    }
+  };
+
   Ok(json!({
     "meeting": detail,
     "summary": meeting_summary,
+    "memory_ingest": memory_ingest,
   }))
 }
 

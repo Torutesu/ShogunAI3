@@ -27,7 +27,15 @@ export function briefPayloadWithUserTz(base: any): any {
   return tz ? Object.assign({}, b, { user_tz: tz }) : b;
 }
 
-/** Local body templates for recipes (used when opening a recipe without network). */
+/** Map UI recipe labels → backend `recipe_id` slugs (`meeting_recipes.rs`). */
+export const RECIPE_LABEL_TO_ID: Record<string, string> = {
+  'Coach me: Matt 1:1': 'rec-coach-me',
+  'Write weekly recap': 'rec-feature-digest',
+  'List open decisions': 'rec-decision-log',
+  'Draft follow-ups': 'rec-follow-up-email',
+};
+
+/** Local body templates for recipes (fallback when LLM unavailable). */
 export const RECIPE_LOCAL_BODIES: Record<string, string> = {
   'Write weekly recap': '## 週報\n\n### 今週のハイライト\n- \n\n### 来週のフォーカス\n- \n\n### リスク\n- \n',
   'Coach me: Matt 1:1': '## 1:1 コーチング\n\n### 前回からのフォロー\n- \n\n### 今回の議題\n- \n\n### ネクストアクション\n- [ ] \n',

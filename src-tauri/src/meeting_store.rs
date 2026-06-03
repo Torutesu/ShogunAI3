@@ -61,6 +61,36 @@ pub(crate) fn ensure_meeting_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
   seed_builtin_templates(conn)?;
+  migrate_meetings_client_storage_key(conn)?;
+  Ok(())
+}
+
+fn migrate_meetings_client_storage_key(conn: &Connection) -> Result<(), String> {
+  let mut has_col = false;
+  let mut stmt = conn
+    .prepare("PRAGMA table_info(meetings)")
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map([], |r| r.get::<_, String>(1))
+    .map_err(|e| e.to_string())?;
+  for name in rows.flatten() {
+    if name == "client_storage_key" {
+      has_col = true;
+      break;
+    }
+  }
+  if !has_col {
+    conn
+      .execute("ALTER TABLE meetings ADD COLUMN client_storage_key TEXT", [])
+      .map_err(|e| e.to_string())?;
+    conn
+      .execute(
+        r#"CREATE UNIQUE INDEX IF NOT EXISTS idx_meetings_client_storage_key
+           ON meetings(client_storage_key) WHERE client_storage_key IS NOT NULL"#,
+        [],
+      )
+      .map_err(|e| e.to_string())?;
+  }
   Ok(())
 }
 
@@ -135,22 +165,85 @@ pub fn meeting_insert(
   template_id: Option<&str>,
   app_bundle_id: Option<&str>,
   title: Option<&str>,
+  client_storage_key: Option<&str>,
 ) -> Result<(), String> {
   let conn = memory_store::open_conn()?;
   conn
     .execute(
-      r#"INSERT INTO meetings (id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, embedding)
-         VALUES (?1, ?2, NULL, ?3, ?4, ?5, '[]', 'recording', NULL)"#,
+      r#"INSERT INTO meetings (id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, embedding, client_storage_key)
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, '[]', 'recording', NULL, ?6)"#,
       params![
         id,
         started_at_ms as i64,
         app_bundle_id,
         template_id,
         title.unwrap_or("Untitled meeting"),
+        client_storage_key,
       ],
     )
     .map_err(|e| e.to_string())?;
   Ok(())
+}
+
+pub fn link_client_storage_key(meeting_id: &str, key: &str) -> Result<Value, String> {
+  let key = key.trim();
+  if key.is_empty() {
+    return Err("storage_key is required".to_string());
+  }
+  if let Some(existing) = meeting_by_client_storage_key(key)? {
+    let existing_id = existing
+      .get("id")
+      .and_then(|x| x.as_str())
+      .unwrap_or("")
+      .to_string();
+    if existing_id == meeting_id {
+      return Ok(json!({
+        "ok": true,
+        "meeting_id": meeting_id,
+        "already_linked": true,
+      }));
+    }
+    return Ok(json!({
+      "ok": true,
+      "meeting_id": existing_id,
+      "already_linked": true,
+      "conflict": true,
+      "requested_meeting_id": meeting_id,
+    }));
+  }
+  let conn = memory_store::open_conn()?;
+  let updated = conn
+    .execute(
+      "UPDATE meetings SET client_storage_key = ?1 WHERE id = ?2",
+      params![key, meeting_id],
+    )
+    .map_err(|e| e.to_string())?;
+  if updated == 0 {
+    return Err("meeting not found".to_string());
+  }
+  Ok(json!({
+    "ok": true,
+    "meeting_id": meeting_id,
+    "already_linked": false,
+  }))
+}
+
+pub fn meeting_by_client_storage_key(key: &str) -> Result<Option<Value>, String> {
+  let key = key.trim();
+  if key.is_empty() {
+    return Ok(None);
+  }
+  let conn = memory_store::open_conn()?;
+  let row = conn
+    .query_row(
+      r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, client_storage_key
+         FROM meetings WHERE client_storage_key = ?1"#,
+      params![key],
+      map_meeting_row,
+    )
+    .optional()
+    .map_err(|e| e.to_string())?;
+  Ok(row)
 }
 
 pub fn meeting_stop(meeting_id: &str, ended_at_ms: u64) -> Result<(), String> {
@@ -376,7 +469,7 @@ pub fn purge_meeting(meeting_id: &str) -> Result<(), String> {
   Ok(())
 }
 
-fn row_meeting_list(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+fn map_meeting_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
   let participants_raw: String = r.get(6)?;
   let participants: Value = serde_json::from_str(&participants_raw).unwrap_or(json!([]));
   Ok(json!({
@@ -388,7 +481,12 @@ fn row_meeting_list(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     "title": r.get::<_, Option<String>>(5)?,
     "participants": participants,
     "state": r.get::<_, String>(7)?,
+    "client_storage_key": r.get::<_, Option<String>>(8)?,
   }))
+}
+
+fn row_meeting_list(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+  map_meeting_row(r)
 }
 
 pub fn list_meetings(from_ms: Option<u64>, to_ms: Option<u64>, limit: usize) -> Result<Vec<Value>, String> {
@@ -399,7 +497,7 @@ pub fn list_meetings(from_ms: Option<u64>, to_ms: Option<u64>, limit: usize) -> 
     (Some(f), Some(t)) => {
       let mut stmt = conn
         .prepare(
-          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state
+          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, client_storage_key
              FROM meetings WHERE started_at >= ?1 AND started_at <= ?2
              ORDER BY started_at DESC LIMIT ?3"#,
         )
@@ -414,7 +512,7 @@ pub fn list_meetings(from_ms: Option<u64>, to_ms: Option<u64>, limit: usize) -> 
     (Some(f), None) => {
       let mut stmt = conn
         .prepare(
-          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state
+          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, client_storage_key
              FROM meetings WHERE started_at >= ?1
              ORDER BY started_at DESC LIMIT ?2"#,
         )
@@ -429,7 +527,7 @@ pub fn list_meetings(from_ms: Option<u64>, to_ms: Option<u64>, limit: usize) -> 
     (None, Some(t)) => {
       let mut stmt = conn
         .prepare(
-          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state
+          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, client_storage_key
              FROM meetings WHERE started_at <= ?1
              ORDER BY started_at DESC LIMIT ?2"#,
         )
@@ -444,7 +542,7 @@ pub fn list_meetings(from_ms: Option<u64>, to_ms: Option<u64>, limit: usize) -> 
     (None, None) => {
       let mut stmt = conn
         .prepare(
-          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state
+          r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, client_storage_key
              FROM meetings ORDER BY started_at DESC LIMIT ?1"#,
         )
         .map_err(|e| e.to_string())?;
@@ -463,23 +561,10 @@ pub fn get_meeting_detail(meeting_id: &str) -> Result<Option<Value>, String> {
   let conn = memory_store::open_conn()?;
   let row = conn
     .query_row(
-      r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state
+      r#"SELECT id, started_at, ended_at, app_bundle_id, template_id, title, participants_json, state, client_storage_key
          FROM meetings WHERE id = ?1"#,
       params![meeting_id],
-      |r| {
-        let participants_raw: String = r.get(6)?;
-        let participants: Value = serde_json::from_str(&participants_raw).unwrap_or(json!([]));
-        Ok(json!({
-          "id": r.get::<_, String>(0)?,
-          "started_at": r.get::<_, i64>(1)? as u64,
-          "ended_at": r.get::<_, Option<i64>>(2)?.map(|x| x as u64),
-          "app_bundle_id": r.get::<_, Option<String>>(3)?,
-          "template_id": r.get::<_, Option<String>>(4)?,
-          "title": r.get::<_, Option<String>>(5)?,
-          "participants": participants,
-          "state": r.get::<_, String>(7)?,
-        }))
-      },
+      map_meeting_row,
     )
     .optional()
     .map_err(|e| e.to_string())?;

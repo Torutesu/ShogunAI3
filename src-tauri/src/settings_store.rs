@@ -152,6 +152,12 @@ fn ensure_shape(mut v: Value) -> Value {
       .entry("meetings".to_string())
       .or_insert_with(|| json!({}));
     if let Some(o) = mtg.as_object_mut() {
+      o.entry("autoStartOnCalendar".to_string())
+        .or_insert(json!(false));
+      o.entry("autoIngestToMemory".to_string())
+        .or_insert(json!(true));
+      o.entry("liveSttStreaming".to_string())
+        .or_insert(json!(true));
       o.entry("autoStartOnVideoDetect".to_string())
         .or_insert(json!(true));
       o.entry("autoStartMicOnVideoDetect".to_string())
@@ -166,6 +172,7 @@ fn ensure_shape(mut v: Value) -> Value {
     }
   }
   v = migrate_kioku_flags(v);
+  v = migrate_meetings_auto_start(v);
   v
 }
 
@@ -201,6 +208,33 @@ fn migrate_kioku_flags(mut v: Value) -> Value {
   }
   if let Some(obj) = v.as_object_mut() {
     obj.insert("settingsSchemaVersion".to_string(), json!(2));
+  }
+  v
+}
+
+/// Rename legacy `autoRecord` → `autoStartOnCalendar` (calendar window auto-open).
+fn migrate_meetings_auto_start(mut v: Value) -> Value {
+  let ver = v
+    .get("settingsSchemaVersion")
+    .and_then(|x| x.as_u64())
+    .unwrap_or(0);
+  if ver >= 3 {
+    return v;
+  }
+  if let Some(mtg) = v
+    .pointer_mut("/sections/meetings")
+    .and_then(|s| s.as_object_mut())
+  {
+    if !mtg.contains_key("autoStartOnCalendar") {
+      let from_legacy = mtg
+        .get("autoRecord")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
+      mtg.insert("autoStartOnCalendar".to_string(), json!(from_legacy));
+    }
+  }
+  if let Some(obj) = v.as_object_mut() {
+    obj.insert("settingsSchemaVersion".to_string(), json!(3));
   }
   v
 }
@@ -340,7 +374,7 @@ mod tests {
     let migrated = ensure_shape(legacy);
     assert_eq!(
       migrated.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
-      Some(2)
+      Some(3)
     );
     assert_eq!(
       migrated
@@ -357,6 +391,33 @@ mod tests {
     assert_eq!(
       migrated
         .pointer("/sections/meetings/autoStartOnVideoDetect")
+        .and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert_eq!(
+      migrated
+        .pointer("/sections/meetings/autoStartOnCalendar")
+        .and_then(|v| v.as_bool()),
+      Some(false)
+    );
+  }
+
+  #[test]
+  fn migrate_auto_record_to_auto_start_on_calendar() {
+    let legacy = json!({
+      "settingsSchemaVersion": 2,
+      "sections": {
+        "meetings": { "autoRecord": true, "autoStartOnVideoDetect": false }
+      }
+    });
+    let migrated = ensure_shape(legacy);
+    assert_eq!(
+      migrated.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
+      Some(3)
+    );
+    assert_eq!(
+      migrated
+        .pointer("/sections/meetings/autoStartOnCalendar")
         .and_then(|v| v.as_bool()),
       Some(true)
     );

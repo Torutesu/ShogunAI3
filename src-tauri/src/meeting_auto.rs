@@ -69,6 +69,7 @@ pub fn try_start_from_video_detect(
     None,
     Some(provider),
     Some(title.trim()),
+    None,
   )
   .is_err()
   {
@@ -123,6 +124,7 @@ pub fn try_start_from_video_detect(
     }
   }
 
+  let screen_capture_granted = crate::macos_permissions::screen_capture_granted();
   let payload = json!({
     "meeting_id": id,
     "provider": provider,
@@ -131,6 +133,7 @@ pub fn try_start_from_video_detect(
     "app": app_label,
     "mic_started": mic_started,
     "system_started": system_started,
+    "screen_capture_granted": screen_capture_granted,
     "auto_started": true,
   });
   let _ = app.emit("video-meeting-started", payload.clone());

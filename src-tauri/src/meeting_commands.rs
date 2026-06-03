@@ -24,6 +24,12 @@ pub async fn shogun_meeting_start(
     .and_then(|x| x.as_str())
     .unwrap_or("Untitled meeting")
     .to_string();
+  let client_storage_key = payload
+    .get("client_storage_key")
+    .or_else(|| payload.get("storage_key"))
+    .or_else(|| payload.get("storageKey"))
+    .and_then(|x| x.as_str())
+    .map(String::from);
   let id = meeting_store::new_uuid();
   let started = memory_store::now_ms();
   meeting_store::meeting_insert(
@@ -32,6 +38,7 @@ pub async fn shogun_meeting_start(
     template_id.as_deref(),
     app_bundle_id.as_deref(),
     Some(&title),
+    client_storage_key.as_deref(),
   )?;
   if let Some(ref tid) = template_id {
     meeting_store::seed_note_from_template(&id, tid)?;
@@ -54,9 +61,59 @@ pub async fn shogun_meeting_start(
     "template_id": template_id,
     "title": title,
     "state": "recording",
+    "client_storage_key": client_storage_key,
     "stub": false,
     "echo": payload,
   }))
+}
+
+#[tauri::command]
+pub fn shogun_meeting_link_client_note(payload: Value) -> Result<Value, String> {
+  let meeting_id = payload
+    .get("meeting_id")
+    .and_then(|x| x.as_str())
+    .ok_or_else(|| "meeting_id is required".to_string())?;
+  let key = payload
+    .get("storage_key")
+    .or_else(|| payload.get("storageKey"))
+    .or_else(|| payload.get("client_storage_key"))
+    .and_then(|x| x.as_str())
+    .ok_or_else(|| "storage_key is required".to_string())?;
+  let mut out = meeting_store::link_client_storage_key(meeting_id, key)?;
+  if let Some(obj) = out.as_object_mut() {
+    obj.insert("stub".to_string(), json!(false));
+    obj.insert("echo".to_string(), payload);
+  }
+  Ok(out)
+}
+
+#[tauri::command]
+pub fn shogun_meeting_resolve_by_storage_key(payload: Value) -> Result<Value, String> {
+  let key = payload
+    .get("storage_key")
+    .or_else(|| payload.get("storageKey"))
+    .or_else(|| payload.get("client_storage_key"))
+    .and_then(|x| x.as_str())
+    .ok_or_else(|| "storage_key is required".to_string())?;
+  match meeting_store::meeting_by_client_storage_key(key)? {
+    Some(meeting) => {
+      let meeting_id = meeting.get("id").cloned().unwrap_or(Value::Null);
+      Ok(json!({
+        "found": true,
+        "meeting_id": meeting_id,
+        "meeting": meeting,
+        "stub": false,
+        "echo": payload,
+      }))
+    }
+    None => Ok(json!({
+      "found": false,
+      "meeting_id": Value::Null,
+      "meeting": Value::Null,
+      "stub": false,
+      "echo": payload,
+    })),
+  }
 }
 
 #[tauri::command]

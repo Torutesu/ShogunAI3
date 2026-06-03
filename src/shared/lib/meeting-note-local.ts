@@ -312,12 +312,23 @@ function countOccurrences(haystack: any, needle: any) {
   return c;
 }
 
+function calendarStorageKey(calKey: any) {
+  return storageHash({ cal: String(calKey), v: 1 });
+}
+
+function linkBackendMeetingId(storageKey: any, backendMeetingId: any) {
+  if (!storageKey || !backendMeetingId) return;
+  saveNote(storageKey, { backendMeetingId: String(backendMeetingId) });
+}
+
 export const MeetingNoteLocal = {
   STORAGE_KEY: STORAGE_KEY,
   USER_MTG_LOG_KEY: USER_MTG_LOG_KEY,
   loadNote: loadNote,
   saveNote: saveNote,
   storageHash: storageHash,
+  calendarStorageKey: calendarStorageKey,
+  linkBackendMeetingId: linkBackendMeetingId,
   buildStubTranscript: buildStubTranscript,
   summarizeLocal: summarizeLocal,
   buildMinutesMarkdown: buildMinutesMarkdown,

@@ -11,7 +11,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 const MAX_MONO_FLOATS: usize = 48000 * 60 * 8;
-const LIVE_CHUNK_SECS: u64 = 8;
+const LIVE_CHUNK_SECS: u64 = 3;
 const MIN_CHUNK_PCM_BYTES: usize = 16000 * 2;
 const SYSTEM_SAMPLE_RATE: u32 = 48_000;
 
@@ -36,7 +36,7 @@ pub fn resample_f32_mono_to_pcm16_16k(input: &[f32], from_hz: u32) -> Vec<u8> {
   out
 }
 
-struct SampleTrack {
+pub(crate) struct SampleTrack {
   floats: Vec<f32>,
   sample_rate: u32,
   consumed: usize,
@@ -51,7 +51,7 @@ impl SampleTrack {
     }
   }
 
-  fn take_chunk_pcm16(&mut self) -> Vec<u8> {
+  pub(crate) fn take_chunk_pcm16(&mut self) -> Vec<u8> {
     if self.consumed >= self.floats.len() {
       return Vec::new();
     }
@@ -243,6 +243,21 @@ fn spawn_live_stt_worker(
   system_buf: Option<Arc<Mutex<Vec<f32>>>>,
   stop: Arc<AtomicBool>,
 ) {
+  if crate::meeting_stt::deepgram_api_key().is_some()
+    && crate::meeting_stt_live::streaming_enabled()
+  {
+    crate::meeting_stt_live::spawn_mic_stream(
+      app.clone(),
+      meeting_id.clone(),
+      mic_track,
+      stop.clone(),
+    );
+    if let Some(buf) = system_buf {
+      crate::meeting_stt_live::spawn_system_stream(app, meeting_id, buf, stop);
+    }
+    return;
+  }
+
   let mut sys_consumed: usize = 0;
   tauri::async_runtime::spawn(async move {
     let mut chunk_idx: u64 = 0;

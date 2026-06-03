@@ -1,11 +1,13 @@
 import React from 'react';
 
 import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
+import { emitMeetingHud, clearMeetingHud } from '@/shared/lib/meeting-hud-events';
 import { Icon, Kamon } from '@/shared/icons';
 import { MtgProgressDots } from './components/MtgProgressDots';
 import { GranolaOverlay } from './components/GranolaOverlay';
 import { MtgChatDock } from './components/MtgChatDock';
 import { MeetingDetailModal } from './components/MeetingDetailModal';
+import { useMeetingScreenCapturePermission } from './hooks/useMeetingScreenCapturePermission';
 import { runRuntimeActionM } from '@/shared/ipc/runtime-actions';
 import {
   mnl,
@@ -14,6 +16,7 @@ import {
   RECIPE_LOCAL_BODIES,
   MEETINGS_COMING_UP_STORAGE,
   MEETINGS_DOCK_SLASH_CATALOG,
+  RECIPE_LABEL_TO_ID,
   noteHasCompletedRecording,
 } from './lib/runtime';
 
@@ -58,6 +61,21 @@ export function MeetingsScreen() {
   const [backendRecActive, setBackendRecActive] = useState(false);
   const backendRecActiveRef = useRef(false);
   backendRecActiveRef.current = backendRecActive;
+  const backendRecStartedAtRef = useRef(0);
+  const [systemAudioRunning, setSystemAudioRunning] = useState(false);
+  const [permissionActionBusy, setPermissionActionBusy] = useState(false);
+  const permissionPollEnabled = !!(granola && granola.backendMeetingId && isNativeDesktop());
+  const {
+    screenCaptureGranted,
+    refresh: refreshScreenCapturePermission,
+    grantedChangedToTrue,
+    isNativeDesktop: nativeDesktop,
+  } = useMeetingScreenCapturePermission(permissionPollEnabled);
+  const showPermissionBanner =
+    permissionPollEnabled &&
+    nativeDesktop &&
+    ((screenCaptureGranted === false && (!backendRecActive || !systemAudioRunning)) ||
+      (backendRecActive && !systemAudioRunning));
   const [_recTick, setRecTick] = useState(0);
   const [comingUp, setComingUp] = useState<any[]>([]);
   const [meetingsPrompt, setMeetingsPrompt] = useState('');
@@ -73,6 +91,10 @@ export function MeetingsScreen() {
   const [mtgLinkAccessMenuOpen, setMtgLinkAccessMenuOpen] = useState(false);
   /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
+  /** Mirrors `sections.meetings.autoStartOnCalendar` (default false). */
+  const [autoStartOnCalendar, setAutoStartOnCalendar] = useState(false);
+  const autoStartOnCalendarRef = useRef(false);
+  autoStartOnCalendarRef.current = autoStartOnCalendar;
 
   granolaRef.current = granola;
 
@@ -80,6 +102,19 @@ export function MeetingsScreen() {
 
   useEffect(function () {
     function onEnded() {
+      if (backendRecActiveRef.current && granolaRef.current && granolaRef.current.backendMeetingId && isNativeDesktop()) {
+        setBackendRecActive(false);
+        backendRecStartedAtRef.current = 0;
+        var mid = granolaRef.current.backendMeetingId;
+        void runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true }).then(function (getRes: any) {
+          var segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
+          if (segs.length) {
+            setGranolaDraft(function (d: any) {
+              return { ...d, transcript: formatLiveTranscript(segs) };
+            });
+          }
+        });
+      }
       if (granolaRef.current && granolaRef.current.storageKey) {
         setPostRecSessionFlag(true);
         setListTick(function (x) { return x + 1; });
@@ -91,14 +126,32 @@ export function MeetingsScreen() {
 
   useEffect(function () {
     var cancelled = false;
-    runRuntimeActionM('settings.load', {}, { silentError: true }).then(function (r) {
+    function applyMeetingSettings(r: any) {
       if (cancelled || !r || !r.ok || !r.data || !r.data.settings || !r.data.settings.sections) return;
       var priv = r.data.settings.sections.privacy;
       if (priv && typeof priv === 'object') {
         setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
       }
-    });
-    return function () { cancelled = true; };
+      var mtg = r.data.settings.sections.meetings;
+      if (mtg && typeof mtg === 'object') {
+        if (typeof mtg.autoStartOnCalendar === 'boolean') {
+          setAutoStartOnCalendar(mtg.autoStartOnCalendar);
+        } else if (typeof mtg.autoRecord === 'boolean') {
+          setAutoStartOnCalendar(mtg.autoRecord);
+        } else {
+          setAutoStartOnCalendar(false);
+        }
+      }
+    }
+    runRuntimeActionM('settings.load', {}, { silentError: true }).then(applyMeetingSettings);
+    function onSettingsRefresh() {
+      runRuntimeActionM('settings.load', {}, { silentError: true }).then(applyMeetingSettings);
+    }
+    window.addEventListener('shogun-settings-refresh', onSettingsRefresh);
+    return function () {
+      cancelled = true;
+      window.removeEventListener('shogun-settings-refresh', onSettingsRefresh);
+    };
   }, []);
 
   useEffect(function () {
@@ -262,11 +315,81 @@ export function MeetingsScreen() {
       if (cancelled) return;
       if (r && r.ok && r.data && r.data.mic_capture_running) {
         setBackendRecActive(true);
+        setSystemAudioRunning(!!r.data.system_audio_running);
         setGranolaPane('minutes');
       }
     });
     return function () { cancelled = true; };
   }, [granola && granola.backendMeetingId]);
+
+  useEffect(function () {
+    if (!backendRecActive || !granola || !granola.backendMeetingId || !isNativeDesktop()) {
+      if (!backendRecActive) setSystemAudioRunning(false);
+      return undefined;
+    }
+    var cancelled = false;
+    const poll = function () {
+      runRuntimeActionM('meetings.audio.status', {}, { silentError: true }).then(function (r: any) {
+        if (cancelled || !r || !r.ok || !r.data) return;
+        setSystemAudioRunning(!!r.data.system_audio_running);
+      });
+    };
+    poll();
+    var id = window.setInterval(poll, 5000);
+    return function () {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [backendRecActive, granola && granola.backendMeetingId]);
+
+  useEffect(function () {
+    if (!backendRecActive || !granola || !granola.backendMeetingId || !isNativeDesktop()) {
+      if (backendRecStartedAtRef.current) {
+        clearMeetingHud();
+        backendRecStartedAtRef.current = 0;
+      }
+      return undefined;
+    }
+    if (!backendRecStartedAtRef.current) {
+      backendRecStartedAtRef.current = Date.now();
+    }
+    var cancelled = false;
+    function pushHud(phase: 'begin' | 'tick') {
+      if (cancelled) return;
+      runRuntimeActionM('meetings.audio.status', {}, { silentError: true }).then(function (statusRes: any) {
+        if (cancelled) return;
+        const g = granolaRef.current;
+        const st = statusRes && statusRes.ok && statusRes.data ? statusRes.data : {};
+        const sysOn = !!st.system_audio_running;
+        setSystemAudioRunning(sysOn);
+        emitMeetingHud({
+          active: true,
+          hudPhase: phase,
+          title: (g && g.title) || 'Untitled',
+          startedAt: backendRecStartedAtRef.current,
+          storageKey: (g && g.storageKey) || null,
+          backend: true,
+          backendMeetingId: (g && g.backendMeetingId) || null,
+          micRunning: !!st.mic_capture_running,
+          systemRunning: sysOn,
+          deepgramConfigured: !!st.deepgram_configured,
+          systemMode: st.system_mode || null,
+        });
+      });
+    }
+    pushHud('begin');
+    var hudId = window.setInterval(function () { pushHud('tick'); }, 5000);
+    return function () {
+      cancelled = true;
+      window.clearInterval(hudId);
+    };
+  }, [backendRecActive, granola && granola.backendMeetingId]);
+
+  useEffect(function () {
+    if (!grantedChangedToTrue) return;
+    toastM('画面収録が許可されました。録音を開始できます', 'success');
+    void refreshScreenCapturePermission();
+  }, [grantedChangedToTrue, refreshScreenCapturePermission]);
 
   useEffect(function () {
     if (!granola || !granola.backendMeetingId || !backendRecActive) return undefined;
@@ -295,7 +418,7 @@ export function MeetingsScreen() {
       return;
     }
     setAudioRecSession({
-      startedAt: Date.now(),
+      startedAt: backendRecStartedAtRef.current || Date.now(),
       storageKey: granolaRef.current && granolaRef.current.storageKey,
       backend: true,
     });
@@ -313,6 +436,8 @@ export function MeetingsScreen() {
     const mid = g.backendMeetingId;
     const res = await runRuntimeActionM('meetings.stop', { meeting_id: mid }, { silentError: true });
     setBackendRecActive(false);
+    backendRecStartedAtRef.current = 0;
+    clearMeetingHud();
     if (res && res.ok && res.data) {
       const getRes = await runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true });
       const segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
@@ -344,6 +469,8 @@ export function MeetingsScreen() {
           var g = granolaRef.current;
           if (!mid || !g || g.backendMeetingId !== mid) return;
           setBackendRecActive(false);
+          backendRecStartedAtRef.current = 0;
+          clearMeetingHud();
           void runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true }).then(function (getRes: any) {
             var segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
             if (segs.length) {
@@ -390,10 +517,39 @@ export function MeetingsScreen() {
     };
   }, []);
 
+  const linkClientNoteToStorage = useCallback(async function (meetingId: any, storageKey: any) {
+    if (!meetingId || !storageKey || !isNativeDesktop()) return meetingId;
+    const L = mnl();
+    if (L && L.linkBackendMeetingId) {
+      L.linkBackendMeetingId(storageKey, meetingId);
+    }
+    const r = await runRuntimeActionM(
+      'meetings.link_client_note',
+      { meeting_id: meetingId, storage_key: storageKey },
+      { silentError: true },
+    );
+    if (r && r.ok && r.data) {
+      const linkedId = r.data.meeting_id || meetingId;
+      if (linkedId !== meetingId) {
+        setGranola(function (g: any) {
+          if (!g || g.storageKey !== storageKey) return g;
+          return { ...g, backendMeetingId: linkedId };
+        });
+        if (L && L.linkBackendMeetingId) {
+          L.linkBackendMeetingId(storageKey, linkedId);
+        }
+      }
+      return linkedId;
+    }
+    return meetingId;
+  }, []);
+
   const openGranolaMinutesForDetectedMeeting = useCallback(function (title: any, eventId: any, meetingId?: any) {
     const L = mnl();
     const key = meetingId ? 'mtg-' + String(meetingId) : 'cal-' + String(eventId != null ? eventId : Date.now());
-    const storageKey = L ? L.storageHash({ cal: key, t: title, mid: meetingId || '' }) : key;
+    const storageKey = L && L.calendarStorageKey
+      ? L.calendarStorageKey(key)
+      : (L ? L.storageHash({ cal: key, v: 1 }) : key);
     setGranolaPane('minutes');
     setGranolaMenuOpen(false);
     setGranola({
@@ -411,11 +567,17 @@ export function MeetingsScreen() {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     });
     if (meetingId) {
-      toastM('\u30d3\u30c7\u30aa\u4f1a\u8b70\u3092\u691c\u77e5\u2014\u9332\u97f3\u3092\u958b\u59cb\u3057\u307e\u3057\u305f', 'success');
+      if (L && L.linkBackendMeetingId) {
+        L.linkBackendMeetingId(storageKey, meetingId);
+      }
+      if (isNativeDesktop()) {
+        void linkClientNoteToStorage(meetingId, storageKey);
+      }
+      toastM('ビデオ会議を検知—会議ノートを開きました', 'success');
     } else {
       toastM('\u4e88\u5b9a\u304b\u3089\u30df\u30fc\u30c6\u30a3\u30f3\u30b0\u3092\u691c\u77e5\u3057\u307e\u3057\u305f\uff08\u8b70\u4e8b\u9332\uff09', 'success');
     }
-  }, []);
+  }, [linkClientNoteToStorage]);
 
   useEffect(function () {
     const onDetected = function (e: any) {
@@ -433,8 +595,9 @@ export function MeetingsScreen() {
   }, [openGranolaMinutesForDetectedMeeting]);
 
   useEffect(function () {
-    if (!comingUp || !comingUp.length) return undefined;
+    if (!autoStartOnCalendar || !comingUp || !comingUp.length) return undefined;
     const check = function () {
+      if (!autoStartOnCalendarRef.current) return;
       if (granolaRef.current) return;
       const now = Date.now();
       for (let i = 0; i < comingUp.length; i++) {
@@ -459,7 +622,7 @@ export function MeetingsScreen() {
     return function () {
       window.clearInterval(id);
     };
-  }, [comingUp]);
+  }, [comingUp, autoStartOnCalendar]);
 
   function rowStorageKey(n: any, dateCtx: any, dayJp?: any) {
     const L = mnl();
@@ -553,7 +716,11 @@ export function MeetingsScreen() {
     }
     if (g && g.storageKey && mnl() && mnl().saveNote) {
       const tit = g.title != null ? String(g.title) : '';
-      mnl().saveNote(g.storageKey, { ...granolaDraftRef.current, title: tit });
+      mnl().saveNote(g.storageKey, {
+        ...granolaDraftRef.current,
+        title: tit,
+        backendMeetingId: g.backendMeetingId || null,
+      });
       const L = mnl();
       if (tit.trim() && L.updateMeetingLogTitleByStorageKey) {
         L.updateMeetingLogTitleByStorageKey(g.storageKey, tit);
@@ -571,22 +738,54 @@ export function MeetingsScreen() {
     setListTick(function (x) { return x + 1; });
   }, [granola, finalizeBackendMeeting]);
 
+  const startBackendRecording = useCallback(async function (captureSystem: boolean) {
+    const g = granolaRef.current;
+    if (!g || !g.backendMeetingId || !isNativeDesktop()) return false;
+    if (backendRecActiveRef.current) return true;
+    if (g.storageKey) {
+      await linkClientNoteToStorage(g.backendMeetingId, g.storageKey);
+    }
+    var br = await runRuntimeActionM('meetings.mic.start', {
+      meeting_id: g.backendMeetingId,
+      live_stt: true,
+      capture_system: captureSystem,
+    });
+    if (br && br.ok) {
+      backendRecStartedAtRef.current = Date.now();
+      setBackendRecActive(true);
+      setGranolaPane('minutes');
+      var statusRes = await runRuntimeActionM('meetings.audio.status', {}, { silentError: true });
+      var sysOn = !!(statusRes && statusRes.ok && statusRes.data && statusRes.data.system_audio_running);
+      setSystemAudioRunning(sysOn);
+      if (captureSystem && sysOn) {
+        toastM('録音を開始しました（マイク + 相手の声）', 'success');
+      } else if (captureSystem && !sysOn) {
+        toastM('マイク録音を開始しました（相手の声は画面収録の許可が必要です）', 'info');
+      } else {
+        toastM('マイクのみで録音を開始しました', 'success');
+      }
+      return true;
+    }
+    toastM((br && br.error) || 'バックエンド録音の開始に失敗しました', 'error');
+    return false;
+  }, [linkClientNoteToStorage]);
+
   const startNoteRecording = useCallback(async function () {
     if (!granola || !granola.storageKey) return;
     if (granola.backendMeetingId && isNativeDesktop()) {
       if (backendRecActive) return;
-      var br = await runRuntimeActionM('meetings.mic.start', {
-        meeting_id: granola.backendMeetingId,
-        live_stt: true,
-        capture_system: true,
-      });
-      if (br && br.ok) {
-        setBackendRecActive(true);
-        setGranolaPane('minutes');
-        toastM('録音を開始しました（マイク + 相手の声）', 'success');
-      } else {
-        toastM((br && br.error) || 'バックエンド録音の開始に失敗しました', 'error');
+      if (screenCaptureGranted === false) {
+        toastM('相手の声を録音するには画面収録の許可が必要です', 'warn');
+        return;
       }
+      if (screenCaptureGranted !== true) {
+        const granted = await refreshScreenCapturePermission();
+        if (!granted) {
+          toastM('相手の声を録音するには画面収録の許可が必要です', 'warn');
+          return;
+        }
+      }
+      await startBackendRecording(true);
       return;
     }
     var M = MeetingMediaRecording;
@@ -603,7 +802,40 @@ export function MeetingsScreen() {
     if (r && r.ok) {
       setGranolaPane('minutes');
     }
-  }, [granola, backendRecActive]);
+  }, [granola, backendRecActive, screenCaptureGranted, startBackendRecording, refreshScreenCapturePermission]);
+
+  const startMicOnlyRecording = useCallback(async function () {
+    if (!granola || !granola.backendMeetingId || !isNativeDesktop()) return;
+    if (backendRecActive) return;
+    await startBackendRecording(false);
+  }, [granola, backendRecActive, startBackendRecording]);
+
+  const openMeetingScreenCaptureSettings = useCallback(async function () {
+    setPermissionActionBusy(true);
+    try {
+      await runRuntimeActionM(
+        'permissions.manage',
+        { target: 'screen_capture', source: 'meetings.permission_banner' },
+        { silentError: true },
+      );
+    } finally {
+      setPermissionActionBusy(false);
+    }
+  }, []);
+
+  const requestMeetingScreenCaptureAccess = useCallback(async function () {
+    setPermissionActionBusy(true);
+    try {
+      await runRuntimeActionM(
+        'permissions.manage',
+        { target: 'screen_capture_request', source: 'meetings.permission_banner' },
+        { silentError: true },
+      );
+      await refreshScreenCapturePermission();
+    } finally {
+      setPermissionActionBusy(false);
+    }
+  }, [refreshScreenCapturePermission]);
 
   const stopNoteRecording = useCallback(async function () {
     if (granola && granola.backendMeetingId && isNativeDesktop() && backendRecActive) {
@@ -619,10 +851,55 @@ export function MeetingsScreen() {
   }, [granola, backendRecActive, finalizeBackendMeeting]);
 
   const granolaKey = granola && granola.key;
+  useEffect(function () {
+    if (!granola || !granola.storageKey || !isNativeDesktop()) return undefined;
+    var cancelled = false;
+    (async function () {
+      const L = mnl();
+      const saved = L && L.loadNote ? L.loadNote(granola.storageKey) : null;
+      var mid = granola.backendMeetingId || (saved && saved.backendMeetingId) || null;
+      if (!mid) {
+        const r = await runRuntimeActionM(
+          'meetings.resolve_by_storage_key',
+          { storage_key: granola.storageKey },
+          { silentError: true },
+        );
+        if (r && r.ok && r.data && r.data.found && r.data.meeting_id) {
+          mid = String(r.data.meeting_id);
+        }
+      }
+      if (cancelled || !mid) return;
+      const sk = granola.storageKey;
+      if (granolaRef.current && granolaRef.current.storageKey === sk) {
+        if (granolaRef.current.backendMeetingId !== mid) {
+          setGranola(function (g: any) {
+            if (!g || g.storageKey !== sk) return g;
+            return { ...g, backendMeetingId: mid, tag: g.tag === 'MTG' ? 'LIVE' : g.tag };
+          });
+        }
+        if (L && L.linkBackendMeetingId) {
+          L.linkBackendMeetingId(sk, mid);
+        }
+        await runRuntimeActionM(
+          'meetings.link_client_note',
+          { meeting_id: mid, storage_key: sk },
+          { silentError: true },
+        );
+      }
+    })();
+    return function () { cancelled = true; };
+  }, [granola && granola.storageKey]);
+
   useEffect(() => {
     if (!granola || !granola.storageKey) return;
     const L = mnl();
     const saved = L && L.loadNote ? L.loadNote(granola.storageKey) : null;
+    if (saved && saved.backendMeetingId && !granola.backendMeetingId) {
+      setGranola(function (g: any) {
+        if (!g || g.storageKey !== granola.storageKey) return g;
+        return { ...g, backendMeetingId: saved.backendMeetingId };
+      });
+    }
     if (saved && (saved.body || saved.transcript || saved.summary || saved.minutes)) {
       setGranolaDraft({
         body: saved.body || '',
@@ -641,10 +918,13 @@ export function MeetingsScreen() {
     const L = mnl();
     if (!L || !L.saveNote) return;
     const t = setTimeout(function () {
-      L.saveNote(granola.storageKey, granolaDraft);
+      L.saveNote(granola.storageKey, {
+        ...granolaDraft,
+        backendMeetingId: granola.backendMeetingId || null,
+      });
     }, 450);
     return function () { clearTimeout(t); };
-  }, [granola, granolaStorageKey, granolaDraft]);
+  }, [granola, granolaStorageKey, granolaDraft, granola && granola.backendMeetingId]);
 
   useEffect(() => {
     if (!granola) return;
@@ -729,16 +1009,61 @@ export function MeetingsScreen() {
   const ingestNoteToMemory = useCallback(() => {
     const title = (granola && granola.title) || 'Meeting note';
     const snippet = [
-      granolaDraft.summary && granolaDraft.summary.slice(0, 400),
-      granolaDraft.body && granolaDraft.body.slice(0, 300),
-    ].filter(Boolean).join('\n---\n').slice(0, 1800);
+      granolaDraft.summary && granolaDraft.summary.slice(0, 500),
+      granolaDraft.transcript && granolaDraft.transcript.slice(0, 1200),
+      granolaDraft.body && granolaDraft.body.slice(0, 400),
+    ].filter(Boolean).join('\n---\n').slice(0, 4000);
     void runRuntimeActionM('memory.ingest', {
-      title: title + ' · note',
+      title: title + ' · meeting',
       snippet: snippet || '(empty)',
-      source: 'meetings_granola',
-      kinds: ['note'],
+      source: 'meeting',
+      provenance: 'meeting',
+      entity_id: (granola && granola.backendMeetingId) || (granola && granola.storageKey) || undefined,
+      kinds: ['note', 'meeting'],
     }, { successMessage: 'Memory に保存しました' });
   }, [granola, granolaDraft]);
+
+  const runMeetingRecipe = useCallback(async function (recipeLabel: any, target?: 'memo' | 'summary') {
+    const where = target || 'memo';
+    const recipeId = RECIPE_LABEL_TO_ID[recipeLabel];
+    if (!recipeId || !isNativeDesktop()) {
+      injectRecipeIntoMemoLocal(recipeLabel);
+      return;
+    }
+    const payload: any = { recipe_id: recipeId };
+    if (granola && granola.backendMeetingId) {
+      payload.meeting_id = granola.backendMeetingId;
+    } else {
+      payload.transcript = granolaDraft.transcript || '';
+      payload.notes = granolaDraft.body || '';
+    }
+    const res = await runRuntimeActionM('meetings.recipe.run', payload, { silentError: true });
+    if (res && res.ok && res.data && res.data.text && String(res.data.text).trim()) {
+      const text = String(res.data.text);
+      setGranolaDraft(function (d: any) {
+        if (where === 'summary') return { ...d, summary: text };
+        const sep = (d.body || '').trim() ? '\n\n' : '';
+        return { ...d, body: (d.body || '') + sep + text };
+      });
+      if (where === 'summary') setGranolaPane('summary');
+      else setGranolaPane('memo');
+      toastM('レシピを実行しました', 'success');
+      return;
+    }
+    injectRecipeIntoMemoLocal(recipeLabel);
+  }, [granola, granolaDraft]);
+
+  function injectRecipeIntoMemoLocal(recipeLabel: any) {
+    var block = RECIPE_LOCAL_BODIES[recipeLabel];
+    if (!granola || !block) return;
+    setGranolaPane('memo');
+    setGranolaDraft(function (d: any) {
+      var sep = (d.body || '').trim() ? '\n\n' : '';
+      return { ...d, body: (d.body || '') + sep + block };
+    });
+    toastM('テンプレートをメモに挿入しました', 'success');
+    setPostRecWaveMenuOpen(false);
+  }
 
   const buildMtgShareMarkdown = useCallback(function () {
     if (!granola) return '';
@@ -870,16 +1195,8 @@ export function MeetingsScreen() {
   }, [granolaDraft]);
 
   const injectRecipeIntoMemo = useCallback(function (recipeLabel: any) {
-    var block = RECIPE_LOCAL_BODIES[recipeLabel];
-    if (!granola || !block) return;
-    setGranolaPane('memo');
-    setGranolaDraft(function (d) {
-      var sep = (d.body || '').trim() ? '\n\n' : '';
-      return { ...d, body: (d.body || '') + sep + block };
-    });
-    toastM('\u30c6\u30f3\u30d7\u3092\u30e1\u30e2\u306b\u633f\u5165\u3057\u307e\u3057\u305f', 'success');
-    setPostRecWaveMenuOpen(false);
-  }, [granola]);
+    void runMeetingRecipe(recipeLabel, 'memo');
+  }, [runMeetingRecipe]);
 
   const runPostRecSlashItem = useCallback(function (item: any) {
     setPostRecWaveMenuOpen(false);
@@ -888,9 +1205,9 @@ export function MeetingsScreen() {
       return;
     }
     if (item.kind === 'recipe' && item.recipeLabel) {
-      injectRecipeIntoMemo(item.recipeLabel);
+      void runMeetingRecipe(item.recipeLabel, 'memo');
     }
-  }, [listLocalTodos, injectRecipeIntoMemo]);
+  }, [listLocalTodos, runMeetingRecipe]);
 
   const [granolaPillMenu, setGranolaPillMenu] = useState<any>(null); // { kind: 'date'|'attendees'|'folder', anchor: {left, top, width} }
   const [granolaAttendees, setGranolaAttendees] = useState<string[]>(['Toru Tano']);
@@ -1411,6 +1728,12 @@ export function MeetingsScreen() {
         listLocalTodos={listLocalTodos}
         startNoteRecording={startNoteRecording}
         stopNoteRecording={stopNoteRecording}
+        showPermissionBanner={showPermissionBanner}
+        recordingWithoutRemote={!!(backendRecActive && !systemAudioRunning && screenCaptureGranted === false)}
+        permissionActionBusy={permissionActionBusy}
+        onOpenScreenCaptureSettings={openMeetingScreenCaptureSettings}
+        onRequestScreenCaptureAccess={requestMeetingScreenCaptureAccess}
+        onMicOnlyRecording={startMicOnlyRecording}
         injectRecipeIntoMemo={injectRecipeIntoMemo}
         runPostRecSlashItem={runPostRecSlashItem}
         runRuntimeActionM={runRuntimeActionM}

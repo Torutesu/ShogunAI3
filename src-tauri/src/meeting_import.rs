@@ -81,6 +81,7 @@ pub async fn import_recording_file(path_str: &str) -> Result<Value, String> {
     None,
     Some("com.shogun.import"),
     Some(&title),
+    None,
   )?;
 
   let mut segments_inserted: u32 = 0;

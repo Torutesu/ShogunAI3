@@ -136,6 +136,9 @@ import { ShogunIpcClient } from './ipc-client';
       authBiometricAuthenticate: (input: any) =>
         call("auth_biometric_authenticate", input || {}, WRITE),
       meetingStart: (input: any) => call("shogun_meeting_start", input, WRITE),
+      meetingLinkClientNote: (input: any) => call("shogun_meeting_link_client_note", input, WRITE),
+      meetingResolveByStorageKey: (input: any) =>
+        call("shogun_meeting_resolve_by_storage_key", input, READ),
       meetingStop: (input: any) => call("shogun_meeting_stop", input, WRITE),
       meetingNoteAppendBlock: (input: any) => call("shogun_meeting_note_append_block", input, WRITE),
       meetingNoteEditBlock: (input: any) => call("shogun_meeting_note_edit_block", input, WRITE),

@@ -31,12 +31,14 @@ mod llm;
 mod llm_providers;
 mod macos_ax;
 mod meeting_lifecycle;
+mod meeting_memory;
 mod meeting_auto;
 mod meeting_commands;
 mod meeting_enhance;
 mod meeting_import;
 mod macos_system_audio;
 mod meeting_mic;
+mod meeting_stt_live;
 pub mod meeting_mcp;
 pub mod memory_mcp;
 pub mod kioku_mcp;
@@ -274,6 +276,8 @@ pub fn run() {
       commands::auth_biometric_status,
       commands::auth_biometric_authenticate,
       meeting_commands::shogun_meeting_start,
+      meeting_commands::shogun_meeting_link_client_note,
+      meeting_commands::shogun_meeting_resolve_by_storage_key,
       meeting_commands::shogun_meeting_stop,
       meeting_commands::shogun_meeting_note_append_block,
       meeting_commands::shogun_meeting_note_edit_block,

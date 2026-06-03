@@ -887,6 +887,9 @@ export function ensureRuntimeDeps(): void {
         llmApiKeyClear: (input: any) => client.invoke('app_llm_api_key_clear', input),
         scheduleAction: (input: any) => client.invoke('shogun_schedule_action', input),
         meetingStart: (input: any) => client.invoke('shogun_meeting_start', input),
+        meetingLinkClientNote: (input: any) => client.invoke('shogun_meeting_link_client_note', input),
+        meetingResolveByStorageKey: (input: any) =>
+          client.invoke('shogun_meeting_resolve_by_storage_key', input),
         meetingStop: (input: any) => client.invoke('shogun_meeting_stop', input),
         meetingNoteAppendBlock: (input: any) => client.invoke('shogun_meeting_note_append_block', input),
         meetingNoteEditBlock: (input: any) => client.invoke('shogun_meeting_note_edit_block', input),
@@ -974,6 +977,8 @@ export function ensureRuntimeDeps(): void {
           'draft.create': api.draftCreate,
           'schedule.create': api.scheduleAction,
           'meetings.start': api.meetingStart,
+          'meetings.link_client_note': api.meetingLinkClientNote,
+          'meetings.resolve_by_storage_key': api.meetingResolveByStorageKey,
           'meetings.stop': api.meetingStop,
           'meetings.note.append_block': api.meetingNoteAppendBlock,
           'meetings.note.edit_block': api.meetingNoteEditBlock,

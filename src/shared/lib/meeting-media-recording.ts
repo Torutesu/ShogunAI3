@@ -21,15 +21,17 @@ function fmtElapsedMs(ms: any) {
   return String(m) + ':' + String(sec).padStart(2, '0');
 }
 
-function emitHud(active: any, title?: any, startedAt?: any) {
+function emitHud(active: any, title?: any, startedAt?: any, hudPhase?: any) {
   try {
     window.dispatchEvent(
       new CustomEvent('shogun-meeting-hud', {
         detail: {
           active: !!active,
+          hudPhase: active ? (hudPhase || 'begin') : 'end',
           title: title || 'Untitled',
           startedAt: startedAt || 0,
           storageKey: storageKeyRef || null,
+          backend: false,
         },
       }),
     );

@@ -222,9 +222,21 @@ export function MainApp(): React.ReactElement {
         setMeetingHud(null);
         return;
       }
-      setMeetingHud({
-        title: d.title || 'Untitled',
-        startedAt: d.startedAt || Date.now(),
+      setMeetingHud((prev: any) => {
+        const next = {
+          title: d.title || prev?.title || 'Untitled',
+          startedAt: d.startedAt || prev?.startedAt || Date.now(),
+          storageKey: d.storageKey != null ? d.storageKey : prev?.storageKey ?? null,
+          backend: d.backend != null ? !!d.backend : !!prev?.backend,
+          backendMeetingId:
+            d.backendMeetingId != null ? d.backendMeetingId : prev?.backendMeetingId ?? null,
+          micRunning: d.micRunning != null ? !!d.micRunning : prev?.micRunning,
+          systemRunning: d.systemRunning != null ? !!d.systemRunning : prev?.systemRunning,
+          deepgramConfigured:
+            d.deepgramConfigured != null ? !!d.deepgramConfigured : prev?.deepgramConfigured,
+          systemMode: d.systemMode != null ? d.systemMode : prev?.systemMode ?? null,
+        };
+        return next;
       });
       // Title updates during recording emit hudPhase "tick"; only "begin" should steal focus / reopen tabs.
       if (d.hudPhase !== 'begin') return;
@@ -1128,7 +1140,27 @@ export function MainApp(): React.ReactElement {
     window.__SHOGUN_SHELL_ACTIVE_CHAT__ = activeChat;
   }
 
-  const dismissMeetingHud = () => {
+  const dismissMeetingHud = async () => {
+    if (meetingHud?.backend && meetingHud.backendMeetingId) {
+      const r = await executeAction(
+        'meetings.stop',
+        { meeting_id: meetingHud.backendMeetingId },
+        { silentError: true },
+      );
+      setMeetingHud(null);
+      try {
+        window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
+        window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
+      } catch (_) {
+        /* ignore */
+      }
+      if (r.ok) {
+        pushToast('会議を保存して終了しました', 'success');
+      } else {
+        pushToast(r.error || '会議の停止に失敗しました', 'error');
+      }
+      return;
+    }
     const M = MeetingMediaRecording;
     if (!M || typeof M.stop !== 'function') {
       pushToast('録音モジュールが読み込まれていません', 'warn');

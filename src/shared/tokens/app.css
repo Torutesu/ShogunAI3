@@ -96,7 +96,7 @@
   z-index: 1600;
   display: flex;
   justify-content: center;
-  max-width: min(440px, calc(100vw - 24px));
+  max-width: min(520px, calc(100vw - 24px));
   width: calc(100vw - 24px);
   box-sizing: border-box;
   pointer-events: none;

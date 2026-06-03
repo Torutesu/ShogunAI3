@@ -1,8 +1,9 @@
 import React from 'react';
 import { Icon } from '@/shared/icons';
+import { meetingHudStatusLabel, type MeetingHudDetail } from '@/shared/lib/meeting-hud-events';
 
 interface MeetingHudProps {
-  meetingHud: { title: string; startedAt: number } | null;
+  meetingHud: MeetingHudDetail | null;
   meetingHudTick: number;
   onDismiss: () => void;
 }
@@ -20,6 +21,10 @@ function fmtHudElapsed(startedAt: number, _tick: number): string {
 
 export function MeetingHud({ meetingHud, meetingHudTick, onDismiss }: MeetingHudProps): React.ReactElement | null {
   if (!meetingHud) return null;
+  const statusLabel = meetingHudStatusLabel(meetingHud);
+  const micOn = meetingHud.backend ? meetingHud.micRunning !== false : true;
+  const remoteOn = !!(meetingHud.backend && meetingHud.systemRunning);
+
   return (
     <div className="shogun-meeting-hud-host" role="status" aria-live="polite">
       <div
@@ -39,7 +44,28 @@ export function MeetingHud({ meetingHud, meetingHudTick, onDismiss }: MeetingHud
         }}
       >
         <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexShrink: 0 }} aria-hidden="true">
-          {[0, 1, 2].map((i) => (
+          <span
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: 999,
+              background: micOn ? 'var(--success)' : 'var(--text-dim)',
+              animation: micOn ? 'mtgStripDotPulse 1.25s ease-in-out infinite' : undefined,
+            }}
+          />
+          {meetingHud.backend && (
+            <span
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 999,
+                background: remoteOn ? 'var(--success)' : 'var(--gold)',
+                animation: remoteOn ? 'mtgStripDotPulse 1.25s ease-in-out infinite' : undefined,
+                animationDelay: '0.2s',
+              }}
+            />
+          )}
+          {!meetingHud.backend && [1, 2].map((i) => (
             <span
               key={i}
               style={{
@@ -55,25 +81,46 @@ export function MeetingHud({ meetingHud, meetingHudTick, onDismiss }: MeetingHud
         </span>
         <span
           style={{
-            fontSize: 14,
-            fontWeight: 500,
-            letterSpacing: '-0.02em',
-            color: 'var(--text)',
+            display: 'flex',
+            flexDirection: 'column',
             minWidth: 0,
             flex: '1 1 auto',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            fontFamily: 'var(--font-sans, system-ui, sans-serif)',
+            gap: 1,
           }}
         >
-          {meetingHud.title || 'Untitled'}
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 500,
+              letterSpacing: '-0.02em',
+              color: 'var(--text)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontFamily: 'var(--font-sans, system-ui, sans-serif)',
+            }}
+          >
+            {meetingHud.title || 'Untitled'}
+          </span>
+          {statusLabel && (
+            <span
+              style={{
+                fontSize: 10,
+                color: 'var(--text-mute)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {statusLabel}
+            </span>
+          )}
         </span>
         <span
           className="t-mono"
           style={{ fontSize: 11, color: 'var(--text-mute)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}
         >
-          {fmtHudElapsed(meetingHud.startedAt, meetingHudTick)}
+          {fmtHudElapsed(meetingHud.startedAt || 0, meetingHudTick)}
         </span>
         <button
           type="button"
