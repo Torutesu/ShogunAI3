@@ -135,6 +135,22 @@ pub(crate) fn ensure_context_layer_columns(conn: &Connection) -> Result<(), Stri
       .execute("ALTER TABLE mem_items ADD COLUMN redaction TEXT", [])
       .map_err(|e| e.to_string())?;
   }
+  if !names.iter().any(|n| n == "meeting_id") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN meeting_id TEXT", [])
+      .map_err(|e| e.to_string())?;
+  }
+  if !names.iter().any(|n| n == "meeting_offset_ms") {
+    conn
+      .execute("ALTER TABLE mem_items ADD COLUMN meeting_offset_ms INTEGER", [])
+      .map_err(|e| e.to_string())?;
+  }
+  conn
+    .execute(
+      "CREATE INDEX IF NOT EXISTS idx_mem_items_meeting_id ON mem_items(meeting_id) WHERE meeting_id IS NOT NULL",
+      [],
+    )
+    .map_err(|e| e.to_string())?;
 
   if needs_provenance {
     backfill_provenance_from_source(conn)?;
@@ -1205,6 +1221,16 @@ pub fn ingest_capture_upsert(payload: &Value) -> Result<Value, String> {
     .and_then(|v| v.as_str())
     .filter(|s| is_valid_redaction(s))
     .map(String::from);
+  let meeting_id: Option<String> = payload
+    .get("meeting_id")
+    .and_then(|v| v.as_str())
+    .map(|s| s.trim())
+    .filter(|s| !s.is_empty())
+    .map(String::from);
+  let meeting_offset_ms: Option<i64> = payload
+    .get("meeting_offset_ms")
+    .and_then(|v| v.as_u64())
+    .map(|v| v as i64);
 
   static INGEST_SEQ: AtomicU64 = AtomicU64::new(0);
   let seq = INGEST_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -1213,13 +1239,15 @@ pub fn ingest_capture_upsert(payload: &Value) -> Result<Value, String> {
 
   let affected = conn
     .execute(
-      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction) \
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+      "INSERT INTO mem_items (id, title, snippet, source, kinds_json, created_at, provenance, entity_id, confidence, redaction, meeting_id, meeting_offset_ms) \
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
        ON CONFLICT(source, entity_id) DO UPDATE SET \
          created_at = excluded.created_at, \
          snippet = excluded.snippet, \
          title = excluded.title, \
-         kinds_json = excluded.kinds_json",
+         kinds_json = excluded.kinds_json, \
+         meeting_id = excluded.meeting_id, \
+         meeting_offset_ms = excluded.meeting_offset_ms",
       params![
         id,
         title,
@@ -1230,7 +1258,9 @@ pub fn ingest_capture_upsert(payload: &Value) -> Result<Value, String> {
         provenance,
         entity_id,
         confidence,
-        redaction
+        redaction,
+        meeting_id,
+        meeting_offset_ms
       ],
     )
     .map_err(|e| e.to_string())?;
@@ -1247,11 +1277,45 @@ pub fn ingest_capture_upsert(payload: &Value) -> Result<Value, String> {
       "kinds": kinds,
       "created_at": created as u64,
       "entity_id": entity_id,
+      "meeting_id": meeting_id,
+      "meeting_offset_ms": meeting_offset_ms.map(|v| v as u64),
     },
     "inserted": inserted,
     "updated": !inserted,
     "stub": false,
   }))
+}
+
+/// Screen captures tagged with an active meeting session.
+pub fn list_meeting_capture_rows(meeting_id: &str, limit: usize) -> Result<Vec<Value>, String> {
+  let conn = open_conn()?;
+  let lim = limit.clamp(1, 500) as i64;
+  let mut stmt = conn
+    .prepare(
+      "SELECT id, title, snippet, source, created_at, meeting_offset_ms \
+       FROM mem_items \
+       WHERE meeting_id = ?1 \
+       ORDER BY COALESCE(meeting_offset_ms, created_at) ASC \
+       LIMIT ?2",
+    )
+    .map_err(|e| e.to_string())?;
+  let rows = stmt
+    .query_map(params![meeting_id, lim], |r| {
+      Ok(json!({
+        "id": r.get::<_, String>(0)?,
+        "title": r.get::<_, String>(1)?,
+        "snippet": r.get::<_, String>(2)?,
+        "source": r.get::<_, String>(3)?,
+        "created_at": r.get::<_, i64>(4)? as u64,
+        "meeting_offset_ms": r.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+      }))
+    })
+    .map_err(|e| e.to_string())?;
+  let mut out = Vec::new();
+  for row in rows {
+    out.push(row.map_err(|e| e.to_string())?);
+  }
+  Ok(out)
 }
 
 /// Delete aged capture rows (`capture_%` sources). Returns rows removed.

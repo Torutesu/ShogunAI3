@@ -20,6 +20,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
+use tauri::Manager;
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
 
@@ -454,7 +455,8 @@ fn snippet_with_spatial(base: &str, spatial: Option<&str>) -> String {
 }
 
 fn upsert_capture_row(
-  app: &str,
+  app: Option<&AppHandle>,
+  app_label: &str,
   source: &str,
   title: &str,
   snippet: &str,
@@ -463,21 +465,41 @@ fn upsert_capture_row(
   live_kind: &str,
   live_detail: &str,
 ) {
-  crate::capture_events::record_live(app, live_kind, live_detail);
-  let kinds_json: Vec<&str> = kinds.to_vec();
-  let payload = json!({
+  crate::capture_events::record_live(app_label, live_kind, live_detail);
+  let mut payload = json!({
     "title": title,
     "snippet": snippet,
     "source": source,
-    "kinds": kinds_json,
+    "kinds": kinds,
     "entity_id": entity_id,
   });
+  if let Some(handle) = app {
+    if let Some(state) = handle.try_state::<crate::meeting_session::MeetingSessionState>() {
+      if let Ok(Some((_id, _started, offset_ms))) = state.active_capture_offset() {
+        if let Some(obj) = payload.as_object_mut() {
+          obj.insert("meeting_id".to_string(), json!(_id));
+          obj.insert("meeting_offset_ms".to_string(), json!(offset_ms));
+        }
+      }
+    }
+  }
   if let Err(e) = memory_store::ingest_capture_upsert(&payload) {
     maybe_log_ingest_error(source, &e);
   }
 }
 
-fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
+fn meeting_tags_for_mem_captures(app: Option<&AppHandle>) -> Option<(String, u64)> {
+  let handle = app?;
+  let state = handle.try_state::<crate::meeting_session::MeetingSessionState>()?;
+  let (id, _started, offset) = state.active_capture_offset().ok()??;
+  Some((id, offset))
+}
+
+fn maybe_ingest_focus(
+  app_handle: Option<&AppHandle>,
+  app: &str,
+  spatial_context_json: Option<String>,
+) {
   let sig = fnv_hash(app);
   if let Ok(mut last) = LAST_SIG.lock() {
     if *last == Some(sig) {
@@ -489,6 +511,8 @@ fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
   let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
   if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
     let snippet = format!("Frontmost app (capture sampler): {}", app);
+    let meeting_meta = meeting_tags_for_mem_captures(app_handle)
+      .map(|(id, offset)| json!({ "meeting_id": id, "meeting_offset_ms": offset }).to_string());
     let input = crate::mem_captures::CaptureInput {
       kind: "screen_app".into(),
       raw_text: Some(snippet),
@@ -497,6 +521,7 @@ fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
       url: None,
       captured_at_ms: now_ms() as i64,
       spatial_context_json: spatial_context_json.clone(),
+      filter_meta_json: meeting_meta,
       ..Default::default()
     };
     match memory_store::open_conn() {
@@ -516,6 +541,7 @@ fn maybe_ingest_focus(app: &str, spatial_context_json: Option<String>) {
     spatial_context_json.as_deref(),
   );
   upsert_capture_row(
+    app_handle,
     app,
     "capture_sampler",
     &format!("Focus · {app}"),
@@ -559,6 +585,8 @@ fn maybe_ingest_ax(app: &AppHandle, text: &str, app_label: &str, spatial_context
 
   let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
   if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
+    let meeting_meta = meeting_tags_for_mem_captures(Some(app))
+      .map(|(id, offset)| json!({ "meeting_id": id, "meeting_offset_ms": offset }).to_string());
     let input = crate::mem_captures::CaptureInput {
       kind: "screen_ax".into(),
       raw_text: Some(snippet_body.clone()),
@@ -567,6 +595,7 @@ fn maybe_ingest_ax(app: &AppHandle, text: &str, app_label: &str, spatial_context
       url: None,
       captured_at_ms: now_ms() as i64,
       spatial_context_json: spatial_context_json.clone(),
+      filter_meta_json: meeting_meta,
       ..Default::default()
     };
     match memory_store::open_conn() {
@@ -584,6 +613,7 @@ fn maybe_ingest_ax(app: &AppHandle, text: &str, app_label: &str, spatial_context
   let snippet = snippet_with_spatial(&snippet_body, spatial_context_json.as_deref());
   let preview = snippet.lines().next().unwrap_or("AX snapshot").chars().take(80).collect::<String>();
   upsert_capture_row(
+    Some(app),
     app_label,
     "capture_ax",
     &format!("Focus · {app_label}"),
@@ -630,7 +660,7 @@ fn run_capture_tick(app: &AppHandle) {
       }
     }
     if let Some(name) = frontmost {
-      maybe_ingest_focus(&name, spatial_for_ingest);
+      maybe_ingest_focus(Some(app), &name, spatial_for_ingest);
     }
   }
   #[cfg(not(target_os = "macos"))]
@@ -726,7 +756,7 @@ pub fn start_background_sampler(app: AppHandle) {
         }
       }
       if let Some(name) = frontmost {
-        maybe_ingest_focus(&name, spatial_for_ingest);
+        maybe_ingest_focus(Some(&app), &name, spatial_for_ingest);
       }
     }
     #[cfg(not(target_os = "macos"))]

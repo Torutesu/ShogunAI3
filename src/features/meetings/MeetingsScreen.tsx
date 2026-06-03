@@ -61,6 +61,8 @@ export function MeetingsScreen() {
   const [backendRecActive, setBackendRecActive] = useState(false);
   const backendRecActiveRef = useRef(false);
   backendRecActiveRef.current = backendRecActive;
+  const [contextTimelineItems, setContextTimelineItems] = useState<any[]>([]);
+  const [contextTimelineLoading, setContextTimelineLoading] = useState(false);
   const backendRecStartedAtRef = useRef(0);
   const [systemAudioRunning, setSystemAudioRunning] = useState(false);
   const [permissionActionBusy, setPermissionActionBusy] = useState(false);
@@ -384,6 +386,35 @@ export function MeetingsScreen() {
       window.clearInterval(hudId);
     };
   }, [backendRecActive, granola && granola.backendMeetingId]);
+
+  useEffect(function () {
+    if (!granola || !granola.backendMeetingId || !isNativeDesktop()) {
+      setContextTimelineItems([]);
+      setContextTimelineLoading(false);
+      return undefined;
+    }
+    var cancelled = false;
+    function refreshContextTimeline() {
+      if (cancelled) return;
+      setContextTimelineLoading(true);
+      void runRuntimeActionM('meetings.context_timeline', {
+        meeting_id: granola.backendMeetingId,
+        include_live: backendRecActiveRef.current,
+        limit: 120,
+      }, { silentError: true }).then(function (res: any) {
+        if (cancelled) return;
+        const items = res && res.ok && res.data && Array.isArray(res.data.items) ? res.data.items : [];
+        setContextTimelineItems(items);
+        setContextTimelineLoading(false);
+      });
+    }
+    refreshContextTimeline();
+    var id = window.setInterval(refreshContextTimeline, backendRecActiveRef.current ? 4000 : 15000);
+    return function () {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [granola, granola && granola.backendMeetingId, backendRecActive]);
 
   useEffect(function () {
     if (!grantedChangedToTrue) return;
@@ -1730,6 +1761,8 @@ export function MeetingsScreen() {
         stopNoteRecording={stopNoteRecording}
         showPermissionBanner={showPermissionBanner}
         recordingWithoutRemote={!!(backendRecActive && !systemAudioRunning && screenCaptureGranted === false)}
+        contextTimelineItems={contextTimelineItems}
+        contextTimelineLoading={contextTimelineLoading}
         permissionActionBusy={permissionActionBusy}
         onOpenScreenCaptureSettings={openMeetingScreenCaptureSettings}
         onRequestScreenCaptureAccess={requestMeetingScreenCaptureAccess}

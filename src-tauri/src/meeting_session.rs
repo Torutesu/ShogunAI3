@@ -51,6 +51,19 @@ impl MeetingSessionState {
     Ok(g.as_ref().map(|m| m.id.clone()))
   }
 
+  /// Active meeting id + ms elapsed since session start (for capture alignment).
+  pub fn active_capture_offset(&self) -> Result<Option<(String, u64, u64)>, String> {
+    let g = self.inner.lock().map_err(|e| e.to_string())?;
+    let now = crate::memory_store::now_ms();
+    Ok(g.as_ref().map(|m| {
+      (
+        m.id.clone(),
+        m.started_at_ms,
+        now.saturating_sub(m.started_at_ms),
+      )
+    }))
+  }
+
   pub fn push_live_segment(&self, meeting_id: &str, seg: Value) -> Result<(), String> {
     let mut g = self.inner.lock().map_err(|e| e.to_string())?;
     let Some(m) = g.as_mut() else {

@@ -914,6 +914,7 @@ export function ensureRuntimeDeps(): void {
         meetingMcpTools: (input: any) => client.invoke('shogun_meeting_mcp_tools', input),
         meetingImportPick: (input: any) => client.invoke('shogun_meeting_import_pick', input || {}),
         meetingImportFile: (input: any) => client.invoke('shogun_meeting_import_file', input),
+        meetingContextTimeline: (input: any) => client.invoke('shogun_meeting_context_timeline', input),
       }),
     };
   }
@@ -1003,6 +1004,7 @@ export function ensureRuntimeDeps(): void {
           'meetings.mcp.tools': api.meetingMcpTools,
           'meetings.import.pick': api.meetingImportPick,
           'meetings.import.file': api.meetingImportFile,
+          'meetings.context_timeline': api.meetingContextTimeline,
         };
         return {
           run: async (key: string, payload: any) => {

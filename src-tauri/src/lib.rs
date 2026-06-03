@@ -31,6 +31,7 @@ mod llm;
 mod llm_providers;
 mod macos_ax;
 mod meeting_lifecycle;
+mod meeting_context_timeline;
 mod meeting_memory;
 mod meeting_auto;
 mod meeting_commands;
@@ -302,6 +303,7 @@ pub fn run() {
       meeting_commands::shogun_meeting_mcp_tools,
       meeting_commands::shogun_meeting_import_pick,
       meeting_commands::shogun_meeting_import_file,
+      meeting_commands::shogun_meeting_context_timeline,
       #[cfg(debug_assertions)]
       commands::shogun_memory_debug_query,
       #[cfg(debug_assertions)]

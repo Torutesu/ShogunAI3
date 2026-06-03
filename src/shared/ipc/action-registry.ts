@@ -174,6 +174,7 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
     register("meetings.mcp.tools", (payload) => api.meetingMcpTools(payload));
     register("meetings.import.pick", (payload) => api.meetingImportPick(payload));
     register("meetings.import.file", (payload) => api.meetingImportFile(payload));
+    register("meetings.context_timeline", (payload) => api.meetingContextTimeline(payload));
 
     // Phase 2.1.2: Mirror cloud sync actions.
     register("mirror.register", (payload) => api.mirror.register(payload));

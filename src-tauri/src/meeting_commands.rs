@@ -567,3 +567,29 @@ pub async fn shogun_meeting_import_file(payload: Value) -> Result<Value, String>
     .ok_or_else(|| "path is required".to_string())?;
   meeting_import::import_recording_file(path).await
 }
+
+/// Merged transcript + screen-capture timeline for one meeting session.
+#[tauri::command]
+pub async fn shogun_meeting_context_timeline(
+  app: AppHandle,
+  payload: Value,
+) -> Result<Value, String> {
+  let meeting_id = payload
+    .get("meeting_id")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "meeting_id is required".to_string())?;
+  let include_live = payload
+    .get("include_live")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let limit = payload
+    .get("limit")
+    .and_then(|v| v.as_u64())
+    .unwrap_or(120) as usize;
+  crate::meeting_context_timeline::build_context_timeline(
+    Some(&app),
+    meeting_id,
+    include_live,
+    limit,
+  )
+}

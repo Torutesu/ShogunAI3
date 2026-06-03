@@ -163,6 +163,7 @@ import { ShogunIpcClient } from './ipc-client';
       meetingMcpTools: (input: any) => call("shogun_meeting_mcp_tools", input, READ),
       meetingImportPick: (input: any) => call("shogun_meeting_import_pick", input || {}, WRITE),
       meetingImportFile: (input: any) => call("shogun_meeting_import_file", input, WRITE),
+      meetingContextTimeline: (input: any) => call("shogun_meeting_context_timeline", input, READ),
       mirror: {
         register: (input: any) => call("mirror_register", input, WRITE),
         unlock: (input: any) => call("mirror_unlock", input, WRITE),

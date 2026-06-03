@@ -55,12 +55,13 @@ export function memoryHitToRiverEvent(hit: any): any {
   else if (rawSrc === 'google_calendar') src = 'meet';
   else if (rawSrc === 'gmail') src = 'mail';
   const provenance = hit.provenance || deriveLocalProvenance(hit.source);
+  const meetingTag = hit.meeting_id ? ' · 会議中' : '';
   return {
     ts,
     t,
     h,
     src,
-    title: hit.title || 'Memory',
+    title: (hit.title || 'Memory') + meetingTag,
     snippet: hit.snippet || '',
     titleHighlight: typeof hit.title_highlight === 'string' ? hit.title_highlight : null,
     snippetHighlight: typeof hit.snippet_highlight === 'string' ? hit.snippet_highlight : null,
@@ -68,6 +69,7 @@ export function memoryHitToRiverEvent(hit: any): any {
     provenance,
     sourceRaw: hit.source || '',
     entityId: hit.entity_id != null ? String(hit.entity_id) : null,
+    meetingId: hit.meeting_id != null ? String(hit.meeting_id) : null,
     big: false,
   };
 }

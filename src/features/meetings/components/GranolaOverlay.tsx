@@ -2,6 +2,7 @@ import { Icon } from '@/shared/icons';
 import { GranolaPillMenu } from './GranolaOverlay/GranolaPillMenu';
 import { GranolaTopPanels } from './GranolaOverlay/GranolaTopPanels';
 import { MeetingPermissionBanner } from './MeetingPermissionBanner';
+import { MeetingContextTimeline, MeetingContextTimelineHeader } from './MeetingContextTimeline';
 import { MEETINGS_DOCK_SLASH_CATALOG } from '../lib/runtime';
 import {
   toastM,
@@ -82,6 +83,8 @@ export interface GranolaOverlayProps {
   onOpenScreenCaptureSettings?: () => void;
   onRequestScreenCaptureAccess?: () => void;
   onMicOnlyRecording?: () => void;
+  contextTimelineItems?: any[];
+  contextTimelineLoading?: boolean;
   injectRecipeIntoMemo: (label: string) => void;
   runPostRecSlashItem: (item: any) => void;
   runRuntimeActionM: (action: string, payload: any, opts: any) => any;
@@ -127,6 +130,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
     onOpenScreenCaptureSettings,
     onRequestScreenCaptureAccess,
     onMicOnlyRecording,
+    contextTimelineItems, contextTimelineLoading,
     injectRecipeIntoMemo, runPostRecSlashItem,
     runRuntimeActionM,
   } = p;
@@ -571,8 +575,8 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
 
       {granolaOutline && (
         <div className="granola-float" style={{top:100, right:16, display:'flex', flexDirection:'column', gap:6, padding:10, borderRadius:12, background:'var(--surface)', border:'1px solid var(--border-hi)', maxWidth:140}}>
-          {['memo','transcript','summary','minutes'].map(function (pid) {
-            const labels: Record<string,string> = { memo:'メモ', transcript:'文字起こし', summary:'要約', minutes:'議事録' };
+          {['memo','transcript','context','summary','minutes'].map(function (pid) {
+            const labels: Record<string,string> = { memo:'メモ', transcript:'文字起こし', context:'文脈', summary:'要約', minutes:'議事録' };
             return (
               <button key={pid} type="button" onClick={function () { setGranolaPane(pid); }} style={{fontSize:11, padding:'6px 8px', borderRadius:8, border:'1px solid var(--border-hi)', background:granolaPane===pid?'color-mix(in srgb, var(--gold) 16%, transparent)':'transparent', color:'var(--text)', cursor:'pointer', fontFamily:'inherit'}}>
                 {labels[pid]}
@@ -720,6 +724,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
           {[
             { id:'memo', en:'Notes', jp:'メモ' },
             { id:'transcript', en:'Transcript', jp:'文字起こし' },
+            { id:'context', en:'Context', jp:'文脈' },
             { id:'summary', en:'Summary', jp:'要約' },
             { id:'minutes', en:'Minutes', jp:'議事録' },
           ].map(function (t: any) {
@@ -775,6 +780,15 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
             className="granola-body granola-pane"
             style={granolaTextareaStyle()}
           />
+        )}
+        {granolaPane === 'context' && (
+          <div style={{ marginTop: 16 }}>
+            <MeetingContextTimelineHeader />
+            <MeetingContextTimeline
+              items={contextTimelineItems || []}
+              loading={!!contextTimelineLoading}
+            />
+          </div>
         )}
         {granolaPane === 'minutes' && (
           <textarea
