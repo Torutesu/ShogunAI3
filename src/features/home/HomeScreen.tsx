@@ -352,14 +352,18 @@ export function HomeScreen() {
   }, [promptModal]);
 
   const seedAndOpenChat = (text: any, options?: any) => {
+    const opts = options || {};
     const t = String(text || '').trim();
-    const autoSend = !!(options && options.autoSend) && t.length > 0;
-    window.dispatchEvent(
-      new CustomEvent('shogun-chat-composer-seed', {
-        detail: { text: t, webSearch: webSearchOn, assembleMemory: assembleMemoryOn, autoSend },
-      }),
-    );
+    const autoSend = !!opts.autoSend && t.length > 0;
+    const webSearch = typeof opts.webSearch === 'boolean' ? opts.webSearch : webSearchOn;
+    const assembleMemory =
+      typeof opts.assembleMemory === 'boolean' ? opts.assembleMemory : assembleMemoryOn;
+    const detail = { text: t, webSearch, assembleMemory, autoSend };
+    // ScreenChat mounts on demand — defer so its composer-seed listener is attached before dispatch.
     (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
+    }, 0);
   };
 
   const goAsk = () => {

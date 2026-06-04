@@ -175,9 +175,6 @@ export function openMemoryEntryInChat(entry: any, options?: any): void {
   }
   const dispatch = () => window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
   (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('chat');
-  if (opts.newChat) {
-    setTimeout(dispatch, 0);
-  } else {
-    dispatch();
-  }
+  // ScreenChat mounts on demand — defer so its composer-seed listener is attached before dispatch.
+  setTimeout(dispatch, 0);
 }

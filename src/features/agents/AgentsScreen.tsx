@@ -195,8 +195,10 @@ export function AgentsScreen() {
     } else {
       detail.clearMemoryAssemblyPreset = true;
     }
-    window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
     (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('chat');
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
+    }, 0);
   }, [runPrompt, allowServerMemoryAssembly]);
 
   const attentionCount = effectiveAgents.filter((a) => {
