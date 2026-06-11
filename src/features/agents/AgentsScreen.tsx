@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Icon } from '@/shared/icons';
-import { runRuntimeActionA, runRuntimeActionB } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction, } from '@/shared/ipc/runtime-actions';
 import { AGENTS_DEMO, AGENTS_DEMO_NOW, AGENTS_LIVE } from './lib/demo-data';
 import { AGENT_RUNTIME } from './lib/metadata';
 import { AttentionStrip } from './components/AttentionStrip';
@@ -29,7 +29,7 @@ export function AgentsScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    runRuntimeActionA('settings.load', {}, { silentError: true }).then((r) => {
+    runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
       if (cancelled) return;
       if (r?.ok && r.data?.settings?.sections) setSettings(r.data.settings.sections);
     });
@@ -93,14 +93,14 @@ export function AgentsScreen() {
     if (!agent || !def) return;
     setRunningIds((prev) => new Set([...prev, agentId]));
     try {
-      const res = await runRuntimeActionA(def.runNowAction, def.runNowPayload(), { silentError: true });
+      const res = await runRuntimeAction(def.runNowAction, def.runNowPayload(), { silentError: true });
       if (res?.ok) {
         (window as any).SHOGUN_RUNTIME?.pushToast?.(def.runNowSuccessMsg(res.data), 'success');
       } else {
         const errMsg = res?.error?.message || 'Run failed';
         (window as any).SHOGUN_RUNTIME?.pushToast?.(`${agent.name}: ${errMsg}`, 'warn');
         // Capture this failure as a Lesson (silent — no toast, no UI feedback)
-        runRuntimeActionA('lesson.capture.tool_failure', {
+        runRuntimeAction('lesson.capture.tool_failure', {
           agentId,
           agentName: agent.name,
           action: def.runNowAction,
@@ -126,7 +126,7 @@ export function AgentsScreen() {
     const nextEnabled = currentEnabled === false ? true : false;
 
     const patch = { section, [key]: nextEnabled };
-    const res = await runRuntimeActionA('settings.save', patch, { silentError: true });
+    const res = await runRuntimeAction('settings.save', patch, { silentError: true });
     if (res?.ok) {
       setSettingsTick((n) => n + 1);
       (window as any).SHOGUN_RUNTIME?.pushToast?.(
@@ -142,7 +142,7 @@ export function AgentsScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
+    void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
       if (cancelled || !r?.ok || !r.data?.settings?.sections?.privacy) return;
       const priv = r.data.settings.sections.privacy;
       if (priv && typeof priv === 'object') {
@@ -156,7 +156,7 @@ export function AgentsScreen() {
 
   useEffect(() => {
     const onPrivacy = () => {
-      void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
+      void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
         if (priv && typeof priv === 'object') {
           setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
@@ -176,7 +176,7 @@ export function AgentsScreen() {
     if (allowServerMemoryAssembly) {
       payload.memoryAssembly = { query: raw.slice(0, 480) || '', limit: 14, semantic: true };
     }
-    return runRuntimeActionB('draft.create', payload, { successMessage: 'Draft ready', silentError: true }).then((r) => {
+    return runRuntimeAction('draft.create', payload, { successMessage: 'Draft ready', silentError: true }).then((r) => {
       if (!r.ok && (window as any).SHOGUN_RUNTIME && (window as any).SHOGUN_RUNTIME.pushToast) {
         (window as any).SHOGUN_RUNTIME.pushToast(r.error && r.error.message ? r.error.message : 'Draft failed', 'warn');
       }

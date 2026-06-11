@@ -12,7 +12,7 @@ export interface MtgChatDockProps {
   allowServerMemoryAssembly: boolean;
   submitMeetingsPrompt: (e: any) => void;
   runDockSlashItem: (item: any) => void;
-  runRuntimeActionM: (action: string, payload: any, opts: any) => any;
+  runRuntimeAction: (action: string, payload: any, opts: any) => any;
 }
 
 export function MtgChatDock({
@@ -25,7 +25,7 @@ export function MtgChatDock({
   allowServerMemoryAssembly,
   submitMeetingsPrompt,
   runDockSlashItem,
-  runRuntimeActionM,
+  runRuntimeAction,
 }: MtgChatDockProps) {
   return (
     <div className="screen-meetings-chatdock">
@@ -145,7 +145,7 @@ export function MtgChatDock({
                       semantic: true,
                     };
                   }
-                  runRuntimeActionM('draft.create', payload, { silentError: true }).then(function (r: any) {
+                  runRuntimeAction('draft.create', payload, { silentError: true }).then(function (r: any) {
                     if (r && r.ok) toastM('下書きを生成しました（モック）', 'success');
                     else toastM((r && r.error && r.error.message) || '下書きできませんでした', 'warn');
                   });

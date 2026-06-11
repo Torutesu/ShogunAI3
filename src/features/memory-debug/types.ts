@@ -90,6 +90,7 @@ export interface KiokuDebugStats {
     read_path?: string;
     worker_enabled?: boolean;
     capture_to_mem_captures?: boolean;
+    meeting_extraction_enabled?: boolean;
   };
   queue?: KiokuQueueStats;
   cost?: KiokuCostStats;

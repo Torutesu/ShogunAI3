@@ -19,7 +19,7 @@ export interface GranolaTopPanelsProps {
   setGranolaMenuOpen: (fn: (v: boolean) => boolean) => void;
   mtgDraftEmail: () => void;
   mtgCopyAllText: () => void;
-  runRuntimeActionM: (action: string, payload: any, opts: any) => any;
+  runRuntimeAction: (action: string, payload: any, opts: any) => any;
   applyStubTranscript: () => void;
   refreshSummary: () => void;
   refreshMinutes: () => void;
@@ -39,7 +39,7 @@ export function GranolaTopPanels(p: GranolaTopPanelsProps) {
     copyMtgShareLink,
     granolaMenuOpen, setGranolaMenuOpen,
     mtgDraftEmail, mtgCopyAllText,
-    runRuntimeActionM,
+    runRuntimeAction,
     applyStubTranscript, refreshSummary, refreshMinutes,
     ingestNoteToMemory,
     moveGranolaToTrash,
@@ -305,7 +305,7 @@ export function GranolaTopPanels(p: GranolaTopPanelsProps) {
             },
             {
               fn: function () {
-                void runRuntimeActionM('integrations.connect', { provider: 'slack' }, { silentError: true });
+                void runRuntimeAction('integrations.connect', { provider: 'slack' }, { silentError: true });
                 setGranolaMenuOpen(function () { return false; });
               },
               en: 'Connect Slack',

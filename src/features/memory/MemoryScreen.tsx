@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Icon } from '@/shared/icons';
-import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import {
   memoryProviderKey,
   MEMORY_PROVIDER_META,
@@ -12,59 +12,16 @@ import { MemorySearchView } from './components/MemorySearchView';
 import { MemoryRiverView } from './components/MemoryRiverView';
 import { MemoryKakejikuView } from './components/MemoryKakejikuView';
 import { MemoryHeatmapView } from './components/MemoryHeatmapView';
+import { useMemoryWorkspace } from './hooks/useMemoryWorkspace';
 
 export function MemoryScreen() {
   const [view, setView] = useState('river');
   const [digestState, setDigestState] = useState({
     week: null, day: null, loading: false, error: null, generatingWeek: false, generatingDay: false,
   });
-  const [workspaceAssignments, setWorkspaceAssignments] = useState<Record<string, string>>({});
-  const [workProjects, setWorkProjectsLocal] = useState<any[]>(() => {
-    const get = (window as any).SHOGUN_RUNTIME && (window as any).SHOGUN_RUNTIME.getWorkProjects;
-    return typeof get === 'function' ? get() : [];
-  });
+  const { workspaceAssignments, setWorkspaceAssignments, workProjects, assignMemoryToWorkspace } = useMemoryWorkspace();
   const [assignMenuOpen, setAssignMenuOpen] = useState(false);
   const [newWorkspaceDraft, setNewWorkspaceDraft] = useState('');
-
-  useEffect(() => {
-    const syncProjects = () => {
-      const get = (window as any).SHOGUN_RUNTIME && (window as any).SHOGUN_RUNTIME.getWorkProjects;
-      if (typeof get === 'function') setWorkProjectsLocal(get());
-    };
-    syncProjects();
-    window.addEventListener('shogun-work-projects-changed', syncProjects);
-    return () => window.removeEventListener('shogun-work-projects-changed', syncProjects);
-  }, []);
-
-  useEffect(() => {
-    runRuntimeActionA('settings.load', {}, { silentError: true }).then((r: any) => {
-      const map = r && r.ok
-        && r.data && r.data.settings && r.data.settings.sections
-        && r.data.settings.sections.workspace_memberships
-        && r.data.settings.sections.workspace_memberships.memberships;
-      if (map && typeof map === 'object') {
-        setWorkspaceAssignments(map);
-      }
-    });
-  }, []);
-
-  const assignMemoryToWorkspace = useCallback(async (memoryId: string, workspaceId: string | null) => {
-    if (!memoryId) return;
-    const next = { ...workspaceAssignments };
-    if (workspaceId) next[memoryId] = workspaceId;
-    else delete next[memoryId];
-    setWorkspaceAssignments(next);
-    await runRuntimeActionA(
-      'settings.save',
-      { section: 'workspace_memberships', memberships: next },
-      { silentError: true },
-    );
-    try {
-      window.dispatchEvent(new CustomEvent('shogun-workspace-memberships-changed', {
-        detail: { memberships: next },
-      }));
-    } catch (_) { /* ignore */ }
-  }, [workspaceAssignments]);
 
   const [rawEvents, setRawEvents] = useState<any[]>(() => []);
   const [summaryByMemId, setSummaryByMemId] = useState<Record<string, any>>(() => ({}));
@@ -260,7 +217,7 @@ export function MemoryScreen() {
     [semanticMemorySearch],
   );
   const refreshSourceEntities = () => {
-    runRuntimeActionA('entity.query', { query: '' }, { silentError: true }).then((res: any) => {
+    runRuntimeAction('entity.query', { query: '' }, { silentError: true }).then((res: any) => {
       if (!res || !res.ok || !res.data || !Array.isArray(res.data.entities)) return;
       setSourceEntities(res.data.entities);
     });
@@ -271,7 +228,7 @@ export function MemoryScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const r = await runRuntimeActionA('settings.load', {}, { silentError: true });
+      const r = await runRuntimeAction('settings.load', {}, { silentError: true });
       if (cancelled) return;
       const mem = r?.ok && r.data?.settings?.sections?.memory;
       if (mem && typeof mem === 'object' && typeof mem.semanticRerank === 'boolean') {
@@ -290,7 +247,7 @@ export function MemoryScreen() {
   }, []);
   useEffect(() => {
     const onPrivacy = () => {
-      void runRuntimeActionA('settings.load', {}, { silentError: true }).then((r: any) => {
+      void runRuntimeAction('settings.load', {}, { silentError: true }).then((r: any) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
         if (priv && typeof priv === 'object') {
           setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
@@ -363,7 +320,7 @@ export function MemoryScreen() {
     setBatchSummarizing(connectorItems.length);
     (async () => {
       try {
-        const res = await runRuntimeActionA('memory.summary.batch', { items: connectorItems, lang }, { silentError: true });
+        const res = await runRuntimeAction('memory.summary.batch', { items: connectorItems, lang }, { silentError: true });
         if (cancelled || !res?.ok || !res.data?.ok) return;
         const next: Record<string, any> = {};
         for (const s of res.data.ok) {
@@ -395,7 +352,7 @@ export function MemoryScreen() {
     (async () => {
       try {
         const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-        const res = await runRuntimeActionA('memory.rollup.get', { weekStartMs, lang }, { silentError: true });
+        const res = await runRuntimeAction('memory.rollup.get', { weekStartMs, lang }, { silentError: true });
         if (cancelled) return;
         if (res?.ok && res.data?.rollup) {
           setWeekRollup(res.data.rollup);
@@ -422,7 +379,7 @@ export function MemoryScreen() {
     (async () => {
       try {
         const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-        const res = await runRuntimeActionA('memory.rollup.day.get', { dayStartMs, lang }, { silentError: true });
+        const res = await runRuntimeAction('memory.rollup.day.get', { dayStartMs, lang }, { silentError: true });
         if (cancelled) return;
         if (res?.ok && res.data?.rollup) {
           setDayRollup(res.data.rollup);
@@ -448,7 +405,7 @@ export function MemoryScreen() {
     (async () => {
       try {
         const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-        const res = await runRuntimeActionA('memory.rollup.month.get', { monthStartMs, lang }, { silentError: true });
+        const res = await runRuntimeAction('memory.rollup.month.get', { monthStartMs, lang }, { silentError: true });
         if (cancelled) return;
         if (res?.ok && res.data?.rollup) {
           setMonthRollup(res.data.rollup);
@@ -474,7 +431,7 @@ export function MemoryScreen() {
     (async () => {
       try {
         const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-        const res = await runRuntimeActionA('memory.rollup.year.get', { yearStartMs, lang }, { silentError: true });
+        const res = await runRuntimeAction('memory.rollup.year.get', { yearStartMs, lang }, { silentError: true });
         if (cancelled) return;
         if (res?.ok && res.data?.rollup) {
           setYearRollup(res.data.rollup);
@@ -491,7 +448,7 @@ export function MemoryScreen() {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
     (async () => {
-      const res = await runRuntimeActionA('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
+      const res = await runRuntimeAction('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
       if (cancelled) return;
       mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
     })();
@@ -499,7 +456,7 @@ export function MemoryScreen() {
   }, [memorySettingsLoaded, withSemantic, activeKinds]);
   useEffect(() => {
     const onIndexChanged = async () => {
-      const r = await runRuntimeActionA('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
+      const r = await runRuntimeAction('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
       mergeIndexHitsIntoRiver(r, setRawEvents, setScrubIdx);
       refreshSourceEntities();
     };
@@ -586,7 +543,7 @@ export function MemoryScreen() {
     (async () => {
       try {
         const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-        const res = await runRuntimeActionA('memory.summary.get', {
+        const res = await runRuntimeAction('memory.summary.get', {
           targetId: scrubbed.memoryId,
           targetKind: 'item',
           lang,
@@ -730,7 +687,7 @@ export function MemoryScreen() {
                   <div style={{display:'flex', gap:8, marginTop:8}}>
                     <button type="button" onClick={async ()=>{
                       const kinds = Object.entries(activeFilters.sources).filter(([,on])=>on).map(([x])=>x);
-                      const res = await runRuntimeActionA('memory.timelineSearch', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
+                      const res = await runRuntimeAction('memory.timelineSearch', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
                       mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
                       setFiltersOpen(false);
                     }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
@@ -788,7 +745,7 @@ export function MemoryScreen() {
               const prev = semanticMemorySearch;
               const next = e.target.checked;
               setSemanticMemorySearch(next);
-              const r = await runRuntimeActionA(
+              const r = await runRuntimeAction(
                 'settings.save',
                 { section: 'memory', semanticRerank: next },
                 { silentError: true },
@@ -923,7 +880,7 @@ export function MemoryScreen() {
                     setDayRollupLoading(true);
                     setDayRollup(null);
                     const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-                    const res = await runRuntimeActionA('memory.rollup.day.get', {
+                    const res = await runRuntimeAction('memory.rollup.day.get', {
                       dayStartMs: day.getTime(), lang, regenerate: true,
                     }, { silentError: true });
                     if (res?.ok && res.data?.rollup) setDayRollup(res.data.rollup);
@@ -991,7 +948,7 @@ export function MemoryScreen() {
                     setWeekRollupLoading(true);
                     setWeekRollup(null);
                     const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-                    const res = await runRuntimeActionA('memory.rollup.get', {
+                    const res = await runRuntimeAction('memory.rollup.get', {
                       weekStartMs: monday.getTime(), lang, regenerate: true,
                     }, { silentError: true });
                     if (res?.ok && res.data?.rollup) setWeekRollup(res.data.rollup);
@@ -1055,7 +1012,7 @@ export function MemoryScreen() {
                     setMonthRollupLoading(true);
                     setMonthRollup(null);
                     const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-                    const res = await runRuntimeActionA('memory.rollup.month.get', {
+                    const res = await runRuntimeAction('memory.rollup.month.get', {
                       monthStartMs: monthStart.getTime(), lang, regenerate: true,
                     }, { silentError: true });
                     if (res?.ok && res.data?.rollup) setMonthRollup(res.data.rollup);
@@ -1119,7 +1076,7 @@ export function MemoryScreen() {
                     setYearRollupLoading(true);
                     setYearRollup(null);
                     const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-                    const res = await runRuntimeActionA('memory.rollup.year.get', {
+                    const res = await runRuntimeAction('memory.rollup.year.get', {
                       yearStartMs: yearStart.getTime(), lang, regenerate: true,
                     }, { silentError: true });
                     if (res?.ok && res.data?.rollup) setYearRollup(res.data.rollup);

@@ -115,7 +115,7 @@ Before distributing a build to external testers, verify on a clean macOS user ac
 
 ## CI
 
-`.github/workflows/ci.yml` runs `check:actions`, `check:ipc-mock`, `check:rust`, `build:web-dist`, Playwright E2E, and an **unsigned** `tauri build`.
+`.github/workflows/ci.yml` runs `typecheck`, `lint`, `knip`, `test:unit`, `check:actions`, `check:rust`, `build:web-dist`, Playwright E2E, and an **unsigned** `tauri build`.
 
 ## 7. GitHub Actions: signed release
 

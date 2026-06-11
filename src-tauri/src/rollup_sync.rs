@@ -13,12 +13,12 @@
 //!   `sections.memory.autoDigestLang` (default "en"); non-matching langs
 //!   fall back to on-demand generation when the user visits Memory.
 
+use crate::background_sync::{is_due, now_ms};
 use crate::settings_store;
 use crate::summarizer;
 use crate::summarizer_store;
 use chrono::{Datelike, NaiveDate, TimeZone, Utc};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::async_runtime::spawn;
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -38,13 +38,6 @@ static STATE: Mutex<RollupSyncState> = Mutex::new(RollupSyncState {
 
 pub fn snapshot_state() -> RollupSyncState {
   STATE.lock().map(|g| g.clone()).unwrap_or_default()
-}
-
-fn now_ms() -> u64 {
-  SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map(|d| d.as_millis() as u64)
-    .unwrap_or(0)
 }
 
 /// Settings → (enabled, interval_minutes, lang).
@@ -163,9 +156,7 @@ pub fn spawn_background_rollup_sync() {
         let now = now_ms();
         let last_ms = STATE.lock().ok().and_then(|g| g.last_run_ms);
         let period_ms = mins.saturating_mul(60_000);
-        let due = last_ms
-          .map(|t| now.saturating_sub(t) >= period_ms)
-          .unwrap_or(true);
+        let due = is_due(last_ms, period_ms);
         if due {
           match run_once(&lang).await {
             Ok((day_id, week_id)) => {

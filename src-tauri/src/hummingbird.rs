@@ -1,28 +1,15 @@
 //! Screen-context snapshot for the in-app Hummingbird overlay.
 
-use crate::{macos_ax, settings_store};
+use crate::{app_events, macos_ax, settings_store};
 use serde_json::{json, Value};
-use std::sync::OnceLock;
-use tauri::{AppHandle, Emitter, Manager};
-
-static APP: OnceLock<AppHandle> = OnceLock::new();
+use tauri::AppHandle;
 
 pub fn register_app(app: AppHandle) {
-  let _ = APP.set(app);
+  app_events::init(&app);
 }
 
 pub fn emit_open(source: &str) {
-  let Some(app) = APP.get() else {
-    return;
-  };
-  if let Some(win) = app.get_webview_window("main") {
-    let _ = win.show();
-    let _ = win.set_focus();
-  }
-  let _ = app.emit(
-    "hummingbird-open",
-    json!({ "source": source, "mode": "in_app_overlay" }),
-  );
+  app_events::emit_hummingbird_open(source);
 }
 
 fn hummingbird_enabled_in_settings() -> bool {

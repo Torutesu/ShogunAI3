@@ -13,7 +13,7 @@ const {
   setMirrorLocked,
 } = require("./_helpers/mirror-mock");
 
-const HIFI_ENTRY = "/SHOGUN%20Hi-Fi%20UI.html";
+const HIFI_ENTRY = "/";
 
 async function openHiFi(page) {
   for (let attempt = 0; attempt < 2; attempt += 1) {

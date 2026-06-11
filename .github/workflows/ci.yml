@@ -28,11 +28,23 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Typecheck (tsc)
+        run: npm run typecheck
+
+      - name: Lint (eslint)
+        run: npm run lint
+
+      - name: Circular dependency check (madge)
+        run: npm run cycles
+
+      - name: Unused code check (knip)
+        run: npm run knip
+
+      - name: Unit tests (vitest)
+        run: npm run test:unit
+
       - name: Action wiring check
         run: npm run check:actions
-
-      - name: IPC mock sync check
-        run: npm run check:ipc-mock
 
       - name: OAuth helper syntax check
         run: node --check scripts/oauth-google.mjs

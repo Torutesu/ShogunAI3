@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { runRuntimeActionM } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 
 function isNativeDesktop() {
   return !!(typeof window !== 'undefined' && (window as any).__TAURI__);
@@ -25,7 +25,7 @@ export function useMeetingScreenCapturePermission(enabled: boolean) {
       setScreenCaptureGranted(true);
       return true;
     }
-    const r = await runRuntimeActionM('capture.status', {}, { silentError: true });
+    const r = await runRuntimeAction('capture.status', {}, { silentError: true });
     const granted = r && r.ok ? readScreenCaptureGranted(r.data) : null;
     if (granted != null) {
       setScreenCaptureGranted(granted);

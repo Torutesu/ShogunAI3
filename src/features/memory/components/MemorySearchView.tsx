@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { memoryProviderKey, MEMORY_PROVIDER_META } from '../lib/runtime';
 import { ShogunHighlight } from '@/shared/lib/highlight';
 
@@ -21,7 +21,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
   useEffect(() => {
     let cancelled = false;
     setSearching(true);
-    runRuntimeActionA('memory.timelineSearch', { query: '', limit: 60 }, { silentError: true })
+    runRuntimeAction('memory.timelineSearch', { query: '', limit: 60 }, { silentError: true })
       .then((r: any) => {
         if (cancelled) return;
         setSearching(false);
@@ -35,7 +35,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
     if (query === '') return undefined;
     const t = setTimeout(() => {
       setSearching(true);
-      runRuntimeActionA('memory.timelineSearch', { query, limit: 60 }, { silentError: true })
+      runRuntimeAction('memory.timelineSearch', { query, limit: 60 }, { silentError: true })
         .then((r: any) => {
           setSearching(false);
           const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];
@@ -79,7 +79,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
       else delete next[id];
     });
     setAssignments(next);
-    await runRuntimeActionA(
+    await runRuntimeAction(
       'settings.save',
       { section: 'workspace_memberships', memberships: next },
       { silentError: true },

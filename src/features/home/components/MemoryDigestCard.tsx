@@ -1,5 +1,5 @@
 import { Icon } from '@/shared/icons';
-import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { smartSnoozePresets } from '../lib/runtime';
 
 export interface MemoryDigestCardProps {
@@ -108,7 +108,7 @@ export function MemoryDigestCard({
                     })),
                   } : prev);
                   window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: 0 } }));
-                  await runRuntimeActionA('memory.summary.acknowledge', {
+                  await runRuntimeAction('memory.summary.acknowledge', {
                     items, acknowledged: true,
                   }, { silentError: true });
                 }}
@@ -129,7 +129,7 @@ export function MemoryDigestCard({
                 if (h.entityId && !entityRollupCache[h.entityId]) {
                   setEntityRollupCache((prev: any) => ({ ...prev, [h.entityId]: { rollup: null, loading: true } }));
                   const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-                  runRuntimeActionA('memory.rollup.entity.get', {
+                  runRuntimeAction('memory.rollup.entity.get', {
                     entityId: h.entityId, entityLabel: h.entityId, lang,
                   }, { silentError: true }).then((res: any) => {
                     const rollup = res?.ok && res.data?.rollup ? res.data.rollup : null;
@@ -205,7 +205,7 @@ export function MemoryDigestCard({
                           type="button"
                           onClick={async (e) => {
                             e.stopPropagation();
-                            await runRuntimeActionA('memory.summary.acknowledge', {
+                            await runRuntimeAction('memory.summary.acknowledge', {
                               items: [{ targetId: h.targetId, targetKind: h.targetKind || 'item' }],
                               acknowledged: true,
                             }, { silentError: true });
@@ -240,7 +240,7 @@ export function MemoryDigestCard({
                                 ...prev,
                                 highlights: (prev.highlights || []).map((x: any) => x.targetId === h.targetId ? { ...x, snoozeUntil: untilMs } : x),
                               } : prev);
-                              await runRuntimeActionA('memory.summary.snooze', {
+                              await runRuntimeAction('memory.summary.snooze', {
                                 targetId: h.targetId, targetKind: h.targetKind || 'item', untilMs,
                               }, { silentError: true });
                             }}

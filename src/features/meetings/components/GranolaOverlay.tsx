@@ -4,93 +4,11 @@ import { GranolaTopPanels } from './GranolaOverlay/GranolaTopPanels';
 import { MeetingPermissionBanner } from './MeetingPermissionBanner';
 import { MeetingContextTimeline, MeetingContextTimelineHeader } from './MeetingContextTimeline';
 import { MEETINGS_DOCK_SLASH_CATALOG } from '../lib/runtime';
-import {
-  toastM,
-  granolaPillStyle,
-  granolaMiniBtn,
-  granolaTextareaStyle,
-  granolaIconBtn,
-} from '../lib/runtime';
+import { toastM, GRANOLA_CLASSES } from '../lib/runtime';
+import { useGranolaOverlay } from '../context/GranolaOverlayContext';
 
-export interface GranolaOverlayProps {
-  granola: any;
-  closeGranola: () => void;
-  granolaPane: string;
-  setGranolaPane: (v: string) => void;
-  granolaDraft: { body: string; transcript: string; summary: string; minutes: string };
-  setGranolaDraft: (fn: (d: any) => any) => void;
-  granolaMenuOpen: boolean;
-  setGranolaMenuOpen: (fn: (v: boolean) => boolean) => void;
-  granolaOutline: boolean;
-  setGranolaOutline: (fn: (v: boolean) => boolean) => void;
-  granolaAsk: string;
-  setGranolaAsk: (v: string) => void;
-  granolaTodos: any;
-  setGranolaTodos: (v: any) => void;
-  granolaEnhanceMenuOpen: boolean;
-  setGranolaEnhanceMenuOpen: (v: any) => void;
-  granolaAttendees: string[];
-  granolaAttendeesQuery: string;
-  setGranolaAttendeesQuery: (v: string) => void;
-  granolaFolder: string;
-  granolaFolderQuery: string;
-  setGranolaFolderQuery: (v: string) => void;
-  granolaFolderList: string[];
-  granolaPillMenu: any;
-  cmdBarMin: boolean;
-  setCmdBarMin: (v: any) => void;
-  postRecBarActive: boolean;
-  postRecWaveMenuOpen: boolean;
-  setPostRecWaveMenuOpen: (fn: (v: boolean) => boolean) => void;
-  mtgTopShareOpen: boolean;
-  setMtgTopShareOpen: (fn: (v: boolean) => boolean) => void;
-  mtgEnhanceBusy: boolean;
-  mtgLinkAccess: string;
-  setMtgLinkAccess: (v: string) => void;
-  mtgShareSearch: string;
-  setMtgShareSearch: (v: string) => void;
-  mtgShareOwner: { displayName: string; email: string };
-  mtgLinkBusy: boolean;
-  mtgLinkAccessMenuOpen: boolean;
-  setMtgLinkAccessMenuOpen: (fn: (v: boolean) => boolean) => void;
-  audioRecSession: any;
-  // Handlers
-  closeGranolaPillMenu: () => void;
-  addFolderTag: (ev: any) => void;
-  addCalendarEvent: () => void;
-  showGranolaDateInfo: (ev: any) => void;
-  showGranolaAuthorInfo: (ev: any) => void;
-  granolaDateFull: { en: string; jp: string; t: string };
-  toggleAttendee: (name: string) => void;
-  pickFolder: (name: string) => void;
-  addNewFolder: () => void;
-  applyStubTranscript: () => void;
-  refreshSummary: () => void;
-  refreshMinutes: () => void;
-  runMtgEnhance: () => Promise<void>;
-  ingestNoteToMemory: () => void;
-  copyMtgShareLink: () => Promise<void>;
-  mtgDraftEmail: () => void;
-  mtgCopyAllText: () => void;
-  moveGranolaToTrash: () => void;
-  runLocalAsk: () => void;
-  listLocalTodos: () => void;
-  startNoteRecording: () => Promise<void>;
-  stopNoteRecording: () => void;
-  showPermissionBanner?: boolean;
-  recordingWithoutRemote?: boolean;
-  permissionActionBusy?: boolean;
-  onOpenScreenCaptureSettings?: () => void;
-  onRequestScreenCaptureAccess?: () => void;
-  onMicOnlyRecording?: () => void;
-  contextTimelineItems?: any[];
-  contextTimelineLoading?: boolean;
-  injectRecipeIntoMemo: (label: string) => void;
-  runPostRecSlashItem: (item: any) => void;
-  runRuntimeActionM: (action: string, payload: any, opts: any) => any;
-}
-
-export function GranolaOverlay(p: GranolaOverlayProps) {
+export function GranolaOverlay() {
+  const p = useGranolaOverlay();
   const {
     granola, closeGranola,
     granolaPane, setGranolaPane,
@@ -132,7 +50,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
     onMicOnlyRecording,
     contextTimelineItems, contextTimelineLoading,
     injectRecipeIntoMemo, runPostRecSlashItem,
-    runRuntimeActionM,
+    runRuntimeAction,
   } = p;
 
   if (!granola) return null;
@@ -194,7 +112,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
             aria-label="More"
             title="More"
             onClick={function () {
-              setGranolaMenuOpen(function (v) { return !v; });
+              setGranolaMenuOpen(function (v: any) { return !v; });
               setMtgTopShareOpen(function () { return false; });
               setMtgLinkAccessMenuOpen(function () { return false; });
               setPostRecWaveMenuOpen(function () { return false; });
@@ -223,7 +141,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
             aria-label="Section outline"
             title="Outline"
             onClick={function () {
-              setGranolaOutline(function (v) { return !v; });
+              setGranolaOutline(function (v: any) { return !v; });
               setGranolaMenuOpen(function () { return false; });
             }}
             style={{
@@ -288,6 +206,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
                 <div
                   role="menu"
                   aria-label="Enhanced notes"
+                  tabIndex={-1}
                   onMouseDown={function (e) { e.stopPropagation(); }}
                   style={{
                     position: 'absolute',
@@ -472,7 +391,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
           <button
             type="button"
             onClick={function () {
-              setMtgTopShareOpen(function (v) { return !v; });
+              setMtgTopShareOpen(function (v: any) { return !v; });
               setGranolaMenuOpen(function () { return false; });
               setMtgLinkAccessMenuOpen(function () { return false; });
             }}
@@ -565,7 +484,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
         setGranolaMenuOpen={setGranolaMenuOpen}
         mtgDraftEmail={mtgDraftEmail}
         mtgCopyAllText={mtgCopyAllText}
-        runRuntimeActionM={runRuntimeActionM}
+        runRuntimeAction={runRuntimeAction}
         applyStubTranscript={applyStubTranscript}
         refreshSummary={refreshSummary}
         refreshMinutes={refreshMinutes}
@@ -615,24 +534,24 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
         </h1>
 
         <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:18}}>
-          <button type="button" onClick={function (ev) { showGranolaDateInfo(ev); }} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'date' ? true : false}>
+          <button type="button" onClick={function (ev) { showGranolaDateInfo(ev); }} className={GRANOLA_CLASSES.pillBtn} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'date' ? true : false}>
             <Icon name="calendar" size={13}/>
             <span className="en-only">{granola.dateLabel}</span>
             <span className="jp" style={{fontSize:12}}>{granola.dateLabelJp}</span>
             {granola.time && <span style={{opacity:0.7, marginLeft:4}} className="t-mono">{granola.time}</span>}
           </button>
-          <button type="button" onClick={function (ev) { showGranolaAuthorInfo(ev); }} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'attendees' ? true : false}>
+          <button type="button" onClick={function (ev) { showGranolaAuthorInfo(ev); }} className={GRANOLA_CLASSES.pillBtn} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'attendees' ? true : false}>
             <Icon name="users" size={13}/>
             <span className="en-only">{granolaAttendees.length === 1 ? 'Me' : granolaAttendees.length + ' people'}</span>
             <span className="jp" style={{fontSize:12}}>{granolaAttendees.length === 1 ? '自分のみ' : granolaAttendees.length + '名'}</span>
           </button>
-          <button type="button" onClick={function (ev) { addFolderTag(ev); }} style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--text-mute)'), cursor:'pointer', font:'inherit', color:'inherit'}} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'folder' ? true : false}>
+          <button type="button" onClick={function (ev) { addFolderTag(ev); }} className={GRANOLA_CLASSES.pillBtn} aria-expanded={granolaPillMenu && granolaPillMenu.kind === 'folder' ? true : false}>
             <Icon name="folder" size={13}/>
             <span className="en-only">{granolaFolder}</span>
             <span className="jp" style={{fontSize:12}}>フォルダ</span>
           </button>
           {granola.tag && (
-            <span style={{...granolaPillStyle('var(--surface)', 'var(--border-hi)', 'var(--gold)'), color:'var(--gold)', borderColor:'color-mix(in srgb, var(--gold) 35%, transparent)'}}>
+            <span className={GRANOLA_CLASSES.pillGold}>
               {granola.tag}
             </span>
           )}
@@ -740,45 +659,42 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
 
         {granolaPane === 'transcript' && (
           <div style={{display:'flex', flexWrap:'wrap', gap:8, marginTop:12, alignItems:'center'}}>
-            <button type="button" onClick={applyStubTranscript} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--text-mute)')}>+ テンプ</button>
+            <button type="button" onClick={applyStubTranscript} className={GRANOLA_CLASSES.miniBtn}>+ テンプ</button>
           </div>
         )}
         {granolaPane === 'summary' && (
           <div style={{marginTop:12}}>
-            <button type="button" onClick={refreshSummary} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--gold)')}>要約を更新（ルール）</button>
+            <button type="button" onClick={refreshSummary} className={GRANOLA_CLASSES.miniBtnGold}>要約を更新（ルール）</button>
           </div>
         )}
         {granolaPane === 'minutes' && (
           <div style={{marginTop:12}}>
-            <button type="button" onClick={refreshMinutes} style={granolaMiniBtn('var(--surface)', 'var(--border-hi)', 'var(--gold)')}>議事録を生成</button>
+            <button type="button" onClick={refreshMinutes} className={GRANOLA_CLASSES.miniBtnGold}>議事録を生成</button>
           </div>
         )}
 
         {granolaPane === 'memo' && (
           <textarea
             value={granolaDraft.body}
-            onChange={function (e) { setGranolaDraft(function (d) { return { ...d, body: e.target.value }; }); }}
+            onChange={function (e) { setGranolaDraft(function (d: any) { return { ...d, body: e.target.value }; }); }}
             placeholder="Write your notes here… メモをここに入力…"
-            className="granola-body granola-pane"
-            style={granolaTextareaStyle()}
+            className="granola-body granola-pane granola-textarea"
           />
         )}
         {granolaPane === 'transcript' && (
           <textarea
             value={granolaDraft.transcript}
-            onChange={function (e) { setGranolaDraft(function (d) { return { ...d, transcript: e.target.value }; }); }}
+            onChange={function (e) { setGranolaDraft(function (d: any) { return { ...d, transcript: e.target.value }; }); }}
             placeholder="Transcript (paste or type locally)… 貼り付けまたは入力…"
-            className="granola-body granola-pane"
-            style={granolaTextareaStyle()}
+            className="granola-body granola-pane granola-textarea"
           />
         )}
         {granolaPane === 'summary' && (
           <textarea
             value={granolaDraft.summary}
-            onChange={function (e) { setGranolaDraft(function (d) { return { ...d, summary: e.target.value }; }); }}
+            onChange={function (e) { setGranolaDraft(function (d: any) { return { ...d, summary: e.target.value }; }); }}
             placeholder="Rule-based summary appears here…"
-            className="granola-body granola-pane"
-            style={granolaTextareaStyle()}
+            className="granola-body granola-pane granola-textarea"
           />
         )}
         {granolaPane === 'context' && (
@@ -793,10 +709,9 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
         {granolaPane === 'minutes' && (
           <textarea
             value={granolaDraft.minutes}
-            onChange={function (e) { setGranolaDraft(function (d) { return { ...d, minutes: e.target.value }; }); }}
+            onChange={function (e) { setGranolaDraft(function (d: any) { return { ...d, minutes: e.target.value }; }); }}
             placeholder="Markdown minutes…"
-            className="granola-body granola-pane"
-            style={granolaTextareaStyle()}
+            className="granola-body granola-pane granola-textarea"
           />
         )}
       </div>
@@ -869,7 +784,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
           <div style={{display:'flex', alignItems:'flex-end', gap:10, flex:1, minWidth:'min(100%, 420px)'}}>
             <button
               type="button"
-              onClick={function () { setPostRecWaveMenuOpen(function (v) { return !v; }); setGranolaMenuOpen(function () { return false; }); }}
+              onClick={function () { setPostRecWaveMenuOpen(function (v: any) { return !v; }); setGranolaMenuOpen(function () { return false; }); }}
               aria-expanded={postRecWaveMenuOpen}
               aria-label="Commands"
               style={{
@@ -1009,7 +924,7 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
         }}
       >
         <div style={{display:'flex', alignItems:'center', gap:4, padding:'0 6px 0 10px'}}>
-          <button type="button" style={granolaIconBtn} onClick={function () { setGranolaMenuOpen(function (v) { return !v; }); }} aria-expanded={granolaMenuOpen}><Icon name="more" size={16}/></button>
+          <button type="button" className={GRANOLA_CLASSES.iconBtn} onClick={function () { setGranolaMenuOpen(function (v: any) { return !v; }); }} aria-expanded={granolaMenuOpen}><Icon name="more" size={16}/></button>
           <button
             type="button"
             onClick={function () { if (audioRecSession) stopNoteRecording(); else startNoteRecording(); }}
@@ -1037,8 +952,8 @@ export function GranolaOverlay(p: GranolaOverlayProps) {
           >
             <Icon name={audioRecSession ? 'stop' : 'play'} size={audioRecSession ? 15 : 16}/>
           </button>
-          <button type="button" style={granolaIconBtn} onClick={function () { setCmdBarMin(true); setGranolaMenuOpen(function () { return false; }); }} aria-label="Minimize bar"><Icon name="chevronUp" size={16}/></button>
-          <button type="button" style={granolaIconBtn} onClick={function () { setGranolaOutline(function (v) { return !v; }); }} aria-label="Section outline" title="セクション一覧"><Icon name="grid" size={15}/></button>
+          <button type="button" className={GRANOLA_CLASSES.iconBtn} onClick={function () { setCmdBarMin(true); setGranolaMenuOpen(function () { return false; }); }} aria-label="Minimize bar"><Icon name="chevronUp" size={16}/></button>
+          <button type="button" className={GRANOLA_CLASSES.iconBtn} onClick={function () { setGranolaOutline(function (v: any) { return !v; }); }} aria-label="Section outline" title="セクション一覧"><Icon name="grid" size={15}/></button>
         </div>
         <input
           type="text"

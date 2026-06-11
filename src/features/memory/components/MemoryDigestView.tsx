@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useCallback } from 'react';
-import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 
 function startOfDayMs(d: Date): number {
   const x = new Date(d);
@@ -44,12 +44,12 @@ export function MemoryDigestView({ state, setState }: MemoryDigestViewProps) {
       error: null,
     }));
     const [weekRes, dayRes] = await Promise.all([
-      runRuntimeActionA(
+      runRuntimeAction(
         'memory.rollup.get',
         { weekStartMs, lang, regenerate: !!regenerate },
         { silentError: true },
       ),
-      runRuntimeActionA(
+      runRuntimeAction(
         'memory.rollup.day.get',
         { dayStartMs, lang, regenerate: !!regenerate },
         { silentError: true },
@@ -168,7 +168,7 @@ export function MemoryDigestView({ state, setState }: MemoryDigestViewProps) {
           'Weekly digest',
           async () => {
             setState((prev: any) => ({ ...prev, generatingWeek: true }));
-            const res = await runRuntimeActionA(
+            const res = await runRuntimeAction(
               'memory.rollup.get',
               { weekStartMs, lang, regenerate: true },
               { silentError: true },
@@ -191,7 +191,7 @@ export function MemoryDigestView({ state, setState }: MemoryDigestViewProps) {
           'Daily digest',
           async () => {
             setState((prev: any) => ({ ...prev, generatingDay: true }));
-            const res = await runRuntimeActionA(
+            const res = await runRuntimeAction(
               'memory.rollup.day.get',
               { dayStartMs, lang, regenerate: true },
               { silentError: true },

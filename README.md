@@ -32,7 +32,7 @@ macOS 向けの **Tauri v2** デスクトップアプリと、**Hi-Fi UI**（Rea
 - **アクション一覧:** [`docs/action-map.md`](docs/action-map.md)
 - **macOS 配布・署名・公証:** [`docs/macos-release.md`](docs/macos-release.md)
 - **Morning Brief パイプライン（Node）:** [`tools/amc-pipeline/README.md`](tools/amc-pipeline/README.md)
-- **JSX 分割プロジェクト完了サマリ:** [`docs/superpowers/plans/2026-05-12-hifi-jsx-split-completion-summary.md`](docs/superpowers/plans/2026-05-12-hifi-jsx-split-completion-summary.md)
+- **JSX 分割プロジェクト完了サマリ:** [`docs/archive/superpowers/plans/2026-05-12-hifi-jsx-split-completion-summary.md`](docs/archive/superpowers/plans/2026-05-12-hifi-jsx-split-completion-summary.md)
 
 ### 必要環境
 
@@ -72,7 +72,6 @@ npm ci
 | Vitest 単体テスト | `npm run test:unit` |
 | Playwright e2e | `npm run test:e2e` |
 | 自家製アクション整合チェック | `npm run check:actions` |
-| Mock IPC 同期チェック | `npm run check:ipc-mock` |
 | 全部まとめて | `npm run quality` |
 
 ### ディレクトリ構成
@@ -90,26 +89,26 @@ ShogunAI3/
 │  │  ├─ MainApp.tsx                 ← シェル（state は hooks/ に分離）
 │  │  ├─ MainApp.css                 ← inline <style> から抽出
 │  │  ├─ ErrorBoundary.tsx
-│  │  ├─ hooks/                      ← 11 custom hooks (state cluster ごと)
+│  │  ├─ context/                   ← ShogunRuntimeContext (typed runtime)
+│  │  ├─ hooks/                      ← custom hooks (state cluster ごと)
 │  │  │  ├─ useChatHistory.ts, useChatModals.ts, useChatDrag.ts, useChatActions.ts
 │  │  │  ├─ useSidebarLayout.ts, useShareControls.ts, useFloatMenus.ts
 │  │  │  ├─ useHummingbird.ts, useTweaks.ts, useMeetingHud.ts
 │  │  │  ├─ useProfile.ts, useHistoricalImport.ts, useWriteConfirm.ts
 │  │  ├─ shell/                      ← TopBar, Sidebar, ShareModal + 9 portals + 4 overlays
 │  │  └─ lib/                        ← constants, helpers, mockIpc
-│  ├─ features/                      ← 12 feature folders (縦割り)
+│  ├─ features/                      ← feature folders (縦割り)
 │  │  ├─ home/, memory/, chat/, agents/, work/, meetings/
-│  │  ├─ morning-brief/, settings/, settings-screen/
-│  │  ├─ capture/, integrations/, memory-debug/
+│  │  ├─ settings/, memory-debug/
 │  │  └─ <feature>/{ FeatureScreen.tsx, components/, hooks/, lib/, types.ts, index.ts }
 │  └─ shared/                        ← 横断
 │     ├─ icons/         ← Icon, Kamon, IntegrationLogo
 │     ├─ modals/        ← ConfirmWriteModal, ConsentModal
-│     ├─ ipc/           ← ipc-client, shogun-api, action-registry, runtime-actions
+│     ├─ ipc/           ← ipc-client, mock/handler, shogun-api, action-registry
 │     ├─ lib/           ← markdown-mini, brief-telemetry, morning-brief, …
 │     └─ tokens/        ← tokens.css, app.css
-├─ tests/e2e/                        ← Playwright (68 tests / 10 specs)
-├─ scripts/                          ← check-actions.py, check-ipc-mock-sync.mjs, …
+├─ tests/e2e/                        ← Playwright (14 specs)
+├─ scripts/                          ← check-actions.py, dev-desktop-mac.sh, …
 ├─ tools/amc-pipeline/               ← Morning Brief Node サブパッケージ
 ├─ src-tauri/                        ← Rust (Tauri 2)
 └─ docs/                             ← spec / plan / release notes
@@ -141,7 +140,7 @@ src/features/<feature>/
 
 `.github/workflows/ci.yml` が PR で実行：
 
-- `npm run check:actions` / `check:ipc-mock` （自前整合性チェック）
+- `npm run check:actions` （自前整合性チェック）
 - `npm run check:rust` / `test:rust` （Cargo）
 - `npm run build:web-dist` （Vite build）
 - `npm run test:e2e` （Playwright）

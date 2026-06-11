@@ -11,6 +11,13 @@ blob-report/
 playwright/.cache/
 .worktrees/
 
+# Dev-only assets / legacy prototype remnants — not part of the product
+uploads/
+screenshots/
+screens/
+hifi/
+.claude-stash/
+
 # Secrets / env
 .env
 .env.local

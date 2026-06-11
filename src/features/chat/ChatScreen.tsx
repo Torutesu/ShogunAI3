@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Kamon } from '@/shared/icons';
-import { runRuntimeActionB } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { normalizeSeedMemoryAssembly } from './lib/normalize-seed';
 import { SHOGUN_DEMO_SEED } from '@/shared/lib/demo-seed';
 import { BriefTelemetry } from '@/shared/lib/brief-telemetry';
@@ -52,7 +52,7 @@ export function ChatScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const r = await runRuntimeActionB('stats.get', {}, { silentError: true });
+      const r = await runRuntimeAction('stats.get', {}, { silentError: true });
       if (cancelled || !r.ok || !r.data) return;
       setMemoryTotal(Number(r.data.memoryTotal) || 0);
     })();
@@ -62,7 +62,7 @@ export function ChatScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const r = await runRuntimeActionB('settings.load', {}, { silentError: true });
+      const r = await runRuntimeAction('settings.load', {}, { silentError: true });
       if (cancelled || !r.ok || !r.data?.settings?.sections) return;
       const llm = r.data.settings.sections.llm;
       if (llm && typeof llm === 'object' && llm.model) setModelHint(String(llm.model));
@@ -76,7 +76,7 @@ export function ChatScreen() {
 
   useEffect(() => {
     const onPrivacy = () => {
-      void runRuntimeActionB('settings.load', {}, { silentError: true }).then((r) => {
+      void runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
         const priv = r?.ok && r.data?.settings?.sections?.privacy;
         if (priv && typeof priv === 'object') {
           setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
@@ -147,7 +147,7 @@ export function ChatScreen() {
     // topically relevant; an empty composer falls back to the old behavior of
     // attaching the most recent 12 items.
     const query = composerText.trim();
-    const r = await runRuntimeActionB(
+    const r = await runRuntimeAction(
       'memory.search',
       { query, limit: 12 },
       { silentError: true }
@@ -254,7 +254,7 @@ export function ChatScreen() {
         privacyAllowsServerAssembly: allowServerMemoryAssembly,
       });
     }
-    const res = await runRuntimeActionB('chat.complete', payload, { silentError: true });
+    const res = await runRuntimeAction('chat.complete', payload, { silentError: true });
     setLoading(false);
     if (!res.ok) {
       toast(res.error?.message || 'Chat request failed', 'error');

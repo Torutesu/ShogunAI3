@@ -57,6 +57,53 @@ pub(crate) fn clear_test_db_path() {
   TEST_DB_PATH.with(|c| *c.borrow_mut() = None);
 }
 
+/// Cross-module test support. Command-level characterization tests (in
+/// `commands.rs`, `meeting_commands.rs`, …) need the same "point `memory.db`
+/// at a throwaway temp file" seam that `memory_store`'s own tests use, so the
+/// RAII guard lives here as `pub(crate)` instead of being re-implemented in
+/// every test module. The override is a `thread_local`, which is safe because
+/// the test harness runs each `#[test]` / `#[tokio::test]` body on its own
+/// thread (tokio's default test flavor is `current_thread`).
+#[cfg(test)]
+pub(crate) mod testkit {
+  /// RAII guard that points `db_path()` at a fresh temp file for the lifetime
+  /// of the test, then removes the file and clears the override on drop.
+  pub(crate) struct TestDbGuard {
+    path: std::path::PathBuf,
+  }
+
+  impl TestDbGuard {
+    pub(crate) fn new(name: &str) -> Self {
+      use std::sync::atomic::{AtomicU64, Ordering};
+      static UNIQ: AtomicU64 = AtomicU64::new(0);
+      let n = UNIQ.fetch_add(1, Ordering::Relaxed);
+      let mut p = std::env::temp_dir();
+      p.push(format!(
+        "shogun-cmd-test-{}-{}-{}-memory.db",
+        std::process::id(),
+        n,
+        name
+      ));
+      // Best-effort cleanup of any leftover from a prior crashed test run.
+      let _ = std::fs::remove_file(&p);
+      let _ = std::fs::remove_file(format!("{}-wal", p.display()));
+      let _ = std::fs::remove_file(format!("{}-shm", p.display()));
+
+      super::set_test_db_path(p.clone());
+      TestDbGuard { path: p }
+    }
+  }
+
+  impl Drop for TestDbGuard {
+    fn drop(&mut self) {
+      super::clear_test_db_path();
+      let _ = std::fs::remove_file(&self.path);
+      let _ = std::fs::remove_file(format!("{}-wal", self.path.display()));
+      let _ = std::fs::remove_file(format!("{}-shm", self.path.display()));
+    }
+  }
+}
+
 pub(crate) fn now_ms() -> u64 {
   use std::time::{SystemTime, UNIX_EPOCH};
   SystemTime::now()

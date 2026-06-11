@@ -1,56 +1,103 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Icon } from '@/shared/icons';
 import { Pane } from '../components/Pane';
 import { Field } from '../components/Field';
 import { ProductLegalLinks } from '../components/ProductLegalLinks';
-import { useRuntimeActions } from '../lib/hooks';
+import { useRuntimeActions, useSettingsSection } from '../lib/hooks';
 import { isProfilePhotoDataUrlSetting, imageFileToAvatarDataUrl } from '../lib/utils';
 import { MAX_PROFILE_PHOTO_BYTES } from '../lib/defaults';
-import { SettingsHydrationContext } from '../types';
 import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
+
+export interface GeneralSettingsState extends Record<string, unknown> {
+  name: string;
+  avatarGlyph: string;
+  avatarImageDataUrl: string;
+  aliases: string;
+  email: string;
+}
+
+const GENERAL_DEFAULTS: GeneralSettingsState = {
+  name: '',
+  avatarGlyph: '',
+  avatarImageDataUrl: '',
+  aliases: '',
+  email: '',
+};
+
+function generalFromSections(sections: Record<string, unknown>): GeneralSettingsState | null {
+  const g = sections.general;
+  if (!g || typeof g !== 'object') return null;
+  const row = g as Record<string, unknown>;
+  return {
+    name: row.name != null ? String(row.name) : GENERAL_DEFAULTS.name,
+    avatarGlyph: row.avatarGlyph != null ? String(row.avatarGlyph) : GENERAL_DEFAULTS.avatarGlyph,
+    avatarImageDataUrl: row.avatarImageDataUrl != null ? String(row.avatarImageDataUrl) : GENERAL_DEFAULTS.avatarImageDataUrl,
+    aliases: row.aliases != null ? String(row.aliases) : GENERAL_DEFAULTS.aliases,
+    email: row.email != null ? String(row.email) : GENERAL_DEFAULTS.email,
+  };
+}
+
+function dispatchProfileChanged(state: GeneralSettingsState): void {
+  try {
+    window.dispatchEvent(
+      new CustomEvent('shogun-profile-changed', {
+        detail: {
+          name: state.name,
+          email: state.email,
+          avatarGlyph: state.avatarGlyph,
+          avatarImageDataUrl: state.avatarImageDataUrl,
+        },
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
 
 export function PaneGeneral() {
   const { run, toast } = useRuntimeActions();
-  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
-  const [name, setName] = useState('');
-  const [avatarGlyph, setAvatarGlyph] = useState('');
-  const [avatarImageDataUrl, setAvatarImageDataUrl] = useState('');
-  const [aliases, setAliases] = useState('');
-  const [email, setEmail] = useState('');
-  const [clerkState, setClerkState] = useState({ enabled: false, signedIn: false, label: '' });
+  const [profile, setProfile, save] = useSettingsSection(
+    {
+      section: 'general',
+      fromSections: generalFromSections,
+      toPayload: (s) => ({
+        name: s.name,
+        aliases: s.aliases,
+        email: s.email,
+        avatarGlyph: s.avatarGlyph,
+        avatarImageDataUrl: s.avatarImageDataUrl,
+      }),
+      onSaved: ({ ok, state }) => {
+        if (ok) dispatchProfileChanged(state);
+      },
+    },
+    GENERAL_DEFAULTS,
+  );
+  const { name, avatarGlyph, avatarImageDataUrl, aliases, email } = profile;
+  const [clerkState, setClerkState] = React.useState({ enabled: false, signedIn: false, label: '' });
   const photoInputRef = React.useRef<HTMLInputElement>(null);
   const saveProfile = React.useCallback(
     async (opts?: { quiet?: boolean }) => {
-      const quiet = opts && opts.quiet;
+      if (opts?.quiet) {
+        await save();
+        return;
+      }
       const r = await run(
         'settings.save',
-        { section: 'general', name, aliases, email, avatarGlyph, avatarImageDataUrl },
-        quiet ? { silentError: true } : { silentError: true, successMessage: 'Profile updated' },
+        {
+          section: 'general',
+          name: profile.name,
+          aliases: profile.aliases,
+          email: profile.email,
+          avatarGlyph: profile.avatarGlyph,
+          avatarImageDataUrl: profile.avatarImageDataUrl,
+        },
+        { silentError: true, successMessage: 'Profile updated' },
       );
-      if (r && r.ok && refreshSections) await refreshSections();
-      if (r && r.ok) {
-        try {
-          window.dispatchEvent(
-            new CustomEvent('shogun-profile-changed', {
-              detail: { name, email, avatarGlyph, avatarImageDataUrl },
-            }),
-          );
-        } catch (_) {
-          /* ignore */
-        }
-      }
+      if (r?.ok) dispatchProfileChanged(profile);
     },
-    [run, refreshSections, name, aliases, email, avatarGlyph, avatarImageDataUrl],
+    [run, save, profile],
   );
-  React.useEffect(() => {
-    const g = sections.general;
-    if (!g || typeof g !== 'object') return;
-    if (g.name != null) setName(String(g.name));
-    if (g.avatarGlyph != null) setAvatarGlyph(String(g.avatarGlyph));
-    if (g.avatarImageDataUrl != null) setAvatarImageDataUrl(String(g.avatarImageDataUrl));
-    if (g.aliases != null) setAliases(String(g.aliases));
-    if (g.email != null) setEmail(String(g.email));
-  }, [sections]);
   React.useEffect(() => {
     const refresh = async () => {
       const exec = (window as any).SHOGUN_RUNTIME && (window as any).SHOGUN_RUNTIME.executeAction;
@@ -159,7 +206,7 @@ export function PaneGeneral() {
           className="s-input"
           placeholder="Your name"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))}
           onBlur={() => void saveProfile({ quiet: true })}
         />
       </Field>
@@ -199,31 +246,8 @@ export function PaneGeneral() {
                 toast(res.error, 'warn');
                 return;
               }
-              setAvatarImageDataUrl(res.dataUrl!);
-              const r = await run(
-                'settings.save',
-                {
-                  section: 'general',
-                  name,
-                  aliases,
-                  email,
-                  avatarGlyph,
-                  avatarImageDataUrl: res.dataUrl,
-                },
-                { silentError: true, successMessage: 'Profile photo updated' },
-              );
-              if (r && r.ok && refreshSections) await refreshSections();
-              if (r && r.ok) {
-                try {
-                  window.dispatchEvent(
-                    new CustomEvent('shogun-profile-changed', {
-                      detail: { name, email, avatarGlyph, avatarImageDataUrl: res.dataUrl },
-                    }),
-                  );
-                } catch (_) {
-                  /* ignore */
-                }
-              }
+              await save({ avatarImageDataUrl: res.dataUrl! });
+              toast('Profile photo updated', 'success');
             })();
           }}
         />
@@ -266,7 +290,7 @@ export function PaneGeneral() {
           <input
             className="s-input"
             value={avatarGlyph}
-            onChange={(e) => setAvatarGlyph(e.target.value)}
+            onChange={(e) => setProfile((p) => ({ ...p, avatarGlyph: e.target.value }))}
             onBlur={() => void saveProfile({ quiet: true })}
             placeholder="e.g. T or 🎯"
             maxLength={8}
@@ -282,35 +306,7 @@ export function PaneGeneral() {
             type="button"
             className="btn btn-sm btn-ghost"
             disabled={!isProfilePhotoDataUrlSetting(avatarImageDataUrl)}
-            onClick={() => {
-              void (async () => {
-                const r = await run(
-                  'settings.save',
-                  {
-                    section: 'general',
-                    name,
-                    aliases,
-                    email,
-                    avatarGlyph,
-                    avatarImageDataUrl: '',
-                  },
-                  { silentError: true },
-                );
-                setAvatarImageDataUrl('');
-                if (r && r.ok && refreshSections) await refreshSections();
-                if (r && r.ok) {
-                  try {
-                    window.dispatchEvent(
-                      new CustomEvent('shogun-profile-changed', {
-                        detail: { name, email, avatarGlyph, avatarImageDataUrl: '' },
-                      }),
-                    );
-                  } catch (_) {
-                    /* ignore */
-                  }
-                }
-              })();
-            }}
+            onClick={() => void save({ avatarImageDataUrl: '' })}
           >
             <span className="en-only">Remove photo</span>
             <span className="jp">写真を削除</span>
@@ -318,35 +314,7 @@ export function PaneGeneral() {
           <button
             type="button"
             className="btn btn-sm btn-ghost"
-            onClick={() => {
-              void (async () => {
-                const r = await run(
-                  'settings.save',
-                  {
-                    section: 'general',
-                    name,
-                    aliases,
-                    email,
-                    avatarGlyph: '',
-                    avatarImageDataUrl,
-                  },
-                  { silentError: true },
-                );
-                setAvatarGlyph('');
-                if (r && r.ok && refreshSections) await refreshSections();
-                if (r && r.ok) {
-                  try {
-                    window.dispatchEvent(
-                      new CustomEvent('shogun-profile-changed', {
-                        detail: { name, email, avatarGlyph: '', avatarImageDataUrl },
-                      }),
-                    );
-                  } catch (_) {
-                    /* ignore */
-                  }
-                }
-              })();
-            }}
+            onClick={() => void save({ avatarGlyph: '' })}
           >
             <span className="en-only">Clear letter</span>
             <span className="jp">文字を消す</span>
@@ -358,7 +326,7 @@ export function PaneGeneral() {
           className="s-input"
           placeholder="e.g. @handle, nickname"
           value={aliases}
-          onChange={(e) => setAliases(e.target.value)}
+          onChange={(e) => setProfile((p) => ({ ...p, aliases: e.target.value }))}
           onBlur={() => void saveProfile({ quiet: true })}
         />
       </Field>
@@ -370,7 +338,7 @@ export function PaneGeneral() {
             type="email"
             autoComplete="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => setProfile((p) => ({ ...p, email: e.target.value }))}
             style={{ flex: 1 }}
             onBlur={() => void saveProfile({ quiet: true })}
           />

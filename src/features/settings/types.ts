@@ -10,9 +10,3 @@ export const SettingsHydrationContext = React.createContext<SettingsHydrationCon
   sections: {},
   refreshSections: null,
 });
-
-export interface RuntimeActions {
-  run: (key: string, payload?: any, options?: any) => Promise<any>;
-  confirmWrite: (key: string, payload: any, title: string, description: string) => void;
-  toast: (message: string, kind?: string) => void;
-}

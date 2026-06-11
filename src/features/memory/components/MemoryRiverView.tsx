@@ -1,6 +1,6 @@
 import type * as React from 'react';
 import { Icon } from '@/shared/icons';
-import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import {
   memoryProviderKey,
   MEMORY_PROVIDER_META,
@@ -183,7 +183,7 @@ export function MemoryRiverView({
             const nextSummary = { ...scrubSummary, userPriority: nextValue };
             setScrubSummary(nextSummary);
             setSummaryByMemId((prev) => ({ ...prev, [targetId]: nextSummary }));
-            await runRuntimeActionA('memory.summary.set_priority', {
+            await runRuntimeAction('memory.summary.set_priority', {
               targetId, targetKind: 'item', priority: nextValue,
             }, { silentError: true });
           };
@@ -253,11 +253,11 @@ export function MemoryRiverView({
                     delete next[targetId];
                     return next;
                   });
-                  await runRuntimeActionA('memory.summary.invalidate', {
+                  await runRuntimeAction('memory.summary.invalidate', {
                     targetId, targetKind: 'item',
                   }, { silentError: true });
                   const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-                  const res = await runRuntimeActionA('memory.summary.get', {
+                  const res = await runRuntimeAction('memory.summary.get', {
                     targetId, targetKind: 'item', lang,
                     item: {
                       id: targetId,

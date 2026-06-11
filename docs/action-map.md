@@ -23,7 +23,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - **`app_updates_check`** / **`updates.check`**: Tauri updater — returns **`available`**, optional **`version`**, **`body`**, **`currentVersion`**. Fails if endpoints are misconfigured or unreachable.
 - **`app_updates_download_install`** / **`updates.download_install`**: re-checks, downloads signature-verified bundle, installs, then **`restart()`** (does not return on success).
 - **`shogun_stats`** with **`stage: "capture"`** includes full **`settings`** document for Capture UI hydration.
-- **`shogun_memory_search`** / **`memory.search`**: **async**. Lexical **FTS5** by default. Payload **`semantic: true`** + non-empty **`query`** + LLM API key → fetch a wider lexical candidate set, **`/v1/embeddings`** on the query, re-rank by cosine vs stored **`embedding` BLOB**; response may include **`semanticRerank: true`**. Without a key (or `semantic: false`) → lexical only. **When `query` is non-empty**, the FTS5 path adds **`title_highlight`** / **`snippet_highlight`** fields to each hit — matched spans wrapped in ASCII STX (`\x02`) / ETX (`\x03`) sentinels. Empty queries and semantic rerank don't produce these fields. Frontend renders them via **`hifi/lib/highlight.js`** → React `<mark>` (no `dangerouslySetInnerHTML`).
+- **`shogun_memory_search`** / **`memory.search`**: **async**. Lexical **FTS5** by default. Payload **`semantic: true`** + non-empty **`query`** + LLM API key → fetch a wider lexical candidate set, **`/v1/embeddings`** on the query, re-rank by cosine vs stored **`embedding` BLOB**; response may include **`semanticRerank: true`**. Without a key (or `semantic: false`) → lexical only. **When `query` is non-empty**, the FTS5 path adds **`title_highlight`** / **`snippet_highlight`** fields to each hit — matched spans wrapped in ASCII STX (`\x02`) / ETX (`\x03`) sentinels. Empty queries and semantic rerank don't produce these fields. Frontend renders them via **`src/shared/lib/highlight.ts`** → React `<mark>` (no `dangerouslySetInnerHTML`).
 - **`shogun_memory_ingest`**: inserts row; **background embedding** for `title`+`snippet` except when **`source`** is **`capture_sampler`** or **`capture_ax`** (cost/noise). Embedding model: **`settings.sections.llm.embeddingModel`**, default **`text-embedding-3-small`** (same **`baseUrl`** / key as chat). Optional: **`provenance`** (`screen`|`connector`|`meeting`|`user`; else derived from `source`), **`entity_id`**, **`confidence`** (0–1), **`redaction`** (`none`|`summary_only`|`redacted`). Spec: **`docs/context-layer-phase-0-1.md`**.
 - **`shogun_memory_embed_backfill`** / **`memory.embed_backfill`**: **async**; embeds up to **`limit`** rows (default 40, max 200) where **`embedding` IS NULL** and source not capture noise. Optional **`delayMs`** (0–3000) sleeps between rows to ease API rate limits. Transient API / network errors retry with **exponential backoff** (up to 5 attempts per row); response **`firstError`** is still the **first** failure message only. Emits Tauri event **`memory-embed-backfill-progress`** with **`{ index, total, embedded, failed }`** after each row when running in the desktop app. Returns **`embedded`**, **`failed`**, **`remaining`**, **`attempted`**, optional **`firstError`**, **`cancelled`** (true if the user cancelled mid-run). Long invoke: frontend uses an extended IPC timeout for this command.
 - **`shogun_memory_embed_backfill_cancel`** / **`memory.embed_backfill_cancel`**: sets a **shared cancel flag** so the current backfill loop stops between rows; idempotent. Returns **`requested`: true**.
@@ -234,6 +234,11 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `meetings.mcp.tools`
 - `meetings.import.pick`
 - `meetings.import.file`
+- `meetings.context_timeline`
+- `meetings.link_client_note`
+- `meetings.resolve_by_storage_key`
+- `memory.timelineSearch`
+- `kioku.pipeline_smoke`
 - `mirror.register`
 - `mirror.unlock`
 - `mirror.status`
@@ -248,13 +253,13 @@ UIボタンと ActionRegistry / Runtime の対応表。
 ## Quick Verification
 
 ```bash
-./hifi/scripts/check-actions.sh
+npm run check:actions
 ```
 
 Or:
 
 ```bash
-python3 hifi/scripts/check-actions.py
+python3 scripts/check-actions.py
 ```
 
 ## E2E (Playwright)
@@ -267,7 +272,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-`playwright.config.js` が `python3 -m http.server` で静的配信し、`SHOGUN Hi-Fi UI.html` を開いてマウントと `executeAction` を検証します。
+`playwright.config.js` が `npm run build && npm run preview`（port 4173）で Vite ビルドを配信し、`index.html`（`/`）を開いてマウントと `executeAction` を検証します。
 
 `tests/e2e/hifi-smoke.spec.js` の追加ケース: ユーザーメニューから Settings を開いて閉じる、トップバー先頭の Hummingbird で WRITE 確認を開き Cancel または Confirm（成功トースト）。
 Also: Settings > Data Controls > first Delete (WRITE confirm, Cancel); Share modal (backdrop close + Export to file toast); Memory entity sources panel; Work draft success (mock).

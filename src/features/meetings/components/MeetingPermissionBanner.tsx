@@ -3,8 +3,8 @@ import { Icon } from '@/shared/icons';
 
 export interface MeetingPermissionBannerProps {
   /** Mic is running but remote / system audio is not captured. */
-  recordingWithoutRemote?: boolean;
-  busy?: boolean;
+  recordingWithoutRemote?: boolean | undefined;
+  busy?: boolean | undefined;
   onOpenSettings: () => void;
   onRequestAccess: () => void;
   onMicOnly: () => void;

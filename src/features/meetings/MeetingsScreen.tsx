@@ -1,38 +1,29 @@
 import React from 'react';
 
 import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
-import { emitMeetingHud, clearMeetingHud } from '@/shared/lib/meeting-hud-events';
+import { takePendingMeetingDetect } from '@/shared/lib/meeting-detect-events';
 import { Icon, Kamon } from '@/shared/icons';
 import { MtgProgressDots } from './components/MtgProgressDots';
 import { GranolaOverlay } from './components/GranolaOverlay';
 import { MtgChatDock } from './components/MtgChatDock';
 import { MeetingDetailModal } from './components/MeetingDetailModal';
-import { useMeetingScreenCapturePermission } from './hooks/useMeetingScreenCapturePermission';
-import { runRuntimeActionM } from '@/shared/ipc/runtime-actions';
+import { useMeetingsCalendar } from './hooks/useMeetingsCalendar';
+import { useGranolaPillUi } from './hooks/useGranolaPillUi';
+import { useMeetingsBackendRecording } from './hooks/useMeetingsBackendRecording';
+import { useMeetingsScreenPrefs } from './hooks/useMeetingsScreenPrefs';
+import { GranolaOverlayProvider } from './context/GranolaOverlayContext';
+import type { GranolaOverlayContextValue } from './context/GranolaOverlayContext';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import {
   mnl,
   toastM,
   briefPayloadWithUserTz,
   RECIPE_LOCAL_BODIES,
-  MEETINGS_COMING_UP_STORAGE,
   MEETINGS_DOCK_SLASH_CATALOG,
   RECIPE_LABEL_TO_ID,
   noteHasCompletedRecording,
+  isNativeDesktop,
 } from './lib/runtime';
-
-function formatLiveTranscript(segments: any[]) {
-  return segments
-    .map(function (s: any) {
-      var sp = s.speaker === 'self' ? 'You' : s.speaker === 'other' ? 'Other' : (s.speaker || 'Speaker');
-      return sp + ': ' + (s.text || '');
-    })
-    .filter(function (line: string) { return line.trim().length > 3; })
-    .join('\n');
-}
-
-function isNativeDesktop() {
-  return !!(typeof window !== 'undefined' && (window as any).__TAURI__);
-}
 
 // ===========================================================================
 // MEETINGS — synthesis layer for calendar events + conversations
@@ -57,29 +48,9 @@ export function MeetingsScreen() {
   // { meeting, segments, loading, filter } when the detail modal is open.
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [listTick, setListTick] = useState(0);
-  const [audioRecSession, setAudioRecSession] = useState<any>(null);
-  const [backendRecActive, setBackendRecActive] = useState(false);
-  const backendRecActiveRef = useRef(false);
-  backendRecActiveRef.current = backendRecActive;
-  const [contextTimelineItems, setContextTimelineItems] = useState<any[]>([]);
-  const [contextTimelineLoading, setContextTimelineLoading] = useState(false);
-  const backendRecStartedAtRef = useRef(0);
-  const [systemAudioRunning, setSystemAudioRunning] = useState(false);
-  const [permissionActionBusy, setPermissionActionBusy] = useState(false);
-  const permissionPollEnabled = !!(granola && granola.backendMeetingId && isNativeDesktop());
-  const {
-    screenCaptureGranted,
-    refresh: refreshScreenCapturePermission,
-    grantedChangedToTrue,
-    isNativeDesktop: nativeDesktop,
-  } = useMeetingScreenCapturePermission(permissionPollEnabled);
-  const showPermissionBanner =
-    permissionPollEnabled &&
-    nativeDesktop &&
-    ((screenCaptureGranted === false && (!backendRecActive || !systemAudioRunning)) ||
-      (backendRecActive && !systemAudioRunning));
-  const [_recTick, setRecTick] = useState(0);
-  const [comingUp, setComingUp] = useState<any[]>([]);
+  const comingUp = useMeetingsCalendar();
+  const granolaPillUi = useGranolaPillUi();
+  const { allowServerMemoryAssembly, autoStartOnCalendar, autoStartOnCalendarRef } = useMeetingsScreenPrefs();
   const [meetingsPrompt, setMeetingsPrompt] = useState('');
   const [meetingsRecipeBrowse, setMeetingsRecipeBrowse] = useState(false);
   const [postRecSessionFlag, setPostRecSessionFlag] = useState(false);
@@ -91,83 +62,70 @@ export function MeetingsScreen() {
   const [mtgShareOwner, setMtgShareOwner] = useState({ displayName: '', email: '' });
   const [mtgLinkBusy, setMtgLinkBusy] = useState(false);
   const [mtgLinkAccessMenuOpen, setMtgLinkAccessMenuOpen] = useState(false);
-  /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
-  /** Mirrors `sections.meetings.autoStartOnCalendar` (default false). */
-  const [autoStartOnCalendar, setAutoStartOnCalendar] = useState(false);
-  const autoStartOnCalendarRef = useRef(false);
-  autoStartOnCalendarRef.current = autoStartOnCalendar;
+  const pendingAutoRecordRef = useRef(false);
+  const linkClientNoteToStorageRef = useRef<(meetingId: any, storageKey: any) => Promise<any>>(async (id) => id);
 
   granolaRef.current = granola;
 
-  const postRecBarActive = !!(granola && granola.storageKey && !audioRecSession && (postRecSessionFlag || noteHasCompletedRecording(granola.storageKey)));
-
-  useEffect(function () {
-    function onEnded() {
-      if (backendRecActiveRef.current && granolaRef.current && granolaRef.current.backendMeetingId && isNativeDesktop()) {
-        setBackendRecActive(false);
-        backendRecStartedAtRef.current = 0;
-        var mid = granolaRef.current.backendMeetingId;
-        void runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true }).then(function (getRes: any) {
-          var segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
-          if (segs.length) {
-            setGranolaDraft(function (d: any) {
-              return { ...d, transcript: formatLiveTranscript(segs) };
-            });
-          }
+  const linkClientNoteToStorage = useCallback(async function (meetingId: any, storageKey: any) {
+    if (!meetingId || !storageKey || !isNativeDesktop()) return meetingId;
+    const L = mnl();
+    if (L && L.linkBackendMeetingId) {
+      L.linkBackendMeetingId(storageKey, meetingId);
+    }
+    const r = await runRuntimeAction(
+      'meetings.link_client_note',
+      { meeting_id: meetingId, storage_key: storageKey },
+      { silentError: true },
+    );
+    if (r && r.ok && r.data) {
+      const linkedId = r.data.meeting_id || meetingId;
+      if (linkedId !== meetingId) {
+        setGranola(function (g: any) {
+          if (!g || g.storageKey !== storageKey) return g;
+          return { ...g, backendMeetingId: linkedId };
         });
-      }
-      if (granolaRef.current && granolaRef.current.storageKey) {
-        setPostRecSessionFlag(true);
-        setListTick(function (x) { return x + 1; });
-      }
-    }
-    window.addEventListener('shogun-meeting-recording-ended', onEnded);
-    return function () { window.removeEventListener('shogun-meeting-recording-ended', onEnded); };
-  }, []);
-
-  useEffect(function () {
-    var cancelled = false;
-    function applyMeetingSettings(r: any) {
-      if (cancelled || !r || !r.ok || !r.data || !r.data.settings || !r.data.settings.sections) return;
-      var priv = r.data.settings.sections.privacy;
-      if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-      }
-      var mtg = r.data.settings.sections.meetings;
-      if (mtg && typeof mtg === 'object') {
-        if (typeof mtg.autoStartOnCalendar === 'boolean') {
-          setAutoStartOnCalendar(mtg.autoStartOnCalendar);
-        } else if (typeof mtg.autoRecord === 'boolean') {
-          setAutoStartOnCalendar(mtg.autoRecord);
-        } else {
-          setAutoStartOnCalendar(false);
+        if (L && L.linkBackendMeetingId) {
+          L.linkBackendMeetingId(storageKey, linkedId);
         }
       }
+      return linkedId;
     }
-    runRuntimeActionM('settings.load', {}, { silentError: true }).then(applyMeetingSettings);
-    function onSettingsRefresh() {
-      runRuntimeActionM('settings.load', {}, { silentError: true }).then(applyMeetingSettings);
-    }
-    window.addEventListener('shogun-settings-refresh', onSettingsRefresh);
-    return function () {
-      cancelled = true;
-      window.removeEventListener('shogun-settings-refresh', onSettingsRefresh);
-    };
+    return meetingId;
   }, []);
 
-  useEffect(function () {
-    function onPrivacy() {
-      runRuntimeActionM('settings.load', {}, { silentError: true }).then(function (r) {
-        var priv = r && r.ok && r.data && r.data.settings && r.data.settings.sections && r.data.settings.sections.privacy;
-        if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-        }
-      });
-    }
-    window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
-    return function () { window.removeEventListener('shogun-privacy-settings-changed', onPrivacy); };
-  }, []);
+  linkClientNoteToStorageRef.current = linkClientNoteToStorage;
+
+  const {
+    audioRecSession,
+    backendRecActive,
+    systemAudioRunning,
+    contextTimelineItems,
+    contextTimelineLoading,
+    permissionActionBusy,
+    screenCaptureGranted,
+    showPermissionBanner,
+    finalizeBackendMeeting,
+    startNoteRecording,
+    stopNoteRecording,
+    startMicOnlyRecording,
+    openMeetingScreenCaptureSettings,
+    requestMeetingScreenCaptureAccess,
+    startBackendRecordingRef,
+    startNoteRecordingRef,
+    setBackendRecActive,
+    setSystemAudioRunning,
+  } = useMeetingsBackendRecording({
+    granola,
+    granolaRef,
+    setGranolaDraft,
+    setGranolaPane,
+    setPostRecSessionFlag,
+    setListTick,
+    linkClientNoteToStorage: (mid, sk) => linkClientNoteToStorageRef.current(mid, sk),
+  });
+
+  const postRecBarActive = !!(granola && granola.storageKey && !audioRecSession && (postRecSessionFlag || noteHasCompletedRecording(granola.storageKey)));
 
   const granolaStorageKey = granola && granola.storageKey;
   useEffect(function () {
@@ -181,7 +139,7 @@ export function MeetingsScreen() {
 
   useEffect(function () {
     if (!mtgTopShareOpen) return;
-    runRuntimeActionM('auth.status', {}, { silentError: true }).then(function (r) {
+    runRuntimeAction('auth.status', {}, { silentError: true }).then(function (r) {
       var snap = r && r.ok && r.data && r.data.snapshot;
       var g = granolaRef.current;
       if (snap && (snap.displayName || snap.primaryEmail)) {
@@ -197,48 +155,6 @@ export function MeetingsScreen() {
       }
     });
   }, [mtgTopShareOpen]);
-
-  useEffect(function () {
-    try {
-      var raw = localStorage.getItem(MEETINGS_COMING_UP_STORAGE);
-      if (raw) {
-        var parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) setComingUp(parsed);
-      }
-    } catch (_e) {}
-    runRuntimeActionM('calendar.sync', { calendarId: 'primary', maxResults: 25 }, { silentError: true }).then(function (r) {
-      if (!r || !r.ok) {
-        // "not configured" is an expected first-run state — stay silent.
-        // Any other failure (auth expired, network, API error) gets surfaced
-        // so the user doesn't wonder why the coming-up list is stale.
-        var errMsg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
-        if (errMsg && errMsg.indexOf('not configured') < 0) {
-          toastM('カレンダー同期に失敗しました — ' + errMsg, 'warn');
-        }
-        return;
-      }
-      if (!r.data || !Array.isArray(r.data.events) || !r.data.events.length) return;
-      var WKD = ['\u65e5', '\u6708', '\u706b', '\u6c34', '\u6728', '\u91d1', '\u571f'];
-      var mapped = r.data.events.map(function (ev: any, idx: any) {
-        var start = ev.startDateTimeMs != null ? new Date(ev.startDateTimeMs) : (ev.start ? new Date(ev.start) : new Date());
-        var end = ev.endDateTimeMs != null ? new Date(ev.endDateTimeMs) : (ev.end ? new Date(ev.end) : start);
-        return {
-          id: String(ev.id || 'ev-' + idx),
-          day: start.getDate(),
-          monthLabel: start.getMonth() + 1 + '\u6708',
-          weekday: WKD[start.getDay()],
-          title: ev.summary || ev.title || '\u4e88\u5b9a',
-          timeRange: start.getHours() + ':' + String(start.getMinutes()).padStart(2, '0') + '\u301c' + end.getHours() + ':' + String(end.getMinutes()).padStart(2, '0'),
-          startMs: start.getTime(),
-          endMs: end.getTime(),
-        };
-      });
-      setComingUp(mapped);
-      try {
-        localStorage.setItem(MEETINGS_COMING_UP_STORAGE, JSON.stringify(mapped));
-      } catch (_e2) {}
-    });
-  }, []);
 
   useEffect(function () {
     const L = mnl();
@@ -267,7 +183,7 @@ export function MeetingsScreen() {
   useEffect(function () {
     let cancelled = false;
     const load = function () {
-      runRuntimeActionM('meetings.list', { limit: 50 }, { silentError: true }).then(function (r) {
+      runRuntimeAction('meetings.list', { limit: 50 }, { silentError: true }).then(function (r) {
         if (cancelled) return;
         const items = r && r.ok && Array.isArray(r.data && r.data.items) ? r.data.items : [];
         const filtered = items.filter(function (m: any) {
@@ -285,243 +201,6 @@ export function MeetingsScreen() {
     };
   }, []);
 
-  useEffect(function () {
-    function syncRec() {
-      if (backendRecActiveRef.current) {
-        setAudioRecSession({ startedAt: Date.now(), storageKey: granolaRef.current && granolaRef.current.storageKey, backend: true });
-        setRecTick(function (x) { return x + 1; });
-        return;
-      }
-      var M = MeetingMediaRecording;
-      if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting()) {
-        var sk = M.getActiveStorageKey && M.getActiveStorageKey();
-        setAudioRecSession({ startedAt: M.getStartedAt(), storageKey: sk || null });
-      } else {
-        setAudioRecSession(null);
-      }
-      setRecTick(function (x) { return x + 1; });
-    }
-    window.addEventListener('shogun-meeting-hud', syncRec);
-    window.addEventListener('shogun-meeting-recording-ended', syncRec);
-    syncRec();
-    return function () {
-      window.removeEventListener('shogun-meeting-hud', syncRec);
-      window.removeEventListener('shogun-meeting-recording-ended', syncRec);
-    };
-  }, []);
-
-  useEffect(function () {
-    if (!granola || !granola.backendMeetingId || !isNativeDesktop()) return;
-    var cancelled = false;
-    runRuntimeActionM('meetings.audio.status', {}, { silentError: true }).then(function (r: any) {
-      if (cancelled) return;
-      if (r && r.ok && r.data && r.data.mic_capture_running) {
-        setBackendRecActive(true);
-        setSystemAudioRunning(!!r.data.system_audio_running);
-        setGranolaPane('minutes');
-      }
-    });
-    return function () { cancelled = true; };
-  }, [granola && granola.backendMeetingId]);
-
-  useEffect(function () {
-    if (!backendRecActive || !granola || !granola.backendMeetingId || !isNativeDesktop()) {
-      if (!backendRecActive) setSystemAudioRunning(false);
-      return undefined;
-    }
-    var cancelled = false;
-    const poll = function () {
-      runRuntimeActionM('meetings.audio.status', {}, { silentError: true }).then(function (r: any) {
-        if (cancelled || !r || !r.ok || !r.data) return;
-        setSystemAudioRunning(!!r.data.system_audio_running);
-      });
-    };
-    poll();
-    var id = window.setInterval(poll, 5000);
-    return function () {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [backendRecActive, granola && granola.backendMeetingId]);
-
-  useEffect(function () {
-    if (!backendRecActive || !granola || !granola.backendMeetingId || !isNativeDesktop()) {
-      if (backendRecStartedAtRef.current) {
-        clearMeetingHud();
-        backendRecStartedAtRef.current = 0;
-      }
-      return undefined;
-    }
-    if (!backendRecStartedAtRef.current) {
-      backendRecStartedAtRef.current = Date.now();
-    }
-    var cancelled = false;
-    function pushHud(phase: 'begin' | 'tick') {
-      if (cancelled) return;
-      runRuntimeActionM('meetings.audio.status', {}, { silentError: true }).then(function (statusRes: any) {
-        if (cancelled) return;
-        const g = granolaRef.current;
-        const st = statusRes && statusRes.ok && statusRes.data ? statusRes.data : {};
-        const sysOn = !!st.system_audio_running;
-        setSystemAudioRunning(sysOn);
-        emitMeetingHud({
-          active: true,
-          hudPhase: phase,
-          title: (g && g.title) || 'Untitled',
-          startedAt: backendRecStartedAtRef.current,
-          storageKey: (g && g.storageKey) || null,
-          backend: true,
-          backendMeetingId: (g && g.backendMeetingId) || null,
-          micRunning: !!st.mic_capture_running,
-          systemRunning: sysOn,
-          deepgramConfigured: !!st.deepgram_configured,
-          systemMode: st.system_mode || null,
-        });
-      });
-    }
-    pushHud('begin');
-    var hudId = window.setInterval(function () { pushHud('tick'); }, 5000);
-    return function () {
-      cancelled = true;
-      window.clearInterval(hudId);
-    };
-  }, [backendRecActive, granola && granola.backendMeetingId]);
-
-  useEffect(function () {
-    if (!granola || !granola.backendMeetingId || !isNativeDesktop()) {
-      setContextTimelineItems([]);
-      setContextTimelineLoading(false);
-      return undefined;
-    }
-    var cancelled = false;
-    function refreshContextTimeline() {
-      if (cancelled) return;
-      setContextTimelineLoading(true);
-      void runRuntimeActionM('meetings.context_timeline', {
-        meeting_id: granola.backendMeetingId,
-        include_live: backendRecActiveRef.current,
-        limit: 120,
-      }, { silentError: true }).then(function (res: any) {
-        if (cancelled) return;
-        const items = res && res.ok && res.data && Array.isArray(res.data.items) ? res.data.items : [];
-        setContextTimelineItems(items);
-        setContextTimelineLoading(false);
-      });
-    }
-    refreshContextTimeline();
-    var id = window.setInterval(refreshContextTimeline, backendRecActiveRef.current ? 4000 : 15000);
-    return function () {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [granola, granola && granola.backendMeetingId, backendRecActive]);
-
-  useEffect(function () {
-    if (!grantedChangedToTrue) return;
-    toastM('画面収録が許可されました。録音を開始できます', 'success');
-    void refreshScreenCapturePermission();
-  }, [grantedChangedToTrue, refreshScreenCapturePermission]);
-
-  useEffect(function () {
-    if (!granola || !granola.backendMeetingId || !backendRecActive) return undefined;
-    var cancelled = false;
-    const poll = function () {
-      runRuntimeActionM('meetings.transcript.live', { meeting_id: granola.backendMeetingId }, { silentError: true })
-        .then(function (r: any) {
-          if (cancelled) return;
-          var segs = r && r.ok && Array.isArray(r.data && r.data.segments) ? r.data.segments : [];
-          if (!segs.length) return;
-          var tx = formatLiveTranscript(segs);
-          if (!tx) return;
-          setGranolaDraft(function (d: any) { return { ...d, transcript: tx }; });
-        });
-    };
-    poll();
-    var id = setInterval(poll, 2000);
-    return function () { cancelled = true; clearInterval(id); };
-  }, [granola, granola && granola.backendMeetingId, backendRecActive]);
-
-  useEffect(function () {
-    if (!backendRecActive) {
-      if (!MeetingMediaRecording || !MeetingMediaRecording.isRecording || !MeetingMediaRecording.isRecording()) {
-        setAudioRecSession(null);
-      }
-      return;
-    }
-    setAudioRecSession({
-      startedAt: backendRecStartedAtRef.current || Date.now(),
-      storageKey: granolaRef.current && granolaRef.current.storageKey,
-      backend: true,
-    });
-  }, [backendRecActive]);
-
-  useEffect(function () {
-    if (!audioRecSession) return undefined;
-    const id = setInterval(function () { setRecTick(function (x) { return x + 1; }); }, 1000);
-    return function () { clearInterval(id); };
-  }, [audioRecSession]);
-
-  const finalizeBackendMeeting = useCallback(async function (opts?: { silent?: boolean }) {
-    const g = granolaRef.current;
-    if (!g || !g.backendMeetingId || !isNativeDesktop()) return null;
-    const mid = g.backendMeetingId;
-    const res = await runRuntimeActionM('meetings.stop', { meeting_id: mid }, { silentError: true });
-    setBackendRecActive(false);
-    backendRecStartedAtRef.current = 0;
-    clearMeetingHud();
-    if (res && res.ok && res.data) {
-      const getRes = await runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true });
-      const segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
-      if (segs.length) {
-        setGranolaDraft(function (d: any) {
-          return { ...d, transcript: formatLiveTranscript(segs) };
-        });
-      }
-    }
-    if (!opts?.silent) {
-      toastM('会議を保存して終了しました', 'success');
-    }
-    try {
-      window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
-      window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
-    } catch (_e) {}
-    return res;
-  }, []);
-
-  useEffect(function () {
-    const listenFn = typeof window !== 'undefined' && (window as any).__TAURI__?.event?.listen;
-    if (typeof listenFn !== 'function') return undefined;
-    let unlisten: (() => void) | undefined;
-    (async function () {
-      try {
-        unlisten = await listenFn('meeting-auto-stopped', function (e: any) {
-          var p = (e && e.payload) || {};
-          var mid = p.meeting_id;
-          var g = granolaRef.current;
-          if (!mid || !g || g.backendMeetingId !== mid) return;
-          setBackendRecActive(false);
-          backendRecStartedAtRef.current = 0;
-          clearMeetingHud();
-          void runRuntimeActionM('meetings.get', { meeting_id: mid }, { silentError: true }).then(function (getRes: any) {
-            var segs = getRes && getRes.ok && Array.isArray(getRes.data?.transcript) ? getRes.data.transcript : [];
-            if (segs.length) {
-              setGranolaDraft(function (d: any) {
-                return { ...d, transcript: formatLiveTranscript(segs) };
-              });
-            }
-          });
-          var reasonLabel = p.reason === 'video_ended' ? 'ビデオ通話終了' : '無活動';
-          toastM('会議を自動終了しました（' + reasonLabel + '）', 'info');
-          try {
-            window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
-          } catch (_e2) {}
-        });
-      } catch (_e) {}
-    })();
-    return function () {
-      if (typeof unlisten === 'function') unlisten();
-    };
-  }, []);
   const granolaTitle = granola && granola.title;
   /** Keep MediaRecorder titleRef aligned with the note title (download filename + HUD) while recording. */
   useEffect(function () {
@@ -546,33 +225,6 @@ export function MeetingsScreen() {
     return function () {
       window.removeEventListener('shogun-auto-open-meeting-minutes', onAutoMinutes);
     };
-  }, []);
-
-  const linkClientNoteToStorage = useCallback(async function (meetingId: any, storageKey: any) {
-    if (!meetingId || !storageKey || !isNativeDesktop()) return meetingId;
-    const L = mnl();
-    if (L && L.linkBackendMeetingId) {
-      L.linkBackendMeetingId(storageKey, meetingId);
-    }
-    const r = await runRuntimeActionM(
-      'meetings.link_client_note',
-      { meeting_id: meetingId, storage_key: storageKey },
-      { silentError: true },
-    );
-    if (r && r.ok && r.data) {
-      const linkedId = r.data.meeting_id || meetingId;
-      if (linkedId !== meetingId) {
-        setGranola(function (g: any) {
-          if (!g || g.storageKey !== storageKey) return g;
-          return { ...g, backendMeetingId: linkedId };
-        });
-        if (L && L.linkBackendMeetingId) {
-          L.linkBackendMeetingId(storageKey, linkedId);
-        }
-      }
-      return linkedId;
-    }
-    return meetingId;
   }, []);
 
   const openGranolaMinutesForDetectedMeeting = useCallback(function (title: any, eventId: any, meetingId?: any) {
@@ -617,6 +269,7 @@ export function MeetingsScreen() {
       if ((window as any).SHOGUN_RUNTIME && typeof (window as any).SHOGUN_RUNTIME.setActiveScreen === 'function') {
         (window as any).SHOGUN_RUNTIME.setActiveScreen('meetings');
       }
+      if (d.openNotes || d.autoRecord) pendingAutoRecordRef.current = true;
       openGranolaMinutesForDetectedMeeting(d.title, d.eventId, d.meeting_id || null);
     };
     window.addEventListener('shogun-meeting-detected', onDetected);
@@ -624,6 +277,43 @@ export function MeetingsScreen() {
       window.removeEventListener('shogun-meeting-detected', onDetected);
     };
   }, [openGranolaMinutesForDetectedMeeting]);
+
+  useEffect(function () {
+    const pending = takePendingMeetingDetect();
+    if (!pending || granolaRef.current) return;
+    if ((window as any).SHOGUN_RUNTIME && typeof (window as any).SHOGUN_RUNTIME.setActiveScreen === 'function') {
+      (window as any).SHOGUN_RUNTIME.setActiveScreen('meetings');
+    }
+    pendingAutoRecordRef.current = true;
+    openGranolaMinutesForDetectedMeeting(pending.title, pending.eventId, pending.meeting_id || null);
+  }, [openGranolaMinutesForDetectedMeeting]);
+
+  useEffect(function () {
+    if (!granola || !pendingAutoRecordRef.current) return;
+    pendingAutoRecordRef.current = false;
+    var cancelled = false;
+    (async function () {
+      if (cancelled) return;
+      if (granola.backendMeetingId && isNativeDesktop()) {
+        var statusRes = await runRuntimeAction('meetings.audio.status', {}, { silentError: true });
+        if (cancelled) return;
+        if (statusRes && statusRes.ok && statusRes.data && statusRes.data.mic_capture_running) {
+          setBackendRecActive(true);
+          setSystemAudioRunning(!!statusRes.data.system_audio_running);
+          setGranolaPane('minutes');
+          return;
+        }
+        await startBackendRecordingRef.current(true);
+        return;
+      }
+      await startNoteRecordingRef.current();
+    })();
+    return function () {
+      cancelled = true;
+    };
+    // Re-running on granola identity changes is safe: pendingAutoRecordRef is
+    // cleared on first run, so later runs bail immediately.
+  }, [granola, setBackendRecActive, setSystemAudioRunning, startBackendRecordingRef, startNoteRecordingRef]);
 
   useEffect(function () {
     if (!autoStartOnCalendar || !comingUp || !comingUp.length) return undefined;
@@ -653,7 +343,7 @@ export function MeetingsScreen() {
     return function () {
       window.clearInterval(id);
     };
-  }, [comingUp, autoStartOnCalendar]);
+  }, [comingUp, autoStartOnCalendar, autoStartOnCalendarRef]);
 
   function rowStorageKey(n: any, dateCtx: any, dayJp?: any) {
     const L = mnl();
@@ -736,7 +426,7 @@ export function MeetingsScreen() {
       tag: null,
       time: null,
     });
-    void runRuntimeActionM('brief.get', briefPayloadWithUserTz({ span:'today', recipe: recipe.label, source:'meetings_local_recipe' }), { silentError:true });
+    void runRuntimeAction('brief.get', briefPayloadWithUserTz({ span:'today', recipe: recipe.label, source:'meetings_local_recipe' }), { silentError:true });
     toastM('\u30ed\u30fc\u30ab\u30eb\u30c6\u30f3\u30d7\u3092\u958b\u304d\u307e\u3057\u305f\uff08\u30dc\u30c3\u30c8\u672a\u4f7f\u7528\uff09', 'success');
   }, []);
 
@@ -767,119 +457,7 @@ export function MeetingsScreen() {
     setGranolaTodos(null);
     setCmdBarMin(false);
     setListTick(function (x) { return x + 1; });
-  }, [granola, finalizeBackendMeeting]);
-
-  const startBackendRecording = useCallback(async function (captureSystem: boolean) {
-    const g = granolaRef.current;
-    if (!g || !g.backendMeetingId || !isNativeDesktop()) return false;
-    if (backendRecActiveRef.current) return true;
-    if (g.storageKey) {
-      await linkClientNoteToStorage(g.backendMeetingId, g.storageKey);
-    }
-    var br = await runRuntimeActionM('meetings.mic.start', {
-      meeting_id: g.backendMeetingId,
-      live_stt: true,
-      capture_system: captureSystem,
-    });
-    if (br && br.ok) {
-      backendRecStartedAtRef.current = Date.now();
-      setBackendRecActive(true);
-      setGranolaPane('minutes');
-      var statusRes = await runRuntimeActionM('meetings.audio.status', {}, { silentError: true });
-      var sysOn = !!(statusRes && statusRes.ok && statusRes.data && statusRes.data.system_audio_running);
-      setSystemAudioRunning(sysOn);
-      if (captureSystem && sysOn) {
-        toastM('録音を開始しました（マイク + 相手の声）', 'success');
-      } else if (captureSystem && !sysOn) {
-        toastM('マイク録音を開始しました（相手の声は画面収録の許可が必要です）', 'info');
-      } else {
-        toastM('マイクのみで録音を開始しました', 'success');
-      }
-      return true;
-    }
-    toastM((br && br.error) || 'バックエンド録音の開始に失敗しました', 'error');
-    return false;
-  }, [linkClientNoteToStorage]);
-
-  const startNoteRecording = useCallback(async function () {
-    if (!granola || !granola.storageKey) return;
-    if (granola.backendMeetingId && isNativeDesktop()) {
-      if (backendRecActive) return;
-      if (screenCaptureGranted === false) {
-        toastM('相手の声を録音するには画面収録の許可が必要です', 'warn');
-        return;
-      }
-      if (screenCaptureGranted !== true) {
-        const granted = await refreshScreenCapturePermission();
-        if (!granted) {
-          toastM('相手の声を録音するには画面収録の許可が必要です', 'warn');
-          return;
-        }
-      }
-      await startBackendRecording(true);
-      return;
-    }
-    var M = MeetingMediaRecording;
-    if (M && M.isBusyRecordingOrStarting && M.isBusyRecordingOrStarting()) return;
-    if (!M || typeof M.start !== 'function') {
-      toastM('録音モジュールが読み込まれていません', 'error');
-      return;
-    }
-    var r = await M.start({
-      storageKey: granola.storageKey,
-      title: granola.title,
-      onToast: toastM,
-    });
-    if (r && r.ok) {
-      setGranolaPane('minutes');
-    }
-  }, [granola, backendRecActive, screenCaptureGranted, startBackendRecording, refreshScreenCapturePermission]);
-
-  const startMicOnlyRecording = useCallback(async function () {
-    if (!granola || !granola.backendMeetingId || !isNativeDesktop()) return;
-    if (backendRecActive) return;
-    await startBackendRecording(false);
-  }, [granola, backendRecActive, startBackendRecording]);
-
-  const openMeetingScreenCaptureSettings = useCallback(async function () {
-    setPermissionActionBusy(true);
-    try {
-      await runRuntimeActionM(
-        'permissions.manage',
-        { target: 'screen_capture', source: 'meetings.permission_banner' },
-        { silentError: true },
-      );
-    } finally {
-      setPermissionActionBusy(false);
-    }
-  }, []);
-
-  const requestMeetingScreenCaptureAccess = useCallback(async function () {
-    setPermissionActionBusy(true);
-    try {
-      await runRuntimeActionM(
-        'permissions.manage',
-        { target: 'screen_capture_request', source: 'meetings.permission_banner' },
-        { silentError: true },
-      );
-      await refreshScreenCapturePermission();
-    } finally {
-      setPermissionActionBusy(false);
-    }
-  }, [refreshScreenCapturePermission]);
-
-  const stopNoteRecording = useCallback(async function () {
-    if (granola && granola.backendMeetingId && isNativeDesktop() && backendRecActive) {
-      await finalizeBackendMeeting();
-      return;
-    }
-    var M = MeetingMediaRecording;
-    if (M && typeof M.stop === 'function') {
-      M.stop();
-    } else {
-      toastM('録音モジュールが読み込まれていません', 'error');
-    }
-  }, [granola, backendRecActive, finalizeBackendMeeting]);
+  }, [granola, finalizeBackendMeeting, setBackendRecActive]);
 
   const granolaKey = granola && granola.key;
   useEffect(function () {
@@ -890,7 +468,7 @@ export function MeetingsScreen() {
       const saved = L && L.loadNote ? L.loadNote(granola.storageKey) : null;
       var mid = granola.backendMeetingId || (saved && saved.backendMeetingId) || null;
       if (!mid) {
-        const r = await runRuntimeActionM(
+        const r = await runRuntimeAction(
           'meetings.resolve_by_storage_key',
           { storage_key: granola.storageKey },
           { silentError: true },
@@ -911,7 +489,7 @@ export function MeetingsScreen() {
         if (L && L.linkBackendMeetingId) {
           L.linkBackendMeetingId(sk, mid);
         }
-        await runRuntimeActionM(
+        await runRuntimeAction(
           'meetings.link_client_note',
           { meeting_id: mid, storage_key: sk },
           { silentError: true },
@@ -919,7 +497,7 @@ export function MeetingsScreen() {
       }
     })();
     return function () { cancelled = true; };
-  }, [granola && granola.storageKey]);
+  }, [granola]);
 
   useEffect(() => {
     if (!granola || !granola.storageKey) return;
@@ -955,7 +533,7 @@ export function MeetingsScreen() {
       });
     }, 450);
     return function () { clearTimeout(t); };
-  }, [granola, granolaStorageKey, granolaDraft, granola && granola.backendMeetingId]);
+  }, [granola, granolaStorageKey, granolaDraft]);
 
   useEffect(() => {
     if (!granola) return;
@@ -1012,7 +590,7 @@ export function MeetingsScreen() {
     if (!granola || !granola.storageKey) return;
     setMtgEnhanceBusy(true);
     try {
-      var res = await runRuntimeActionM('meetings.enhance', {
+      var res = await runRuntimeAction('meetings.enhance', {
         storageKey: granola.storageKey,
         title: granola.title || '',
         notes: granolaDraft.body || '',
@@ -1044,7 +622,7 @@ export function MeetingsScreen() {
       granolaDraft.transcript && granolaDraft.transcript.slice(0, 1200),
       granolaDraft.body && granolaDraft.body.slice(0, 400),
     ].filter(Boolean).join('\n---\n').slice(0, 4000);
-    void runRuntimeActionM('memory.ingest', {
+    void runRuntimeAction('memory.ingest', {
       title: title + ' · meeting',
       snippet: snippet || '(empty)',
       source: 'meeting',
@@ -1053,6 +631,18 @@ export function MeetingsScreen() {
       kinds: ['note', 'meeting'],
     }, { successMessage: 'Memory に保存しました' });
   }, [granola, granolaDraft]);
+
+  const injectRecipeIntoMemoLocal = useCallback(function (recipeLabel: any) {
+    var block = RECIPE_LOCAL_BODIES[recipeLabel];
+    if (!granola || !block) return;
+    setGranolaPane('memo');
+    setGranolaDraft(function (d: any) {
+      var sep = (d.body || '').trim() ? '\n\n' : '';
+      return { ...d, body: (d.body || '') + sep + block };
+    });
+    toastM('テンプレートをメモに挿入しました', 'success');
+    setPostRecWaveMenuOpen(false);
+  }, [granola]);
 
   const runMeetingRecipe = useCallback(async function (recipeLabel: any, target?: 'memo' | 'summary') {
     const where = target || 'memo';
@@ -1068,7 +658,7 @@ export function MeetingsScreen() {
       payload.transcript = granolaDraft.transcript || '';
       payload.notes = granolaDraft.body || '';
     }
-    const res = await runRuntimeActionM('meetings.recipe.run', payload, { silentError: true });
+    const res = await runRuntimeAction('meetings.recipe.run', payload, { silentError: true });
     if (res && res.ok && res.data && res.data.text && String(res.data.text).trim()) {
       const text = String(res.data.text);
       setGranolaDraft(function (d: any) {
@@ -1082,19 +672,7 @@ export function MeetingsScreen() {
       return;
     }
     injectRecipeIntoMemoLocal(recipeLabel);
-  }, [granola, granolaDraft]);
-
-  function injectRecipeIntoMemoLocal(recipeLabel: any) {
-    var block = RECIPE_LOCAL_BODIES[recipeLabel];
-    if (!granola || !block) return;
-    setGranolaPane('memo');
-    setGranolaDraft(function (d: any) {
-      var sep = (d.body || '').trim() ? '\n\n' : '';
-      return { ...d, body: (d.body || '') + sep + block };
-    });
-    toastM('テンプレートをメモに挿入しました', 'success');
-    setPostRecWaveMenuOpen(false);
-  }
+  }, [granola, granolaDraft, injectRecipeIntoMemoLocal]);
 
   const buildMtgShareMarkdown = useCallback(function () {
     if (!granola) return '';
@@ -1121,7 +699,7 @@ export function MeetingsScreen() {
     setMtgLinkBusy(true);
     try {
       var mode = mtgLinkAccess === 'anyone' ? 'public' : 'private';
-      var res = await runRuntimeActionM('app.create_share_link', {
+      var res = await runRuntimeAction('app.create_share_link', {
         resourceType: 'meeting_note',
         storageKey: granola.storageKey,
         title: granola.title,
@@ -1162,7 +740,7 @@ export function MeetingsScreen() {
   const mtgDraftEmail = useCallback(function () {
     if (!granola) return;
     var blob = [granolaDraft.body, granolaDraft.transcript, granolaDraft.summary, granolaDraft.minutes].filter(Boolean).join('\n\n');
-    void runRuntimeActionM('shogun.draft_reply', {
+    void runRuntimeAction('shogun.draft_reply', {
       format: 'email',
       sourceText: blob,
       meetingTitle: granola.title,
@@ -1240,76 +818,6 @@ export function MeetingsScreen() {
     }
   }, [listLocalTodos, runMeetingRecipe]);
 
-  const [granolaPillMenu, setGranolaPillMenu] = useState<any>(null); // { kind: 'date'|'attendees'|'folder', anchor: {left, top, width} }
-  const [granolaAttendees, setGranolaAttendees] = useState<string[]>(['Toru Tano']);
-  const [granolaAttendeesQuery, setGranolaAttendeesQuery] = useState('');
-  const [granolaFolder, setGranolaFolder] = useState('My notes');
-  const [granolaFolderQuery, setGranolaFolderQuery] = useState('');
-  const [granolaFolderList, setGranolaFolderList] = useState<string[]>(['My notes', 'Toru team']);
-
-  const openGranolaPillMenu = useCallback(function (kind: any, evt: any) {
-    try {
-      var el = evt && evt.currentTarget;
-      if (!el) { setGranolaPillMenu({ kind: kind, anchor: { left: 80, top: 80, width: 260 } }); return; }
-      var r = el.getBoundingClientRect();
-      setGranolaPillMenu({
-        kind: kind,
-        anchor: { left: r.left, top: r.bottom + 6, width: Math.max(260, Math.round(r.width)) },
-      });
-    } catch (_e) {
-      setGranolaPillMenu({ kind: kind, anchor: { left: 80, top: 80, width: 260 } });
-    }
-  }, []);
-  const closeGranolaPillMenu = useCallback(function () { setGranolaPillMenu(null); }, []);
-
-  const addFolderTag = useCallback(function (ev: any) {
-    openGranolaPillMenu('folder', ev);
-  }, [openGranolaPillMenu]);
-
-  const addCalendarEvent = useCallback(function () {
-    toastM('\u30ab\u30ec\u30f3\u30c0\u30fc\u30a4\u30d9\u30f3\u30c8\u306e\u30ea\u30f3\u30af\u306f\u8a2d\u5b9a\u304b\u3089\u6709\u52b9\u5316\u3067\u304d\u307e\u3059\uff08\u30e2\u30c3\u30af\uff09', 'info');
-  }, []);
-
-  const showGranolaDateInfo = useCallback(function (ev: any) {
-    openGranolaPillMenu('date', ev);
-  }, [openGranolaPillMenu]);
-
-  const showGranolaAuthorInfo = useCallback(function (ev: any) {
-    openGranolaPillMenu('attendees', ev);
-  }, [openGranolaPillMenu]);
-
-  const granolaDateFull = useMemo(function () {
-    try {
-      var d = new Date();
-      var en = d.toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric' });
-      var jp = d.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' });
-      var t = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-      return { en: en, jp: jp, t: t };
-    } catch (_e) {
-      return { en: 'Today', jp: '\u672c\u65e5', t: '--:--' };
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: re-eval when menu opens so "today" stays fresh
-  }, [granolaPillMenu]);
-  const toggleAttendee = useCallback(function (name: any) {
-    setGranolaAttendees(function (list) {
-      return list.indexOf(name) >= 0 ? list.filter(function (n) { return n !== name; }) : list.concat([name]);
-    });
-  }, []);
-  const pickFolder = useCallback(function (name: any) {
-    setGranolaFolder(name);
-    toastM('Folder: ' + name, 'success');
-    setGranolaPillMenu(null);
-  }, []);
-  const addNewFolder = useCallback(function () {
-    var base = (granolaFolderQuery || '').trim();
-    if (!base) { toastM('\u65b0\u3057\u3044\u30d5\u30a9\u30eb\u30c0\u540d\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044', 'info'); return; }
-    setGranolaFolderList(function (list) { return list.indexOf(base) >= 0 ? list : list.concat([base]); });
-    setGranolaFolder(base);
-    toastM('\u30d5\u30a9\u30eb\u30c0\u3092\u4f5c\u6210\u3057\u307e\u3057\u305f: ' + base, 'success');
-    setGranolaFolderQuery('');
-    setGranolaPillMenu(null);
-  }, [granolaFolderQuery]);
-
   const submitMeetingsPrompt = useCallback(function (e: any) {
     if (e) e.preventDefault();
     var raw = (meetingsPrompt || '').trim();
@@ -1322,11 +830,11 @@ export function MeetingsScreen() {
       }
       raw = rest;
     }
-    runRuntimeActionM('memory.search', { query: raw, kinds: ['audio', 'note'], limit: 30 }, { successMessage: '\u691c\u7d22\u3057\u307e\u3057\u305f' });
+    runRuntimeAction('memory.search', { query: raw, kinds: ['audio', 'note'], limit: 30 }, { successMessage: '\u691c\u7d22\u3057\u307e\u3057\u305f' });
   }, [meetingsPrompt]);
 
   const listRecentTodosFromDock = useCallback(function () {
-    runRuntimeActionM('memory.search', { query: 'TODO [ ]', kinds: ['note'], limit: 25 }, { successMessage: 'TODO\u3092\u691c\u7d22\u3057\u307e\u3057\u305f' });
+    runRuntimeAction('memory.search', { query: 'TODO [ ]', kinds: ['note'], limit: 25 }, { successMessage: 'TODO\u3092\u691c\u7d22\u3057\u307e\u3057\u305f' });
   }, []);
 
   const runDockSlashItem = useCallback(function (item: any) {
@@ -1365,6 +873,77 @@ export function MeetingsScreen() {
     window.addEventListener('keydown', onKey);
     return function () { window.removeEventListener('keydown', onKey); };
   }, [showDockRecipeOverlay]);
+
+  const granolaOverlayValue = useMemo((): GranolaOverlayContextValue => ({
+    granola,
+    closeGranola,
+    granolaPane,
+    setGranolaPane,
+    granolaDraft,
+    setGranolaDraft,
+    granolaMenuOpen,
+    setGranolaMenuOpen,
+    granolaOutline,
+    setGranolaOutline,
+    granolaAsk,
+    setGranolaAsk,
+    granolaTodos,
+    setGranolaTodos,
+    granolaEnhanceMenuOpen,
+    setGranolaEnhanceMenuOpen,
+    ...granolaPillUi,
+    cmdBarMin,
+    setCmdBarMin,
+    postRecBarActive,
+    postRecWaveMenuOpen,
+    setPostRecWaveMenuOpen,
+    mtgTopShareOpen,
+    setMtgTopShareOpen,
+    mtgEnhanceBusy,
+    mtgLinkAccess,
+    setMtgLinkAccess,
+    mtgShareSearch,
+    setMtgShareSearch,
+    mtgShareOwner,
+    mtgLinkBusy,
+    mtgLinkAccessMenuOpen,
+    setMtgLinkAccessMenuOpen,
+    audioRecSession,
+    applyStubTranscript,
+    refreshSummary,
+    refreshMinutes,
+    runMtgEnhance,
+    ingestNoteToMemory,
+    copyMtgShareLink,
+    mtgDraftEmail,
+    mtgCopyAllText,
+    moveGranolaToTrash,
+    runLocalAsk,
+    listLocalTodos,
+    startNoteRecording,
+    stopNoteRecording,
+    showPermissionBanner,
+    recordingWithoutRemote: !!(backendRecActive && !systemAudioRunning && screenCaptureGranted === false),
+    contextTimelineItems,
+    contextTimelineLoading,
+    permissionActionBusy,
+    onOpenScreenCaptureSettings: openMeetingScreenCaptureSettings,
+    onRequestScreenCaptureAccess: requestMeetingScreenCaptureAccess,
+    onMicOnlyRecording: startMicOnlyRecording,
+    injectRecipeIntoMemo,
+    runPostRecSlashItem,
+    runRuntimeAction,
+  }), [
+    granola, closeGranola, granolaPane, granolaDraft, granolaMenuOpen, granolaOutline, granolaAsk,
+    granolaTodos, granolaEnhanceMenuOpen, granolaPillUi, cmdBarMin, postRecBarActive, postRecWaveMenuOpen,
+    mtgTopShareOpen, mtgEnhanceBusy, mtgLinkAccess, mtgShareSearch, mtgShareOwner, mtgLinkBusy,
+    mtgLinkAccessMenuOpen, audioRecSession, applyStubTranscript, refreshSummary, refreshMinutes,
+    runMtgEnhance, ingestNoteToMemory, copyMtgShareLink, mtgDraftEmail, mtgCopyAllText, moveGranolaToTrash,
+    runLocalAsk, listLocalTodos, startNoteRecording, stopNoteRecording, showPermissionBanner,
+    backendRecActive, systemAudioRunning, screenCaptureGranted, contextTimelineItems, contextTimelineLoading,
+    permissionActionBusy, openMeetingScreenCaptureSettings, requestMeetingScreenCaptureAccess,
+    startMicOnlyRecording, injectRecipeIntoMemo, runPostRecSlashItem,
+  ]);
 
   return (
     <div className="screen-meetings-root">
@@ -1475,7 +1054,7 @@ export function MeetingsScreen() {
           type="button"
           className="btn btn-sm btn-secondary"
           onClick={async () => {
-            const pick = await runRuntimeActionM('meetings.import.pick', {}, { silentError: true });
+            const pick = await runRuntimeAction('meetings.import.pick', {}, { silentError: true });
             const paths = pick && pick.ok && Array.isArray(pick.data?.paths) ? pick.data.paths : [];
             if (!paths.length) return;
             (window as any).SHOGUN_RUNTIME?.pushToast?.(
@@ -1485,7 +1064,7 @@ export function MeetingsScreen() {
             let succeeded = 0;
             let failed = 0;
             for (const p of paths) {
-              const r = await runRuntimeActionM('meetings.import.file', { path: p }, { silentError: true });
+              const r = await runRuntimeAction('meetings.import.file', { path: p }, { silentError: true });
               if (r && r.ok) succeeded += 1;
               else {
                 failed += 1;
@@ -1544,7 +1123,7 @@ export function MeetingsScreen() {
                   style={{padding:14, display:'flex', gap:14, alignItems:'center', cursor:'pointer'}}
                   onClick={function () {
                     setMeetingDetail({ meeting: m, segments: null, loading: true, filter: '' });
-                    runRuntimeActionM(
+                    runRuntimeAction(
                       'meetings.transcript.get',
                       { meeting_id: m.id },
                       { silentError: true },
@@ -1579,7 +1158,7 @@ export function MeetingsScreen() {
                         ? window.confirm('Remove "' + (m.title || 'this recording') + '" and its transcript?')
                         : true;
                       if (!ok) return;
-                      runRuntimeActionM('meetings.purge', { meeting_id: m.id }, { silentError: true }).then(function (r) {
+                      runRuntimeAction('meetings.purge', { meeting_id: m.id }, { silentError: true }).then(function (r) {
                         if (r && r.ok) {
                           (window as any).SHOGUN_RUNTIME?.pushToast?.('Recording removed', 'success');
                           window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
@@ -1691,86 +1270,12 @@ export function MeetingsScreen() {
         allowServerMemoryAssembly={allowServerMemoryAssembly}
         submitMeetingsPrompt={submitMeetingsPrompt}
         runDockSlashItem={runDockSlashItem}
-        runRuntimeActionM={runRuntimeActionM}
+        runRuntimeAction={runRuntimeAction}
       />
       )}
-      {/* Granola — scoped to main column only (sidebar + topbar stay visible) */}
-      <GranolaOverlay
-        granola={granola}
-        closeGranola={closeGranola}
-        granolaPane={granolaPane}
-        setGranolaPane={setGranolaPane}
-        granolaDraft={granolaDraft}
-        setGranolaDraft={setGranolaDraft}
-        granolaMenuOpen={granolaMenuOpen}
-        setGranolaMenuOpen={setGranolaMenuOpen}
-        granolaOutline={granolaOutline}
-        setGranolaOutline={setGranolaOutline}
-        granolaAsk={granolaAsk}
-        setGranolaAsk={setGranolaAsk}
-        granolaTodos={granolaTodos}
-        setGranolaTodos={setGranolaTodos}
-        granolaEnhanceMenuOpen={granolaEnhanceMenuOpen}
-        setGranolaEnhanceMenuOpen={setGranolaEnhanceMenuOpen}
-        granolaAttendees={granolaAttendees}
-        granolaAttendeesQuery={granolaAttendeesQuery}
-        setGranolaAttendeesQuery={setGranolaAttendeesQuery}
-        granolaFolder={granolaFolder}
-        granolaFolderQuery={granolaFolderQuery}
-        setGranolaFolderQuery={setGranolaFolderQuery}
-        granolaFolderList={granolaFolderList}
-        granolaPillMenu={granolaPillMenu}
-        cmdBarMin={cmdBarMin}
-        setCmdBarMin={setCmdBarMin}
-        postRecBarActive={postRecBarActive}
-        postRecWaveMenuOpen={postRecWaveMenuOpen}
-        setPostRecWaveMenuOpen={setPostRecWaveMenuOpen}
-        mtgTopShareOpen={mtgTopShareOpen}
-        setMtgTopShareOpen={setMtgTopShareOpen}
-        mtgEnhanceBusy={mtgEnhanceBusy}
-        mtgLinkAccess={mtgLinkAccess}
-        setMtgLinkAccess={setMtgLinkAccess}
-        mtgShareSearch={mtgShareSearch}
-        setMtgShareSearch={setMtgShareSearch}
-        mtgShareOwner={mtgShareOwner}
-        mtgLinkBusy={mtgLinkBusy}
-        mtgLinkAccessMenuOpen={mtgLinkAccessMenuOpen}
-        setMtgLinkAccessMenuOpen={setMtgLinkAccessMenuOpen}
-        audioRecSession={audioRecSession}
-        closeGranolaPillMenu={closeGranolaPillMenu}
-        addFolderTag={addFolderTag}
-        addCalendarEvent={addCalendarEvent}
-        showGranolaDateInfo={showGranolaDateInfo}
-        showGranolaAuthorInfo={showGranolaAuthorInfo}
-        granolaDateFull={granolaDateFull}
-        toggleAttendee={toggleAttendee}
-        pickFolder={pickFolder}
-        addNewFolder={addNewFolder}
-        applyStubTranscript={applyStubTranscript}
-        refreshSummary={refreshSummary}
-        refreshMinutes={refreshMinutes}
-        runMtgEnhance={runMtgEnhance}
-        ingestNoteToMemory={ingestNoteToMemory}
-        copyMtgShareLink={copyMtgShareLink}
-        mtgDraftEmail={mtgDraftEmail}
-        mtgCopyAllText={mtgCopyAllText}
-        moveGranolaToTrash={moveGranolaToTrash}
-        runLocalAsk={runLocalAsk}
-        listLocalTodos={listLocalTodos}
-        startNoteRecording={startNoteRecording}
-        stopNoteRecording={stopNoteRecording}
-        showPermissionBanner={showPermissionBanner}
-        recordingWithoutRemote={!!(backendRecActive && !systemAudioRunning && screenCaptureGranted === false)}
-        contextTimelineItems={contextTimelineItems}
-        contextTimelineLoading={contextTimelineLoading}
-        permissionActionBusy={permissionActionBusy}
-        onOpenScreenCaptureSettings={openMeetingScreenCaptureSettings}
-        onRequestScreenCaptureAccess={requestMeetingScreenCaptureAccess}
-        onMicOnlyRecording={startMicOnlyRecording}
-        injectRecipeIntoMemo={injectRecipeIntoMemo}
-        runPostRecSlashItem={runPostRecSlashItem}
-        runRuntimeActionM={runRuntimeActionM}
-      />
+      <GranolaOverlayProvider value={granolaOverlayValue}>
+        <GranolaOverlay />
+      </GranolaOverlayProvider>
 
 
       {/* Scoped styles */}

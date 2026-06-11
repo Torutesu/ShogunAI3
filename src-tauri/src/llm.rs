@@ -4,6 +4,21 @@ use crate::{context_assembly, secrets, settings_store};
 use serde_json::{json, Value};
 use url::Url;
 
+/// Extract the first JSON object from LLM text (markdown fences or prose wrappers).
+pub fn extract_json_object_from_llm_text(raw: &str) -> Result<Value, String> {
+  let t = raw.trim();
+  let json_part = if let Some(i) = t.find('{') {
+    if let Some(j) = t.rfind('}') {
+      &t[i..=j]
+    } else {
+      t
+    }
+  } else {
+    t
+  };
+  serde_json::from_str(json_part).map_err(|e| format!("Invalid JSON from model: {e}"))
+}
+
 fn now_ms() -> u64 {
   std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)

@@ -1,66 +1,93 @@
-import React, { useState } from 'react';
 import { Pane } from '../components/Pane';
 import { Row } from '../components/Row';
 import { Toggle } from '../components/Toggle';
-import { useRuntimeActions } from '../lib/hooks';
-import { SettingsHydrationContext } from '../types';
+import { useSettingsSection } from '../lib/hooks';
+
+export interface MeetingsSettingsState extends Record<string, unknown> {
+  notifScope: string;
+  meetingLang: string;
+  remindersOn: boolean;
+  reminderMins: string;
+  excludeNoGuests: boolean;
+  appDetectAlerts: boolean;
+  autoStartOnCalendar: boolean;
+  autoStartOnVideoDetect: boolean;
+  autoStartMicOnVideoDetect: boolean;
+  autoIngestToMemory: boolean;
+  liveSttStreaming: boolean;
+  inactivityMins: string;
+}
+
+const MEETINGS_DEFAULTS: MeetingsSettingsState = {
+  notifScope: 'confirmed_only',
+  meetingLang: 'ja',
+  remindersOn: true,
+  reminderMins: '5',
+  excludeNoGuests: true,
+  appDetectAlerts: true,
+  autoStartOnCalendar: false,
+  autoStartOnVideoDetect: true,
+  autoStartMicOnVideoDetect: true,
+  autoIngestToMemory: true,
+  liveSttStreaming: true,
+  inactivityMins: '15',
+};
+
+function meetingsFromSections(sections: Record<string, unknown>): MeetingsSettingsState | null {
+  const m = sections.meetings;
+  if (!m || typeof m !== 'object') return null;
+  const row = m as Record<string, unknown>;
+  return {
+    notifScope: row.notifScope != null ? String(row.notifScope) : MEETINGS_DEFAULTS.notifScope,
+    meetingLang: row.meetingLang != null ? String(row.meetingLang) : MEETINGS_DEFAULTS.meetingLang,
+    remindersOn: typeof row.remindersOn === 'boolean' ? row.remindersOn : MEETINGS_DEFAULTS.remindersOn,
+    reminderMins: row.reminderMins != null ? String(row.reminderMins) : MEETINGS_DEFAULTS.reminderMins,
+    excludeNoGuests: typeof row.excludeNoGuests === 'boolean' ? row.excludeNoGuests : MEETINGS_DEFAULTS.excludeNoGuests,
+    appDetectAlerts: typeof row.appDetectAlerts === 'boolean' ? row.appDetectAlerts : MEETINGS_DEFAULTS.appDetectAlerts,
+    autoStartOnCalendar: typeof row.autoStartOnCalendar === 'boolean'
+      ? row.autoStartOnCalendar
+      : (typeof row.autoRecord === 'boolean' ? row.autoRecord : MEETINGS_DEFAULTS.autoStartOnCalendar),
+    autoStartOnVideoDetect: typeof row.autoStartOnVideoDetect === 'boolean'
+      ? row.autoStartOnVideoDetect
+      : MEETINGS_DEFAULTS.autoStartOnVideoDetect,
+    autoStartMicOnVideoDetect: typeof row.autoStartMicOnVideoDetect === 'boolean'
+      ? row.autoStartMicOnVideoDetect
+      : MEETINGS_DEFAULTS.autoStartMicOnVideoDetect,
+    autoIngestToMemory: typeof row.autoIngestToMemory === 'boolean'
+      ? row.autoIngestToMemory
+      : MEETINGS_DEFAULTS.autoIngestToMemory,
+    liveSttStreaming: typeof row.liveSttStreaming === 'boolean'
+      ? row.liveSttStreaming
+      : MEETINGS_DEFAULTS.liveSttStreaming,
+    inactivityMins: row.inactivityMins != null ? String(row.inactivityMins) : MEETINGS_DEFAULTS.inactivityMins,
+  };
+}
 
 export function PaneMeetings() {
-  const { run } = useRuntimeActions();
-  const { sections } = React.useContext(SettingsHydrationContext);
-  const [notifScope, setNotifScope] = useState('confirmed_only');
-  const [meetingLang, setMeetingLang] = useState('ja');
-  const [remindersOn, setRemindersOn] = useState(true);
-  const [reminderMins, setReminderMins] = useState('5');
-  const [excludeNoGuests, setExcludeNoGuests] = useState(true);
-  const [appDetectAlerts, setAppDetectAlerts] = useState(true);
-  const [autoStartOnCalendar, setAutoStartOnCalendar] = useState(false);
-  const [autoStartOnVideoDetect, setAutoStartOnVideoDetect] = useState(true);
-  const [autoStartMicOnVideoDetect, setAutoStartMicOnVideoDetect] = useState(true);
-  const [autoIngestToMemory, setAutoIngestToMemory] = useState(true);
-  const [liveSttStreaming, setLiveSttStreaming] = useState(true);
-  const [inactivityMins, setInactivityMins] = useState('15');
-  const persist = React.useCallback(
-    (patch: any) =>
-      run(
-        'settings.save',
-        {
-          section: 'meetings',
-          notifScope,
-          meetingLang,
-          remindersOn,
-          reminderMins,
-          excludeNoGuests,
-          appDetectAlerts,
-          autoStartOnCalendar,
-          autoStartOnVideoDetect,
-          autoStartMicOnVideoDetect,
-          autoIngestToMemory,
-          liveSttStreaming,
-          inactivityMins,
-          ...patch,
-        },
-        { silentError: true },
-      ),
-    [run, notifScope, meetingLang, remindersOn, reminderMins, excludeNoGuests, appDetectAlerts, autoStartOnCalendar, autoStartOnVideoDetect, autoStartMicOnVideoDetect, autoIngestToMemory, liveSttStreaming, inactivityMins],
+  const [state, , save] = useSettingsSection(
+    {
+      section: 'meetings',
+      fromSections: meetingsFromSections,
+      toPayload: (s) => s,
+    },
+    MEETINGS_DEFAULTS,
   );
-  React.useEffect(() => {
-    const m = sections.meetings;
-    if (!m || typeof m !== 'object') return;
-    if (m.notifScope != null) setNotifScope(String(m.notifScope));
-    if (m.meetingLang != null) setMeetingLang(String(m.meetingLang));
-    if (typeof m.remindersOn === 'boolean') setRemindersOn(m.remindersOn);
-    if (m.reminderMins != null) setReminderMins(String(m.reminderMins));
-    if (typeof m.excludeNoGuests === 'boolean') setExcludeNoGuests(m.excludeNoGuests);
-    if (typeof m.appDetectAlerts === 'boolean') setAppDetectAlerts(m.appDetectAlerts);
-    if (typeof m.autoStartOnCalendar === 'boolean') setAutoStartOnCalendar(m.autoStartOnCalendar);
-    else if (typeof m.autoRecord === 'boolean') setAutoStartOnCalendar(m.autoRecord);
-    if (typeof m.autoStartOnVideoDetect === 'boolean') setAutoStartOnVideoDetect(m.autoStartOnVideoDetect);
-    if (typeof m.autoStartMicOnVideoDetect === 'boolean') setAutoStartMicOnVideoDetect(m.autoStartMicOnVideoDetect);
-    if (typeof m.autoIngestToMemory === 'boolean') setAutoIngestToMemory(m.autoIngestToMemory);
-    if (typeof m.liveSttStreaming === 'boolean') setLiveSttStreaming(m.liveSttStreaming);
-    if (m.inactivityMins != null) setInactivityMins(String(m.inactivityMins));
-  }, [sections]);
+
+  const {
+    notifScope,
+    meetingLang,
+    remindersOn,
+    reminderMins,
+    excludeNoGuests,
+    appDetectAlerts,
+    autoStartOnCalendar,
+    autoStartOnVideoDetect,
+    autoStartMicOnVideoDetect,
+    autoIngestToMemory,
+    liveSttStreaming,
+    inactivityMins,
+  } = state;
+
   return (
     <Pane title="Meetings" jp="会議">
       <div className="s-card">
@@ -68,11 +95,7 @@ export function PaneMeetings() {
           <select
             className="s-select"
             value={notifScope}
-            onChange={(e) => {
-              const v = e.target.value;
-              setNotifScope(v);
-              void persist({ notifScope: v });
-            }}
+            onChange={(e) => void save({ notifScope: e.target.value })}
           >
             <option value="confirmed_only">Confirmed Only</option>
             <option value="all">All meetings</option>
@@ -82,11 +105,7 @@ export function PaneMeetings() {
           <select
             className="s-select"
             value={meetingLang}
-            onChange={(e) => {
-              const v = e.target.value;
-              setMeetingLang(v);
-              void persist({ meetingLang: v });
-            }}
+            onChange={(e) => void save({ meetingLang: e.target.value })}
           >
             <option value="ja">Japanese</option>
             <option value="en">English</option>
@@ -96,22 +115,14 @@ export function PaneMeetings() {
         <Row title="Meeting Reminders" desc="Show notifications before meetings start">
           <Toggle
             on={remindersOn}
-            onClick={() => {
-              const next = !remindersOn;
-              setRemindersOn(next);
-              void persist({ remindersOn: next });
-            }}
+            onClick={() => void save({ remindersOn: !remindersOn })}
           />
         </Row>
         <Row title="Reminder Time" desc="Set the time before a meeting to get a reminder">
           <select
             className="s-select"
             value={reminderMins}
-            onChange={(e) => {
-              const v = e.target.value;
-              setReminderMins(v);
-              void persist({ reminderMins: v });
-            }}
+            onChange={(e) => void save({ reminderMins: e.target.value })}
           >
             <option value="1">1 Minute</option>
             <option value="5">5 Minutes</option>
@@ -121,21 +132,13 @@ export function PaneMeetings() {
         <Row title="Exclude Events Without Guests" desc="Don't show notifications for events without other guests or meeting links">
           <Toggle
             on={excludeNoGuests}
-            onClick={() => {
-              const next = !excludeNoGuests;
-              setExcludeNoGuests(next);
-              void persist({ excludeNoGuests: next });
-            }}
+            onClick={() => void save({ excludeNoGuests: !excludeNoGuests })}
           />
         </Row>
         <Row title="Meeting App Detection Alerts" desc="Show notifications when a meeting app is detected">
           <Toggle
             on={appDetectAlerts}
-            onClick={() => {
-              const next = !appDetectAlerts;
-              setAppDetectAlerts(next);
-              void persist({ appDetectAlerts: next });
-            }}
+            onClick={() => void save({ appDetectAlerts: !appDetectAlerts })}
           />
         </Row>
         <Row
@@ -144,62 +147,38 @@ export function PaneMeetings() {
         >
           <Toggle
             on={autoStartOnCalendar}
-            onClick={() => {
-              const next = !autoStartOnCalendar;
-              setAutoStartOnCalendar(next);
-              void persist({ autoStartOnCalendar: next });
-            }}
+            onClick={() => void save({ autoStartOnCalendar: !autoStartOnCalendar })}
           />
         </Row>
         <Row title="Auto-Start Meeting on Video Detect" desc="When Meet/Zoom is detected from screen capture, create a live backend meeting and open the note">
           <Toggle
             on={autoStartOnVideoDetect}
-            onClick={() => {
-              const next = !autoStartOnVideoDetect;
-              setAutoStartOnVideoDetect(next);
-              void persist({ autoStartOnVideoDetect: next });
-            }}
+            onClick={() => void save({ autoStartOnVideoDetect: !autoStartOnVideoDetect })}
           />
         </Row>
         <Row title="Auto-Start Mic + System Audio" desc="When a video meeting is auto-detected, start microphone and remote audio capture (requires Deepgram key)">
           <Toggle
             on={autoStartMicOnVideoDetect}
-            onClick={() => {
-              const next = !autoStartMicOnVideoDetect;
-              setAutoStartMicOnVideoDetect(next);
-              void persist({ autoStartMicOnVideoDetect: next });
-            }}
+            onClick={() => void save({ autoStartMicOnVideoDetect: !autoStartMicOnVideoDetect })}
           />
         </Row>
         <Row title="Auto-Save Meetings to Memory" desc="When a backend meeting ends, upsert transcript and summary into Memory search">
           <Toggle
             on={autoIngestToMemory}
-            onClick={() => {
-              const next = !autoIngestToMemory;
-              setAutoIngestToMemory(next);
-              void persist({ autoIngestToMemory: next });
-            }}
+            onClick={() => void save({ autoIngestToMemory: !autoIngestToMemory })}
           />
         </Row>
         <Row title="Live STT Streaming" desc="Use Deepgram WebSocket for lower-latency transcription (falls back to chunked HTTP when off)">
           <Toggle
             on={liveSttStreaming}
-            onClick={() => {
-              const next = !liveSttStreaming;
-              setLiveSttStreaming(next);
-              void persist({ liveSttStreaming: next });
-            }}
+            onClick={() => void save({ liveSttStreaming: !liveSttStreaming })}
           />
         </Row>
         <Row title="Auto-Stop Inactivity Timeout" desc="Automatically stop transcription after inactivity" last>
           <select
             className="s-select"
             value={inactivityMins}
-            onChange={(e) => {
-              const v = e.target.value;
-              setInactivityMins(v);
-              void persist({ inactivityMins: v });
-            }}
+            onChange={(e) => void save({ inactivityMins: e.target.value })}
           >
             <option value="5">5 Minutes</option>
             <option value="15">15 Minutes</option>

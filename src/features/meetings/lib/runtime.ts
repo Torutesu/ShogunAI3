@@ -63,34 +63,29 @@ export const MEETINGS_DOCK_SLASH_CATALOG: Array<{
   { id: 'followups', label: 'Draft follow-ups', desc: 'Turn threads into a send-ready checklist your team can act on.', jpHint: 'フォロー用チェックリスト', kind: 'recipe', recipeLabel: 'Draft follow-ups', recipeJp: '追跡', accent: 'cyan' },
 ];
 
-export function granolaMiniBtn(surface: string, border: string, color: string): any {
-  return {
-    fontSize: 12,
-    padding: '6px 12px',
-    borderRadius: 999,
-    border: '1px solid ' + border,
-    background: surface,
-    color: color,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  };
+/** Granola overlay CSS class tokens (styles live in app.css). */
+export const GRANOLA_CLASSES = {
+  pill: 'granola-pill',
+  pillBtn: 'granola-pill granola-pill--btn',
+  pillGold: 'granola-pill granola-pill--gold',
+  miniBtn: 'granola-mini-btn',
+  miniBtnGold: 'granola-mini-btn granola-mini-btn--gold',
+  textarea: 'granola-textarea',
+  iconBtn: 'granola-icon-btn',
+} as const;
+
+export function isNativeDesktop(): boolean {
+  return !!(typeof window !== 'undefined' && (window as Window & { __TAURI__?: unknown }).__TAURI__);
 }
 
-export function granolaTextareaStyle(): any {
-  return {
-    width: '100%',
-    minHeight: 'min(48vh, 420px)',
-    marginTop: 14,
-    padding: 0,
-    border: 'none',
-    outline: 'none',
-    resize: 'vertical',
-    background: 'transparent',
-    color: 'var(--text)',
-    fontSize: 16,
-    lineHeight: 1.65,
-    fontFamily: 'inherit',
-  };
+export function formatLiveTranscript(segments: Array<{ speaker?: string; text?: string }>): string {
+  return segments
+    .map((s) => {
+      const sp = s.speaker === 'self' ? 'You' : s.speaker === 'other' ? 'Other' : (s.speaker || 'Speaker');
+      return `${sp}: ${s.text || ''}`;
+    })
+    .filter((line) => line.trim().length > 3)
+    .join('\n');
 }
 
 export function fmtElapsedMs(ms: number): string {
@@ -111,29 +106,3 @@ export function noteHasCompletedRecording(storageKey: string): boolean {
   return /\[録音\s[^\]]+\]/.test(t) || t.indexOf('音声ファイル:') !== -1;
 }
 
-export function granolaPillStyle(bg: string, border: string, color: string): any {
-  return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '6px 12px',
-    borderRadius: 999,
-    border: `1px solid ${border}`,
-    background: bg,
-    fontSize: 12,
-    color,
-  };
-}
-
-export const granolaIconBtn: any = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: 34,
-  height: 34,
-  borderRadius: 999,
-  border: 'none',
-  background: 'transparent',
-  color: 'var(--text-mute)',
-  cursor: 'pointer',
-};

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Icon, IntegrationLogo } from '@/shared/icons';
 import { Pane } from '../components/Pane';
 import { Row } from '../components/Row';
-import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { useRuntimeActions } from '../lib/hooks';
 import { SettingsHydrationContext } from '../types';
 import { AuditLogSection } from './PaneIntegrations/AuditLogSection';
@@ -187,7 +187,7 @@ export function PaneIntegrations() {
   const handleOauthConnect = async (provider: string) => {
     setOauthBusy(provider);
     try {
-      const res = await runRuntimeActionA('oauth.google.start', { provider }, { silentError: true });
+      const res = await runRuntimeAction('oauth.google.start', { provider }, { silentError: true });
       if (!res?.ok) {
         const msg = String(res?.error || '');
         if (msg.startsWith('oauth_credentials_not_configured')) {
@@ -201,8 +201,8 @@ export function PaneIntegrations() {
       const label = provider === 'gmail' ? 'Gmail' : 'Google Calendar';
       (window as any).SHOGUN_RUNTIME?.pushToast?.(`Connected to ${label}`, 'success');
       await Promise.all([
-        runRuntimeActionA('integrations.credentials_status', { provider: 'gmail' }, { silentError: true }),
-        runRuntimeActionA('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true }),
+        runRuntimeAction('integrations.credentials_status', { provider: 'gmail' }, { silentError: true }),
+        runRuntimeAction('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true }),
       ]);
     } finally {
       setOauthBusy(null);

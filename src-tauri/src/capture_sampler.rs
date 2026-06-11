@@ -35,74 +35,6 @@ static LAST_AX_EMPTY_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_AX_NOT_TRUSTED_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_INGEST_ERROR_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
 static LAST_FILTER_DROP_LOG_MS: Mutex<Option<u64>> = Mutex::new(None);
-#[cfg(target_os = "macos")]
-static LAST_VIDEO_EMIT: Mutex<Option<(String, u64)>> = Mutex::new(None);
-
-#[cfg(target_os = "macos")]
-fn detect_video_meeting(text: &str) -> Option<(String, String)> {
-  let lower = text.to_lowercase();
-  if lower.contains("meet.google.com") || lower.contains("meet.google") {
-    let url = extract_meeting_url(&lower, "meet.google");
-    return Some(("google_meet".to_string(), url));
-  }
-  if lower.contains("zoom.us") || lower.contains("zoomgov.com") {
-    let url = extract_meeting_url(&lower, "zoom.us");
-    return Some(("zoom".to_string(), url));
-  }
-  None
-}
-
-#[cfg(target_os = "macos")]
-fn extract_meeting_url(text: &str, needle: &str) -> String {
-  for token in text.split_whitespace() {
-    if token.contains(needle) {
-      let trimmed = token
-        .trim_matches(|c: char| {
-          !c.is_ascii_alphanumeric() && c != ':' && c != '/' && c != '.' && c != '?' && c != '='
-            && c != '-' && c != '_'
-        })
-        .to_string();
-      if !trimmed.is_empty() {
-        return trimmed;
-      }
-    }
-  }
-  if needle.contains("meet.google") {
-    "https://meet.google.com".to_string()
-  } else {
-    "https://zoom.us".to_string()
-  }
-}
-
-#[cfg(target_os = "macos")]
-fn maybe_emit_video_meeting(app: &AppHandle, text: &str, app_label: &str) {
-  let Some((provider, url)) = detect_video_meeting(text) else {
-    return;
-  };
-  let now = now_ms();
-  if let Ok(mut guard) = LAST_VIDEO_EMIT.lock() {
-    if let Some((prev_provider, prev_ms)) = guard.as_ref() {
-      if prev_provider == &provider && now.saturating_sub(*prev_ms) < 300_000 {
-        return;
-      }
-    }
-    *guard = Some((provider.clone(), now));
-  }
-  let meeting_id =
-    crate::meeting_auto::try_start_from_video_detect(app, &provider, &url, app_label);
-  crate::meeting_lifecycle::touch_video_activity(app);
-  let _ = app.emit(
-    "video-meeting-started",
-    json!({
-      "provider": provider,
-      "url": url,
-      "title": app_label,
-      "app": app_label,
-      "meeting_id": meeting_id,
-      "auto_started": meeting_id.is_some(),
-    }),
-  );
-}
 
 fn now_ms() -> u64 {
   SystemTime::now()
@@ -554,7 +486,6 @@ fn maybe_ingest_focus(
 }
 
 fn maybe_ingest_ax(app: &AppHandle, text: &str, app_label: &str, spatial_context_json: Option<String>) {
-  maybe_emit_video_meeting(app, text, app_label);
   let sig = fnv_hash(text);
   if let Ok(last_sig) = LAST_AX_SIG.lock() {
     if *last_sig == Some(sig) {
@@ -659,9 +590,9 @@ fn run_capture_tick(app: &AppHandle) {
         maybe_log_ax_snapshot_empty();
       }
     }
-    if let Some(name) = frontmost {
-      maybe_ingest_focus(Some(app), &name, spatial_for_ingest);
-    }
+      if let Some(name) = frontmost {
+        maybe_ingest_focus(Some(app), &name, spatial_for_ingest.clone());
+      }
   }
   #[cfg(not(target_os = "macos"))]
   {

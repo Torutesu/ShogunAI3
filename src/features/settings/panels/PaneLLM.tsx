@@ -26,25 +26,18 @@ export function PaneLLM() {
   const [memorySemanticDefault, setMemorySemanticDefault] = useState(true);
 
   React.useEffect(() => {
-    const listen = typeof window !== 'undefined' && (window as any).__TAURI__?.event?.listen;
-    if (typeof listen !== 'function') return undefined;
-    let un: any;
-    void (async () => {
-      try {
-        un = await listen('memory-embed-backfill-progress', (ev: any) => {
-          const p = (ev && ev.payload) || {};
-          const index = Number(p.index);
-          const total = Number(p.total);
-          if (Number.isFinite(index) && Number.isFinite(total)) {
-            setBackfillProgress({ index, total });
-          }
-        });
-      } catch (_) {
-        /* ignore */
+    // Native progress is bridged to a DOM CustomEvent by ipc-client.
+    const onProgress = (ev: any) => {
+      const p = (ev && ev.detail) || {};
+      const index = Number(p.index);
+      const total = Number(p.total);
+      if (Number.isFinite(index) && Number.isFinite(total)) {
+        setBackfillProgress({ index, total });
       }
-    })();
+    };
+    window.addEventListener('shogun-memory-embed-backfill-progress', onProgress);
     return () => {
-      if (typeof un === 'function') un();
+      window.removeEventListener('shogun-memory-embed-backfill-progress', onProgress);
     };
   }, []);
 

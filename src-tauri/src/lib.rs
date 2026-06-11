@@ -1,6 +1,8 @@
+mod app_error;
+mod app_events;
 mod auth;
 mod agents;
-mod apple_local;
+mod background_sync;
 mod biometric;
 mod brief;
 mod brief_actions;
@@ -8,9 +10,7 @@ mod calendar_sync;
 mod capture_events;
 mod capture_sampler;
 mod capture_tray;
-mod macos_input;
-mod macos_permissions;
-mod connector_sync;
+mod connectors;
 mod context_assembly;
 mod dead_letter;
 mod commands;
@@ -18,46 +18,28 @@ mod memory_export;
 mod deep_link_credentials;
 mod embed_backfill;
 mod embeddings;
-mod gmail;
-mod google_calendar;
-mod google_drive;
 mod google_oauth;
 mod hummingbird;
 mod http_retry;
 mod integration_secrets;
 mod integrations;
-mod linear;
+mod kioku;
 mod llm;
 mod llm_providers;
 mod macos_ax;
-mod meeting_lifecycle;
-mod meeting_context_timeline;
-mod meeting_kioku;
-mod meeting_memory;
-mod meeting_auto;
-mod meeting_commands;
-mod meeting_enhance;
-mod meeting_import;
+mod macos_input;
+mod macos_permissions;
 mod macos_system_audio;
-mod meeting_mic;
-mod meeting_stt_live;
-pub mod meeting_mcp;
+mod meeting;
 pub mod memory_mcp;
-pub mod kioku_mcp;
 pub mod mcp_server;
-pub mod meeting_recipes;
-mod meeting_session;
 mod mirror;
-mod meeting_store;
-mod meeting_stt;
+mod memory;
 mod memory_debug;
 mod memory_notify;
 mod memory_obs;
 mod memory_store;
-mod kioku_graph_schema;
-mod kioku_eval;
 mod decay;
-mod kioku_capture;
 mod lessons;
 mod lessons_verifier;
 mod legal_docs;
@@ -70,14 +52,6 @@ mod supersession_sync;
 mod mem_captures;
 mod extraction_jobs;
 mod cost_ledger;
-mod kioku_extraction;
-mod kioku_decision_graph;
-mod kioku_rules;
-mod kioku_graph_traversal;
-mod kioku_debug_stats;
-mod kioku_edge_types;
-mod kioku_stage5;
-mod kioku_backup;
 mod rollup_sync;
 mod summarizer_store;
 mod summarizer;
@@ -87,14 +61,27 @@ mod schedule_queue;
 mod secrets;
 mod sensitive_filter;
 mod settings_store;
-mod slack;
-mod notion;
 mod oauth_flow;
-mod github;
-mod zoom;
-mod outlook;
-mod figma;
-mod claude;
+
+// Backward-compatible re-exports after kioku/ meeting/ connectors/ folderization.
+pub use connectors::{
+  apple_local, claude, connector_sync, figma, github, gmail, google_calendar, google_drive,
+  linear, notion, outlook, slack, zoom,
+};
+pub use kioku::{
+  backup as kioku_backup, capture as kioku_capture, debug_stats as kioku_debug_stats,
+  decision_graph as kioku_decision_graph, edge_types as kioku_edge_types, eval as kioku_eval,
+  extraction as kioku_extraction, graph_schema as kioku_graph_schema,
+  graph_traversal as kioku_graph_traversal, mcp as kioku_mcp, rules as kioku_rules,
+  stage5 as kioku_stage5,
+};
+pub use meeting::{
+  auto as meeting_auto, commands as meeting_commands, context_timeline as meeting_context_timeline,
+  enhance as meeting_enhance, import as meeting_import, kioku as meeting_kioku,
+  lifecycle as meeting_lifecycle, mcp as meeting_mcp, memory as meeting_memory, mic as meeting_mic,
+  recipes as meeting_recipes, session as meeting_session, store as meeting_store, stt as meeting_stt,
+  stt_live as meeting_stt_live, video_detect as meeting_video_detect,
+};
 
 /// Production ship profile: enable connector sync, KIOKU workers, rollups, and patterns.
 /// Individual features still respect per-section settings flags at runtime.
@@ -167,6 +154,8 @@ pub fn run() {
         }
       }
       capture_sampler::start_background_sampler(app.handle().clone());
+      meeting_video_detect::start_poller(app.handle().clone());
+      app_events::init(app.handle());
       memory_notify::init(app.handle().clone());
       mirror::sync::spawn_scheduler(app.handle().clone());
       #[cfg(target_os = "macos")]
@@ -189,95 +178,95 @@ pub fn run() {
       // chat / brief call doesn't pay a settings round-trip.
       kioku_rules::reload_from_settings_now();
       progress_emitter::set_app_handle(app.handle().clone());
-      hummingbird::register_app(app.handle().clone());
+      hummingbird::register_app(app.handle().clone()); // also idempotent via app_events::init
       meeting_lifecycle::spawn_inactivity_watcher(app.handle().clone());
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
-      commands::shogun_memory_search,
-      commands::shogun_memory_fetch,
-      commands::shogun_memory_ingest,
-      commands::shogun_memory_delete,
-      commands::shogun_memory_embed_backfill,
-      commands::shogun_memory_embed_backfill_cancel,
-      commands::shogun_memory_export,
-      commands::shogun_memory_import,
-      commands::shogun_entity_query,
-      commands::shogun_brief_get,
-      commands::shogun_open_pack,
-      commands::shogun_start_focus_session,
-      commands::shogun_draft_reply,
-      commands::shogun_chat_complete,
-      commands::shogun_draft,
-      commands::shogun_schedule_action,
-      commands::shogun_kioku_brief_signals,
-      commands::shogun_kioku_debug_stats,
-      commands::shogun_kioku_pipeline_smoke,
-      commands::shogun_kioku_stage5_dry_run,
-      commands::shogun_kioku_stage5_apply,
-      commands::shogun_kioku_backup_db,
-      commands::shogun_kioku_edge_type_proposals,
-      commands::shogun_kioku_edge_type_review,
-      commands::shogun_stats,
-      commands::app_open_hummingbird,
-      commands::app_create_share_link,
-      commands::app_settings_load,
-      commands::app_settings_save,
-      commands::app_settings_export,
-      commands::app_settings_import,
-      commands::app_llm_api_key_set,
-      commands::app_llm_api_key_status,
-      commands::app_llm_api_key_clear,
-      commands::app_integration_connect,
-      commands::app_integration_import_credentials,
-      commands::app_integration_credentials_status,
-      commands::shogun_oauth_google_start,
-      commands::shogun_oauth_google_app_status,
-      commands::shogun_oauth_google_app_set,
-      commands::shogun_agent_run_now,
-      commands::shogun_hummingbird_context,
-      commands::app_integration_toggle,
-      commands::shogun_google_calendar_sync,
-      commands::shogun_gmail_sync,
-      commands::shogun_slack_sync,
-      commands::shogun_notion_sync,
-      commands::shogun_github_sync,
-      commands::shogun_linear_sync,
-      commands::shogun_drive_sync,
-      commands::shogun_zoom_sync,
-      commands::shogun_outlook_sync,
-      commands::shogun_figma_sync,
-      commands::shogun_claude_sync,
-      commands::shogun_apple_calendar_sync,
-      commands::shogun_apple_reminders_sync,
-      commands::shogun_dead_letter_list,
-      commands::shogun_dead_letter_retry,
-      commands::shogun_dead_letter_clear,
-      commands::shogun_dead_letter_retry_one,
-      commands::shogun_dead_letter_delete,
-      commands::app_capture_pause,
-      commands::app_capture_resume,
-      commands::shogun_capture_live_events,
-      commands::shogun_capture_status,
-      commands::app_onboarding_complete,
-      commands::app_permissions_manage,
-      commands::app_privacy_pick_app,
-      commands::app_diagnostics_report,
-      commands::app_frontend_error_report,
-      commands::app_updates_check,
-      commands::app_updates_download_install,
-      commands::app_quit,
-      commands::app_delete_data_range,
-      commands::app_delete_all_data,
-      commands::app_delete_account,
-      commands::auth_clerk_config,
-      commands::auth_open_browser_sign_in,
-      commands::auth_open_browser_sign_up,
-      commands::auth_status,
-      commands::auth_session_save,
-      commands::auth_sign_out,
-      commands::auth_biometric_status,
-      commands::auth_biometric_authenticate,
+      commands::memory::shogun_memory_search,
+      commands::memory::shogun_memory_fetch,
+      commands::memory::shogun_memory_ingest,
+      commands::memory::shogun_memory_delete,
+      commands::memory::shogun_memory_embed_backfill,
+      commands::memory::shogun_memory_embed_backfill_cancel,
+      commands::memory::shogun_memory_export,
+      commands::memory::shogun_memory_import,
+      commands::memory::shogun_entity_query,
+      commands::llm::shogun_brief_get,
+      commands::llm::shogun_open_pack,
+      commands::llm::shogun_start_focus_session,
+      commands::llm::shogun_draft_reply,
+      commands::llm::shogun_chat_complete,
+      commands::llm::shogun_draft,
+      commands::llm::shogun_schedule_action,
+      commands::kioku::shogun_kioku_brief_signals,
+      commands::kioku::shogun_kioku_debug_stats,
+      commands::kioku::shogun_kioku_pipeline_smoke,
+      commands::kioku::shogun_kioku_stage5_dry_run,
+      commands::kioku::shogun_kioku_stage5_apply,
+      commands::kioku::shogun_kioku_backup_db,
+      commands::kioku::shogun_kioku_edge_type_proposals,
+      commands::kioku::shogun_kioku_edge_type_review,
+      commands::app::shogun_stats,
+      commands::app::app_open_hummingbird,
+      commands::app::app_create_share_link,
+      commands::app::app_settings_load,
+      commands::app::app_settings_save,
+      commands::app::app_settings_export,
+      commands::app::app_settings_import,
+      commands::app::app_llm_api_key_set,
+      commands::app::app_llm_api_key_status,
+      commands::app::app_llm_api_key_clear,
+      commands::integrations::app_integration_connect,
+      commands::integrations::app_integration_import_credentials,
+      commands::integrations::app_integration_credentials_status,
+      commands::integrations::shogun_oauth_google_start,
+      commands::integrations::shogun_oauth_google_app_status,
+      commands::integrations::shogun_oauth_google_app_set,
+      commands::integrations::shogun_agent_run_now,
+      commands::app::shogun_hummingbird_context,
+      commands::integrations::app_integration_toggle,
+      commands::integrations::shogun_google_calendar_sync,
+      commands::integrations::shogun_gmail_sync,
+      commands::integrations::shogun_slack_sync,
+      commands::integrations::shogun_notion_sync,
+      commands::integrations::shogun_github_sync,
+      commands::integrations::shogun_linear_sync,
+      commands::integrations::shogun_drive_sync,
+      commands::integrations::shogun_zoom_sync,
+      commands::integrations::shogun_outlook_sync,
+      commands::integrations::shogun_figma_sync,
+      commands::integrations::shogun_claude_sync,
+      commands::integrations::shogun_apple_calendar_sync,
+      commands::integrations::shogun_apple_reminders_sync,
+      commands::app::shogun_dead_letter_list,
+      commands::app::shogun_dead_letter_retry,
+      commands::app::shogun_dead_letter_clear,
+      commands::app::shogun_dead_letter_retry_one,
+      commands::app::shogun_dead_letter_delete,
+      commands::app::app_capture_pause,
+      commands::app::app_capture_resume,
+      commands::app::shogun_capture_live_events,
+      commands::app::shogun_capture_status,
+      commands::app::app_onboarding_complete,
+      commands::app::app_permissions_manage,
+      commands::app::app_privacy_pick_app,
+      commands::app::app_diagnostics_report,
+      commands::app::app_frontend_error_report,
+      commands::app::app_updates_check,
+      commands::app::app_updates_download_install,
+      commands::app::app_quit,
+      commands::app::app_delete_data_range,
+      commands::app::app_delete_all_data,
+      commands::app::app_delete_account,
+      commands::auth::auth_clerk_config,
+      commands::auth::auth_open_browser_sign_in,
+      commands::auth::auth_open_browser_sign_up,
+      commands::auth::auth_status,
+      commands::auth::auth_session_save,
+      commands::auth::auth_sign_out,
+      commands::auth::auth_biometric_status,
+      commands::auth::auth_biometric_authenticate,
       meeting_commands::shogun_meeting_start,
       meeting_commands::shogun_meeting_link_client_note,
       meeting_commands::shogun_meeting_resolve_by_storage_key,
@@ -307,44 +296,44 @@ pub fn run() {
       meeting_commands::shogun_meeting_import_file,
       meeting_commands::shogun_meeting_context_timeline,
       #[cfg(debug_assertions)]
-      commands::shogun_memory_debug_query,
+      commands::memory::shogun_memory_debug_query,
       #[cfg(debug_assertions)]
-      commands::shogun_memory_debug_recent_calls,
+      commands::memory::shogun_memory_debug_recent_calls,
       #[cfg(debug_assertions)]
-      commands::shogun_memory_debug_stats,
+      commands::memory::shogun_memory_debug_stats,
       #[cfg(debug_assertions)]
-      commands::shogun_memory_debug_sync_status,
-      commands::shogun_memory_debug_gate,
-      commands::shogun_memory_summary_get,
-      commands::shogun_memory_summary_batch,
-      commands::shogun_memory_summary_invalidate,
-      commands::shogun_memory_summary_acknowledge,
-      commands::shogun_memory_summary_snooze,
-      commands::shogun_memory_entity_rollup_get,
-      commands::shogun_memory_rollup_get,
-      commands::shogun_memory_day_rollup_get,
-      commands::shogun_memory_month_rollup_get,
-      commands::shogun_memory_year_rollup_get,
-      commands::mirror_delete_device,
-      commands::mirror_disable,
-      commands::mirror_list_devices,
-      commands::mirror_register,
-      commands::mirror_rename_device,
-      commands::mirror_reset_stuck,
-      commands::mirror_search_blobs,
-      commands::mirror_status,
-      commands::mirror_sync_now,
-      commands::mirror_unlock,
-      commands::shogun_lesson_capture_rejection,
-      commands::shogun_lesson_capture_tool_failure,
-      commands::shogun_patterns_run_now,
-      commands::shogun_supersession_run_now,
-      commands::shogun_patterns_list,
-      commands::shogun_patterns_invalidate,
-      commands::shogun_lessons_list,
-      commands::shogun_lessons_archive,
-      commands::shogun_lessons_stats,
-      commands::shogun_memory_summary_set_priority,
+      commands::memory::shogun_memory_debug_sync_status,
+      commands::memory::shogun_memory_debug_gate,
+      commands::summaries::shogun_memory_summary_get,
+      commands::summaries::shogun_memory_summary_batch,
+      commands::summaries::shogun_memory_summary_invalidate,
+      commands::summaries::shogun_memory_summary_acknowledge,
+      commands::summaries::shogun_memory_summary_snooze,
+      commands::summaries::shogun_memory_entity_rollup_get,
+      commands::summaries::shogun_memory_rollup_get,
+      commands::summaries::shogun_memory_day_rollup_get,
+      commands::summaries::shogun_memory_month_rollup_get,
+      commands::summaries::shogun_memory_year_rollup_get,
+      commands::mirror::mirror_delete_device,
+      commands::mirror::mirror_disable,
+      commands::mirror::mirror_list_devices,
+      commands::mirror::mirror_register,
+      commands::mirror::mirror_rename_device,
+      commands::mirror::mirror_reset_stuck,
+      commands::mirror::mirror_search_blobs,
+      commands::mirror::mirror_status,
+      commands::mirror::mirror_sync_now,
+      commands::mirror::mirror_unlock,
+      commands::lessons::shogun_lesson_capture_rejection,
+      commands::lessons::shogun_lesson_capture_tool_failure,
+      commands::lessons::shogun_patterns_run_now,
+      commands::lessons::shogun_supersession_run_now,
+      commands::lessons::shogun_patterns_list,
+      commands::lessons::shogun_patterns_invalidate,
+      commands::lessons::shogun_lessons_list,
+      commands::lessons::shogun_lessons_archive,
+      commands::lessons::shogun_lessons_stats,
+      commands::summaries::shogun_memory_summary_set_priority,
       legal_docs::legal_docs_load,
     ])
     .run(tauri::generate_context!())

@@ -5,13 +5,13 @@ import { Icon, Kamon } from '@/shared/icons';
 import { ShogunDriveGlyph } from './components/ShogunDriveGlyph';
 import { MorningBriefCard } from './components/MorningBriefCard';
 import { MemoryDigestCard } from './components/MemoryDigestCard';
-import { runRuntimeActionA } from '@/shared/ipc/runtime-actions';
+import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import {
-  resolveUserTimeZoneId,
   composerPlaceholderForLang,
   homeFirstNameToken,
   computeHomeGreetingState,
 } from './lib/runtime';
+import { useHomeBriefCards } from './hooks/useHomeBriefCards';
 
 const HOME_QUICK_CATEGORIES = [
   { id: 'writing', en: 'Writing', jp: '文章作成', icon: 'edit' },
@@ -73,8 +73,7 @@ function pickHomeText(item: any, uiLang: any): string {
 }
 
 export function HomeScreen() {
-  const [morningBrief, setMorningBrief] = useState<any>(null);
-  const [memoryDigest, setMemoryDigest] = useState<any>(null);
+  const { morningBrief, memoryDigest, setMorningBrief, setMemoryDigest } = useHomeBriefCards();
   const [expandedHighlightId, setExpandedHighlightId] = useState<any>(null);
   const [entityRollupCache, setEntityRollupCache] = useState<any>({});
   const [memoryTotal, setMemoryTotal] = useState<any>(null);
@@ -111,8 +110,9 @@ export function HomeScreen() {
     uiLang === 'jp' ? headLine.dateJp : uiLang === 'bi' ? headLine.dateBi : headLine.dateEn;
 
   const briefGeneratedDisplay = useMemo(() => {
-    const iso = morningBrief && morningBrief.generated_at;
-    if (!iso) return '';
+    const raw = morningBrief?.generated_at;
+    if (typeof raw !== 'string' || !raw) return '';
+    const iso = raw;
     const U = ShogunUserTimezone;
     if (U && typeof U.formatIsoInTimeZone === 'function') {
       const x = U.formatIsoInTimeZone(iso);
@@ -190,7 +190,7 @@ export function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    runRuntimeActionA('stats.get', {}, { silentError: true }).then((r) => {
+    runRuntimeAction('stats.get', {}, { silentError: true }).then((r) => {
       if (cancelled || !r?.ok || !r.data) return;
       const n = Number(r.data.memoryTotal);
       if (!Number.isNaN(n)) setMemoryTotal(n);
@@ -201,7 +201,7 @@ export function HomeScreen() {
   useEffect(() => {
     let cancelled = false;
     const fetchSli = () =>
-      runRuntimeActionA('stats.get', { stage: 'sli' }, { silentError: true }).then((r: any) => {
+      runRuntimeAction('stats.get', { stage: 'sli' }, { silentError: true }).then((r: any) => {
         if (cancelled || !r?.ok || !r.data?.sli) return;
         setSliSnapshot(r.data.sli);
       });
@@ -233,7 +233,7 @@ export function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    runRuntimeActionA('settings.load', {}, { silentError: true }).then((r: any) => {
+    runRuntimeAction('settings.load', {}, { silentError: true }).then((r: any) => {
       if (cancelled || !r?.ok || !r.data?.settings?.sections) return;
       const g = r.data.settings.sections.general;
       if (g && typeof g === 'object') {
@@ -272,51 +272,6 @@ export function HomeScreen() {
     };
     window.addEventListener('shogun-profile-changed', onProfile);
     return () => window.removeEventListener('shogun-profile-changed', onProfile);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const lang = (typeof document !== 'undefined' && document.body && document.body.getAttribute('data-lang')) || 'en';
-      const res = await runRuntimeActionA(
-        "brief.get",
-        { span: "today", source: "home", user_tz: resolveUserTimeZoneId(), lang },
-        { silentError: true }
-      );
-      if (cancelled) return;
-      if (!res.ok || !res.data) {
-        setMorningBrief(null);
-        setMemoryDigest(null);
-        return;
-      }
-      const inner = res.data;
-      if (inner.memory_digest) {
-        setMemoryDigest(inner.memory_digest);
-        try {
-          const highlights = Array.isArray(inner.memory_digest.highlights)
-            ? inner.memory_digest.highlights
-            : [];
-          const nowMs = Date.now();
-          const highCount = highlights.filter(
-            (h: any) => (h.userPriority || h.priority) === 'high'
-              && !h.acknowledgedAt
-              && !(h.snoozeUntil && h.snoozeUntil > nowMs),
-          ).length;
-          window.dispatchEvent(new CustomEvent('shogun-memory-high-count', { detail: { count: highCount } }));
-        } catch (_) { /* ignore */ }
-      }
-      if (inner.skipped || !inner.brief) {
-        setMorningBrief(null);
-        return;
-      }
-      setMorningBrief(inner.brief);
-      if (BriefTelemetry) {
-        BriefTelemetry.log(BriefTelemetry.EVENTS.BRIEF_RENDERED, {
-          itemCount: inner.brief.items?.length || 0,
-        });
-      }
-    })();
-    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -396,7 +351,7 @@ export function HomeScreen() {
           snippet = `[File] ${file.name} — could not read as text (binary or too large).`;
         }
       }
-      const r = await runRuntimeActionA(
+      const r = await runRuntimeAction(
         'memory.ingest',
         {
           title: `Home · ${file.name}`,
@@ -530,7 +485,7 @@ export function HomeScreen() {
         time_hint: item.time_hint,
       },
     };
-    runRuntimeActionA(key, payload, { successMessage: item.next_action?.label || "Done" });
+    runRuntimeAction(key, payload, { successMessage: item.next_action?.label || "Done" });
     if (BriefTelemetry) {
       BriefTelemetry.log(BriefTelemetry.EVENTS.NEXT_ACTION_CLICK, {
         itemId: item.id,
@@ -556,7 +511,7 @@ export function HomeScreen() {
     if (BriefTelemetry) {
       BriefTelemetry.log(BriefTelemetry.EVENTS.RATING, { score: n });
     }
-    runRuntimeActionA("settings.save", { section: "brief", rating: n }, { successMessage: "Thanks — saved locally" });
+    runRuntimeAction("settings.save", { section: "brief", rating: n }, { successMessage: "Thanks — saved locally" });
   };
 
   const modalMeta = promptModal && HOME_QUICK_CATEGORIES.find((c) => c.id === promptModal);

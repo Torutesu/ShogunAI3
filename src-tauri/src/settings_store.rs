@@ -7,6 +7,7 @@
 //! corruption, all writes are serialized through a process-level mutex AND
 //! committed via tempfile + atomic rename.
 
+use crate::app_error::AppError;
 use crate::paths;
 use serde_json::{json, Map, Value};
 use std::fs;
@@ -21,8 +22,75 @@ use std::sync::Mutex;
 /// turn frequent UI loads into a contention bottleneck.
 static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-fn settings_path() -> Result<PathBuf, String> {
-  Ok(paths::app_data_dir()?.join("settings.json"))
+fn settings_path() -> Result<PathBuf, AppError> {
+  #[cfg(test)]
+  {
+    if let Some(p) = test_settings_path_override() {
+      return Ok(p);
+    }
+  }
+  Ok(paths::app_data_dir()
+    .map_err(AppError::Other)?
+    .join("settings.json"))
+}
+
+// Test seam mirroring `memory_store::set_test_db_path`: a thread-local path
+// override so tests can exercise the real `load` / `save_patch` /
+// `upsert_integration_provider` code paths without touching the user's real
+// settings.json. cfg(test)-only — production behavior is unchanged.
+#[cfg(test)]
+thread_local! {
+  static TEST_SETTINGS_PATH: std::cell::RefCell<Option<PathBuf>> =
+    const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_settings_path_override() -> Option<PathBuf> {
+  TEST_SETTINGS_PATH.with(|c| c.borrow().clone())
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_settings_path(p: PathBuf) {
+  TEST_SETTINGS_PATH.with(|c| *c.borrow_mut() = Some(p));
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_settings_path() {
+  TEST_SETTINGS_PATH.with(|c| *c.borrow_mut() = None);
+}
+
+/// RAII guard pointing `settings_path()` at a unique temp file for the
+/// current test thread; clears the override and removes the file on drop.
+/// `pub(crate)` so command-level tests (e.g. `app_settings_load`) can reuse it.
+#[cfg(test)]
+pub(crate) struct TestSettingsGuard {
+  pub(crate) path: PathBuf,
+}
+
+#[cfg(test)]
+impl TestSettingsGuard {
+  pub(crate) fn new(name: &str) -> Self {
+    static UNIQ: AtomicU64 = AtomicU64::new(0);
+    let n = UNIQ.fetch_add(1, Ordering::Relaxed);
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+      "shogun-settings-test-{}-{}-{}.json",
+      std::process::id(),
+      n,
+      name
+    ));
+    let _ = fs::remove_file(&p);
+    set_test_settings_path(p.clone());
+    TestSettingsGuard { path: p }
+  }
+}
+
+#[cfg(test)]
+impl Drop for TestSettingsGuard {
+  fn drop(&mut self) {
+    clear_test_settings_path();
+    let _ = fs::remove_file(&self.path);
+  }
 }
 
 /// Atomic write via tempfile + rename in the same directory. Power-loss /
@@ -31,11 +99,11 @@ fn settings_path() -> Result<PathBuf, String> {
 /// the same filesystem (POSIX guarantee on macOS / Linux; same-volume
 /// guarantee on Windows since Rust's `fs::rename` uses MoveFileExW with
 /// REPLACE_EXISTING under the hood).
-fn write_atomic(target: &Path, contents: &[u8]) -> Result<(), String> {
+fn write_atomic(target: &Path, contents: &[u8]) -> Result<(), AppError> {
   let parent = target
     .parent()
-    .ok_or_else(|| "settings target has no parent dir".to_string())?;
-  fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    .ok_or_else(|| AppError::InvalidInput("settings target has no parent dir".to_string()))?;
+  fs::create_dir_all(parent)?;
   // Unique tempfile name that's clearly identifiable as ours, in case we
   // crash and leave one behind — the next successful write replaces it.
   // PID + monotonic counter guarantees uniqueness even when many threads
@@ -46,31 +114,31 @@ fn write_atomic(target: &Path, contents: &[u8]) -> Result<(), String> {
   let seq = SEQ.fetch_add(1, Ordering::Relaxed);
   tmp.push(format!(".settings.json.tmp-{}-{}", pid, seq));
   {
-    let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-    f.write_all(contents).map_err(|e| e.to_string())?;
+    let mut f = fs::File::create(&tmp)?;
+    f.write_all(contents)?;
     // Best-effort fsync so the rename's "either old or new" guarantee
     // actually means "new contents are durable". Ignore unsupported errors
     // (e.g. some FUSE filesystems).
     let _ = f.sync_all();
   }
-  fs::rename(&tmp, target).map_err(|e| {
-    // If rename fails, clean up the tempfile so we don't leave litter.
+  if let Err(e) = fs::rename(&tmp, target) {
     let _ = fs::remove_file(&tmp);
-    e.to_string()
-  })
+    return Err(AppError::Io(e));
+  }
+  Ok(())
 }
 
 fn empty_doc() -> Value {
   json!({ "sections": {} })
 }
 
-pub fn load() -> Result<Value, String> {
+fn load_inner() -> Result<Value, AppError> {
   let path = settings_path()?;
   if !path.exists() {
-    return Ok(empty_doc());
+    return Ok(ensure_shape(empty_doc()));
   }
-  let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-  let v: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+  let raw = fs::read_to_string(&path)?;
+  let v: Value = serde_json::from_str(&raw)?;
   let prev_ver = v.get("settingsSchemaVersion").and_then(|x| x.as_u64());
   let shaped = ensure_shape(v);
   if prev_ver != shaped.get("settingsSchemaVersion").and_then(|x| x.as_u64()) {
@@ -81,12 +149,22 @@ pub fn load() -> Result<Value, String> {
   Ok(shaped)
 }
 
+pub fn load() -> Result<Value, String> {
+  load_inner().map_err(|e| e.to_ipc_string())
+}
+
 fn ensure_shape(mut v: Value) -> Value {
   if v.get("sections").and_then(|s| s.as_object()).is_none() {
     if let Some(obj) = v.as_object_mut() {
       obj.insert("sections".to_string(), json!({}));
     }
   }
+  // Migrations must run BEFORE default backfill: e.g. the v3 migration copies
+  // legacy `autoRecord` into `autoStartOnCalendar` only when the key is absent,
+  // so inserting the default first would silently drop the user's preference.
+  v = migrate_kioku_flags(v);
+  v = migrate_meetings_auto_start(v);
+  v = migrate_kioku_meeting_extraction(v);
   if let Some(sections) = v.get_mut("sections").and_then(|s| s.as_object_mut()) {
     let sec = sections
       .entry("security".to_string())
@@ -173,9 +251,6 @@ fn ensure_shape(mut v: Value) -> Value {
         .or_insert(json!("claude-haiku-4-5"));
     }
   }
-  v = migrate_kioku_flags(v);
-  v = migrate_meetings_auto_start(v);
-  v = migrate_kioku_meeting_extraction(v);
   v
 }
 
@@ -270,11 +345,11 @@ fn migrate_kioku_meeting_extraction(mut v: Value) -> Value {
 /// concurrent callers (e.g. in-app Settings toggle vs. macOS tray click)
 /// can't lose each other's updates. Persists via atomic rename so an
 /// interrupted write never truncates the existing file.
-pub fn save_patch(payload: &Value) -> Result<Value, String> {
-  let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+fn save_patch_inner(payload: &Value) -> Result<Value, AppError> {
+  let _guard = WRITE_LOCK.lock()?;
   let path = settings_path()?;
   let mut doc = if path.exists() {
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let raw = fs::read_to_string(&path)?;
     ensure_shape(serde_json::from_str(&raw).unwrap_or_else(|_| empty_doc()))
   } else {
     empty_doc()
@@ -299,10 +374,12 @@ pub fn save_patch(payload: &Value) -> Result<Value, String> {
     .as_object_mut()
     .and_then(|o| o.get_mut("sections"))
     .and_then(|s| s.as_object_mut())
-    .ok_or_else(|| "invalid settings document".to_string())?;
+    .ok_or_else(|| AppError::InvalidInput("invalid settings document".to_string()))?;
 
   let entry = sections.entry(section).or_insert_with(|| json!({}));
-  let entry_obj = entry.as_object_mut().ok_or_else(|| "section value must be an object".to_string())?;
+  let entry_obj = entry.as_object_mut().ok_or_else(|| {
+    AppError::InvalidInput("section value must be an object".to_string())
+  })?;
   for (k, v) in patch_map {
     entry_obj.insert(k, v);
   }
@@ -311,10 +388,14 @@ pub fn save_patch(payload: &Value) -> Result<Value, String> {
     obj.insert("updatedAt".to_string(), json!(now_ms()));
   }
 
-  let serialized = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+  let serialized = serde_json::to_string_pretty(&doc)?;
   write_atomic(&path, serialized.as_bytes())?;
 
   Ok(doc)
+}
+
+pub fn save_patch(payload: &Value) -> Result<Value, String> {
+  save_patch_inner(payload).map_err(|e| e.to_ipc_string())
 }
 
 fn now_ms() -> u64 {
@@ -331,7 +412,7 @@ fn now_ms() -> u64 {
 /// Atomic write via `write_atomic` for crash safety.
 pub fn upsert_integration_provider(slug: &str, patch: &Value) -> Result<Value, String> {
   let _guard = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-  let path = settings_path()?;
+  let path = settings_path().map_err(|e| e.to_ipc_string())?;
   let mut doc = if path.exists() {
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     ensure_shape(serde_json::from_str(&raw).unwrap_or_else(|_| empty_doc()))
@@ -378,7 +459,7 @@ pub fn upsert_integration_provider(slug: &str, patch: &Value) -> Result<Value, S
   }
 
   let serialized = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
-  write_atomic(&path, serialized.as_bytes())?;
+  write_atomic(&path, serialized.as_bytes()).map_err(|e| e.to_ipc_string())?;
 
   Ok(doc)
 }
@@ -399,7 +480,7 @@ mod tests {
     let migrated = ensure_shape(legacy);
     assert_eq!(
       migrated.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
-      Some(3)
+      Some(4)
     );
     assert_eq!(
       migrated
@@ -438,7 +519,7 @@ mod tests {
     let migrated = ensure_shape(legacy);
     assert_eq!(
       migrated.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
-      Some(3)
+      Some(4)
     );
     assert_eq!(
       migrated
@@ -502,5 +583,160 @@ mod tests {
     let parsed: serde_json::Value =
       serde_json::from_str(&final_contents).expect("final file parses");
     assert!(parsed.get("writer").and_then(|v| v.as_u64()).is_some());
+  }
+
+  // ── Characterization: load / save_patch / upsert_integration_provider ────
+  // These lock in current behavior ahead of the commands.rs / store refactor.
+  // All use TestSettingsGuard so the user's real settings.json is untouched.
+
+  /// `load()` with no file on disk returns the shaped empty document with all
+  /// section defaults and the current schema version, without creating a file.
+  #[test]
+  fn load_missing_file_returns_shaped_defaults() {
+    let guard = TestSettingsGuard::new("load-missing");
+    let doc = load().expect("load");
+    assert_eq!(
+      doc.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
+      Some(4),
+      "fresh doc should carry the latest schema version"
+    );
+    // Spot-check the section defaults the frontend relies on.
+    assert_eq!(
+      doc.pointer("/sections/memory/enableMemorySummary").and_then(|v| v.as_bool()),
+      Some(true),
+      "migrate_kioku_flags backfills enableMemorySummary=true for fresh installs"
+    );
+    assert_eq!(
+      doc.pointer("/sections/capture/retentionDays").and_then(|v| v.as_u64()),
+      Some(30)
+    );
+    assert_eq!(
+      doc.pointer("/sections/meetings/autoIngestToMemory").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert_eq!(
+      doc.pointer("/sections/kioku_cost/monthly_cap_usd").and_then(|v| v.as_f64()),
+      Some(10.0)
+    );
+    assert_eq!(
+      doc.pointer("/sections/llm/extractionModel").and_then(|v| v.as_str()),
+      Some("claude-haiku-4-5")
+    );
+    assert!(!guard.path.exists(), "load() must not create the file");
+  }
+
+  /// `load()` on a legacy (pre-versioned) file migrates it AND persists the
+  /// migrated document back to disk (schema-version bump triggers a rewrite).
+  #[test]
+  fn load_migrates_legacy_file_and_persists_bump() {
+    let guard = TestSettingsGuard::new("load-migrate");
+    fs::write(
+      &guard.path,
+      r#"{ "sections": { "meetings": { "autoRecord": true } } }"#,
+    )
+    .expect("seed legacy file");
+
+    let doc = load().expect("load");
+    assert_eq!(
+      doc.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
+      Some(4)
+    );
+    // v3 migration: legacy autoRecord is copied into autoStartOnCalendar.
+    assert_eq!(
+      doc.pointer("/sections/meetings/autoStartOnCalendar").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+
+    // The migrated doc must have been written back.
+    let on_disk: Value =
+      serde_json::from_str(&fs::read_to_string(&guard.path).expect("read")).expect("parse");
+    assert_eq!(
+      on_disk.get("settingsSchemaVersion").and_then(|v| v.as_u64()),
+      Some(4),
+      "migration result should be persisted"
+    );
+  }
+
+  /// `load()` surfaces invalid JSON as Err (callers fall back to defaults).
+  #[test]
+  fn load_invalid_json_is_an_error() {
+    let guard = TestSettingsGuard::new("load-bad-json");
+    fs::write(&guard.path, b"{ not json").expect("seed corrupt file");
+    assert!(load().is_err());
+  }
+
+  /// `save_patch` merges keys into the named section, preserves other
+  /// sections, and stamps a top-level `updatedAt`.
+  #[test]
+  fn save_patch_merges_into_section_and_preserves_others() {
+    let _guard = TestSettingsGuard::new("save-merge");
+    save_patch(&json!({ "section": "capture", "paused": true })).expect("first save");
+    let doc = save_patch(&json!({ "section": "memory", "autoDigest": true, "autoDigestLang": "jp" }))
+      .expect("second save");
+
+    assert_eq!(
+      doc.pointer("/sections/memory/autoDigest").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert_eq!(
+      doc.pointer("/sections/memory/autoDigestLang").and_then(|v| v.as_str()),
+      Some("jp")
+    );
+    // First section survived the second patch.
+    assert_eq!(
+      doc.pointer("/sections/capture/paused").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert!(doc.get("updatedAt").and_then(|v| v.as_u64()).is_some());
+    // The `section` discriminator key itself is never persisted as data.
+    assert!(doc.pointer("/sections/memory/section").is_none());
+  }
+
+  /// `save_patch` without a `section` key falls back to the `misc` section.
+  #[test]
+  fn save_patch_defaults_to_misc_section() {
+    let _guard = TestSettingsGuard::new("save-misc");
+    let doc = save_patch(&json!({ "someFlag": 42 })).expect("save");
+    assert_eq!(
+      doc.pointer("/sections/misc/someFlag").and_then(|v| v.as_u64()),
+      Some(42)
+    );
+  }
+
+  /// `save_patch` overwrites existing keys within a section (last write wins)
+  /// while leaving that section's other keys intact.
+  #[test]
+  fn save_patch_overwrites_key_keeps_siblings() {
+    let _guard = TestSettingsGuard::new("save-overwrite");
+    save_patch(&json!({ "section": "capture", "paused": false, "retentionDays": 7 }))
+      .expect("seed");
+    let doc = save_patch(&json!({ "section": "capture", "paused": true })).expect("patch");
+    assert_eq!(
+      doc.pointer("/sections/capture/paused").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert_eq!(
+      doc.pointer("/sections/capture/retentionDays").and_then(|v| v.as_u64()),
+      Some(7)
+    );
+  }
+
+  /// `upsert_integration_provider` creates the nested
+  /// `sections.integrations.providers[slug]` path, merges patches, and stamps
+  /// `updatedAt` on both the provider entry and the document.
+  #[test]
+  fn upsert_integration_provider_creates_and_merges() {
+    let _guard = TestSettingsGuard::new("upsert-provider");
+    upsert_integration_provider("gmail", &json!({ "connected": true })).expect("first upsert");
+    let doc =
+      upsert_integration_provider("gmail", &json!({ "scope": "read" })).expect("second upsert");
+
+    let prov = doc
+      .pointer("/sections/integrations/providers/gmail")
+      .expect("provider entry");
+    assert_eq!(prov.get("connected").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(prov.get("scope").and_then(|v| v.as_str()), Some("read"));
+    assert!(prov.get("updatedAt").and_then(|v| v.as_u64()).is_some());
+    assert!(doc.get("updatedAt").and_then(|v| v.as_u64()).is_some());
   }
 }

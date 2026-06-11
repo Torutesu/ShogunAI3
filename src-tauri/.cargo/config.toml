@@ -1,0 +1,4 @@
+# Keep build artifacts under src-tauri/target so Swift/ScreenCaptureKit
+# rpaths resolve correctly when running the native Mac app (tauri dev / cargo test).
+[build]
+target-dir = "target"

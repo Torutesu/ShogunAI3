@@ -103,6 +103,8 @@ export default [
         rules: [
           { from: 'shared', disallow: ['app', 'feature'] },
           { from: 'app', allow: ['feature', 'shared'] },
+          // Same-feature imports OK; cross-feature imports blocked via capture match.
+          { from: 'feature', allow: ['shared', ['feature', { feature: '${from.feature}' }]] },
         ],
       }],
     },
@@ -138,6 +140,6 @@ export default [
     },
   },
   {
-    ignores: ['web-dist/**', 'dist/**', 'node_modules/**', 'src-tauri/**', 'tools/amc-pipeline/**', 'hifi/**'],
+    ignores: ['web-dist/**', 'dist/**', 'node_modules/**', 'src-tauri/**', 'tools/amc-pipeline/**', 'hifi/**', '.worktrees/**', '.claude-stash/**'],
   },
 ];

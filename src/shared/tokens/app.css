@@ -105,6 +105,117 @@
   pointer-events: auto;
 }
 
+/* Meeting detected prompt — Granola-style, top-right */
+.shogun-meeting-prompt-host {
+  position: fixed;
+  top: 56px;
+  right: 16px;
+  z-index: 1650;
+  pointer-events: none;
+  max-width: min(420px, calc(100vw - 32px));
+}
+.shogun-meeting-prompt {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 0;
+  border-radius: 14px;
+  border: 1px solid var(--border-hi);
+  background: color-mix(in srgb, var(--surface) 94%, #0a0a0a);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  animation: shogun-meeting-prompt-in 0.28s ease-out;
+}
+@keyframes shogun-meeting-prompt-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.shogun-meeting-prompt-accent {
+  width: 4px;
+  align-self: stretch;
+  min-height: 44px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--gold);
+  flex-shrink: 0;
+}
+.shogun-meeting-prompt-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 4px;
+}
+.shogun-meeting-prompt-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shogun-meeting-prompt-meta {
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shogun-meeting-prompt-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 8px 10px 8px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-hi) 80%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.shogun-meeting-prompt-action:hover {
+  background: color-mix(in srgb, var(--gold) 12%, var(--surface-hi));
+  border-color: color-mix(in srgb, var(--gold) 35%, var(--border));
+}
+.shogun-meeting-prompt-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--gold) 22%, transparent);
+  color: var(--gold);
+}
+.shogun-meeting-prompt-action-label {
+  white-space: nowrap;
+}
+.shogun-meeting-prompt-action-chevron {
+  opacity: 0.55;
+  margin-left: -2px;
+}
+.shogun-meeting-prompt-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.shogun-meeting-prompt-close:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
 .topbar {
   grid-column: 1 / -1;
   display:flex;
@@ -604,6 +715,65 @@
   top: 20px;
   left: 24px;
   z-index: 5;
+}
+.granola-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-hi);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text-mute);
+}
+.granola-pill--btn {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.granola-pill--gold {
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 35%, transparent);
+}
+.granola-mini-btn {
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-hi);
+  background: var(--surface);
+  color: var(--text-mute);
+  cursor: pointer;
+  font-family: inherit;
+}
+.granola-mini-btn--gold {
+  color: var(--gold);
+}
+.granola-textarea {
+  width: 100%;
+  min-height: min(48vh, 420px);
+  margin-top: 14px;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: vertical;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.65;
+  font-family: inherit;
+}
+.granola-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
 }
 .content-inner { padding: 32px 40px 64px; max-width:1440px; }
 .content-inner.wide { max-width:none; }

@@ -204,13 +204,3 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
 export const ShogunActionRegistry: { createActionRegistry: (api: typeof ShogunAPI, options?: any) => any } =
   (typeof window !== 'undefined' ? (window as any) : (globalThis as any)).ShogunActionRegistry;
 
-// SHOGUN_RUNTIME is set by the app bootstrap (e.g. main.tsx), not here.
-// We export the type so callers can reference it; the actual value is window.SHOGUN_RUNTIME.
-export type ShogunRuntime = {
-  executeAction: (key: string, payload?: any, options?: any) => Promise<any>;
-  setActiveScreen: (screen: string, params?: any) => void;
-  [key: string]: any;
-};
-
-export const SHOGUN_RUNTIME: ShogunRuntime | undefined =
-  typeof window !== 'undefined' ? (window as any).SHOGUN_RUNTIME : undefined;

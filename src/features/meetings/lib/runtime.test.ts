@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmtElapsedMs, granolaMiniBtn, granolaPillStyle } from './runtime';
+import { fmtElapsedMs, GRANOLA_CLASSES } from './runtime';
 
 // ─── fmtElapsedMs ─────────────────────────────────────────────────────────────
 
@@ -42,54 +42,16 @@ describe('fmtElapsedMs', () => {
   });
 });
 
-// ─── granolaMiniBtn ───────────────────────────────────────────────────────────
+// ─── GRANOLA_CLASSES ──────────────────────────────────────────────────────────
 
-describe('granolaMiniBtn', () => {
-  it('returns an object with expected style keys', () => {
-    const style = granolaMiniBtn('#fff', '#ccc', '#000');
-    expect(style).toHaveProperty('fontSize');
-    expect(style).toHaveProperty('padding');
-    expect(style).toHaveProperty('borderRadius');
-    expect(style).toHaveProperty('border');
-    expect(style).toHaveProperty('background');
-    expect(style).toHaveProperty('color');
-    expect(style).toHaveProperty('cursor');
-    expect(style).toHaveProperty('fontFamily');
-  });
-
-  it('uses the provided surface color as background', () => {
-    const style = granolaMiniBtn('#f0f0f0', '#ddd', '#333');
-    expect(style.background).toBe('#f0f0f0');
-  });
-
-  it('uses the provided border color in the border property', () => {
-    const style = granolaMiniBtn('#fff', '#aabbcc', '#000');
-    expect(style.border).toContain('#aabbcc');
-  });
-
-  it('uses the provided text color', () => {
-    const style = granolaMiniBtn('#fff', '#ccc', '#ff0000');
-    expect(style.color).toBe('#ff0000');
-  });
-});
-
-// ─── granolaPillStyle ─────────────────────────────────────────────────────────
-
-describe('granolaPillStyle', () => {
-  it('returns an object with display: inline-flex', () => {
-    const style = granolaPillStyle('#fff', '#ccc', '#000');
-    expect(style.display).toBe('inline-flex');
-  });
-
-  it('uses borderRadius 999', () => {
-    const style = granolaPillStyle('#fff', '#ccc', '#000');
-    expect(style.borderRadius).toBe(999);
-  });
-
-  it('uses the provided colors', () => {
-    const style = granolaPillStyle('#background', '#border', '#textcolor');
-    expect(style.background).toBe('#background');
-    expect(style.color).toBe('#textcolor');
-    expect(style.border).toContain('#border');
+describe('GRANOLA_CLASSES', () => {
+  it('exposes stable CSS class tokens for Granola UI', () => {
+    expect(GRANOLA_CLASSES.pill).toBe('granola-pill');
+    expect(GRANOLA_CLASSES.pillBtn).toContain('granola-pill');
+    expect(GRANOLA_CLASSES.pillGold).toContain('granola-pill--gold');
+    expect(GRANOLA_CLASSES.miniBtn).toBe('granola-mini-btn');
+    expect(GRANOLA_CLASSES.miniBtnGold).toContain('granola-mini-btn--gold');
+    expect(GRANOLA_CLASSES.textarea).toBe('granola-textarea');
+    expect(GRANOLA_CLASSES.iconBtn).toBe('granola-icon-btn');
   });
 });

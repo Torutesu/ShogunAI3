@@ -1,40 +1,65 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Icon, Kamon } from '@/shared/icons';
 import { Pane } from '../components/Pane';
 import { Row } from '../components/Row';
 import { Toggle } from '../components/Toggle';
-import { useRuntimeActions } from '../lib/hooks';
-import { SettingsHydrationContext } from '../types';
+import { useRuntimeActions, useSettingsSection } from '../lib/hooks';
+
+export interface HummingbirdSettingsState extends Record<string, unknown> {
+  mode: string;
+  enabled: boolean;
+  alwaysNew: boolean;
+  globalShortcut: string;
+}
+
+const HUMMINGBIRD_DEFAULTS: HummingbirdSettingsState = {
+  mode: 'any_app',
+  enabled: true,
+  alwaysNew: false,
+  globalShortcut: 'option_double_tap',
+};
+
+function hummingbirdFromSections(sections: Record<string, unknown>): HummingbirdSettingsState | null {
+  const h = sections.hummingbird;
+  if (!h || typeof h !== 'object') return null;
+  const row = h as Record<string, unknown>;
+  return {
+    mode: row.mode != null ? String(row.mode) : HUMMINGBIRD_DEFAULTS.mode,
+    enabled: typeof row.enabled === 'boolean' ? row.enabled : HUMMINGBIRD_DEFAULTS.enabled,
+    alwaysNew: typeof row.alwaysNew === 'boolean' ? row.alwaysNew : HUMMINGBIRD_DEFAULTS.alwaysNew,
+    globalShortcut: row.globalShortcut != null
+      ? String(row.globalShortcut)
+      : HUMMINGBIRD_DEFAULTS.globalShortcut,
+  };
+}
 
 export function PaneHummingbird() {
   const { run } = useRuntimeActions();
-  const { sections } = React.useContext(SettingsHydrationContext);
+  const [state, , save] = useSettingsSection(
+    {
+      section: 'hummingbird',
+      fromSections: hummingbirdFromSections,
+      toPayload: (s) => s,
+    },
+    HUMMINGBIRD_DEFAULTS,
+  );
   const [open, setOpen] = useState(true);
-  const [enabled, setEnabled] = useState(true);
-  const [alwaysNew, setAlwaysNew] = useState(false);
-  const [mode, setMode] = useState('any_app');
-  const [globalShortcut, setGlobalShortcut] = useState('option_double_tap');
-  React.useEffect(() => {
-    const h = sections.hummingbird;
-    if (!h || typeof h !== 'object') return;
-    if (h.mode != null) setMode(String(h.mode));
-    if (typeof h.enabled === 'boolean') setEnabled(h.enabled);
-    if (typeof h.alwaysNew === 'boolean') setAlwaysNew(h.alwaysNew);
-    if (h.globalShortcut != null) setGlobalShortcut(String(h.globalShortcut));
-  }, [sections]);
+
+  const { mode, enabled, alwaysNew, globalShortcut } = state;
+
   return (
     <Pane title="Hummingbird" jp="鳥" subtitle="Chat with anything on your screen — apps, meetings, or selected text.">
       <div className="s-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div onClick={() => setOpen(!open)} className="row" style={{ padding: '12px 16px', cursor: 'pointer' }}>
+        <button type="button" onClick={() => setOpen(!open)} className="row" style={{ padding: '12px 16px', cursor: 'pointer', width: '100%', border: 'none', background: 'transparent', textAlign: 'left', font: 'inherit', color: 'inherit' }}>
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} className="dim" />
           <span style={{ fontSize: 13, fontWeight: 500, marginLeft: 6 }}>See in action</span>
-        </div>
+        </button>
         {open && (
           <div style={{ borderTop: '1px solid var(--border)' }}>
             <div className="row" style={{ padding: '10px 16px', gap: 6 }}>
-              <button type="button" className="btn btn-sm" style={{ background: mode === 'any_app' ? 'var(--surface-2)' : 'transparent' }} onClick={() => { setMode('any_app'); run('settings.save', { section: 'hummingbird', mode: 'any_app', enabled, alwaysNew, globalShortcut }, { silentError: true }); }}>Any app</button>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setMode('meeting'); run('settings.save', { section: 'hummingbird', mode: 'meeting', enabled, alwaysNew, globalShortcut }, { silentError: true }); }}>Ongoing meeting</button>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setMode('selection'); run('settings.save', { section: 'hummingbird', mode: 'selection', enabled, alwaysNew, globalShortcut }, { silentError: true }); }}>Selected text</button>
+              <button type="button" className="btn btn-sm" style={{ background: mode === 'any_app' ? 'var(--surface-2)' : 'transparent' }} onClick={() => { void save({ mode: 'any_app' }); }}>Any app</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => { void save({ mode: 'meeting' }); }}>Ongoing meeting</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => { void save({ mode: 'selection' }); }}>Selected text</button>
             </div>
             <div style={{ margin: '0 16px 16px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface-2)', padding: '40px 30px', fontFamily: 'var(--font-en)', color: 'var(--text)', position: 'relative', minHeight: 180 }}>
               <div style={{ fontSize: 22, fontWeight: 500, marginBottom: 8 }}>Creativity Is a Process, Not an Event</div>
@@ -52,24 +77,20 @@ export function PaneHummingbird() {
       </div>
       <div className="s-card" style={{ marginTop: 14 }}>
         <Row title="Enable Hummingbird" desc="Open SHOGUN from anywhere and ask about what's on your screen.">
-          <Toggle on={enabled} onClick={() => { const next = !enabled; setEnabled(next); run('settings.save', { section: 'hummingbird', mode, enabled: next, alwaysNew, globalShortcut }, { silentError: true }); }} />
+          <Toggle on={enabled} onClick={() => { void save({ enabled: !enabled }); }} />
         </Row>
         <Row title="Global Shortcut" desc="Choose the global shortcut used to open Hummingbird">
           <select
             className="s-select"
             value={globalShortcut}
-            onChange={(e) => {
-              const v = e.target.value;
-              setGlobalShortcut(v);
-              run('settings.save', { section: 'hummingbird', mode, enabled, alwaysNew, globalShortcut: v }, { silentError: true });
-            }}
+            onChange={(e) => { void save({ globalShortcut: e.target.value }); }}
           >
             <option value="option_double_tap">Tap Option twice</option>
             <option value="cmd_space">⌘ + Space</option>
           </select>
         </Row>
         <Row title="Always Start New Chat" desc="Start with a fresh chat each time you open Hummingbird" last>
-          <Toggle on={alwaysNew} onClick={() => { const next = !alwaysNew; setAlwaysNew(next); run('settings.save', { section: 'hummingbird', mode, enabled, alwaysNew: next, globalShortcut }, { silentError: true }); }} />
+          <Toggle on={alwaysNew} onClick={() => { void save({ alwaysNew: !alwaysNew }); }} />
         </Row>
       </div>
     </Pane>

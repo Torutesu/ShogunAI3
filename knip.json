@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "tests/e2e/**/*.spec.js",
+    "tests/e2e/_helpers/**/*.js",
+    "scripts/*.mjs"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "tests/**/*.js", "scripts/**/*.mjs"],
+  "ignoreBinaries": ["python3"],
+  "ignoreExportsUsedInFile": true
+}
