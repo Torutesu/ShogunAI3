@@ -7,7 +7,7 @@ Mac ファースト配布用。LP の DL ボタンと welcome ページが参照
 | 用途 | URL |
 |------|-----|
 | **LP の DL ボタン（推奨）** | `https://github.com/Torutesu/ShogunAI3/releases/latest` |
-| **直接 DMG（v0.4.1 固定）** | `https://github.com/Torutesu/ShogunAI3/releases/download/v0.4.1/Shogun%20AI_0.4.1_aarch64.dmg` |
+| **直接 DMG（v0.4.1 固定）** | `https://github.com/Torutesu/ShogunAI3/releases/download/v0.4.1/Shogun.AI_0.4.1_aarch64.dmg` |
 | **リリース一覧** | `https://github.com/Torutesu/ShogunAI3/releases` |
 
 > `releases/latest` は公開済みの最新 Release に飛びます。バージョンアップ時は LP の直接 DMG リンクを更新するか、`latest` のみ使う運用にしてください。
@@ -29,9 +29,8 @@ Mac ファースト配布用。LP の DL ボタンと welcome ページが参照
 Vercel デプロイ時に環境変数を設定:
 
 ```bash
-NEXT_PUBLIC_DMG_DOWNLOAD_URL=https://github.com/Torutesu/ShogunAI3/releases/download/v0.4.1/Shogun%20AI_0.4.1_aarch64.dmg
-# または
-NEXT_PUBLIC_DMG_DOWNLOAD_URL=https://github.com/Torutesu/ShogunAI3/releases/latest/download/Shogun%20AI_0.4.1_aarch64.dmg
+NEXT_PUBLIC_DMG_DOWNLOAD_URL=https://github.com/Torutesu/ShogunAI3/releases/download/v0.4.1/Shogun.AI_0.4.1_aarch64.dmg
+# または LP と同様に releases/latest ページへリンク（バージョンアップ時に env 更新不要）
 ```
 
 `releases/latest/download/` は **アセット名が一致している場合のみ** 有効です。新バージョンで DMG 名が変わるたびに env を更新するか、welcome では `releases/latest` ページへのリンクに切り替えてください。

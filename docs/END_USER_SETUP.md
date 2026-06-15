@@ -5,7 +5,7 @@
 ## 0. ダウンロード（ベータ配布）
 
 1. **[GitHub Releases（最新）](https://github.com/Torutesu/ShogunAI3/releases/latest)** を開く
-2. **Shogun AI_*_aarch64.dmg** をダウンロード（Apple Silicon Mac 向け）
+2. **Shogun.AI_*_aarch64.dmg** をダウンロード（Apple Silicon Mac 向け）
 3. DMG をマウントし、**Shogun AI.app** を Applications にドラッグ
 
 未署名ビルドのため初回起動で macOS が警告します。**右クリック → 開く**（macOS 14 以前）または **システム設定 → プライバシーとセキュリティ → このまま開く**（macOS 15 以降）。詳細は [`README.md`](../README.md) の「Unsigned ビルドのインストール」。
