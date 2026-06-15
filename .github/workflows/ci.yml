@@ -60,8 +60,13 @@ jobs:
           SWIFT_LIB=$(find src-tauri/target/debug/build/screencapturekit-*/out/swift-build -name 'libswift_Concurrency.dylib' -print -quit)
           if [ -n "$SWIFT_LIB" ]; then
             SWIFT_DIR=$(dirname "$SWIFT_LIB")
-            export DYLD_FALLBACK_LIBRARY_PATH="$SWIFT_DIR:src-tauri/target/debug:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+            for dest in src-tauri/target/debug src-tauri/target/debug/deps; do
+              mkdir -p "$dest"
+              cp -f "$SWIFT_DIR"/*.dylib "$dest/" 2>/dev/null || true
+            done
           fi
+          XCODE_SWIFT=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx
+          export DYLD_LIBRARY_PATH="$XCODE_SWIFT:src-tauri/target/debug:src-tauri/target/debug/deps:${DYLD_LIBRARY_PATH:-}"
           npm run test:rust
 
       - name: Sync web-dist bundle
