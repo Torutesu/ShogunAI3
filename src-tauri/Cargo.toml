@@ -76,9 +76,8 @@ block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
 objc2-local-authentication = "0.3.2"
-screencapturekit = "6.0.1"
-# apple-metal 0.8.7 references macOS 26 Metal APIs unavailable on CI Xcode SDKs.
-apple-metal = "=0.8.6"
+# screencapturekit 6.x pulls apple-metal, which requires macOS 26 SDK unavailable on CI.
+screencapturekit = { version = "=2.1.0", features = ["macos_13_0"] }
 
 [[bin]]
 name = "shogun-mcp"
