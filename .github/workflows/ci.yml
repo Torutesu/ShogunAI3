@@ -65,6 +65,8 @@ jobs:
               cp -f "$SWIFT_DIR"/*.dylib "$dest/" 2>/dev/null || true
             done
           fi
+          XCODE_SWIFT=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx
+          export DYLD_LIBRARY_PATH="$XCODE_SWIFT:src-tauri/target/debug:src-tauri/target/debug/deps:${DYLD_LIBRARY_PATH:-}"
           npm run test:rust
 
       - name: Sync web-dist bundle
