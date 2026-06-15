@@ -117,7 +117,6 @@ fn append_sck_audio_samples(
   sample: &screencapturekit::prelude::CMSampleBuffer,
   buf: &Arc<Mutex<Vec<f32>>>,
 ) {
-  use screencapturekit::prelude::CMSampleBufferExt;
   let Some(list) = sample.audio_buffer_list() else {
     return;
   };
