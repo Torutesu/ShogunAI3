@@ -24,6 +24,28 @@ pub fn auth_open_browser_sign_up() -> Result<Value, String> {
 
 
 #[tauri::command]
+pub fn billing_config() -> Result<Value, String> {
+  Ok(auth::billing_config())
+}
+
+
+#[tauri::command]
+pub fn billing_open_url(payload: Value) -> Result<Value, String> {
+  let url = payload
+    .get("url")
+    .and_then(|u| u.as_str())
+    .map(str::trim)
+    .filter(|u| !u.is_empty())
+    .ok_or_else(|| "url is required".to_string())?;
+  if !url.starts_with("https://") && !url.starts_with("http://") {
+    return Err("url must start with http:// or https://".into());
+  }
+  open::that(url).map_err(|e| e.to_string())?;
+  Ok(json!({ "opened": true, "url": url }))
+}
+
+
+#[tauri::command]
 pub fn auth_status() -> Result<Value, String> {
   let cfg = auth::clerk_config();
   let snap_raw = secrets::get_clerk_snapshot()?;

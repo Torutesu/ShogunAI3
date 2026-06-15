@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ConsentModal } from '@/shared/modals';
 import { MainApp } from './MainApp';
+import { EntitlementGate } from './EntitlementGate';
+import { McpSetupGate } from './McpSetupGate';
 import { shogunMarkdownMini } from '@/shared/lib/markdown-mini';
 import { ShogunIpcClient } from '@/shared/ipc/ipc-client';
 
@@ -149,6 +151,12 @@ export function AppCore(): React.ReactElement {
       />
     );
   }
-  // ───────── End consent gate; main app continues below. ─────────
-  return <MainApp />;
+  // ───────── End consent gate; entitlement gate then main app. ─────────
+  return (
+    <EntitlementGate>
+      <McpSetupGate>
+        <MainApp />
+      </McpSetupGate>
+    </EntitlementGate>
+  );
 }

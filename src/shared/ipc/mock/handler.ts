@@ -839,6 +839,40 @@ switch (command) {
       message: "Mock: set CLERK_* in .env and run the desktop app for sign-up.",
       echo: echo,
     };
+  case "billing_config":
+    return {
+      enabled: false,
+      webAppUrl: "",
+      stub: true,
+      echo: echo,
+    };
+  case "billing_open_url":
+    return {
+      opened: true,
+      url: echo && echo.url ? echo.url : "",
+      stub: true,
+      echo: echo,
+    };
+  case "mcp_setup_detect":
+    return {
+      claudeConfigPath: "~/Library/Application Support/Claude/claude_desktop_config.json",
+      claudeConfigExists: false,
+      claudeInstalled: false,
+      binaryPath: null,
+      binaryFound: false,
+      shogunConfigured: false,
+      stub: true,
+      echo: echo,
+    };
+  case "mcp_setup_write_config":
+    return { written: true, stub: true, echo: echo };
+  case "mcp_setup_verify":
+    return { ok: false, reason: "config_missing", stub: true, echo: echo };
+  case "mcp_setup_complete":
+    return { complete: true, stub: true, echo: echo };
+  case "mcp_setup_open_claude_config":
+  case "mcp_setup_open_claude_app":
+    return { opened: true, stub: true, echo: echo };
   case "auth_status":
     return {
       clerk: {

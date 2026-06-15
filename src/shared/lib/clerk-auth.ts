@@ -232,6 +232,17 @@ function isSignedIn() {
   return Boolean((window as any).Clerk && (window as any).Clerk.session);
 }
 
+async function getSessionToken(): Promise<string | null> {
+  if (!(window as any).Clerk?.session) return null;
+  try {
+    const token = await (window as any).Clerk.session.getToken();
+    return token || null;
+  } catch (e) {
+    console.warn('[ShogunClerkAuth] getSessionToken', e);
+    return null;
+  }
+}
+
 export const ShogunClerkAuth = {
   init: init,
   openSignIn: openSignIn,
@@ -241,6 +252,7 @@ export const ShogunClerkAuth = {
   signOut: signOut,
   getClerkUser: getClerkUser,
   isSignedIn: isSignedIn,
+  getSessionToken: getSessionToken,
   getConfig: getConfig,
 };
 

@@ -199,6 +199,17 @@ fn ensure_shape(mut v: Value) -> Value {
       .or_insert_with(|| json!({}));
     if let Some(o) = onboarding.as_object_mut() {
       o.entry("complete".to_string()).or_insert(json!(false));
+      o.entry("mcpComplete".to_string()).or_insert(json!(false));
+    }
+    let billing = sections
+      .entry("billing".to_string())
+      .or_insert_with(|| json!({}));
+    if let Some(o) = billing.as_object_mut() {
+      o.entry("status".to_string()).or_insert(json!(""));
+      o.entry("trialEnd".to_string()).or_insert(json!(null));
+      o.entry("currentPeriodEnd".to_string()).or_insert(json!(null));
+      o.entry("manageUrl".to_string()).or_insert(json!(null));
+      o.entry("checkedAt".to_string()).or_insert(json!(null));
     }
     let kioku_graph = sections
       .entry("kioku_graph".to_string())

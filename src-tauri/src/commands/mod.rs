@@ -6,6 +6,7 @@ pub mod integrations;
 pub mod kioku;
 pub mod lessons;
 pub mod llm;
+pub mod mcp;
 pub mod memory;
 pub mod mirror;
 pub mod summaries;
@@ -26,7 +27,11 @@ pub use app::{
 pub use auth::{
   auth_biometric_authenticate, auth_biometric_status, auth_clerk_config,
   auth_open_browser_sign_in, auth_open_browser_sign_up, auth_session_save, auth_sign_out,
-  auth_status,
+  auth_status, billing_config, billing_open_url,
+};
+pub use mcp::{
+  mcp_setup_complete, mcp_setup_detect, mcp_setup_open_claude_app, mcp_setup_open_claude_config,
+  mcp_setup_verify, mcp_setup_write_config,
 };
 pub(crate) use integrations::persist_integration_credentials_inner;
 pub use integrations::{

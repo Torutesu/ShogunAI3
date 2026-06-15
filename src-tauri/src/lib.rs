@@ -28,6 +28,7 @@ mod llm;
 mod llm_providers;
 mod macos_ax;
 mod macos_input;
+mod mcp_setup;
 mod macos_permissions;
 mod macos_system_audio;
 mod meeting;
@@ -262,11 +263,19 @@ pub fn run() {
       commands::auth::auth_clerk_config,
       commands::auth::auth_open_browser_sign_in,
       commands::auth::auth_open_browser_sign_up,
+      commands::auth::billing_config,
+      commands::auth::billing_open_url,
       commands::auth::auth_status,
       commands::auth::auth_session_save,
       commands::auth::auth_sign_out,
       commands::auth::auth_biometric_status,
       commands::auth::auth_biometric_authenticate,
+      commands::mcp::mcp_setup_detect,
+      commands::mcp::mcp_setup_write_config,
+      commands::mcp::mcp_setup_verify,
+      commands::mcp::mcp_setup_complete,
+      commands::mcp::mcp_setup_open_claude_config,
+      commands::mcp::mcp_setup_open_claude_app,
       meeting_commands::shogun_meeting_start,
       meeting_commands::shogun_meeting_link_client_note,
       meeting_commands::shogun_meeting_resolve_by_storage_key,

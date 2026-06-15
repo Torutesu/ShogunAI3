@@ -52,3 +52,15 @@ pub fn sign_up_url() -> Result<String, String> {
   let enc = urlencoding::encode(&redirect);
   Ok(format!("{fe}/sign-up?redirect_url={enc}"))
 }
+
+/// Web onboarding / entitlement API base (e.g. https://app.shogun.ai or http://localhost:3001).
+/// When unset, the desktop entitlement gate is bypassed (local dev).
+pub fn billing_config() -> Value {
+  let url = env::var("SHOGUN_WEB_APP_URL").unwrap_or_default();
+  let trimmed = url.trim().trim_end_matches('/').to_string();
+  let enabled = !trimmed.is_empty();
+  json!({
+    "enabled": enabled,
+    "webAppUrl": trimmed,
+  })
+}
