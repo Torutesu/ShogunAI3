@@ -60,7 +60,10 @@ jobs:
           SWIFT_LIB=$(find src-tauri/target/debug/build/screencapturekit-*/out/swift-build -name 'libswift_Concurrency.dylib' -print -quit)
           if [ -n "$SWIFT_LIB" ]; then
             SWIFT_DIR=$(dirname "$SWIFT_LIB")
-            export DYLD_FALLBACK_LIBRARY_PATH="$SWIFT_DIR:src-tauri/target/debug:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+            for dest in src-tauri/target/debug src-tauri/target/debug/deps; do
+              mkdir -p "$dest"
+              cp -f "$SWIFT_DIR"/*.dylib "$dest/" 2>/dev/null || true
+            done
           fi
           npm run test:rust
 
