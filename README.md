@@ -2,6 +2,12 @@
 
 macOS 向けの **Tauri v2** デスクトップアプリと、**Hi-Fi UI**（React + TypeScript、Vite ビルド、ブラウザ／WebView 共用）を同一プロダクトとして開発しています。
 
+## ダウンロード（macOS ベータ）
+
+**[GitHub Releases](https://github.com/Torutesu/ShogunAI3/releases/latest)** から未署名 DMG を入手できます（Apple Silicon / `aarch64`）。
+
+初回起動の Gatekeeper 回避手順は下記「Unsigned ビルドのインストール」を参照。LP 運用者向け: [`docs/lp-download.md`](docs/lp-download.md)
+
 ## 利用者向け（同梱・配布用ドキュメント）
 
 - **[セットアップ（日本語）](docs/END_USER_SETUP.md)** — 起動、API キー、Memory・埋め込みの要点

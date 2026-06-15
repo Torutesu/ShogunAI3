@@ -2,9 +2,7 @@
 # falls back to unsigned (Gatekeeper warning on first launch) otherwise.
 #
 # Triggers:
-#   - push: tag `v*`   → tauri-action creates a draft Release with DMG
-#                        (+ updater `latest.json` once the updater plugin
-#                        lands; env vars below are harmless until then).
+#   - push: tag `v*`   → draft Release with DMG
 #   - workflow_dispatch → build only, DMG uploaded as artifact.
 #
 # See docs/macos-release.md §7 for required secrets to enable signing.
@@ -26,15 +24,14 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Signing mode
         id: signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
           if [ -n "${APPLE_CERTIFICATE}" ]; then
             echo "mode=signed" >> "${GITHUB_OUTPUT}"
@@ -81,13 +78,21 @@ jobs:
         with:
           workspaces: "src-tauri -> target"
 
-      # Tag push → build + draft GitHub Release (DMG attached; latest.json
-      # attaches automatically once the updater plugin is enabled).
-      - name: Build bundles + draft Release (tag push)
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - name: Sync web-dist bundle
+        if: steps.signing.outputs.mode == 'unsigned'
+        run: npm run build:web-dist
+
+      # Signed tag push → tauri-action (imports cert, notarizes when configured).
+      - name: Build bundles + draft Release (tag push, signed)
+        if: >-
+          steps.signing.outputs.mode == 'signed'
+          && github.event_name == 'push'
+          && startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -95,16 +100,35 @@ jobs:
           releaseName: "Shogun AI ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
-          releaseBody: |
-            ${{ steps.signing.outputs.mode == 'unsigned' && '⚠️ **Unsigned build.** macOS will show "Apple could not verify..." on first launch. Right-click the app → **Open** to bypass Gatekeeper (or System Settings → Privacy & Security → Open Anyway).' || '' }}
           includeUpdaterJson: true
+
+      # Unsigned tag push → plain tauri build + gh-release (tauri-action always
+      # attempts keychain import when Apple env vars are present, even if empty).
+      - name: Build unsigned bundles (tag push)
+        if: >-
+          steps.signing.outputs.mode == 'unsigned'
+          && github.event_name == 'push'
+          && startsWith(github.ref, 'refs/tags/v')
+        run: npm run build:desktop
+        timeout-minutes: 45
+
+      - name: Publish unsigned draft Release (tag push)
+        if: >-
+          steps.signing.outputs.mode == 'unsigned'
+          && github.event_name == 'push'
+          && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          tag_name: ${{ github.ref_name }}
+          name: Shogun AI ${{ github.ref_name }}
+          body: |
+            ⚠️ **Unsigned build.** macOS will show "Apple could not verify..." on first launch. Right-click the app → **Open** to bypass Gatekeeper (or System Settings → Privacy & Security → Open Anyway).
+          files: src-tauri/target/release/bundle/dmg/*.dmg
 
       # workflow_dispatch → build only, no Release side-effects.
       - name: Build bundles (manual dispatch)
         if: github.event_name == 'workflow_dispatch'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run build:desktop
         timeout-minutes: 45
 

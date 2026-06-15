@@ -2,9 +2,17 @@
 
 このガイドは **エンドユーザー向け** の最短手順です。開発者向けの詳細は **[`README.md`](../README.md)**、UI・IPC は **[`hifi/README.md`](../hifi/README.md)** を参照してください。
 
+## 0. ダウンロード（ベータ配布）
+
+1. **[GitHub Releases（最新）](https://github.com/Torutesu/ShogunAI3/releases/latest)** を開く
+2. **Shogun AI_*_aarch64.dmg** をダウンロード（Apple Silicon Mac 向け）
+3. DMG をマウントし、**Shogun AI.app** を Applications にドラッグ
+
+未署名ビルドのため初回起動で macOS が警告します。**右クリック → 開く**（macOS 14 以前）または **システム設定 → プライバシーとセキュリティ → このまま開く**（macOS 15 以降）。詳細は [`README.md`](../README.md) の「Unsigned ビルドのインストール」。
+
 ## 1. アプリを起動
 
-macOS で SHOGUN を起動します（配布パッケージまたは `npm run dev:desktop`）。
+macOS で SHOGUN を起動します（上記 DMG または開発ビルド）。
 
 ## 2. 初回セットアップ（権限）
 
