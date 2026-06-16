@@ -6,6 +6,7 @@
 //! Spec: `docs/superpowers/specs/2026-04-23-multi-provider-llm-design.md`.
 
 use serde_json::{json, Value};
+use url::Url;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmProvider {
@@ -26,15 +27,24 @@ impl LlmProvider {
     }
 }
 
+/// Strip common wrappers so pasted keys still match provider prefixes.
+pub fn normalize_api_key(raw: &str) -> String {
+  let mut k = raw.trim().to_string();
+  if k.len() >= 7 && k[..7].eq_ignore_ascii_case("bearer ") {
+    k = k[7..].trim().to_string();
+  }
+  k.trim_matches('"').trim_matches('\'').trim().to_string()
+}
+
 /// Identify the vendor from the raw key. Anthropic and Gemini have strict
 /// prefixes; OpenAI-style keys (`sk-*`) are the fallback; anything else is
 /// `Custom` (meant for local LLMs or explicit proxies).
 pub fn detect_provider(key: &str) -> LlmProvider {
-    let k = key.trim();
+    let k = normalize_api_key(key);
     if k.starts_with("sk-ant-") {
         return LlmProvider::Anthropic;
     }
-    if k.starts_with("AIza") && k.len() >= 35 {
+    if k.starts_with("AIza") && k.len() >= 10 {
         return LlmProvider::Gemini;
     }
     if k.starts_with("sk-") {
@@ -46,6 +56,38 @@ pub fn detect_provider(key: &str) -> LlmProvider {
         return LlmProvider::OpenAI;
     }
     LlmProvider::Custom
+}
+
+/// When the key prefix is ambiguous (Custom), infer vendor from the configured
+/// chat model in settings (e.g. gemini-2.5-flash → Gemini).
+pub fn infer_provider_from_model(model: &str) -> Option<LlmProvider> {
+    let m = model.trim().to_lowercase();
+    if m.is_empty() {
+        return None;
+    }
+    if m.contains("gemini") {
+        return Some(LlmProvider::Gemini);
+    }
+    if m.contains("claude") {
+        return Some(LlmProvider::Anthropic);
+    }
+    if m.contains("gpt")
+        || m.starts_with("o1")
+        || m.starts_with("o3")
+        || m.starts_with("o4")
+    {
+        return Some(LlmProvider::OpenAI);
+    }
+    None
+}
+
+/// Prefer key-prefix detection; fall back to the configured model name.
+pub fn resolve_provider(key: &str, model_override: &str) -> LlmProvider {
+    let from_key = detect_provider(key);
+    if from_key != LlmProvider::Custom {
+        return from_key;
+    }
+    infer_provider_from_model(model_override).unwrap_or(from_key)
 }
 
 pub fn default_base_url(provider: LlmProvider) -> &'static str {
@@ -162,6 +204,117 @@ pub fn validate_host_for_provider(
         ));
     }
     Ok(())
+}
+
+/// Normalize a user-entered OpenAI-compatible base URL (settings → Model & API).
+pub fn normalize_base_url(raw: &str) -> Result<String, String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return Ok(String::new());
+    }
+    if !s.contains("://") && !s.contains('/') && !s.contains('.') {
+        return Err(format!(
+            "Base URL \"{}\" does not look like a URL. Leave it blank to use the default for your API key.",
+            s
+        ));
+    }
+    let with_scheme = if s.contains("://") {
+        s.to_string()
+    } else if s.starts_with("localhost") || s.starts_with("127.0.0.1") {
+        format!("http://{}", s.trim_start_matches('/'))
+    } else {
+        format!("https://{}", s.trim_start_matches('/'))
+    };
+    let parsed = Url::parse(&with_scheme)
+        .map_err(|e| format!("Invalid Base URL \"{}\": {}", s, e))?;
+    if parsed.host_str().is_none() {
+        return Err(format!(
+            "Base URL \"{}\" has no host. Example for Gemini: https://generativelanguage.googleapis.com/v1beta/openai",
+            s
+        ));
+    }
+    Ok(with_scheme.trim_end_matches('/').to_string())
+}
+
+/// Resolve the OpenAI-compatible base URL for the detected provider, falling
+/// back to vendor defaults when the saved override is empty or mismatched.
+pub fn resolve_llm_base(
+    provider: LlmProvider,
+    base_override: &str,
+    extra_hosts: &[String],
+) -> Result<String, String> {
+    let trimmed = base_override.trim();
+    let default = default_base_url(provider);
+
+    let mut base = if trimmed.is_empty() {
+        if default.is_empty() {
+            return Err(
+                "Could not detect LLM provider from your API key. Use a Gemini key (AIza…), set model to gemini-2.5-flash, or enter a Base URL for custom endpoints."
+                    .to_string(),
+            );
+        }
+        default.to_string()
+    } else {
+        normalize_base_url(trimmed)?
+    };
+
+    let probe = chat_url(provider, &base);
+    match Url::parse(&probe) {
+        Ok(parsed) => {
+            if let Some(host) = parsed.host_str() {
+                if validate_host_for_provider(provider, host, extra_hosts).is_err() {
+                    if !default.is_empty() {
+                        base = default.to_string();
+                    } else {
+                        return Err(format!(
+                            "Base URL host \"{}\" does not match your {} API key. Clear Base URL and save again.",
+                            host,
+                            provider.as_str()
+                        ));
+                    }
+                }
+            } else if !default.is_empty() {
+                base = default.to_string();
+            } else {
+                return Err(format!(
+                    "Invalid LLM URL \"{}\". Check Base URL in Settings → Model & API.",
+                    probe
+                ));
+            }
+        }
+        Err(_) if !default.is_empty() => {
+            base = default.to_string();
+        }
+        Err(e) => {
+            return Err(format!(
+                "Invalid LLM URL \"{}\": {}. Clear Base URL in Settings → Model & API.",
+                probe, e
+            ));
+        }
+    }
+
+    Ok(base)
+}
+
+/// Resolve base + full chat/completions URL with host validation.
+pub fn resolve_chat_url(
+    provider: LlmProvider,
+    base_override: &str,
+    extra_hosts: &[String],
+) -> Result<(String, String), String> {
+    let base = resolve_llm_base(provider, base_override, extra_hosts)?;
+    let url = chat_url(provider, &base);
+    let host = Url::parse(&url)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+        .ok_or_else(|| {
+            format!(
+                "Invalid LLM URL \"{}\". Clear Base URL in Settings → Model & API and save again.",
+                url
+            )
+        })?;
+    validate_host_for_provider(provider, &host, extra_hosts)?;
+    Ok((base, url))
 }
 
 /// Build the HTTP headers for a chat completion request. Each `(name, value)`
@@ -386,8 +539,26 @@ mod tests {
 
     #[test]
     fn detect_gemini_short_rejects() {
-        // Fewer than 35 chars with AIza prefix is not considered Gemini.
-        assert_eq!(detect_provider("AIza-short"), LlmProvider::Custom);
+        assert_eq!(detect_provider("AIza"), LlmProvider::Custom);
+    }
+
+    #[test]
+    fn resolve_provider_from_model_when_key_custom() {
+        assert_eq!(
+            resolve_provider("not-a-known-prefix", "gemini-2.5-flash"),
+            LlmProvider::Gemini
+        );
+    }
+
+    #[test]
+    fn resolve_llm_base_gemini_ignores_stale_anthropic_url() {
+        let base = resolve_llm_base(
+            LlmProvider::Gemini,
+            "https://api.anthropic.com/v1",
+            &[],
+        )
+        .expect("fallback");
+        assert!(base.contains("generativelanguage.googleapis.com"));
     }
 
     #[test]

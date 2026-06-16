@@ -16,7 +16,7 @@ export interface UseChatHistoryResult {
 }
 
 export function useChatHistory(): UseChatHistoryResult {
-  const [activeChat, setActiveChat] = useState<any>(() => (INITIAL_CHAT_HISTORY[0] ? INITIAL_CHAT_HISTORY[0].id : null));
+  const [activeChat, setActiveChat] = useState<any>(() => null);
   const [chats, setChats] = useState<any[]>(INITIAL_CHAT_HISTORY);
   const [dragId, setDragId] = useState<any>(null);
   const [dragOver, setDragOver] = useState<any>(null); // {id, pos:'before'|'after'|'fav'|'chats'}

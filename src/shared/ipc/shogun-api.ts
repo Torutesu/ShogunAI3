@@ -85,7 +85,8 @@ import { ShogunIpcClient } from './ipc-client';
       openPack: (input: any) => call("shogun_open_pack", input, WRITE),
       draftReply: (input: any) => call("shogun_draft_reply", input, WRITE),
       startFocusSession: (input: any) => call("shogun_start_focus_session", input, WRITE),
-      chatComplete: (input: any) => call("shogun_chat_complete", input, WRITE),
+      chatComplete: (input: any) =>
+        call("shogun_chat_complete", input, WRITE, { timeoutMs: 120000 }),
       draftCreate: (input: any) => call("shogun_draft", input, WRITE),
       scheduleAction: (input: any) => call("shogun_schedule_action", input, WRITE),
       statsGet: (input: any) => call("shogun_stats", input, READ),

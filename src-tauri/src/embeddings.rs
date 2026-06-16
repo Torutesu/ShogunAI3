@@ -46,19 +46,15 @@ pub async fn embed_one(text: &str) -> Result<Vec<f32>, String> {
     let key = secrets::get_llm_api_key()?
         .filter(|k| !k.trim().is_empty())
         .ok_or_else(|| "LLM API key is not set. Open Settings and save your key.".to_string())?;
-    let provider = llm_providers::detect_provider(&key);
     let (base_override, model_override) = read_embedding_prefs()?;
-    let base = if base_override.is_empty() {
-        llm_providers::default_base_url(provider).to_string()
-    } else {
-        base_override
-    };
+    let provider = llm_providers::resolve_provider(&key, &model_override);
+    let extra_hosts = read_extra_llm_hosts();
+    let base = llm_providers::resolve_llm_base(provider, &base_override, &extra_hosts)?;
     let url = llm_providers::embed_url(provider, &base)?;
     let host = Url::parse(&url)
         .ok()
         .and_then(|u| u.host_str().map(|s| s.to_string()))
-        .ok_or_else(|| "Invalid embeddings URL".to_string())?;
-    let extra_hosts = read_extra_llm_hosts();
+        .ok_or_else(|| format!("Invalid embeddings URL \"{}\"", url))?;
     llm_providers::validate_host_for_provider(provider, &host, &extra_hosts)?;
     let model = if model_override.is_empty() {
         llm_providers::default_embedding_model(provider)

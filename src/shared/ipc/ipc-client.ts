@@ -10,6 +10,24 @@ import { mockTransport as runMockTransport } from "@/shared/ipc/transports/mock"
     return err;
   }
 
+  /** Tauri invoke often rejects with a plain string, not an Error instance. */
+  function ipcErrorMessage(error: unknown): string {
+    if (typeof error === "string") {
+      const s = error.trim();
+      return s || "Unknown IPC error";
+    }
+    if (error && typeof error === "object") {
+      const e = error as Record<string, unknown>;
+      if (typeof e.message === "string" && e.message.trim()) return e.message.trim();
+      if (typeof e.error === "string" && e.error.trim()) return e.error.trim();
+      if (typeof e.toString === "function") {
+        const s = String(e.toString());
+        if (s && s !== "[object Object]") return s;
+      }
+    }
+    return "Unknown IPC error";
+  }
+
   function tauriInvokeFn() {
     // Tauri v2: invoke lives under window.__TAURI_INTERNALS__.
     // Tauri v1 kept it at window.__TAURI__.core.invoke — supported as a fallback
@@ -63,11 +81,15 @@ import { mockTransport as runMockTransport } from "@/shared/ipc/transports/mock"
     if (!invoke) {
       throw createError("TRANSPORT_UNAVAILABLE", "Tauri invoke is unavailable");
     }
-    // Rust side uniformly uses `fn shogun_*(payload: Value)` (see
-    // src-tauri/src/commands.rs), so args must be wrapped as { payload: X }
-    // for Tauri's named-argument deserializer. Commands with no user args
-    // still accept this — the extra key is ignored.
-    return invoke(command, { payload: payload || {} });
+    try {
+      // Rust side uniformly uses `fn shogun_*(payload: Value)` (see
+      // src-tauri/src/commands.rs), so args must be wrapped as { payload: X }
+      // for Tauri's named-argument deserializer. Commands with no user args
+      // still accept this — the extra key is ignored.
+      return await invoke(command, { payload: payload || {} });
+    } catch (error: unknown) {
+      throw createError("IPC_ERROR", ipcErrorMessage(error), error);
+    }
   }
 
   async function httpTransport(command: string, payload: any, timeoutMs: number) {
@@ -156,9 +178,9 @@ import { mockTransport as runMockTransport } from "@/shared/ipc/transports/mock"
         return {
           ok: false,
           error: {
-            code: error.code || "IPC_ERROR",
-            message: error.message || "Unknown IPC error",
-            details: error.details || null,
+            code: error?.code || "IPC_ERROR",
+            message: ipcErrorMessage(error),
+            details: error?.details ?? error ?? null,
           },
           request: request,
         };

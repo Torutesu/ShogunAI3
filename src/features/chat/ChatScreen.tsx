@@ -102,17 +102,19 @@ export function ChatScreen() {
         (rt && rt.__activeChatId) ||
         (rt && typeof rt.getActiveChat === 'function' && rt.getActiveChat() && rt.getActiveChat().id) ||
         null;
-      if (!id || !seed || !seed.chatThreads || !seed.chatThreads[id]) {
+      if (!id) {
         setMessages([]);
         setMemoryContext('');
         setMemoryContextHits(null);
         return;
       }
+      // Only hydrate demo threads — real "New Chat" threads keep local state.
+      if (!seed?.chatThreads?.[id]) {
+        return;
+      }
       setMessages(seed.chatThreads[id].map((m: any) => ({ ...m })));
       const ctx = seed.chatMemoryContext && seed.chatMemoryContext[id];
       setMemoryContext(ctx ? String(ctx) : '');
-      // Seed-provided contexts are plain strings — structured hits only come
-      // from in-app searches.
       setMemoryContextHits(null);
     };
     syncFromShell();
@@ -257,7 +259,14 @@ export function ChatScreen() {
     const res = await runRuntimeAction('chat.complete', payload, { silentError: true });
     setLoading(false);
     if (!res.ok) {
-      toast(res.error?.message || 'Chat request failed', 'error');
+      const errMsg = res.error?.message || 'Chat request failed';
+      toast(errMsg, 'error');
+      setMessages((prev) =>
+        prev.concat({
+          role: 'assistant',
+          content: `（LLM エラー）${errMsg}\n\nSettings → Model & API で Gemini キーと model（gemini-2.5-flash）を確認してください。`,
+        }),
+      );
       return;
     }
     const d = res.data;

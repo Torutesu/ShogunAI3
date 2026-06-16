@@ -66,9 +66,13 @@ export function PaneLLM() {
     const l = sections.llm;
     if (!l || typeof l !== 'object') return;
     if (l.baseUrl != null) setBaseUrl(String(l.baseUrl));
-    if (l.model != null) setModel(String(l.model));
-    if (l.embeddingModel != null) setEmbeddingModel(String(l.embeddingModel));
-    if (l.maxTokens != null) setMaxTokens(String(l.maxTokens));
+    if (l.model != null && String(l.model).trim()) setModel(String(l.model));
+    if (l.embeddingModel != null && String(l.embeddingModel).trim()) {
+      setEmbeddingModel(String(l.embeddingModel));
+    }
+    if (l.maxTokens != null && String(l.maxTokens).trim()) {
+      setMaxTokens(String(l.maxTokens));
+    }
     if (l.embedBackfillBatch != null) setBackfillLimit(normalizeEmbedBackfillBatch(l.embedBackfillBatch, EMBED_BACKFILL_BATCH_OPTS));
     if (l.embedBackfillDelayMs != null) setBackfillDelayMs(normalizeEmbedBackfillDelayMs(l.embedBackfillDelayMs, EMBED_BACKFILL_DELAY_OPTS));
   }, [sections]);
@@ -87,12 +91,12 @@ export function PaneLLM() {
       subtitle="OpenAI-compatible chat/completions and /v1/embeddings (Memory semantic search). Endpoint and models are saved locally; the API key stays in the macOS Keychain."
     >
       <div className="s-card" style={{ padding: 20, marginBottom: 16 }}>
-        <Field label="Base URL" hint="HTTPS only (localhost HTTP is accepted for local gateways). If the path has no /v1, it is appended automatically.">
+        <Field label="Base URL" hint="Leave blank for Gemini/OpenAI defaults. Gemini: https://generativelanguage.googleapis.com/v1beta/openai">
           <input
             className="s-input"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://api.openai.com/v1"
+            placeholder="(blank = auto) or https://generativelanguage.googleapis.com/v1beta/openai"
             autoComplete="off"
           />
         </Field>
@@ -101,7 +105,7 @@ export function PaneLLM() {
             className="s-input"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder="gpt-4o-mini"
+            placeholder="gemini-2.5-flash"
             autoComplete="off"
           />
         </Field>
@@ -134,7 +138,9 @@ export function PaneLLM() {
             className="btn btn-sm btn-secondary"
             type="button"
             onClick={async () => {
-              const mt = parseInt(String(maxTokens).trim(), 10);
+              const chatModel = model.trim() || 'gemini-2.5-flash';
+              const mtRaw = String(maxTokens).trim();
+              const mt = mtRaw ? parseInt(mtRaw, 10) : 2048;
               if (!Number.isFinite(mt) || mt < 1) {
                 toast('Max output tokens must be a positive number', 'error');
                 return;
@@ -144,15 +150,19 @@ export function PaneLLM() {
                 {
                   section: 'llm',
                   baseUrl: baseUrl.trim(),
-                  model: model.trim(),
-                  embeddingModel: embeddingModel.trim() || 'text-embedding-3-small',
+                  model: chatModel,
+                  embeddingModel: embeddingModel.trim() || 'gemini-embedding-001',
                   maxTokens: mt,
                   embedBackfillBatch: backfillLimit,
                   embedBackfillDelayMs: backfillDelayMs,
                 },
                 { successMessage: 'LLM endpoint settings saved' },
               );
-              if (r.ok && refreshSections) await refreshSections();
+              if (r.ok) {
+                setModel(chatModel);
+                if (!mtRaw) setMaxTokens(String(mt));
+                if (refreshSections) await refreshSections();
+              }
             }}
           >
             Save endpoint
@@ -170,7 +180,7 @@ export function PaneLLM() {
             type="password"
             value={apiKeyDraft}
             onChange={(e) => setApiKeyDraft(e.target.value)}
-            placeholder={keyConfigured ? '•••••••• (replace by typing a new key)' : 'sk-…'}
+            placeholder={keyConfigured ? '•••••••• (replace by typing a new key)' : 'AIza… (Gemini) or sk-…'}
             autoComplete="off"
           />
           {keyConfigured && keyProvider && (
@@ -215,6 +225,7 @@ export function PaneLLM() {
                 if (r.ok) {
                   setApiKeyDraft('');
                   await refreshKeyStatus();
+                  if (refreshSections) await refreshSections();
                 }
               }}
             >

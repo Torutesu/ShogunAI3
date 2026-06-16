@@ -14,12 +14,39 @@ const CLERK_SNAPSHOT_USER: &str = "clerk_session_snapshot";
 static LLM_KEY_CACHE: Mutex<Option<Option<String>>> = Mutex::new(None);
 
 pub fn set_llm_api_key(key: &str) -> Result<(), String> {
+  let key = crate::llm_providers::normalize_api_key(key);
   let entry = Entry::new(SERVICE, USER).map_err(|e| e.to_string())?;
-  entry.set_password(key).map_err(|e| e.to_string())?;
+  entry.set_password(&key).map_err(|e| e.to_string())?;
   if let Ok(mut cache) = LLM_KEY_CACHE.lock() {
     *cache = Some(Some(key.to_string()));
   }
   Ok(())
+}
+
+fn read_keychain_llm_key() -> Result<Option<String>, String> {
+  let entry = Entry::new(SERVICE, USER).map_err(|e| e.to_string())?;
+  match entry.get_password() {
+    Ok(p) => Ok(Some(p)),
+    Err(keyring::Error::NoEntry) => Ok(None),
+    Err(e) => Err(e.to_string()),
+  }
+}
+
+fn read_env_llm_key() -> Option<String> {
+  for var in [
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+  ] {
+    if let Ok(v) = std::env::var(var) {
+      let trimmed = crate::llm_providers::normalize_api_key(&v);
+      if !trimmed.is_empty() {
+        return Some(trimmed);
+      }
+    }
+  }
+  None
 }
 
 pub fn get_llm_api_key() -> Result<Option<String>, String> {
@@ -28,24 +55,16 @@ pub fn get_llm_api_key() -> Result<Option<String>, String> {
       return Ok(cached.clone());
     }
   }
-  // Dev convenience: ANTHROPIC_API_KEY env var (loaded from .env at startup)
-  // bypasses the macOS Keychain prompt that fires on every fresh process
-  // when the binary signature changes (i.e. every dev rebuild).
-  if let Ok(env_key) = std::env::var("ANTHROPIC_API_KEY") {
-    let trimmed = env_key.trim().to_string();
-    if !trimmed.is_empty() {
-      let result = Some(trimmed);
-      if let Ok(mut cache) = LLM_KEY_CACHE.lock() {
-        *cache = Some(result.clone());
-      }
-      return Ok(result);
-    }
-  }
-  let entry = Entry::new(SERVICE, USER).map_err(|e| e.to_string())?;
-  let result = match entry.get_password() {
-    Ok(p) => Some(p),
-    Err(keyring::Error::NoEntry) => None,
-    Err(e) => return Err(e.to_string()),
+  // Prefer Keychain (explicit user save in Settings) over dev .env fallbacks.
+  let keychain = read_keychain_llm_key()?;
+  let result = if keychain
+    .as_ref()
+    .map(|k| !k.trim().is_empty())
+    .unwrap_or(false)
+  {
+    keychain.map(|k| crate::llm_providers::normalize_api_key(&k))
+  } else {
+    read_env_llm_key()
   };
   if let Ok(mut cache) = LLM_KEY_CACHE.lock() {
     *cache = Some(result.clone());

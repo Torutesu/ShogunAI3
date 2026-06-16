@@ -52,6 +52,49 @@ fn privacy_allows_chat_server_memory_assembly() -> bool {
     .unwrap_or(true)
 }
 
+/// When the user saved an API key but never clicked "Save endpoint", seed
+/// provider-default model names so chat/embeddings can route correctly.
+pub fn seed_llm_endpoint_defaults_if_missing(key: &str) -> Result<bool, String> {
+  let doc = settings_store::load().unwrap_or(json!({}));
+  let model = doc
+    .pointer("/sections/llm/model")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .trim();
+  let embedding = doc
+    .pointer("/sections/llm/embeddingModel")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .trim();
+  if !model.is_empty() && !embedding.is_empty() {
+    return Ok(false);
+  }
+  let provider = crate::llm_providers::resolve_provider(key, model);
+  if provider == crate::llm_providers::LlmProvider::Custom {
+    return Ok(false);
+  }
+  let mut patch = json!({ "section": "llm" });
+  let obj = patch
+    .as_object_mut()
+    .ok_or_else(|| "internal: patch object".to_string())?;
+  if model.is_empty() {
+    obj.insert(
+      "model".to_string(),
+      json!(crate::llm_providers::default_chat_model(provider)),
+    );
+  }
+  if embedding.is_empty() {
+    if let Some(em) = crate::llm_providers::default_embedding_model(provider) {
+      obj.insert("embeddingModel".to_string(), json!(em));
+    }
+  }
+  if obj.len() <= 1 {
+    return Ok(false);
+  }
+  settings_store::save_patch(&patch)?;
+  Ok(true)
+}
+
 pub fn read_llm_prefs() -> Result<(String, String, u64), String> {
   let doc = settings_store::load()?;
   let llm = doc.pointer("/sections/llm");
@@ -100,25 +143,24 @@ pub async fn chat_complete(
     .ok_or_else(|| {
       "LLM API key is not set. Open Settings → Model & API and save your key.".to_string()
     })?;
-  let provider = crate::llm_providers::detect_provider(&key);
+  let _ = seed_llm_endpoint_defaults_if_missing(&key);
   let (base_override, model_override, max_tokens) = read_llm_prefs()?;
-  let base = if base_override.is_empty() {
-    crate::llm_providers::default_base_url(provider).to_string()
-  } else {
-    base_override
-  };
-  let model = if model_override.is_empty() {
+  let provider = crate::llm_providers::resolve_provider(&key, &model_override);
+  let extra_hosts = read_extra_llm_hosts();
+  let (_base, url) =
+    crate::llm_providers::resolve_chat_url(provider, &base_override, &extra_hosts)?;
+  let mut model = if model_override.is_empty() {
     crate::llm_providers::default_chat_model(provider).to_string()
   } else {
     model_override
   };
-  let url = crate::llm_providers::chat_url(provider, &base);
-  let host = Url::parse(&url)
-    .ok()
-    .and_then(|u| u.host_str().map(|s| s.to_string()))
-    .ok_or_else(|| "Invalid LLM URL".to_string())?;
-  let extra_hosts = read_extra_llm_hosts();
-  crate::llm_providers::validate_host_for_provider(provider, &host, &extra_hosts)?;
+  // Stale settings often keep a Claude id after switching the BYOK key to Gemini.
+  let model_lc = model.to_lowercase();
+  if provider == crate::llm_providers::LlmProvider::Gemini && model_lc.contains("claude") {
+    model = crate::llm_providers::default_chat_model(provider).to_string();
+  } else if provider == crate::llm_providers::LlmProvider::Anthropic && model_lc.starts_with("gemini") {
+    model = crate::llm_providers::default_chat_model(provider).to_string();
+  }
   let messages_in = payload
     .get("messages")
     .and_then(|m| m.as_array())
@@ -728,8 +770,12 @@ pub fn resolve_tool_model(model_setting_path: Option<&str>) -> Result<String, St
   let key = crate::secrets::get_llm_api_key()?
     .filter(|k| !k.trim().is_empty())
     .ok_or_else(|| "LLM API key not configured".to_string())?;
-  let provider = crate::llm_providers::detect_provider(&key);
   let settings = crate::settings_store::load().unwrap_or(json!({}));
+  let model_hint = settings
+    .pointer("/sections/llm/model")
+    .and_then(|v| v.as_str())
+    .unwrap_or("");
+  let provider = crate::llm_providers::resolve_provider(&key, model_hint);
   if let Some(path) = model_setting_path {
     if let Some(m) = settings.pointer(path).and_then(|v| v.as_str()) {
       let m = m.trim();
@@ -942,7 +988,8 @@ pub async fn anthropic_tool_complete_with_usage_opts(
 ) -> Result<AnthropicToolResult, String> {
   let key = crate::secrets::get_llm_api_key()?
     .ok_or_else(|| "LLM API key not configured".to_string())?;
-  let provider = crate::llm_providers::detect_provider(&key);
+  let (base_override, model_override, _) = read_llm_prefs()?;
+  let provider = crate::llm_providers::resolve_provider(&key, &model_override);
 
   let tool_name = tool
     .get("name")
@@ -965,18 +1012,8 @@ pub async fn anthropic_tool_complete_with_usage_opts(
     )
   } else {
     let (base_override, _, _) = read_llm_prefs()?;
-    let base = if base_override.is_empty() {
-      crate::llm_providers::default_base_url(provider).to_string()
-    } else {
-      base_override
-    };
-    let url = crate::llm_providers::chat_url(provider, &base);
-    let host = Url::parse(&url)
-      .ok()
-      .and_then(|u| u.host_str().map(|s| s.to_string()))
-      .ok_or_else(|| "Invalid LLM URL".to_string())?;
     let extra_hosts = read_extra_llm_hosts();
-    crate::llm_providers::validate_host_for_provider(provider, &host, &extra_hosts)?;
+    let (_base, url) = crate::llm_providers::resolve_chat_url(provider, &base_override, &extra_hosts)?;
     let body = build_openai_tool_request_body(model, system, user, tool, 1024)?;
     (
       url,
@@ -1048,6 +1085,26 @@ mod tests {
       "description": "test tool",
       "input_schema": { "type": "object", "properties": {} },
     })
+  }
+
+  #[test]
+  fn seed_llm_endpoint_defaults_writes_gemini_models_for_aiza_key() {
+    use crate::settings_store::{self, TestSettingsGuard};
+    let _guard = TestSettingsGuard::new("seed-llm");
+    settings_store::save_patch(&json!({ "section": "llm", "extractionModel": "claude-haiku-4-5" }))
+      .expect("seed");
+    let seeded =
+      seed_llm_endpoint_defaults_if_missing("AIzaSyDummyKey1234567890").expect("seed");
+    assert!(seeded);
+    let doc = settings_store::load().expect("load");
+    assert_eq!(
+      doc.pointer("/sections/llm/model").and_then(|v| v.as_str()),
+      Some("gemini-2.5-flash")
+    );
+    assert_eq!(
+      doc.pointer("/sections/llm/embeddingModel").and_then(|v| v.as_str()),
+      Some("gemini-embedding-001")
+    );
   }
 
   #[test]

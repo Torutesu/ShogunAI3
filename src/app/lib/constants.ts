@@ -1,6 +1,16 @@
 // Navigation + UI constants extracted from App.tsx (Phase 2 Step 11)
 import { SHOGUN_DEMO_SEED } from '@/shared/lib/demo-seed';
 
+function isTauriDesktop(): boolean {
+  if (typeof window === 'undefined') return false;
+  const g = window as any;
+  return Boolean(
+    g.__TAURI_INTERNALS__?.invoke ||
+      g.__TAURI__?.core?.invoke ||
+      g.ShogunIpcClient?.createIpcClient?.()?.hasTauriInvoke?.(),
+  );
+}
+
 export const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "language": "en",
   "accentDensity": "standard",
@@ -35,6 +45,6 @@ export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
 
 export const INITIAL_CHAT_HISTORY: any[] =
-  SHOGUN_DEMO_SEED && Array.isArray(SHOGUN_DEMO_SEED.chats)
+  !isTauriDesktop() && SHOGUN_DEMO_SEED && Array.isArray(SHOGUN_DEMO_SEED.chats)
     ? SHOGUN_DEMO_SEED.chats
     : [];

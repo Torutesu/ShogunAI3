@@ -332,6 +332,7 @@ pub fn app_llm_api_key_set(payload: Value) -> Result<Value, String> {
     .and_then(|k| k.as_str())
     .ok_or_else(|| "apiKey is required".to_string())?;
   secrets::set_llm_api_key(key)?;
+  let _ = crate::llm::seed_llm_endpoint_defaults_if_missing(key);
   Ok(json!({ "saved": true, "stub": false }))
 }
 
@@ -340,7 +341,13 @@ pub fn app_llm_api_key_set(payload: Value) -> Result<Value, String> {
 pub fn app_llm_api_key_status(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
   match secrets::get_llm_api_key()? {
     Some(k) if !k.trim().is_empty() => {
-      let provider = crate::llm_providers::detect_provider(&k);
+      let _ = crate::llm::seed_llm_endpoint_defaults_if_missing(&k);
+      let doc = crate::settings_store::load().unwrap_or(serde_json::json!({}));
+      let model = doc
+        .pointer("/sections/llm/model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+      let provider = crate::llm_providers::resolve_provider(&k, model);
       Ok(serde_json::json!({
         "configured": true,
         "provider": provider.as_str(),

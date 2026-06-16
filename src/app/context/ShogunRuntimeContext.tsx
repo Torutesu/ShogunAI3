@@ -146,9 +146,12 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
     try {
       res = await runtimeRef.current.registry.run(actionKey, payload);
     } catch (err: unknown) {
-      const msg = err && typeof err === 'object' && 'message' in err
-        ? String((err as { message: unknown }).message)
-        : 'Action failed unexpectedly';
+      const msg =
+        typeof err === 'string'
+          ? err.trim() || 'Action failed unexpectedly'
+          : err && typeof err === 'object' && 'message' in err
+            ? String((err as { message: unknown }).message)
+            : 'Action failed unexpectedly';
       if (!options.silentError) pushToastRef.current(msg, 'error');
       return { ok: false, error: { code: 'RUNTIME_EXCEPTION', message: msg } };
     }
