@@ -138,7 +138,7 @@ export function MemoryDigestView({ state, setState }: MemoryDigestViewProps) {
                 ))}
               </ul>
             )}
-            {rollup.reason && (
+            {rollup.reason && !String(rollup.model || '').startsWith('heuristic') && (
               <div style={{fontSize:11, color:'var(--text-dim)', lineHeight:1.5}}>
                 <span className="t-mono" style={{fontSize:9, letterSpacing:'0.1em'}}>WHY</span>{' '}{rollup.reason}
               </div>

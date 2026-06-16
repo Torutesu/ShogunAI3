@@ -261,12 +261,37 @@ pub fn assemble_debug_stats(
     )
     .unwrap_or(0);
 
+  let jobs_terminal = queue.jobs_done.saturating_add(queue.jobs_failed);
+  let job_completion_rate = if jobs_terminal > 0 {
+    Some(queue.jobs_done as f64 / jobs_terminal as f64)
+  } else {
+    None
+  };
+  let edge_density = if graph.mem_items_active > 0 {
+    graph.edges_active as f64 / graph.mem_items_active as f64
+  } else {
+    0.0
+  };
+  let failed_billing_jobs = crate::kioku::extraction::count_failed_billing_jobs(conn).unwrap_or(0);
+
   Ok(json!({
     "queue": queue,
     "cost": cost,
     "graph": graph,
     "rules": rules_summary,
     "flags": flags,
+    "summary": {
+      "jobs_queued": queue.jobs_queued,
+      "jobs_running": queue.jobs_running,
+      "jobs_done": queue.jobs_done,
+      "jobs_failed": queue.jobs_failed,
+      "job_completion_rate": job_completion_rate,
+      "edges_active": graph.edges_active,
+      "mem_items_active": graph.mem_items_active,
+      "edge_density": edge_density,
+      "failed_billing_jobs": failed_billing_jobs,
+      "extraction_paused": failed_billing_jobs > 0 || cost.status == "Pause",
+    },
     "meeting_pipeline": {
       "captures": meeting_captures,
     },
@@ -597,6 +622,7 @@ mod tests {
     assert!(v.get("graph").is_some());
     assert!(v.get("rules").is_some());
     assert!(v.get("flags").is_some());
+    assert!(v.get("summary").is_some());
     assert_eq!(v["now_ms"], json!(1_745_686_800_000_i64));
   }
 

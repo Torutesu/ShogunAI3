@@ -208,7 +208,7 @@ pub fn heuristic_fallback(item: &Value, source_type: &str, lang: &str) -> Summar
     .collect::<String>();
   let no_title = loc(lang, "(no title)", "（無題）");
   let no_content = loc(lang, "(no content)", "（本文なし）");
-  let fallback_reason = loc(lang, "LLM unavailable, heuristic fallback", "LLM 不使用 / 暫定要約");
+  let fallback_reason = loc(lang, "Draft summary (local)", "暫定要約（ローカル）");
 
   Summary {
     target_kind: "item".into(),
@@ -527,7 +527,7 @@ fn entity_heuristic_fallback(
     key_points,
     source_type: "entity_rollup".into(),
     priority: "medium".into(),
-    reason: Some(loc(lang, "LLM unavailable — heuristic rollup", "LLM 不使用 / 集計のみ")),
+    reason: Some(loc(lang, "Local rollup (draft)", "ローカル集計（暫定）")),
     model: "heuristic".into(),
     schema_version: SCHEMA_VERSION,
     generated_at: crate::memory_store::now_ms() as i64,
@@ -954,7 +954,7 @@ fn year_heuristic_fallback(id: &str, monthly: &[Summary], lang: &str) -> Summary
     priority: "medium".into(),
     reason: Some(loc(
       lang,
-      "Heuristic year summary (LLM unavailable)",
+      "Local year rollup (draft)",
       "ヒューリスティック年次サマリ（LLM未到達）",
     )),
     model: "heuristic".into(),
@@ -983,6 +983,62 @@ async fn summarize_rollup(
   };
 
   if items.is_empty() {
+    let indexed = crate::memory_store::count_items_in_window(start_ms, end_ms).unwrap_or(0);
+    if indexed > 0 {
+      let (title_en, title_jp) = match kind {
+        RollupKind::Week => ("Summaries pending", "要約待ち"),
+        RollupKind::Day => ("Summaries pending", "要約待ち"),
+        RollupKind::Month => ("Summaries pending", "要約待ち"),
+        RollupKind::Year => ("Summaries pending", "要約待ち"),
+      };
+      let (body_en, body_jp) = match kind {
+        RollupKind::Week => (
+          format!(
+            "{indexed} memories indexed this week — open Memory → River to refresh summaries."
+          ),
+          format!("{indexed} 件の記憶がインデックス済み — Memory → River で要約を更新できます"),
+        ),
+        RollupKind::Day => (
+          format!(
+            "{indexed} memories indexed today — open Memory → River to refresh summaries."
+          ),
+          format!("{indexed} 件の記憶がインデックス済み — Memory → River で要約を更新できます"),
+        ),
+        RollupKind::Month => (
+          format!(
+            "{indexed} memories indexed this month — open Memory → River to refresh summaries."
+          ),
+          format!("{indexed} 件の記憶がインデックス済み — Memory → River で要約を更新できます"),
+        ),
+        RollupKind::Year => (
+          format!(
+            "{indexed} memories indexed this year — open Memory → River to refresh summaries."
+          ),
+          format!("{indexed} 件の記憶がインデックス済み — Memory → River で要約を更新できます"),
+        ),
+      };
+      return Ok(Summary {
+        target_kind: kind.target_kind().into(),
+        target_id: id,
+        title: loc(lang, title_en, title_jp),
+        key_points: vec![loc(lang, &body_en, &body_jp)],
+        source_type: kind.target_kind().into(),
+        priority: "medium".into(),
+        reason: Some(loc(
+          lang,
+          "Indexed memories exist; LLM summaries pending",
+          "記憶はあるが LLM 要約が未生成",
+        )),
+        model: "heuristic".into(),
+        schema_version: SCHEMA_VERSION,
+        generated_at: crate::memory_store::now_ms() as i64,
+        raw_json: json!({"rollup": "pending", "indexed": indexed, "kind": kind.target_kind()}).to_string(),
+        lang: lang.to_string(),
+        user_priority: None,
+        acknowledged_at: None,
+        snooze_until: None,
+      });
+    }
     let (title_en, title_jp) = match kind {
       RollupKind::Week => ("Quiet week", "静かな週"),
       RollupKind::Day => ("Quiet day", "静かな一日"),
@@ -1170,7 +1226,7 @@ fn rollup_heuristic_fallback(id: &str, items: &[Summary], kind: RollupKind, lang
     key_points,
     source_type: kind.target_kind().into(),
     priority: "medium".into(),
-    reason: Some(loc(lang, "LLM unavailable — heuristic rollup", "LLM 不使用 / 集計のみ")),
+    reason: Some(loc(lang, "Local rollup (draft)", "ローカル集計（暫定）")),
     model: "heuristic".into(),
     schema_version: SCHEMA_VERSION,
     generated_at: crate::memory_store::now_ms() as i64,

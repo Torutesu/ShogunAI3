@@ -43,19 +43,28 @@ describe('ShogunIpcClient mock transport', () => {
     expect(parsed.general.name).toBe('Test User');
   });
 
-  it('shogun_brief_get returns v2 brief with items array', async () => {
+  it('shogun_brief_get returns wrapped brief with items and memory_digest', async () => {
     const direct = ShogunMorningBrief.mockBriefGetResponse({ forceV2: true }) as {
-      version: string;
-      items: unknown[];
+      skipped: boolean;
+      brief: { items: unknown[] } | null;
+      memory_digest: { graph_supplemented?: boolean; read_path?: string };
+      memoryReadPath: string;
     };
-    expect(direct.version).toBe('2.0');
-    expect(Array.isArray(direct.items)).toBe(true);
+    expect(direct.skipped).toBe(false);
+    expect(Array.isArray(direct.brief?.items)).toBe(true);
+    expect(direct.memory_digest?.graph_supplemented).toBe(true);
+    expect(direct.memoryReadPath).toBe('graph');
 
     const client = createMockClient();
     const res = await client.invoke('shogun_brief_get', { forceV2: true, echo: 'x' });
     expect(res.ok).toBe(true);
-    const data = res.data as { version?: string; items?: unknown[] };
-    expect(data.version).toBe('2.0');
-    expect(Array.isArray(data.items)).toBe(true);
+    const data = res.data as {
+      skipped?: boolean;
+      brief?: { items?: unknown[] };
+      memory_digest?: { graph_supplemented?: boolean };
+    };
+    expect(data.skipped).toBe(false);
+    expect(Array.isArray(data.brief?.items)).toBe(true);
+    expect(data.memory_digest?.graph_supplemented).toBe(true);
   });
 });

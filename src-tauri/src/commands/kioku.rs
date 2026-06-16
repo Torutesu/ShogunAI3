@@ -4,8 +4,6 @@ use serde_json::{json, Value};
 
 #[tauri::command]
 pub fn shogun_kioku_brief_signals(payload: Value) -> Result<Value, String> {
-  use crate::kioku_decision_graph::{fetch_decision_graph_hits, fetch_recent_kioku_hits};
-
   let limit_decisions = payload
     .get("limit_decisions")
     .and_then(|v| v.as_u64())
@@ -17,14 +15,7 @@ pub fn shogun_kioku_brief_signals(payload: Value) -> Result<Value, String> {
     .unwrap_or(12)
     .clamp(1, 100) as usize;
 
-  let conn = memory_store::open_conn()?;
-  let decisions = fetch_decision_graph_hits(&conn, limit_decisions)?;
-  let kioku = fetch_recent_kioku_hits(&conn, limit_kioku)?;
-
-  Ok(json!({
-    "decision_graph_hits": decisions,
-    "related_kioku_hits": kioku,
-  }))
+  Ok(crate::brief::load_kioku_brief_signals(limit_decisions, limit_kioku))
 }
 
 
@@ -34,6 +25,24 @@ pub fn shogun_kioku_debug_stats(_payload: Value) -> Result<Value, String> {
   let settings = settings_store::load().unwrap_or_else(|_| json!({}));
   let now_ms = ts() as i64;
   crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)
+}
+
+
+#[tauri::command]
+pub fn shogun_kioku_extraction_requeue(payload: Value) -> Result<Value, String> {
+  let only_billing = payload
+    .get("only_billing")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(true);
+  let conn = memory_store::open_conn()?;
+  let now_ms = ts() as i64;
+  let report = crate::kioku::extraction::requeue_failed_extraction_jobs(&conn, only_billing, now_ms)?;
+  Ok(json!({
+    "requeued": report.requeued,
+    "only_billing": report.only_billing,
+    "stub": false,
+    "echo": payload,
+  }))
 }
 
 

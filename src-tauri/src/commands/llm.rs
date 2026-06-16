@@ -15,7 +15,8 @@ pub async fn shogun_brief_get(
     .get("lang")
     .and_then(|v| v.as_str())
     .unwrap_or("en");
-  let memory_digest = brief::build_memory_digest(lang);
+  let mut memory_digest = brief::build_memory_digest(lang);
+  brief::enrich_memory_digest_with_graph(&mut memory_digest).await;
   let use_v2 = brief::should_use_v2(&settings, &payload);
   let has_llm = crate::secrets::get_llm_api_key()
     .ok()
@@ -25,15 +26,15 @@ pub async fn shogun_brief_get(
 
   let raw_brief = if use_v2 || has_llm {
     if has_llm {
-      match brief::morning_brief_v2_generate(user_tz, &payload).await {
+      match brief::morning_brief_v2_generate(user_tz, &payload, Some(&memory_digest)).await {
         Ok(v) => v,
         Err(e) => {
           log::warn!("brief v2 LLM failed, using heuristic: {}", e);
-          brief::morning_brief_v2_heuristic(user_tz, &payload)
+          brief::morning_brief_v2_heuristic(user_tz, &payload, Some(&memory_digest))
         }
       }
     } else {
-      brief::morning_brief_v2_heuristic(user_tz, &payload)
+      brief::morning_brief_v2_heuristic(user_tz, &payload, Some(&memory_digest))
     }
   } else {
     let v1 = llm::brief_generate(&payload, Some(&*ring)).await?;

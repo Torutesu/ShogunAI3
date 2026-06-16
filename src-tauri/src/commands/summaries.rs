@@ -273,10 +273,19 @@ pub async fn shogun_memory_rollup_get(payload: serde_json::Value) -> Result<serd
     .unwrap_or(false);
 
   let week_id = crate::summarizer::format_week_id(week_start_ms);
+  let week_end_ms = week_start_ms + 7 * 24 * 3600 * 1000;
 
   if !regenerate {
     if let Some(cached) = crate::summarizer_store::get_cached("week_rollup", &week_id, &lang)? {
-      return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+      let stale_quiet = cached
+        .key_points
+        .iter()
+        .any(|p| p.contains("No activity") || p.contains("アクティビティなし"));
+      let indexed = crate::memory_store::count_items_in_window(week_start_ms, week_end_ms)
+        .unwrap_or(0);
+      if !(stale_quiet && indexed > 0) {
+        return Ok(serde_json::json!({ "rollup": cached.to_json(), "cached": true }));
+      }
     }
   }
 

@@ -51,7 +51,10 @@ export function useHomeBriefCards(): {
       }
       const inner = res.data as Record<string, unknown>;
       if (inner.memory_digest && typeof inner.memory_digest === 'object') {
-        const digest = inner.memory_digest as Record<string, unknown>;
+        const digest = { ...(inner.memory_digest as Record<string, unknown>) };
+        if (typeof inner.memoryReadPath === 'string' && !digest.read_path) {
+          digest.read_path = inner.memoryReadPath;
+        }
         setMemoryDigest(digest);
         dispatchHighPriorityCount(digest);
       }

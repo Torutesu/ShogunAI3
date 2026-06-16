@@ -342,18 +342,15 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     expect(out.data.semanticRerank).toBe(true);
   });
 
-  test("Memory: semantic re-rank toggle is on by default", async ({ page }) => {
+  test("Memory: semantic re-rank persists via settings.save (mock)", async ({ page }) => {
     await openHiFi(page);
-    await page.locator(".sidebar .nav-item").filter({ hasText: "Memory" }).first().click();
-    await expect(page.getByTestId("memory-semantic-rerank")).toBeVisible();
-    await expect(page.getByTestId("memory-semantic-rerank")).toBeChecked();
-  });
-
-  test("Memory: semantic re-rank preference persists in settings (mock)", async ({ page }) => {
-    await openHiFi(page);
-    await page.locator(".sidebar .nav-item").filter({ hasText: "Memory" }).first().click();
-    await expect(page.getByTestId("memory-semantic-rerank")).toBeVisible();
-    await page.getByTestId("memory-semantic-rerank").uncheck();
+    await page.evaluate(async () => {
+      await window.SHOGUN_RUNTIME.executeAction(
+        "settings.save",
+        { section: "memory", semanticRerank: false },
+        { silentError: true },
+      );
+    });
     await expect
       .poll(async () =>
         page.evaluate(async () => {
@@ -362,7 +359,13 @@ test.describe("SHOGUN Hi-Fi UI", () => {
         }),
       )
       .toBe(false);
-    await page.getByTestId("memory-semantic-rerank").check();
+    await page.evaluate(async () => {
+      await window.SHOGUN_RUNTIME.executeAction(
+        "settings.save",
+        { section: "memory", semanticRerank: true },
+        { silentError: true },
+      );
+    });
     await expect
       .poll(async () =>
         page.evaluate(async () => {
@@ -371,6 +374,159 @@ test.describe("SHOGUN Hi-Fi UI", () => {
         }),
       )
       .toBe(true);
+  });
+
+  test("Memory: kioku_graph read_path persists via settings.save (mock)", async ({ page }) => {
+    await openHiFi(page);
+    await page.evaluate(async () => {
+      await window.SHOGUN_RUNTIME.executeAction(
+        "settings.save",
+        { section: "kioku_graph", read_path: "legacy" },
+        { silentError: true },
+      );
+    });
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const r = await window.SHOGUN_RUNTIME.executeAction("settings.load", {}, { silentError: true });
+          return r?.data?.settings?.sections?.kioku_graph?.read_path;
+        }),
+      )
+      .toBe("legacy");
+    await page.evaluate(async () => {
+      await window.SHOGUN_RUNTIME.executeAction(
+        "settings.save",
+        { section: "kioku_graph", read_path: "graph" },
+        { silentError: true },
+      );
+    });
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const r = await window.SHOGUN_RUNTIME.executeAction("settings.load", {}, { silentError: true });
+          return r?.data?.settings?.sections?.kioku_graph?.read_path;
+        }),
+      )
+      .toBe("graph");
+  });
+
+  test("Memory: timelineSearch reports graph read_path by default (mock)", async ({ page }) => {
+    await openHiFi(page);
+    const out = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "memory.timelineSearch",
+        { query: "", limit: 20, kinds: ["screen", "input"] },
+        { silentError: true },
+      );
+    });
+    expect(out.ok).toBe(true);
+    expect(out.data.read_path).toBe("graph");
+    expect(out.data.scope).toBe("timeline");
+  });
+
+  test("Chat: memoryAssembly reports graph read_path by default (mock)", async ({ page }) => {
+    await openHiFi(page);
+    const out = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "chat.complete",
+        {
+          messages: [{ role: "user", content: "What did we decide about Aurora beta?" }],
+          memoryAssembly: { query: "Aurora beta", limit: 8, semantic: true },
+        },
+        { silentError: true },
+      );
+    });
+    expect(out.ok).toBe(true);
+    expect(out.data.memoryReadPath).toBe("graph");
+    expect(out.data.memoryAssembly?.read_path).toBe("graph");
+  });
+
+  test("Chat: memoryReadPath follows kioku_graph settings (mock)", async ({ page }) => {
+    await openHiFi(page);
+    await page.evaluate(async () => {
+      await window.SHOGUN_RUNTIME.executeAction(
+        "settings.save",
+        { section: "kioku_graph", read_path: "legacy" },
+        { silentError: true },
+      );
+    });
+    const legacy = await page.evaluate(async () => {
+      const r = await window.SHOGUN_RUNTIME.executeAction(
+        "chat.complete",
+        {
+          messages: [{ role: "user", content: "legacy path check" }],
+          memoryAssembly: { query: "legacy path check", limit: 5, semantic: false },
+        },
+        { silentError: true },
+      );
+      return r?.data?.memoryReadPath;
+    });
+    expect(legacy).toBe("legacy");
+    await page.evaluate(async () => {
+      await window.SHOGUN_RUNTIME.executeAction(
+        "settings.save",
+        { section: "kioku_graph", read_path: "graph" },
+        { silentError: true },
+      );
+    });
+    const graph = await page.evaluate(async () => {
+      const r = await window.SHOGUN_RUNTIME.executeAction(
+        "chat.complete",
+        {
+          messages: [{ role: "user", content: "graph path check" }],
+          memoryAssembly: { query: "graph path check", limit: 5, semantic: false },
+        },
+        { silentError: true },
+      );
+      return r?.data?.memoryReadPath;
+    });
+    expect(graph).toBe("graph");
+  });
+
+  test("Brief: brief.get reports memoryReadPath from settings (mock)", async ({ page }) => {
+    await openHiFi(page);
+    const out = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "brief.get",
+        { forceV2: true, user_tz: "Asia/Tokyo", lang: "en" },
+        { silentError: true },
+      );
+    });
+    expect(out.ok).toBe(true);
+    expect(out.data.memoryReadPath).toBe("graph");
+    await page.evaluate(async () => {
+      await window.SHOGUN_RUNTIME.executeAction(
+        "settings.save",
+        { section: "kioku_graph", read_path: "legacy" },
+        { silentError: true },
+      );
+    });
+    await expect
+      .poll(async () => {
+        const r = await page.evaluate(async () =>
+          window.SHOGUN_RUNTIME.executeAction(
+            "brief.get",
+            { forceV2: true, user_tz: "Asia/Tokyo", lang: "en" },
+            { silentError: true },
+          ),
+        );
+        return r?.data?.memoryReadPath;
+      })
+      .toBe("legacy");
+  });
+
+  test("Brief: memory_digest reports graph_supplemented in mock", async ({ page }) => {
+    await openHiFi(page);
+    const out = await page.evaluate(async () => {
+      return window.SHOGUN_RUNTIME.executeAction(
+        "brief.get",
+        { forceV2: true, user_tz: "Asia/Tokyo", lang: "en" },
+        { silentError: true },
+      );
+    });
+    expect(out.ok).toBe(true);
+    expect(out.data.memory_digest?.graph_supplemented).toBe(true);
+    expect(out.data.memory_digest?.read_path).toBe("graph");
   });
 
   test("Settings Model & API: Backfill embeddings toast after mock key save", async ({ page }) => {

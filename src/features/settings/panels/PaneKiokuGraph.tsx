@@ -8,6 +8,7 @@ import { SliThresholdsSection } from './PaneKiokuGraph/SliThresholdsSection';
 import { RulesSection } from './PaneKiokuGraph/RulesSection';
 import { EdgeReviewSection } from './PaneKiokuGraph/EdgeReviewSection';
 import { BackupSection } from './PaneKiokuGraph/BackupSection';
+import { ExtractionRecoverySection } from './PaneKiokuGraph/ExtractionRecoverySection';
 
 export function PaneKiokuGraph() {
   const { run } = useRuntimeActions();
@@ -233,6 +234,7 @@ export function PaneKiokuGraph() {
         setMaxJobs={setMaxJobs}
         persistGraph={persistGraph}
       />
+      <ExtractionRecoverySection />
       <CostSection
         extractionModel={extractionModel}
         setExtractionModel={setExtractionModel}

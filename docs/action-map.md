@@ -173,8 +173,10 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `lessons.archive`
 - `lessons.stats`
 - `kioku.backup_db`
+- `kioku.debug_stats`
 - `kioku.edge_type_proposals`
 - `kioku.edge_type_review`
+- `kioku.extraction_requeue`
 - `settings.export`
 - `settings.import`
 - `dead_letter.list`

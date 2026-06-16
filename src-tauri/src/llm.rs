@@ -197,6 +197,7 @@ pub async fn chat_complete(
           ("hits", hits.len().to_string()),
           ("manual_ctx", manual_ctx.to_string()),
           ("semantic", semantic.to_string()),
+          ("mode", context_assembly::current_read_path().to_string()),
         ],
       );
       if let Some(ring) = chat_ring {
@@ -333,6 +334,7 @@ pub async fn chat_complete(
   Ok(json!({
     "message": content,
     "memoryAssemblyHits": context_assembly::hits_to_json(&memory_assembly_hits),
+    "memoryReadPath": context_assembly::current_read_path(),
     "echo": payload,
     "stub": false,
   }))
@@ -534,6 +536,7 @@ pub async fn brief_generate(
   Ok(json!({
     "sections": sections,
     "memory_digest": memory_digest,
+    "memoryReadPath": context_assembly::current_read_path(),
     "generatedAt": generated,
     "echo": payload,
     "stub": false,

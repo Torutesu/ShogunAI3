@@ -13,6 +13,8 @@ import { MemoryRiverView } from './components/MemoryRiverView';
 import { MemoryKakejikuView } from './components/MemoryKakejikuView';
 import { MemoryHeatmapView } from './components/MemoryHeatmapView';
 import { useMemoryWorkspace } from './hooks/useMemoryWorkspace';
+import { useMemoryFilters } from './hooks/useMemoryFilters';
+import { useMemoryRetrievalSettings } from './hooks/useMemoryRetrievalSettings';
 
 export function MemoryScreen() {
   const [view, setView] = useState('river');
@@ -38,21 +40,22 @@ export function MemoryScreen() {
   const [timelineSpan, setTimelineSpan] = useState('week');
   const [timelineCursor, setTimelineCursor] = useState(() => new Date());
   const [selectedDayOffset, setSelectedDayOffset] = useState(0);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [activeFilters, setActiveFilters] = useState(() => ({
-    sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
-    priority: { high: true, medium: true, low: false },
-    providers: {
-      screen: true,
-      meeting: true,
-      gmail: true,
-      google_calendar: true,
-      slack: true,
-      notion: true,
-      github: true,
-      manual: true,
-    },
-  }));
+  const {
+    activeFilters,
+    filtersOpen,
+    setFiltersOpen,
+    toggleFilter,
+    activeFilterCount,
+    resetFilters,
+    applyFilters,
+  } = useMemoryFilters();
+  const {
+    graphReadPath,
+    summaryEnabled,
+    allowServerMemoryAssembly,
+    loaded: memorySettingsLoaded,
+    withSemantic,
+  } = useMemoryRetrievalSettings();
   const timelineScrollRef = useRef<any>(null);
   const scrollTimeline = useCallback((dir: number) => {
     const el = timelineScrollRef.current;
@@ -188,34 +191,11 @@ export function MemoryScreen() {
     const total = counts.reduce((a, b) => a + b, 0);
     return { counts, total };
   }, [weekHistograms]);
-  const activeFilterCount =
-    Object.values(activeFilters.sources).filter(Boolean).length +
-    Object.values(activeFilters.priority).filter(Boolean).length +
-    Object.values(activeFilters.providers || {}).filter((v) => v === false).length;
-  const toggleFilter = useCallback((group: string, key: string) => {
-    setActiveFilters((prev: any) => ({
-      ...prev,
-      [group]: { ...prev[group], [key]: !prev[group][key] },
-    }));
-  }, []);
   const [sourceEntities, setSourceEntities] = useState<any[]>([]);
-  const [semanticMemorySearch, setSemanticMemorySearch] = useState(true);
-  const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
-  const [memorySettingsLoaded, setMemorySettingsLoaded] = useState(false);
   const [scrubSummary, setScrubSummary] = useState<any>(null);
   const [scrubSummaryLoading, setScrubSummaryLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
-  const [summaryEnabled, setSummaryEnabled] = useState(true);
   const timelineLoading = !memorySettingsLoaded;
-  const withSemantic = useCallback(
-    (payload: any) => {
-      if (!semanticMemorySearch) return payload;
-      const q = String((payload && payload.query) || '').trim();
-      if (!q) return payload;
-      return { ...payload, semantic: true };
-    },
-    [semanticMemorySearch],
-  );
   const refreshSourceEntities = () => {
     runRuntimeAction('entity.query', { query: '' }, { silentError: true }).then((res: any) => {
       if (!res || !res.ok || !res.data || !Array.isArray(res.data.entities)) return;
@@ -225,42 +205,19 @@ export function MemoryScreen() {
   useEffect(() => {
     refreshSourceEntities();
   }, []);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const r = await runRuntimeAction('settings.load', {}, { silentError: true });
-      if (cancelled) return;
-      const mem = r?.ok && r.data?.settings?.sections?.memory;
-      if (mem && typeof mem === 'object' && typeof mem.semanticRerank === 'boolean') {
-        setSemanticMemorySearch(mem.semanticRerank);
-      }
-      if (mem && typeof mem === 'object') {
-        setSummaryEnabled(mem.enableMemorySummary !== false);
-      }
-      const priv = r?.ok && r.data?.settings?.sections?.privacy;
-      if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-      }
-      setMemorySettingsLoaded(true);
-    })();
-    return () => { cancelled = true; };
-  }, []);
-  useEffect(() => {
-    const onPrivacy = () => {
-      void runRuntimeAction('settings.load', {}, { silentError: true }).then((r: any) => {
-        const priv = r?.ok && r.data?.settings?.sections?.privacy;
-        if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-        }
-      });
-    };
-    window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
-    return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
-  }, []);
   const activeKinds = useMemo(
     () => Object.entries(activeFilters.sources).filter(([, on]) => on).map(([k]) => k),
     [activeFilters.sources],
   );
+  const reloadTimeline = useCallback(async () => {
+    const res = await runRuntimeAction(
+      'memory.timelineSearch',
+      withSemantic({ query: '', kinds: activeKinds, limit: 40 }),
+      { silentError: true },
+    );
+    mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
+    return res;
+  }, [withSemantic, activeKinds]);
   const events = useMemo(() => {
     const showLow = !!activeFilters.priority.low;
     const provs = activeFilters.providers || {};
@@ -364,7 +321,7 @@ export function MemoryScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [timelineSpan, timelineCursor, summaryEnabled, batchSummarizing]);
+  }, [timelineSpan, timelineCursor, summaryEnabled, graphReadPath]);
   useEffect(() => {
     if (!summaryEnabled || timelineSpan !== 'day') {
       setDayRollup(null);
@@ -447,22 +404,20 @@ export function MemoryScreen() {
   useEffect(() => {
     if (!memorySettingsLoaded) return;
     let cancelled = false;
-    (async () => {
-      const res = await runRuntimeAction('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
-      if (cancelled) return;
-      mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
+    void (async () => {
+      const res = await reloadTimeline();
+      if (cancelled || !res?.ok) return;
     })();
     return () => { cancelled = true; };
-  }, [memorySettingsLoaded, withSemantic, activeKinds]);
+  }, [memorySettingsLoaded, reloadTimeline, graphReadPath]);
   useEffect(() => {
     const onIndexChanged = async () => {
-      const r = await runRuntimeAction('memory.timelineSearch', withSemantic({ query: '', kinds: activeKinds, limit: 40 }), { silentError: true });
-      mergeIndexHitsIntoRiver(r, setRawEvents, setScrubIdx);
+      await reloadTimeline();
       refreshSourceEntities();
     };
     window.addEventListener('shogun-memory-index-changed', onIndexChanged);
     return () => window.removeEventListener('shogun-memory-index-changed', onIndexChanged);
-  }, [withSemantic, activeKinds]);
+  }, [reloadTimeline]);
   useEffect(() => {
     setScrubIdx((i) => {
       if (events.length === 0) return 0;
@@ -685,20 +640,8 @@ export function MemoryScreen() {
                     </div>
                   </div>
                   <div style={{display:'flex', gap:8, marginTop:8}}>
-                    <button type="button" onClick={async ()=>{
-                      const kinds = Object.entries(activeFilters.sources).filter(([,on])=>on).map(([x])=>x);
-                      const res = await runRuntimeAction('memory.timelineSearch', withSemantic({ query:'', kinds, limit:80 }), { successMessage:'Filters applied' });
-                      mergeIndexHitsIntoRiver(res, setRawEvents, setScrubIdx);
-                      setFiltersOpen(false);
-                    }} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
-                    <button type="button" onClick={()=>{ setActiveFilters({
-                      sources: { screen: false, audio: true, input: true, calendar: true, mail: true },
-                      priority: { high: true, medium: true, low: false },
-                      providers: {
-                        screen: true, meeting: true, gmail: true, google_calendar: true,
-                        slack: true, notion: true, github: true, manual: true,
-                      },
-                    }); }} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
+                    <button type="button" onClick={() => void applyFilters(withSemantic, setRawEvents, setScrubIdx)} style={{flex:1, padding:'6px 10px', borderRadius:8, border:'1px solid var(--border-hi)', background:'var(--gold)', color:'var(--bg)', fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:500}}>Apply</button>
+                    <button type="button" onClick={resetFilters} style={{padding:'6px 10px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text-mute)', fontSize:12, cursor:'pointer', fontFamily:'inherit'}}>Reset</button>
                   </div>
                 </div>
               </>
@@ -733,31 +676,6 @@ export function MemoryScreen() {
           <span className="en-only">Today</span>
           <span className="jp" style={{marginLeft:4, fontSize:11}}>· 今日</span>
         </button>
-        <label
-          style={{display:'inline-flex', alignItems:'center', gap:8, fontSize:12, color:'var(--text-mute)', cursor:'pointer', userSelect:'none'}}
-          title="Use semantic re-rank for non-empty memory searches"
-        >
-          <input
-            data-testid="memory-semantic-rerank"
-            type="checkbox"
-            checked={semanticMemorySearch}
-            onChange={async (e) => {
-              const prev = semanticMemorySearch;
-              const next = e.target.checked;
-              setSemanticMemorySearch(next);
-              const r = await runRuntimeAction(
-                'settings.save',
-                { section: 'memory', semanticRerank: next },
-                { silentError: true },
-              );
-              if (!r?.ok) {
-                setSemanticMemorySearch(prev);
-                (window as any).SHOGUN_RUNTIME?.pushToast?.('Failed to save Semantic re-rank setting', 'warn');
-              }
-            }}
-          />
-          <span>Semantic re-rank</span>
-        </label>
         <span style={{flex:1}}/>
         <span className="t-mono" style={{fontSize:11, color:'var(--text-mute)', letterSpacing:'0.12em'}}>{memoryTotals.total} MEMORIES · {Math.round(memoryTotals.total * 0.25)}H</span>
       </div>

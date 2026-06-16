@@ -1,6 +1,8 @@
 //! Morning Brief v2 fixture and version gating. v2 JSON matches `hifi/schemas/morning-brief-v2.schema.json`.
 //! Stub copy is English to keep the source ASCII-safe; localized AMC text comes from the composer pipeline.
 
+use crate::kioku_decision_graph::{DecisionGraphHit, KiokuHit};
+use crate::context_assembly;
 use crate::meeting_store;
 use crate::memory_store;
 use crate::summarizer;
@@ -103,7 +105,109 @@ pub fn build_memory_digest(lang: &str) -> Value {
     "highlights": highlights,
     "week_rollup": week_rollup,
     "day_rollup": day_rollup,
+    "read_path": context_assembly::current_read_path(),
   })
+}
+
+const BRIEF_DIGEST_HIGHLIGHT_TARGET: usize = 8;
+
+fn hit_source_type(hit: &context_assembly::Hit) -> &'static str {
+  match hit.provenance.as_str() {
+    "meeting" => "meeting",
+    "connector" => summarizer::derive_source_type(&hit.source),
+    _ => "memory",
+  }
+}
+
+/// Convert graph/legacy retrieval hits into brief digest highlight rows.
+pub fn hits_to_digest_highlights(hits: &[context_assembly::Hit]) -> Vec<Value> {
+  hits
+    .iter()
+    .take(BRIEF_DIGEST_HIGHLIGHT_TARGET)
+    .map(|hit| {
+      let title = if hit.title.trim().is_empty() {
+        truncate_chars(hit.snippet.trim(), 60)
+      } else {
+        hit.title.clone()
+      };
+      let snippet_preview = truncate_chars(hit.snippet.trim(), 140);
+      let entity_id = lookup_item_entity_id(&hit.id);
+      json!({
+        "targetId": hit.id,
+        "targetKind": "item",
+        "title": title,
+        "keyPoints": if snippet_preview.is_empty() {
+          Value::Array(vec![])
+        } else {
+          json!([snippet_preview])
+        },
+        "priority": "medium",
+        "userPriority": Value::Null,
+        "reason": Value::Null,
+        "sourceType": hit_source_type(hit),
+        "generatedAt": hit.created_at as i64,
+        "acknowledgedAt": Value::Null,
+        "entityId": entity_id,
+        "fromGraph": true,
+      })
+    })
+    .collect()
+}
+
+/// When cached item summaries are sparse, supplement the digest from the same
+/// graph/legacy retrieval path used by chat and v1 brief.
+pub async fn enrich_memory_digest_with_graph(digest: &mut Value) {
+  use std::collections::HashSet;
+
+  let existing: Vec<Value> = digest
+    .get("highlights")
+    .and_then(|h| h.as_array())
+    .cloned()
+    .unwrap_or_default();
+  let mut seen: HashSet<String> = existing
+    .iter()
+    .filter_map(|h| {
+      h.get("targetId")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    })
+    .collect();
+
+  let need = BRIEF_DIGEST_HIGHLIGHT_TARGET.saturating_sub(existing.len());
+  digest["read_path"] = json!(context_assembly::current_read_path());
+  if need == 0 {
+    return;
+  }
+
+  let fetch_limit = need.max(BRIEF_DIGEST_HIGHLIGHT_TARGET) as u64;
+  let hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+    query: "",
+    limit: fetch_limit,
+    semantic: true,
+    excluded_provenances: Some(vec!["screen".to_string()]),
+  })
+  .await
+  .unwrap_or_default();
+
+  let mut merged = existing;
+  let mut supplemented = false;
+  for row in hits_to_digest_highlights(&hits) {
+    let Some(id) = row.get("targetId").and_then(|v| v.as_str()) else {
+      continue;
+    };
+    if seen.insert(id.to_string()) {
+      merged.push(row);
+      supplemented = true;
+      if merged.len() >= BRIEF_DIGEST_HIGHLIGHT_TARGET {
+        break;
+      }
+    }
+  }
+
+  if supplemented {
+    digest["graph_supplemented"] = json!(true);
+  }
+  digest["highlights"] = json!(merged);
 }
 
 pub fn morning_brief_v2_stub(_generated_ms: u64, user_tz: &str, payload: &Value) -> Value {
@@ -289,12 +393,177 @@ pub fn wrap_brief_get_response(brief_ui: Value, memory_digest: Value, skipped: b
     "skipped": skipped,
     "brief": if skipped { Value::Null } else { brief_ui },
     "memory_digest": memory_digest,
+    "memoryReadPath": context_assembly::current_read_path(),
     "stub": false,
   })
 }
 
+/// KIOKU graph payloads for Morning Brief / AMC (`shogun_kioku_brief_signals` shape).
+pub fn load_kioku_brief_signals(limit_decisions: usize, limit_kioku: usize) -> Value {
+  let Ok(conn) = memory_store::open_conn() else {
+    return json!({
+      "decision_graph_hits": [],
+      "related_kioku_hits": [],
+    });
+  };
+  let decisions =
+    crate::kioku_decision_graph::fetch_decision_graph_hits(&conn, limit_decisions).unwrap_or_default();
+  let kioku =
+    crate::kioku_decision_graph::fetch_recent_kioku_hits(&conn, limit_kioku).unwrap_or_default();
+  json!({
+    "decision_graph_hits": decisions,
+    "related_kioku_hits": kioku,
+  })
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+  if s.chars().count() <= max {
+    return s.to_string();
+  }
+  s.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+}
+
+fn decision_hit_to_brief_item(hit: &DecisionGraphHit, priority: u64) -> Value {
+  let pending = hit.follow_ups_pending.unwrap_or(0);
+  let why_now = if pending > 0 {
+    format!(
+      "{pending} pending follow-up(s) linked in your decision graph."
+    )
+  } else {
+    "Decision from your KIOKU graph — review or act today.".to_string()
+  };
+  let what = truncate_chars(hit.summary.trim(), 120);
+  json!({
+    "id": format!("dg_{}", hit.decision_id),
+    "priority": priority.min(3).max(1),
+    "category": "decision",
+    "what": if what.is_empty() {
+      "Decision".to_string()
+    } else {
+      what
+    },
+    "why_now": why_now,
+    "related_context": [{
+      "type": "memory",
+      "title": "Decision node",
+      "uri": format!("shogun://memory/{}", hit.decision_id)
+    }],
+    "next_action": {
+      "verb": "Open",
+      "label": "Search related Memory",
+      "type": "open",
+      "mcp_tool": {
+        "tool_name": "shogun.memory_search",
+        "arguments": {
+          "query": hit.decision_id,
+          "limit": 12
+        }
+      }
+    },
+    "source": {
+      "type": "decision_graph",
+      "upstream_ids": [hit.decision_id.clone()]
+    },
+    "confidence": 0.85
+  })
+}
+
+fn kioku_hit_to_context_ref(hit: &KiokuHit) -> Value {
+  json!({
+    "type": "memory",
+    "title": hit.title,
+    "uri": format!("shogun://memory/{}", hit.doc_id)
+  })
+}
+
+/// Prepend decision-graph items (max 3) and enrich related_context from KIOKU hits.
+pub fn merge_kioku_signals_into_brief(brief: &mut Value, signals: &Value) {
+  const MAX_DECISION_ITEMS: usize = 3;
+  const MAX_BRIEF_ITEMS: usize = 6;
+
+  let decisions: Vec<DecisionGraphHit> = signals
+    .get("decision_graph_hits")
+    .and_then(|v| serde_json::from_value(v.clone()).ok())
+    .unwrap_or_default();
+  let kioku: Vec<KiokuHit> = signals
+    .get("related_kioku_hits")
+    .and_then(|v| serde_json::from_value(v.clone()).ok())
+    .unwrap_or_default();
+
+  if decisions.is_empty() && kioku.is_empty() {
+    return;
+  }
+
+  let mut items = brief
+    .get("items")
+    .and_then(|v| v.as_array())
+    .cloned()
+    .unwrap_or_default();
+
+  if !decisions.is_empty() {
+    let mut dg_items: Vec<Value> = decisions
+      .iter()
+      .take(MAX_DECISION_ITEMS)
+      .enumerate()
+      .map(|(i, hit)| decision_hit_to_brief_item(hit, (i + 1) as u64))
+      .collect();
+    dg_items.append(&mut items);
+    items = dg_items;
+  }
+
+  if items.len() > MAX_BRIEF_ITEMS {
+    items.truncate(MAX_BRIEF_ITEMS);
+  }
+
+  for (idx, item) in items.iter_mut().enumerate() {
+    if let Some(obj) = item.as_object_mut() {
+      obj.insert("priority".to_string(), json!((idx + 1).min(3)));
+    }
+  }
+
+  if !kioku.is_empty() {
+    let ctx: Vec<Value> = kioku
+      .iter()
+      .take(3)
+      .map(kioku_hit_to_context_ref)
+      .collect();
+    if let Some(first) = items.first_mut().and_then(|v| v.as_object_mut()) {
+      let existing = first
+        .get("related_context")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+      let mut merged = ctx;
+      for row in existing.into_iter().take(3usize.saturating_sub(merged.len())) {
+        merged.push(row);
+      }
+      first.insert("related_context".to_string(), json!(merged));
+    }
+  }
+
+  brief["items"] = json!(items);
+
+  if !decisions.is_empty() {
+    if let Some(summary) = brief.get_mut("summary").and_then(|v| v.as_object_mut()) {
+      summary.insert(
+        "headline".to_string(),
+        json!("Decisions and highlights from your KIOKU graph"),
+      );
+    }
+  }
+}
+
+fn enrich_brief_with_kioku_signals(brief: &mut Value) {
+  let signals = load_kioku_brief_signals(5, 12);
+  merge_kioku_signals_into_brief(brief, &signals);
+}
+
 /// Memory-backed v2 brief when no LLM key is available.
-pub fn morning_brief_v2_heuristic(user_tz: &str, payload: &Value) -> Value {
+pub fn morning_brief_v2_heuristic(
+  user_tz: &str,
+  payload: &Value,
+  memory_digest: Option<&Value>,
+) -> Value {
   let now = Utc::now();
   let generated_at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
   let date = now.format("%Y-%m-%d").to_string();
@@ -302,7 +571,9 @@ pub fn morning_brief_v2_heuristic(user_tz: &str, payload: &Value) -> Value {
     .get("lang")
     .and_then(|v| v.as_str())
     .unwrap_or("en");
-  let digest = build_memory_digest(lang);
+  let digest = memory_digest
+    .cloned()
+    .unwrap_or_else(|| build_memory_digest(lang));
   let highlights = digest
     .get("highlights")
     .and_then(|h| h.as_array())
@@ -370,15 +641,22 @@ pub fn morning_brief_v2_heuristic(user_tz: &str, payload: &Value) -> Value {
   if !patterns.is_empty() {
     out["patterns"] = Value::Array(patterns);
   }
+  enrich_brief_with_kioku_signals(&mut out);
   out
 }
 
-pub async fn morning_brief_v2_generate(user_tz: &str, payload: &Value) -> Result<Value, String> {
+pub async fn morning_brief_v2_generate(
+  user_tz: &str,
+  payload: &Value,
+  memory_digest: Option<&Value>,
+) -> Result<Value, String> {
   let lang = payload
     .get("lang")
     .and_then(|v| v.as_str())
     .unwrap_or("en");
-  let digest = build_memory_digest(lang);
+  let digest = memory_digest
+    .cloned()
+    .unwrap_or_else(|| build_memory_digest(lang));
   let digest_json = serde_json::to_string(&digest).unwrap_or_else(|_| "{}".to_string());
   let user_prompt = format!(
     "From this local SHOGUN memory digest JSON, output ONLY valid Morning Brief v2 JSON with keys: \
@@ -413,5 +691,110 @@ deferred (array). No markdown fences. Max 6 items.\n\nDigest:\n{}",
   if !patterns.is_empty() {
     brief["patterns"] = Value::Array(patterns);
   }
+  enrich_brief_with_kioku_signals(&mut brief);
   Ok(brief)
+}
+
+#[cfg(test)]
+mod kioku_brief_tests {
+  use super::*;
+
+  #[test]
+  fn hits_to_digest_highlights_maps_snippet_and_flags_graph() {
+    use crate::context_assembly::Hit;
+
+    let hits = vec![Hit {
+      id: "mem_1".into(),
+      title: "Investor deck".into(),
+      snippet: "Q2 metrics and runway update.".into(),
+      source: "gmail".into(),
+      provenance: "connector".into(),
+      created_at: 1_700_000_000_000,
+    }];
+    let rows = hits_to_digest_highlights(&hits);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["targetId"], "mem_1");
+    assert_eq!(rows[0]["title"], "Investor deck");
+    assert_eq!(rows[0]["fromGraph"], true);
+    assert_eq!(rows[0]["sourceType"], "mail");
+  }
+
+  #[test]
+  fn merge_decision_graph_prepends_items_and_updates_headline() {
+    let mut brief = json!({
+      "summary": { "headline": "From highlights" },
+      "items": [{
+        "id": "item_01",
+        "priority": 1,
+        "category": "prep",
+        "what": "Existing item",
+        "why_now": "Already scheduled",
+        "related_context": [],
+        "next_action": {
+          "verb": "Open",
+          "label": "Search",
+          "type": "open",
+          "mcp_tool": { "tool_name": "shogun.memory_search", "arguments": { "query": "x", "limit": 5 } }
+        },
+        "source": { "type": "kioku_search" },
+        "confidence": 0.7
+      }]
+    });
+    let signals = json!({
+      "decision_graph_hits": [{
+        "decision_id": "dec_1",
+        "summary": "Ship KIOKU graph retrieval",
+        "follow_ups_pending": 2
+      }],
+      "related_kioku_hits": []
+    });
+    merge_kioku_signals_into_brief(&mut brief, &signals);
+    let items = brief["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"], "dg_dec_1");
+    assert_eq!(items[0]["category"], "decision");
+    assert!(
+      brief["summary"]["headline"]
+        .as_str()
+        .unwrap()
+        .contains("KIOKU")
+    );
+  }
+
+  #[test]
+  fn merge_kioku_hits_enriches_first_item_context() {
+    let mut brief = json!({
+      "summary": { "headline": "Brief" },
+      "items": [{
+        "id": "item_01",
+        "priority": 1,
+        "category": "prep",
+        "what": "Focus",
+        "why_now": "Today",
+        "related_context": [],
+        "next_action": {
+          "verb": "Open",
+          "label": "Search",
+          "type": "open",
+          "mcp_tool": { "tool_name": "shogun.memory_search", "arguments": { "query": "x", "limit": 5 } }
+        },
+        "source": { "type": "kioku_search" },
+        "confidence": 0.7
+      }]
+    });
+    let signals = json!({
+      "decision_graph_hits": [],
+      "related_kioku_hits": [{
+        "doc_id": "m_1",
+        "title": "Launch checklist",
+        "relevance_score": 0.8
+      }]
+    });
+    merge_kioku_signals_into_brief(&mut brief, &signals);
+    let ctx = brief["items"][0]["related_context"]
+      .as_array()
+      .expect("related_context");
+    assert_eq!(ctx.len(), 1);
+    assert_eq!(ctx[0]["title"], "Launch checklist");
+  }
 }

@@ -140,6 +140,6 @@ export default [
     },
   },
   {
-    ignores: ['web-dist/**', 'dist/**', 'node_modules/**', 'src-tauri/**', 'tools/amc-pipeline/**', 'hifi/**', '.worktrees/**', '.claude-stash/**'],
+    ignores: ['web-dist/**', 'web/.next/**', 'dist/**', 'node_modules/**', 'src-tauri/**', 'tools/amc-pipeline/**', 'hifi/**', '.worktrees/**', '.claude-stash/**'],
   },
 ];

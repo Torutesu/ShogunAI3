@@ -1,13 +1,96 @@
 use super::app::ts;
+use crate::context_assembly;
 use crate::memory_export;
 use crate::memory_store;
 use crate::{embed_backfill, settings_store};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+fn search_payload_has_kinds_filter(payload: &Value) -> bool {
+  payload
+    .get("kinds")
+    .and_then(|k| k.as_array())
+    .map(|arr| !arr.is_empty())
+    .unwrap_or(false)
+}
+
+fn search_scope(payload: &Value) -> &str {
+  payload
+    .get("scope")
+    .and_then(|s| s.as_str())
+    .unwrap_or("all")
+}
+
+fn search_uses_legacy_path(payload: &Value) -> bool {
+  let scope = search_scope(payload);
+  if scope.eq_ignore_ascii_case("meetings_only")
+    || scope.eq_ignore_ascii_case("meetingsonly")
+  {
+    return true;
+  }
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  context_assembly::read_path_mode(&settings) == "legacy"
+}
+
 #[tauri::command]
 pub async fn shogun_memory_search(payload: Value) -> Result<Value, String> {
-  memory_store::search_with_semantics(&payload).await
+  let scope = search_scope(&payload);
+  if scope.eq_ignore_ascii_case("timeline") {
+    if search_uses_legacy_path(&payload) {
+      return memory_store::search_with_semantics(&payload).await;
+    }
+    return context_assembly::search_timeline_graph(&payload).await;
+  }
+
+  if search_uses_legacy_path(&payload) {
+    return memory_store::search_with_semantics(&payload).await;
+  }
+
+  let query = payload
+    .get("query")
+    .and_then(|q| q.as_str())
+    .unwrap_or("")
+    .trim();
+  let limit = payload
+    .get("limit")
+    .and_then(|l| l.as_u64())
+    .unwrap_or(20)
+    .clamp(1, 200);
+  let semantic = payload
+    .get("semantic")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let mut hits = context_assembly::assemble_memory_hits(context_assembly::AssembleParams {
+    query,
+    limit,
+    semantic,
+    excluded_provenances: None,
+  })
+  .await?;
+
+  if search_payload_has_kinds_filter(&payload) {
+    let kinds_want: Vec<String> = payload
+      .get("kinds")
+      .and_then(|k| k.as_array())
+      .map(|arr| {
+        arr
+          .iter()
+          .filter_map(|v| v.as_str().map(String::from))
+          .collect()
+      })
+      .unwrap_or_default();
+    hits = context_assembly::filter_assembled_hits_by_kinds(hits, &kinds_want)?;
+  }
+
+  let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+  let mode = context_assembly::read_path_mode(&settings);
+  Ok(context_assembly::hits_to_search_response(
+    &hits,
+    &payload,
+    mode,
+    semantic && !query.is_empty(),
+  ))
 }
 
 
@@ -270,4 +353,36 @@ pub fn shogun_memory_debug_gate() -> Result<serde_json::Value, String> {
     "available": enabled,
     "reason": if enabled { "enabled" } else { "settings_disabled" },
   }))
+}
+
+#[cfg(test)]
+mod memory_search_routing_tests {
+  use super::*;
+  use serde_json::json;
+
+  #[test]
+  fn graph_path_for_timeline_scope_by_default() {
+    assert!(!search_uses_legacy_path(&json!({ "scope": "timeline" })));
+  }
+
+  #[test]
+  fn graph_path_when_kinds_filter_present() {
+    assert!(!search_uses_legacy_path(&json!({
+      "query": "todo",
+      "kinds": ["note", "audio"],
+    })));
+  }
+
+  #[test]
+  fn graph_path_when_no_kinds_and_default_settings() {
+    assert!(!search_uses_legacy_path(&json!({ "query": "launch" })));
+  }
+
+  #[test]
+  fn legacy_path_for_meetings_only_scope() {
+    assert!(search_uses_legacy_path(&json!({
+      "scope": "meetings_only",
+      "query": "x",
+    })));
+  }
 }

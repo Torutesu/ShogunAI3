@@ -124,18 +124,24 @@ fn hit_from_value(v: &Value) -> Option<Hit> {
 }
 
 /// Read `settings.sections.kioku_graph.read_path`. Returns `"graph"` when the
-/// graph-traversal path is selected, anything else (including absent) ⇒
-/// `"legacy"`. Pure helper.
+/// graph-traversal path is selected, anything else ⇒ `"legacy"`. When the key
+/// is absent, defaults to `"graph"` (matches `settings_store` backfill).
 pub fn read_path_mode(settings: &Value) -> &'static str {
   let v = settings
     .pointer("/sections/kioku_graph/read_path")
     .and_then(|x| x.as_str())
-    .unwrap_or("legacy");
+    .unwrap_or("graph");
   if v.eq_ignore_ascii_case("graph") {
     "graph"
   } else {
     "legacy"
   }
+}
+
+/// Load current retrieval mode from persisted settings (for API responses).
+pub fn current_read_path() -> &'static str {
+  let settings = crate::settings_store::load().unwrap_or_else(|_| json!({}));
+  read_path_mode(&settings)
 }
 
 /// Default node kinds eligible for retrieval on the graph path. Excludes
@@ -149,10 +155,8 @@ pub const DEFAULT_GRAPH_DEPTH: u32 = 3;
 
 /// Single-path memory retrieval. Branches on the
 /// `settings.sections.kioku_graph.read_path` flag — `"graph"` walks the
-/// KIOKU graph, anything else falls back to the legacy
-/// `memory_store::search_with_semantics` path that brief-generate has been
-/// using since Phase 1. The flag is OFF by default so freshly upgraded users
-/// see no behavior change until they (or a settings migration) opt in.
+/// KIOKU graph, `"legacy"` falls back to `memory_store::search_with_semantics`.
+/// Default is `"graph"` (see `settings_store` / `read_path_mode`).
 pub async fn assemble_memory_hits(
   params: AssembleParams<'_>,
 ) -> Result<Vec<Hit>, String> {
@@ -370,6 +374,150 @@ pub async fn assemble_via_graph(params: &AssembleParams<'_>) -> Result<Vec<Hit>,
   }
 
   Ok(out)
+}
+
+/// Serialize assembled hits into the `shogun_memory_search` response shape.
+pub fn hits_to_search_response(
+  hits: &[Hit],
+  payload: &Value,
+  read_path: &str,
+  semantic_applied: bool,
+) -> Value {
+  let items: Vec<Value> = hits
+    .iter()
+    .map(|h| {
+      json!({
+        "id": h.id,
+        "title": h.title,
+        "snippet": h.snippet,
+        "source": h.source,
+        "provenance": h.provenance,
+        "created_at": h.created_at,
+      })
+    })
+    .collect();
+  json!({
+    "hits": items,
+    "total": items.len(),
+    "read_path": read_path,
+    "semanticRerank": semantic_applied,
+    "echo": payload,
+    "stub": false,
+  })
+}
+
+fn timeline_content_types(payload: &Value) -> Vec<String> {
+  payload
+    .get("content_types")
+    .or_else(|| payload.get("contentTypes"))
+    .and_then(|v| v.as_array())
+    .map(|arr| {
+      arr
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.trim().to_ascii_lowercase()))
+        .filter(|s| !s.is_empty())
+        .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn timeline_wants_memory(content_types: &[String]) -> bool {
+  content_types.is_empty() || content_types.iter().any(|t| t == "memory")
+}
+
+fn timeline_kinds_want(payload: &Value) -> Vec<String> {
+  payload
+    .get("kinds")
+    .and_then(|k| k.as_array())
+    .map(|arr| {
+      arr
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn assembled_hit_to_timeline(h: &Hit, kinds: Value) -> Value {
+  json!({
+    "id": h.id,
+    "title": h.title,
+    "snippet": h.snippet,
+    "source": h.source,
+    "provenance": h.provenance,
+    "created_at": h.created_at,
+    "kinds": kinds,
+    "content_type": "memory",
+  })
+}
+
+/// Drop assembled hits whose `kinds_json` does not intersect `want`.
+pub fn filter_assembled_hits_by_kinds(
+  hits: Vec<Hit>,
+  want: &[String],
+) -> Result<Vec<Hit>, String> {
+  if want.is_empty() {
+    return Ok(hits);
+  }
+  let conn = memory_store::open_conn()?;
+  let ids: Vec<String> = hits.iter().map(|h| h.id.clone()).collect();
+  let kinds_map = memory_store::kinds_json_for_ids(&conn, &ids)?;
+  Ok(
+    hits
+      .into_iter()
+      .filter(|h| {
+        let kj = kinds_map.get(&h.id).map(String::as_str).unwrap_or("[]");
+        memory_store::item_matches_kinds_filter(kj, want)
+      })
+      .collect(),
+  )
+}
+
+/// Graph-path timeline: assemble memory via KIOKU, merge meetings, return timeline shape.
+pub async fn search_timeline_graph(payload: &Value) -> Result<Value, String> {
+  let settings = crate::settings_store::load().unwrap_or_else(|_| json!({}));
+  let read_path = read_path_mode(&settings);
+  let content_types = timeline_content_types(payload);
+  let kinds_want = timeline_kinds_want(payload);
+  let limit = payload
+    .get("limit")
+    .and_then(|l| l.as_u64())
+    .unwrap_or(20)
+    .clamp(1, 200);
+  let wide = (limit.saturating_mul(4)).min(200);
+  let query = payload
+    .get("query")
+    .and_then(|q| q.as_str())
+    .unwrap_or("")
+    .trim();
+  let semantic = payload
+    .get("semantic")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+
+  let mut memory_hits: Vec<Value> = Vec::new();
+  if timeline_wants_memory(&content_types) {
+    let assembled = assemble_memory_hits(AssembleParams {
+      query,
+      limit: wide,
+      semantic,
+      excluded_provenances: None,
+    })
+    .await?;
+    let filtered = filter_assembled_hits_by_kinds(assembled, &kinds_want)?;
+    let conn = memory_store::open_conn()?;
+    let ids: Vec<String> = filtered.iter().map(|h| h.id.clone()).collect();
+    let kinds_map = memory_store::kinds_json_for_ids(&conn, &ids)?;
+    for h in filtered {
+      let kinds = kinds_map
+        .get(&h.id)
+        .map(|kj| memory_store::kinds_json_to_value_pub(kj))
+        .unwrap_or_else(|| json!([]));
+      memory_hits.push(assembled_hit_to_timeline(&h, kinds));
+    }
+  }
+
+  memory_store::merge_timeline_from_memory_hits(payload, memory_hits, Some(read_path))
 }
 
 /// Fallback entry: pull recent valid nodes ordered by decay then last-access.
@@ -593,9 +741,38 @@ mod tests {
 
   // ── read_path_mode ─────────────────────────────────────────────────────
   #[test]
-  fn read_path_mode_defaults_to_legacy() {
-    assert_eq!(read_path_mode(&json!({})), "legacy");
-    assert_eq!(read_path_mode(&json!({ "sections": {} })), "legacy");
+  fn hits_to_search_response_shape() {
+    let hits = vec![Hit {
+      id: "m1".into(),
+      title: "T".into(),
+      snippet: "S".into(),
+      source: "note".into(),
+      provenance: "user".into(),
+      created_at: 100,
+    }];
+    let payload = json!({ "query": "q", "limit": 5 });
+    let out = hits_to_search_response(&hits, &payload, "graph", true);
+    assert_eq!(out["read_path"], "graph");
+    assert_eq!(out["semanticRerank"], true);
+    assert_eq!(out["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(out["hits"][0]["id"], "m1");
+  }
+
+  #[test]
+  fn current_read_path_defaults_to_graph_without_settings() {
+    assert_eq!(super::current_read_path(), "graph");
+  }
+
+  #[test]
+  fn read_path_mode_defaults_to_graph() {
+    assert_eq!(read_path_mode(&json!({})), "graph");
+    assert_eq!(read_path_mode(&json!({ "sections": {} })), "graph");
+  }
+
+  #[test]
+  fn read_path_mode_legacy_when_explicitly_set() {
+    let s = json!({ "sections": { "kioku_graph": { "read_path": "legacy" } } });
+    assert_eq!(read_path_mode(&s), "legacy");
   }
 
   #[test]
@@ -841,5 +1018,80 @@ mod tests {
     assert_eq!(connector, 1);
     assert_eq!(meeting, 1);
     assert_eq!(user, 1);
+  }
+}
+
+/// Real-device smoke: hits local `~/Library/.../ai.Shogun.ShogunAI3/memory.db`.
+/// Run via `bash scripts/verify-timeline-graph-real.sh`.
+#[cfg(test)]
+mod real_db_smoke {
+  use super::*;
+  use serde_json::json;
+
+  #[tokio::test]
+  #[ignore = "requires local Tauri memory.db; run scripts/verify-timeline-graph-real.sh"]
+  async fn timeline_graph_real_db_smoke() {
+    let payload = json!({
+      "scope": "timeline",
+      "query": "",
+      "limit": 40,
+      "kinds": ["screen", "audio", "input", "calendar", "mail"],
+    });
+
+    let graph = search_timeline_graph(&payload)
+      .await
+      .expect("graph timeline search");
+    assert_eq!(graph.get("scope").and_then(|v| v.as_str()), Some("timeline"));
+    assert_eq!(
+      graph.get("read_path").and_then(|v| v.as_str()),
+      Some("graph")
+    );
+    let graph_hits = graph
+      .get("hits")
+      .and_then(|v| v.as_array())
+      .expect("graph hits");
+    assert!(
+      !graph_hits.is_empty(),
+      "graph timeline returned no hits — check mem_items / node_kind filters"
+    );
+    for hit in graph_hits.iter().take(5) {
+      let ct = hit
+        .get("content_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+      assert!(
+        ct == "memory" || ct == "meeting",
+        "unexpected content_type: {ct}"
+      );
+      assert!(hit.get("id").and_then(|v| v.as_str()).is_some());
+      assert!(hit.get("created_at").and_then(|v| v.as_u64()).is_some());
+    }
+    assert!(
+      graph_hits
+        .iter()
+        .any(|h| h.get("content_type").and_then(|v| v.as_str()) == Some("memory")),
+      "graph timeline returned no memory rows"
+    );
+
+    let legacy = memory_store::search_timeline(&payload).expect("legacy timeline");
+    let legacy_hits = legacy
+      .get("hits")
+      .and_then(|v| v.as_array())
+      .expect("legacy hits");
+    assert!(
+      !legacy_hits.is_empty(),
+      "legacy timeline returned no hits"
+    );
+
+    eprintln!(
+      "timeline smoke: graph={} hits (total {}), legacy={} hits (total {})",
+      graph_hits.len(),
+      graph.get("total").and_then(|v| v.as_u64()).unwrap_or(0),
+      legacy_hits.len(),
+      legacy.get("total").and_then(|v| v.as_u64()).unwrap_or(0),
+    );
+    eprintln!(
+      "note: graph excludes capture_summary nodes; legacy FTS includes them — legacy count may be higher"
+    );
   }
 }
