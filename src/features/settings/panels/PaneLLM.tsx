@@ -14,7 +14,7 @@ export function PaneLLM() {
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [embeddingModel, setEmbeddingModel] = useState('');
-  const [maxTokens, setMaxTokens] = useState('');
+  const [maxTokens, setMaxTokens] = useState('2048');
   const [apiKeyDraft, setApiKeyDraft] = useState('');
   const [keyConfigured, setKeyConfigured] = useState(false);
   const [keyProvider, setKeyProvider] = useState<string | null>(null);
@@ -162,6 +162,8 @@ export function PaneLLM() {
                 setModel(chatModel);
                 if (!mtRaw) setMaxTokens(String(mt));
                 if (refreshSections) await refreshSections();
+              } else {
+                toast(r.error?.message || 'Failed to save LLM settings', 'error');
               }
             }}
           >

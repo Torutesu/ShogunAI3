@@ -52,8 +52,8 @@ fn privacy_allows_chat_server_memory_assembly() -> bool {
     .unwrap_or(true)
 }
 
-/// When the user saved an API key but never clicked "Save endpoint", seed
-/// provider-default model names so chat/embeddings can route correctly.
+/// When chat model / embedding / maxTokens are missing, seed defaults so
+/// provider routing works even if the key prefix is ambiguous (Custom).
 pub fn seed_llm_endpoint_defaults_if_missing(key: &str) -> Result<bool, String> {
   let doc = settings_store::load().unwrap_or(json!({}));
   let model = doc
@@ -66,30 +66,37 @@ pub fn seed_llm_endpoint_defaults_if_missing(key: &str) -> Result<bool, String> 
     .and_then(|v| v.as_str())
     .unwrap_or("")
     .trim();
-  if !model.is_empty() && !embedding.is_empty() {
+  let max_tokens = doc.pointer("/sections/llm/maxTokens").and_then(|v| v.as_u64());
+  let needs_model = model.is_empty();
+  let needs_embedding = embedding.is_empty();
+  let needs_max = max_tokens.unwrap_or(0) < 1;
+  if !needs_model && !needs_embedding && !needs_max {
     return Ok(false);
   }
-  let provider = crate::llm_providers::resolve_provider(key, model);
-  if provider == crate::llm_providers::LlmProvider::Custom {
-    return Ok(false);
-  }
+
+  let chat_model = if model.is_empty() {
+    "gemini-2.5-flash"
+  } else {
+    model
+  };
+  let provider = crate::llm_providers::resolve_provider(key, chat_model);
+
   let mut patch = json!({ "section": "llm" });
   let obj = patch
     .as_object_mut()
     .ok_or_else(|| "internal: patch object".to_string())?;
-  if model.is_empty() {
-    obj.insert(
-      "model".to_string(),
-      json!(crate::llm_providers::default_chat_model(provider)),
-    );
+  if needs_model {
+    obj.insert("model".to_string(), json!(chat_model));
   }
-  if embedding.is_empty() {
+  if needs_embedding {
     if let Some(em) = crate::llm_providers::default_embedding_model(provider) {
       obj.insert("embeddingModel".to_string(), json!(em));
+    } else {
+      obj.insert("embeddingModel".to_string(), json!("gemini-embedding-001"));
     }
   }
-  if obj.len() <= 1 {
-    return Ok(false);
+  if needs_max {
+    obj.insert("maxTokens".to_string(), json!(2048));
   }
   settings_store::save_patch(&patch)?;
   Ok(true)
@@ -145,12 +152,17 @@ pub async fn chat_complete(
     })?;
   let _ = seed_llm_endpoint_defaults_if_missing(&key);
   let (base_override, model_override, max_tokens) = read_llm_prefs()?;
-  let provider = crate::llm_providers::resolve_provider(&key, &model_override);
+  let model_for_route = if model_override.trim().is_empty() {
+    "gemini-2.5-flash".to_string()
+  } else {
+    model_override.clone()
+  };
+  let provider = crate::llm_providers::resolve_provider(&key, &model_for_route);
   let extra_hosts = read_extra_llm_hosts();
   let (_base, url) =
     crate::llm_providers::resolve_chat_url(provider, &base_override, &extra_hosts)?;
-  let mut model = if model_override.is_empty() {
-    crate::llm_providers::default_chat_model(provider).to_string()
+  let mut model = if model_override.trim().is_empty() {
+    model_for_route
   } else {
     model_override
   };
@@ -1090,7 +1102,7 @@ mod tests {
   #[test]
   fn seed_llm_endpoint_defaults_writes_gemini_models_for_aiza_key() {
     use crate::settings_store::{self, TestSettingsGuard};
-    let _guard = TestSettingsGuard::new("seed-llm");
+    let _guard = TestSettingsGuard::new("seed-llm-aiza");
     settings_store::save_patch(&json!({ "section": "llm", "extractionModel": "claude-haiku-4-5" }))
       .expect("seed");
     let seeded =
@@ -1104,6 +1116,26 @@ mod tests {
     assert_eq!(
       doc.pointer("/sections/llm/embeddingModel").and_then(|v| v.as_str()),
       Some("gemini-embedding-001")
+    );
+    assert_eq!(
+      doc.pointer("/sections/llm/maxTokens").and_then(|v| v.as_u64()),
+      Some(2048)
+    );
+  }
+
+  #[test]
+  fn seed_llm_endpoint_defaults_writes_model_for_custom_key_prefix() {
+    use crate::settings_store::{self, TestSettingsGuard};
+    let _guard = TestSettingsGuard::new("seed-llm-custom");
+    settings_store::save_patch(&json!({ "section": "llm", "extractionModel": "claude-haiku-4-5" }))
+      .expect("seed");
+    let seeded =
+      seed_llm_endpoint_defaults_if_missing("efbc884c-not-a-vendor-key").expect("seed");
+    assert!(seeded);
+    let doc = settings_store::load().expect("load");
+    assert_eq!(
+      doc.pointer("/sections/llm/model").and_then(|v| v.as_str()),
+      Some("gemini-2.5-flash")
     );
   }
 
