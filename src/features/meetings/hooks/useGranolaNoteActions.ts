@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import {
   mnl,
@@ -22,7 +22,7 @@ export function useGranolaNoteActions(params: {
     backendMeetingId?: string | null;
   } | null;
   granolaDraft: GranolaDraft;
-  setGranolaDraft: React.Dispatch<React.SetStateAction<GranolaDraft>>;
+  setGranolaDraft: Dispatch<SetStateAction<GranolaDraft>>;
   setGranolaPane: (pane: string) => void;
   setGranolaTodos: (todos: unknown[] | null) => void;
   setPostRecWaveMenuOpen: (open: boolean) => void;

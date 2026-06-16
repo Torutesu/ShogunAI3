@@ -53,29 +53,35 @@ Settings → Integrations の **Connect** が warn toast を出すクラウド O
 
 ## 4. メモリ層（KIOKU）サマリ
 
-詳細: [`memory-audit/four-flaws.md`](./memory-audit/four-flaws.md)
+詳細: [`memory-audit/four-flaws.md`](../memory-audit/four-flaws.md)
 
 | 領域 | 状態 |
 |---|---|
 | DDL（edges, decay 列, captures） | ✅ 追加済 |
-| Graph retrieval + ranker | ✅ MCP / `assemble_via_graph` |
-| レガシー `memory.search` / Brief | ⚠️ decay / edges 未反映 |
-| Extraction → edges | 🔄 ジョブ基盤あり、本番密度は要計測 |
+| Graph retrieval + ranker | ✅ デフォルト `read_path: graph` — chat / brief / timeline / search |
+| `memory.search` / Brief v2 digest | ✅ `assemble_memory_hits` 経路（graph 失敗時 legacy フォールバック） |
+| KIOKU → Brief | ✅ `decision_graph_hits` + graph digest 補完（`graph_supplemented`） |
+| Extraction → edges | 🔄 ジョブ基盤 + billing ブロック時 re-queue UI。**edges 密度は Anthropic クレジット復旧待ち** |
+| レガシー経路のみ | ⚠️ `meetings_only` scope、明示 `read_path: legacy` 時は decay/edges 薄い |
+
+**Home UI:** Memory digest カードに `Graph retrieval` バッジ + `read_path` 表示。
 
 ---
 
-## 5. E2E カバレッジ（16 specs / 2026-06-16）
+## 5. E2E カバレッジ（2026-06-16 更新）
 
 | Spec | 対象 |
 |---|---|
 | `consent-modal` | TOS 同意 |
-| `entitlement-gate` | 課金ゲート（新規） |
-| `mcp-setup-gate` | MCP wizard（新規） |
-| `hifi-smoke` + 11 others | 各画面・mock IPC |
+| `entitlement-gate` | 課金ゲート |
+| `mcp-setup-gate` | MCP wizard |
+| `hifi-smoke` | graph read_path、chat/brief `memoryReadPath`、`graph_supplemented` 等 |
 
 **ヘルパー:**
 - `tests/e2e/_helpers/preseed-consent.js` — consent + 既定で `mcpComplete`
 - `tests/e2e/_helpers/preseed-gates.js` — billing / Clerk / entitlement fetch mock
+
+**実DB smoke（任意）:** `scripts/verify-timeline-graph-real.sh`
 
 ---
 
@@ -83,13 +89,14 @@ Settings → Integrations の **Connect** が warn toast を出すクラウド O
 
 | 項目 | 内容 |
 |---|---|
-| ESLint + `web/.next/` | ローカル `npm run lint` が build 成果物を走査すると大量エラー。CI は `src/**` のみ。`eslint.config.js` ignores に `web/.next/**` 追加を推奨。 |
-| Playwright | `npx playwright install chromium` が必要 |
+| ESLint + `web/.next/` | ✅ `eslint.config.js` ignores に `web/.next/**` 追加済（2026-06-16） |
+| Playwright | `npx playwright install chromium` が必要（サンドボックス外推奨） |
 
 ---
 
 ## 7. 次の監査候補
 
 1. `web/` Stripe webhook + waitlist — 本番 env 疎通
-2. Brief パイプラインが `decision_graph_hits` を非空で受け取るか（Rust → Node AMC）
-3. KIOKU extraction ジョブ完了率 / edge 密度のダッシュボード（`kioku/debug_stats`）
+2. Anthropic クレジット復旧後 — extraction worker ON → edge 密度計測（Settings → KIOKU Graph）
+3. four-flaws 本丸 — 意味的重複除去、legacy-only ランキング強化
+4. OAuth v1 未配線 9 件（Slack, Notion, Linear 等）
