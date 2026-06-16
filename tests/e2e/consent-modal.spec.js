@@ -104,7 +104,8 @@ test.describe("Consent modal", () => {
     await page.waitForFunction(
       () =>
         document.querySelector(".app") !== null ||
-        document.querySelector(".swm-modal--consent") !== null,
+        document.querySelector(".swm-modal--consent") !== null ||
+        document.body.textContent.includes("Connect Claude Desktop"),
       null,
       { timeout: 30000 },
     );
