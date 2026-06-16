@@ -1,4 +1,5 @@
 import { ShogunUserTimezone } from './user-timezone';
+import { readMockSettingsSections } from '@/shared/ipc/mock/settings';
 
 function wantsV2(payload: any) {
   if (!payload || typeof payload !== "object") return false;
@@ -156,8 +157,70 @@ function buildBriefGetPayload() {
   return payload;
 }
 
+function mockKiokuReadPath(): 'graph' | 'legacy' {
+  const sections = readMockSettingsSections();
+  const graph = sections.kioku_graph as Record<string, unknown> | undefined;
+  const raw =
+    graph && typeof graph.read_path === 'string'
+      ? String(graph.read_path).toLowerCase()
+      : 'graph';
+  return raw === 'graph' ? 'graph' : 'legacy';
+}
+
+function mockMemoryDigest(readPath: 'graph' | 'legacy') {
+  return {
+    highlights: [
+      {
+        targetId: 'mock_graph_mem_1',
+        targetKind: 'item',
+        title: 'Aurora beta scope (sample)',
+        keyPoints: ['DPIA checklist and onboarding flow from KIOKU graph retrieval.'],
+        priority: 'medium',
+        userPriority: 'medium',
+        sourceType: 'memory',
+        fromGraph: true,
+      },
+    ],
+    week_rollup: null,
+    day_rollup: null,
+    read_path: readPath,
+    graph_supplemented: readPath === 'graph',
+  };
+}
+
+function normalizeBriefForUi(raw: any) {
+  const headline =
+    raw?.summary?.headline ?? raw?.headline ?? 'Your day from Memory';
+  const posture = raw?.summary?.posture ?? raw?.posture ?? 'focus';
+  const items = Array.isArray(raw?.items) ? raw.items : [];
+  const deferredCount = Array.isArray(raw?.deferred)
+    ? raw.deferred.length
+    : Number(raw?.deferred_count ?? 0);
+  return {
+    headline,
+    posture,
+    items,
+    deferred_count: deferredCount,
+    generated_at: raw?.generated_at ?? null,
+    patterns: raw?.patterns,
+  };
+}
+
 function mockBriefGetResponse(payload: any) {
-  return wantsV2(payload) ? morningBriefV2Mock(payload) : morningBriefV1Mock(payload);
+  const raw = wantsV2(payload) ? morningBriefV2Mock(payload) : morningBriefV1Mock(payload);
+  const readPath = mockKiokuReadPath();
+  const memoryDigest = mockMemoryDigest(readPath);
+  const briefUi = normalizeBriefForUi(raw);
+  const skipped =
+    briefUi.items.length === 0
+    && !(Array.isArray(memoryDigest.highlights) && memoryDigest.highlights.length > 0);
+  return {
+    skipped,
+    brief: skipped ? null : briefUi,
+    memory_digest: memoryDigest,
+    memoryReadPath: readPath,
+    stub: raw.stub ?? false,
+  };
 }
 
 function unwrapBriefGetRegistryResult(registryResult: any) {

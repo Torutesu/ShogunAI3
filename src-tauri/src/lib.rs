@@ -203,6 +203,7 @@ pub fn run() {
       commands::kioku::shogun_kioku_brief_signals,
       commands::kioku::shogun_kioku_debug_stats,
       commands::kioku::shogun_kioku_pipeline_smoke,
+      commands::kioku::shogun_kioku_extraction_requeue,
       commands::kioku::shogun_kioku_stage5_dry_run,
       commands::kioku::shogun_kioku_stage5_apply,
       commands::kioku::shogun_kioku_backup_db,

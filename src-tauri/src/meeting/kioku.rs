@@ -199,14 +199,25 @@ pub fn pipeline_smoke() -> Result<Value, String> {
     .flatten()
     .map(|k| !k.trim().is_empty())
     .unwrap_or(false);
+  let failed_total: i64 = conn
+    .query_row(
+      "SELECT COUNT(*) FROM extraction_jobs WHERE status = 'failed'",
+      [],
+      |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())?;
+  let failed_billing = crate::kioku::extraction::count_failed_billing_jobs(&conn).unwrap_or(0);
 
   Ok(json!({
-    "ok": worker && meeting_on && llm_ready,
+    "ok": worker && meeting_on && llm_ready && failed_billing == 0,
     "worker_enabled": worker,
     "meeting_extraction_enabled": meeting_on,
     "capture_to_mem_captures": capture_path,
     "llm_key_configured": llm_ready,
     "queued_jobs": queued_jobs,
+    "failed_jobs": failed_total,
+    "failed_billing_jobs": failed_billing,
+    "billing_blocked": failed_billing > 0,
     "meeting_captures": meeting_captures,
     "read_path": crate::context_assembly::read_path_mode(&settings),
   }))

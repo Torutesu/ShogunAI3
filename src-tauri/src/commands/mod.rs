@@ -46,7 +46,7 @@ pub use integrations::{
 pub use kioku::{
   shogun_kioku_backup_db, shogun_kioku_brief_signals, shogun_kioku_debug_stats,
   shogun_kioku_edge_type_proposals, shogun_kioku_edge_type_review,
-  shogun_kioku_pipeline_smoke, shogun_kioku_stage5_apply, shogun_kioku_stage5_dry_run,
+  shogun_kioku_extraction_requeue, shogun_kioku_pipeline_smoke, shogun_kioku_stage5_apply, shogun_kioku_stage5_dry_run,
 };
 pub use lessons::{
   shogun_lesson_capture_rejection, shogun_lesson_capture_tool_failure, shogun_lessons_archive,

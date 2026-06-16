@@ -57,6 +57,16 @@ function clampLimit(raw: any, fallback: number) {
   return Math.min(80, Math.max(1, Math.floor(n)));
 }
 
+function mockKiokuReadPath(g: MockGlobal): "graph" | "legacy" {
+  const sections = readMockSettingsSections(g);
+  const graph = sections.kioku_graph as Record<string, unknown> | undefined;
+  const raw =
+    graph && typeof graph.read_path === "string"
+      ? String(graph.read_path).toLowerCase()
+      : "graph";
+  return raw === "graph" ? "graph" : "legacy";
+}
+
 function scoreMemoryHit(hit: any, queryLower: string) {
   if (!queryLower) return 0;
   const title = String(hit && hit.title ? hit.title : "").toLowerCase();
@@ -263,13 +273,31 @@ if (command === "shogun_kioku_debug_stats") {
     },
     rules: { count: 0, titles: [] },
     flags: {
-      read_path: "legacy",
-      capture_to_mem_captures: false,
-      worker_enabled: false,
+      read_path: "graph",
+      capture_to_mem_captures: true,
+      worker_enabled: true,
       meeting_extraction_enabled: true,
+    },
+    summary: {
+      jobs_queued: 0,
+      jobs_running: 0,
+      jobs_done: 0,
+      jobs_failed: 0,
+      job_completion_rate: null,
+      edges_active: 0,
+      mem_items_active: 0,
+      edge_density: 0,
     },
     meeting_pipeline: { captures: 0 },
     now_ms: Date.now(),
+    stub: false,
+    echo,
+  };
+}
+if (command === "shogun_kioku_extraction_requeue") {
+  return {
+    requeued: 0,
+    only_billing: !!(echo && echo.only_billing !== false),
     stub: false,
     echo,
   };
@@ -282,8 +310,11 @@ if (command === "shogun_kioku_pipeline_smoke") {
     capture_to_mem_captures: false,
     llm_key_configured: false,
     queued_jobs: 0,
+    failed_jobs: 0,
+    failed_billing_jobs: 0,
+    billing_blocked: false,
     meeting_captures: 0,
-    read_path: "legacy",
+    read_path: mockKiokuReadPath(g),
     stub: true,
     echo,
   };
@@ -447,14 +478,25 @@ switch (command) {
   case "shogun_memory_search": {
     const q = String((echo && echo.query) || "");
     const semantic = !!(echo && echo.semantic);
+    const scope = String((echo && echo.scope) || "").toLowerCase();
+    const readPath = mockKiokuReadPath(g);
     const result = searchMemoryIndex(q, echo && echo.limit, semantic);
-    return {
-      hits: result.hits,
+    let hits = result.hits;
+    if (scope === "timeline") {
+      hits = hits.map((h: any) => ({ ...h, content_type: "memory" }));
+    }
+    const out: Record<string, unknown> = {
+      hits,
       total: result.total,
       semanticRerank: semantic,
+      read_path: readPath,
       echo: echo,
       stub: false,
     };
+    if (scope === "timeline") {
+      out.scope = "timeline";
+    }
+    return out;
   }
   case "shogun_memory_fetch":
     return {
@@ -673,8 +715,10 @@ switch (command) {
             semantic: asb.semantic,
             total: asb.total,
             hits: asb.hits,
+            read_path: mockKiokuReadPath(g),
           }
         : null,
+      memoryReadPath: mockKiokuReadPath(g),
       stub: false,
       echo: echo,
     };
@@ -869,6 +913,7 @@ switch (command) {
   case "mcp_setup_verify":
     return { ok: false, reason: "config_missing", stub: true, echo: echo };
   case "mcp_setup_complete":
+    mergeMockSettingsSection("onboarding", { mcpComplete: true }, g);
     return { complete: true, stub: true, echo: echo };
   case "mcp_setup_open_claude_config":
   case "mcp_setup_open_claude_app":

@@ -127,6 +127,17 @@ export function TabKiokuStats() {
           Meeting captures in KIOKU raw layer: {(data as any).meeting_pipeline.captures ?? 0}
         </p>
       )}
+      {data.summary && (
+        <p className="mdbg-muted" style={{ marginTop: 8 }}>
+          Job completion:{' '}
+          {data.summary.job_completion_rate != null
+            ? `${Math.round(Number(data.summary.job_completion_rate) * 100)}%`
+            : '—'}
+          {' · '}
+          Edge density: {Number(data.summary.edge_density ?? 0).toFixed(2)} (
+          {data.summary.edges_active ?? 0}/{data.summary.mem_items_active ?? 0})
+        </p>
+      )}
 
       <h3>Queue</h3>
       {sli && (

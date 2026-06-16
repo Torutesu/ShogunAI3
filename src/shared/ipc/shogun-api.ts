@@ -74,6 +74,8 @@ import { ShogunIpcClient } from './ipc-client';
         call("shogun_kioku_brief_signals", input || {}, READ),
       kiokuDebugStats: () => call("shogun_kioku_debug_stats", {}, READ),
       kiokuPipelineSmoke: () => call("shogun_kioku_pipeline_smoke", {}, READ),
+      kiokuExtractionRequeue: (input: any) =>
+        call("shogun_kioku_extraction_requeue", input || {}, WRITE),
       kiokuBackupDb: (input: any) =>
         call("shogun_kioku_backup_db", input || {}, WRITE),
       kiokuEdgeTypeProposals: (input: any) =>

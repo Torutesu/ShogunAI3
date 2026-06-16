@@ -9,6 +9,12 @@ import {
   openMemoryEntryInChat,
 } from '../lib/runtime';
 
+function shouldShowSummaryReason(summary: any): boolean {
+  if (!summary?.reason) return false;
+  const model = String(summary.model || '');
+  return !model.startsWith('heuristic');
+}
+
 export interface MemoryRiverViewProps {
   timelineLoading: boolean;
   events: any[];
@@ -516,7 +522,7 @@ export function MemoryRiverView({
                     <span style={{color:'var(--text)'}}>{String(scrubSummary.priority).toUpperCase()}</span>
                   </>
                 )}
-                {scrubSummary && scrubSummary.reason && (
+                {scrubSummary && shouldShowSummaryReason(scrubSummary) && (
                   <>
                     <span className="t-mono" style={{color:'var(--text-dim)'}}>Reason</span>
                     <span style={{color:'var(--text-mute)', wordBreak:'break-word', fontSize:12}}>{scrubSummary.reason}</span>

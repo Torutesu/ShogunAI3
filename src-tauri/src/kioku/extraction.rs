@@ -183,7 +183,26 @@ pub struct ExtractionResponse {
 pub enum ExtractionError {
   Transient(String),
   Permanent(String),
+  /// Anthropic billing / credit exhaustion — job stays queued; worker pauses.
+  BillingBlocked(String),
 }
+
+/// True when an API error indicates billing/credit exhaustion (not a job defect).
+pub fn is_billing_error(err: &str) -> bool {
+  let lower = err.to_lowercase();
+  [
+    "credit balance is too low",
+    "purchase credits",
+    "insufficient credit",
+    "billing",
+    "payment required",
+  ]
+  .iter()
+  .any(|m| lower.contains(m))
+}
+
+/// Backoff before retrying after a billing block (6 h).
+pub const BILLING_RETRY_BACKOFF_MS: i64 = 6 * 60 * 60 * 1000;
 
 /// Extraction client abstraction. Production wires Anthropic; tests pass a
 /// fake that returns canned responses.
@@ -263,6 +282,9 @@ impl AnthropicExtractionClient {
 /// Categorize an error string from `llm::anthropic_tool_complete_with_usage`
 /// into transient (retry) vs permanent (give up).
 pub fn classify_anthropic_error(err: &str) -> ExtractionError {
+  if is_billing_error(err) {
+    return ExtractionError::BillingBlocked(err.to_string());
+  }
   let lower = err.to_lowercase();
   // Anthropic-specific transient signals
   for marker in [
@@ -343,6 +365,10 @@ pub enum JobOutcome {
     reason: String,
   },
   Skipped {
+    reason: String,
+  },
+  /// Billing/credit block — worker should pause; job stays queued.
+  BillingPaused {
     reason: String,
   },
 }
@@ -462,6 +488,11 @@ pub fn run_worker_tick<C: ExtractionClient>(
       JobOutcome::Retry { .. } => report.jobs_retrying += 1,
       JobOutcome::Failed { .. } => report.jobs_failed += 1,
       JobOutcome::Skipped { .. } => report.jobs_skipped_no_capture += 1,
+      JobOutcome::BillingPaused { reason } => {
+        report.paused = true;
+        report.paused_reason = Some(reason);
+        break;
+      }
     }
   }
 
@@ -664,9 +695,95 @@ pub fn process_one_job<C: ExtractionClient>(
             .map_err(|e| format!("process_one_job mark failed: {}", e))?;
           Ok(JobOutcome::Failed { reason: last_error })
         }
+        ExtractionError::BillingBlocked(msg) => {
+          let last_error = format!("billing_blocked: {}", msg);
+          conn
+            .execute(
+              "UPDATE extraction_jobs
+                 SET status = 'queued',
+                     attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+                     last_error = ?1,
+                     next_attempt_at = ?2
+               WHERE id = ?3",
+              params![
+                last_error,
+                now_ms.saturating_add(BILLING_RETRY_BACKOFF_MS),
+                job_id,
+              ],
+            )
+            .map_err(|e| format!("process_one_job mark billing queued: {}", e))?;
+          Ok(JobOutcome::BillingPaused {
+            reason: last_error,
+          })
+        }
       }
     }
   }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequeueReport {
+  pub requeued: i64,
+  pub only_billing: bool,
+}
+
+/// Reset failed extraction jobs back to `queued` after fixing billing / API issues.
+pub fn requeue_failed_extraction_jobs(
+  conn: &Connection,
+  only_billing: bool,
+  now_ms: i64,
+) -> Result<RequeueReport, String> {
+  let requeued = if only_billing {
+    conn.execute(
+      "UPDATE extraction_jobs
+         SET status = 'queued',
+             attempts = 0,
+             last_error = NULL,
+             finished_at = NULL,
+             next_attempt_at = ?1
+       WHERE status = 'failed'
+         AND (
+           last_error LIKE '%credit balance%'
+           OR last_error LIKE '%purchase credits%'
+           OR last_error LIKE '%billing_blocked%'
+         )",
+      params![now_ms],
+    )
+    .map_err(|e| format!("requeue_failed_extraction_jobs (billing): {}", e))?
+  } else {
+    conn
+      .execute(
+        "UPDATE extraction_jobs
+           SET status = 'queued',
+               attempts = 0,
+               last_error = NULL,
+               finished_at = NULL,
+               next_attempt_at = ?1
+         WHERE status = 'failed'",
+        params![now_ms],
+      )
+      .map_err(|e| format!("requeue_failed_extraction_jobs (all): {}", e))?
+  };
+  Ok(RequeueReport {
+    requeued: requeued as i64,
+    only_billing,
+  })
+}
+
+pub fn count_failed_billing_jobs(conn: &Connection) -> Result<i64, String> {
+  conn
+    .query_row(
+      "SELECT COUNT(*) FROM extraction_jobs
+       WHERE status = 'failed'
+         AND (
+           last_error LIKE '%credit balance%'
+           OR last_error LIKE '%purchase credits%'
+           OR last_error LIKE '%billing_blocked%'
+         )",
+      [],
+      |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
 }
 
 // ── Worker driver (production wiring) ──────────────────────────────────────
@@ -1983,7 +2100,7 @@ mod tests {
     ] {
       match classify_anthropic_error(msg) {
         ExtractionError::Transient(_) => {}
-        ExtractionError::Permanent(_) => panic!("expected transient for: {}", msg),
+        other => panic!("expected transient for: {} got {:?}", msg, other),
       }
     }
   }
@@ -2788,5 +2905,58 @@ mod tests {
     // "" vs "abcd" → distance 4, ratio = 1 - 4/4 = 0.0
     assert_eq!(levenshtein_ratio("", "abcd"), 0.0);
     assert_eq!(levenshtein_ratio("abcd", ""), 0.0);
+  }
+
+  #[test]
+  fn classify_anthropic_error_billing_is_blocked_not_permanent() {
+    let err = r#"Anthropic tool_use 400 Bad Request: {"error":{"message":"Your credit balance is too low"}}"#;
+    match classify_anthropic_error(err) {
+      ExtractionError::BillingBlocked(_) => {}
+      other => panic!("expected BillingBlocked, got {:?}", other),
+    }
+  }
+
+  #[test]
+  fn process_one_job_billing_blocked_requeues_without_failed_status() {
+    let conn = open_test_conn();
+    let (_cap_id, job_id) = seed_capture_and_job(&conn, 1_000);
+    let client = FakeClient {
+      response: std::cell::RefCell::new(Some(Err(ExtractionError::BillingBlocked(
+        "credit balance is too low".into(),
+      )))),
+    };
+    let outcome = process_one_job(job_id, &client, 2_000, &conn).expect("returned");
+    assert!(matches!(outcome, JobOutcome::BillingPaused { .. }));
+    let (status, last_err): (String, Option<String>) = conn
+      .query_row(
+        "SELECT status, last_error FROM extraction_jobs WHERE id = ?1",
+        params![job_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+      )
+      .expect("row");
+    assert_eq!(status, "queued");
+    assert!(last_err.unwrap().contains("billing_blocked"));
+  }
+
+  #[test]
+  fn requeue_failed_billing_jobs_resets_status() {
+    let conn = open_test_conn();
+    let (_cap_id, job_id) = seed_capture_and_job(&conn, 1_000);
+    conn
+      .execute(
+        "UPDATE extraction_jobs SET status='failed', last_error='permanent: credit balance is too low' WHERE id=?1",
+        params![job_id],
+      )
+      .unwrap();
+    let report = requeue_failed_extraction_jobs(&conn, true, 5_000).expect("requeue");
+    assert_eq!(report.requeued, 1);
+    let status: String = conn
+      .query_row(
+        "SELECT status FROM extraction_jobs WHERE id = ?1",
+        params![job_id],
+        |r| r.get(0),
+      )
+      .expect("row");
+    assert_eq!(status, "queued");
   }
 }

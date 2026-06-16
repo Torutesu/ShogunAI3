@@ -7,35 +7,56 @@
 // with the bundle without hard-coding version strings.
 const MOCK_SETTINGS_LS = "shogun.hifi.mock.settings.sections.v1";
 
-/** Pre-accept consent so the gate stays closed. Use in non-consent specs. */
-async function preacceptConsent(page) {
-  await page.addInitScript((lsKey) => {
-    let _v;
-    Object.defineProperty(window, "SHOGUN_LEGAL_VERSIONS", {
-      configurable: true,
-      get() {
-        return _v;
-      },
-      set(value) {
-        _v = value;
-        try {
-          localStorage.setItem(
-            lsKey,
-            JSON.stringify({
-              legal: {
-                termsAcceptedVersion: value && value.TERMS_VERSION,
-                privacyAcceptedVersion: value && value.PRIVACY_VERSION,
-                telemetryOptIn: false,
-                acceptedAt: "2026-01-01T00:00:00.000Z",
-              },
-            }),
-          );
-        } catch (_) {
-          /* ignore */
-        }
-      },
-    });
-  }, MOCK_SETTINGS_LS);
+/**
+ * Pre-accept consent so the gate stays closed. Use in non-consent specs.
+ * Also seeds `onboarding.mcpComplete` unless `skipMcpComplete: true` (for
+ * MCP wizard specs).
+ */
+async function preacceptConsent(page, options = {}) {
+  const skipMcpComplete = options.skipMcpComplete === true;
+  await page.addInitScript(
+    ({ lsKey, skipMcpComplete }) => {
+      let _v;
+      Object.defineProperty(window, "SHOGUN_LEGAL_VERSIONS", {
+        configurable: true,
+        get() {
+          return _v;
+        },
+        set(value) {
+          _v = value;
+          try {
+            let sections = {};
+            try {
+              const raw = localStorage.getItem(lsKey);
+              if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === "object") sections = parsed;
+              }
+            } catch (_) {
+              /* ignore */
+            }
+            sections.legal = {
+              termsAcceptedVersion: value && value.TERMS_VERSION,
+              privacyAcceptedVersion: value && value.PRIVACY_VERSION,
+              telemetryOptIn: false,
+              acceptedAt: "2026-01-01T00:00:00.000Z",
+            };
+            if (!skipMcpComplete) {
+              const prev =
+                sections.onboarding && typeof sections.onboarding === "object"
+                  ? sections.onboarding
+                  : {};
+              sections.onboarding = { ...prev, mcpComplete: true };
+            }
+            localStorage.setItem(lsKey, JSON.stringify(sections));
+          } catch (_) {
+            /* ignore */
+          }
+        },
+      });
+    },
+    { lsKey: MOCK_SETTINGS_LS, skipMcpComplete },
+  );
 }
 
 /** Force the bundle's legal versions to a value the seeded settings won't

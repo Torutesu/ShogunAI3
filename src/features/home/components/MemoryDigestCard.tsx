@@ -30,11 +30,26 @@ export function MemoryDigestCard({
 
   return (
     <div className="card" style={{ width: '100%', maxWidth: 760, marginInline: 'auto', padding: 24, marginTop: 18, background: 'var(--surface)', display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="row" style={{ alignItems: 'baseline', gap: 12 }}>
+      <div className="row" style={{ alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <div className="t-mono gold" style={{ textTransform: 'none', letterSpacing: '0.02em' }}>
           <span className="en-only">Memory digest</span>
           <span className="jp">メモリのハイライト</span>
         </div>
+        {memoryDigest.graph_supplemented && (
+          <span
+            className="pill"
+            style={{ fontSize: 10, color: 'var(--gold)', borderColor: 'var(--gold-dim)' }}
+            title="Highlights include items retrieved via KIOKU graph when summaries are sparse"
+          >
+            <span className="en-only">Graph retrieval</span>
+            <span className="jp">KIOKU graph から補完</span>
+          </span>
+        )}
+        {memoryDigest.read_path && (
+          <span className="pill t-mono" style={{ fontSize: 10 }} title="Memory read path for this digest">
+            {String(memoryDigest.read_path)}
+          </span>
+        )}
         <span className="spacer" />
       </div>
 
@@ -175,6 +190,11 @@ export function MemoryDigestCard({
                       )}
                       <div className="t-mono" style={{ fontSize: 9, color: 'var(--text-dim)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <span>{(h.sourceType || '').toUpperCase()}</span>
+                        {h.fromGraph && (
+                          <span style={{ color: 'var(--gold)' }} title="Surfaced via KIOKU graph retrieval">
+                            GRAPH
+                          </span>
+                        )}
                         {h.entityId && <span title={h.entityId}>· entity {String(h.entityId).slice(0, 16)}…</span>}
                       </div>
                       {h.entityId && ent && (

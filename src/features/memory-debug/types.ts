@@ -92,6 +92,16 @@ export interface KiokuDebugStats {
     capture_to_mem_captures?: boolean;
     meeting_extraction_enabled?: boolean;
   };
+  summary?: {
+    jobs_queued?: number;
+    jobs_running?: number;
+    jobs_done?: number;
+    jobs_failed?: number;
+    job_completion_rate?: number | null;
+    edges_active?: number;
+    mem_items_active?: number;
+    edge_density?: number;
+  };
   queue?: KiokuQueueStats;
   cost?: KiokuCostStats;
   graph?: KiokuGraphStats;

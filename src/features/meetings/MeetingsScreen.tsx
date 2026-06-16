@@ -11,6 +11,8 @@ import { useMeetingsCalendar } from './hooks/useMeetingsCalendar';
 import { useGranolaPillUi } from './hooks/useGranolaPillUi';
 import { useMeetingsBackendRecording } from './hooks/useMeetingsBackendRecording';
 import { useMeetingsScreenPrefs } from './hooks/useMeetingsScreenPrefs';
+import { useMeetingsShareControls } from './hooks/useMeetingsShareControls';
+import { useGranolaNoteActions } from './hooks/useGranolaNoteActions';
 import { GranolaOverlayProvider } from './context/GranolaOverlayContext';
 import type { GranolaOverlayContextValue } from './context/GranolaOverlayContext';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
@@ -20,7 +22,6 @@ import {
   briefPayloadWithUserTz,
   RECIPE_LOCAL_BODIES,
   MEETINGS_DOCK_SLASH_CATALOG,
-  RECIPE_LABEL_TO_ID,
   noteHasCompletedRecording,
   isNativeDesktop,
 } from './lib/runtime';
@@ -55,13 +56,7 @@ export function MeetingsScreen() {
   const [meetingsRecipeBrowse, setMeetingsRecipeBrowse] = useState(false);
   const [postRecSessionFlag, setPostRecSessionFlag] = useState(false);
   const [postRecWaveMenuOpen, setPostRecWaveMenuOpen] = useState(false);
-  const [mtgTopShareOpen, setMtgTopShareOpen] = useState(false);
   const [mtgEnhanceBusy, setMtgEnhanceBusy] = useState(false);
-  const [mtgLinkAccess, setMtgLinkAccess] = useState('anyone');
-  const [mtgShareSearch, setMtgShareSearch] = useState('');
-  const [mtgShareOwner, setMtgShareOwner] = useState({ displayName: '', email: '' });
-  const [mtgLinkBusy, setMtgLinkBusy] = useState(false);
-  const [mtgLinkAccessMenuOpen, setMtgLinkAccessMenuOpen] = useState(false);
   const pendingAutoRecordRef = useRef(false);
   const linkClientNoteToStorageRef = useRef<(meetingId: any, storageKey: any) => Promise<any>>(async (id) => id);
 
@@ -95,6 +90,20 @@ export function MeetingsScreen() {
   }, []);
 
   linkClientNoteToStorageRef.current = linkClientNoteToStorage;
+
+  const {
+    mtgTopShareOpen,
+    setMtgTopShareOpen,
+    mtgLinkAccess,
+    setMtgLinkAccess,
+    mtgShareSearch,
+    setMtgShareSearch,
+    mtgShareOwner,
+    mtgLinkBusy,
+    mtgLinkAccessMenuOpen,
+    setMtgLinkAccessMenuOpen,
+    copyMtgShareLink,
+  } = useMeetingsShareControls({ granola, granolaDraft, granolaRef });
 
   const {
     audioRecSession,
@@ -131,30 +140,7 @@ export function MeetingsScreen() {
   useEffect(function () {
     setPostRecSessionFlag(false);
     setPostRecWaveMenuOpen(false);
-    setMtgTopShareOpen(false);
-    setMtgShareSearch('');
-    setMtgLinkAccessMenuOpen(false);
-    setMtgLinkAccess('anyone');
   }, [granolaStorageKey]);
-
-  useEffect(function () {
-    if (!mtgTopShareOpen) return;
-    runRuntimeAction('auth.status', {}, { silentError: true }).then(function (r) {
-      var snap = r && r.ok && r.data && r.data.snapshot;
-      var g = granolaRef.current;
-      if (snap && (snap.displayName || snap.primaryEmail)) {
-        setMtgShareOwner({
-          displayName: snap.displayName || 'You',
-          email: snap.primaryEmail || '',
-        });
-      } else {
-        setMtgShareOwner({
-          displayName: (g && g.authorLabel) ? g.authorLabel : 'You',
-          email: '',
-        });
-      }
-    });
-  }, [mtgTopShareOpen]);
 
   useEffect(function () {
     const L = mnl();
@@ -550,273 +536,34 @@ export function MeetingsScreen() {
     return () => window.removeEventListener('keydown', onKey);
   }, [granola, granolaMenuOpen, granolaTodos, closeGranola, mtgTopShareOpen, mtgLinkAccessMenuOpen]);
 
-  const granolaMeta = useCallback(() => ({
-    title: granola && granola.title,
-    authorLabel: granola && granola.authorLabel,
-    dateLabel: granola && granola.dateLabel,
-    time: granola && granola.time,
-    tag: granola && granola.tag,
-  }), [granola]);
+  const {
+    applyStubTranscript,
+    refreshSummary,
+    refreshMinutes,
+    runMtgEnhance,
+    ingestNoteToMemory,
+    injectRecipeIntoMemo,
+    runPostRecSlashItem,
+    moveGranolaToTrash,
+    mtgDraftEmail,
+    mtgCopyAllText,
+    runLocalAsk,
+    listLocalTodos,
+  } = useGranolaNoteActions({
+    granola,
+    granolaDraft,
+    setGranolaDraft,
+    setGranolaPane,
+    setGranolaTodos,
+    setPostRecWaveMenuOpen,
+    granolaAsk,
+    setMtgTopShareOpen,
+    setGranolaMenuOpen,
+    setGranola,
+    setListTick,
+    setMtgEnhanceBusy,
+  });
 
-  const applyStubTranscript = useCallback(() => {
-    const L = mnl();
-    if (!L || !granola) return;
-    const tx = L.buildStubTranscript(granolaMeta());
-    setGranolaDraft(function (d) { return { ...d, transcript: d.transcript ? d.transcript + '\n\n' + tx : tx }; });
-    toastM('\u30c6\u30f3\u30d7\u306e\u6587\u5b57\u8d77\u3053\u3057\u3092\u633f\u5165\u3057\u307e\u3057\u305f', 'success');
-  }, [granola, granolaMeta]);
-
-  const refreshSummary = useCallback(() => {
-    const L = mnl();
-    if (!L || !granola) return;
-    const src = (granolaDraft.transcript || '') + '\n' + (granolaDraft.body || '');
-    const sum = L.summarizeLocal(src, granolaMeta());
-    setGranolaDraft(function (d) { return { ...d, summary: sum }; });
-    setGranolaPane('summary');
-    toastM('\u8981\u7d04\u3092\u66f4\u65b0\u3057\u307e\u3057\u305f\uff08\u30eb\u30fc\u30eb\u30d9\u30fc\u30b9\uff09', 'success');
-  }, [granola, granolaMeta, granolaDraft.transcript, granolaDraft.body]);
-
-  const refreshMinutes = useCallback(() => {
-    const L = mnl();
-    if (!L || !granola) return;
-    const md = L.buildMinutesMarkdown(granolaMeta(), granolaDraft.transcript, granolaDraft.body, granolaDraft.summary);
-    setGranolaDraft(function (d) { return { ...d, minutes: md }; });
-    setGranolaPane('minutes');
-    toastM('\u8b70\u4e8b\u9332\u3092\u751f\u6210\u3057\u307e\u3057\u305f\uff08\u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\uff09', 'success');
-  }, [granola, granolaMeta, granolaDraft]);
-
-  /** 録音（文字起こし）＋メモを渡して AI 議事録。デスクトップは `meetings.enhance`、Hi-Fi はフォールバックでルールベース。 */
-  const runMtgEnhance = useCallback(async function () {
-    if (!granola || !granola.storageKey) return;
-    setMtgEnhanceBusy(true);
-    try {
-      var res = await runRuntimeAction('meetings.enhance', {
-        storageKey: granola.storageKey,
-        title: granola.title || '',
-        notes: granolaDraft.body || '',
-        transcript: granolaDraft.transcript || '',
-        summary: granolaDraft.summary || '',
-      }, { silentError: true });
-      var md =
-        res &&
-        res.ok &&
-        res.data &&
-        (res.data.minutesMarkdown || res.data.minutes || res.data.markdown);
-      if (md && String(md).trim()) {
-        setGranolaDraft(function (d) { return { ...d, minutes: String(md) }; });
-        setGranolaPane('minutes');
-        toastM('AI 議事録を反映しました', 'success');
-        return;
-      }
-      refreshMinutes();
-      toastM('ルールベースの議事録を生成しました（本番 AI はデスクトップ版）', 'info');
-    } finally {
-      setMtgEnhanceBusy(false);
-    }
-  }, [granola, granolaDraft, refreshMinutes]);
-
-  const ingestNoteToMemory = useCallback(() => {
-    const title = (granola && granola.title) || 'Meeting note';
-    const snippet = [
-      granolaDraft.summary && granolaDraft.summary.slice(0, 500),
-      granolaDraft.transcript && granolaDraft.transcript.slice(0, 1200),
-      granolaDraft.body && granolaDraft.body.slice(0, 400),
-    ].filter(Boolean).join('\n---\n').slice(0, 4000);
-    void runRuntimeAction('memory.ingest', {
-      title: title + ' · meeting',
-      snippet: snippet || '(empty)',
-      source: 'meeting',
-      provenance: 'meeting',
-      entity_id: (granola && granola.backendMeetingId) || (granola && granola.storageKey) || undefined,
-      kinds: ['note', 'meeting'],
-    }, { successMessage: 'Memory に保存しました' });
-  }, [granola, granolaDraft]);
-
-  const injectRecipeIntoMemoLocal = useCallback(function (recipeLabel: any) {
-    var block = RECIPE_LOCAL_BODIES[recipeLabel];
-    if (!granola || !block) return;
-    setGranolaPane('memo');
-    setGranolaDraft(function (d: any) {
-      var sep = (d.body || '').trim() ? '\n\n' : '';
-      return { ...d, body: (d.body || '') + sep + block };
-    });
-    toastM('テンプレートをメモに挿入しました', 'success');
-    setPostRecWaveMenuOpen(false);
-  }, [granola]);
-
-  const runMeetingRecipe = useCallback(async function (recipeLabel: any, target?: 'memo' | 'summary') {
-    const where = target || 'memo';
-    const recipeId = RECIPE_LABEL_TO_ID[recipeLabel];
-    if (!recipeId || !isNativeDesktop()) {
-      injectRecipeIntoMemoLocal(recipeLabel);
-      return;
-    }
-    const payload: any = { recipe_id: recipeId };
-    if (granola && granola.backendMeetingId) {
-      payload.meeting_id = granola.backendMeetingId;
-    } else {
-      payload.transcript = granolaDraft.transcript || '';
-      payload.notes = granolaDraft.body || '';
-    }
-    const res = await runRuntimeAction('meetings.recipe.run', payload, { silentError: true });
-    if (res && res.ok && res.data && res.data.text && String(res.data.text).trim()) {
-      const text = String(res.data.text);
-      setGranolaDraft(function (d: any) {
-        if (where === 'summary') return { ...d, summary: text };
-        const sep = (d.body || '').trim() ? '\n\n' : '';
-        return { ...d, body: (d.body || '') + sep + text };
-      });
-      if (where === 'summary') setGranolaPane('summary');
-      else setGranolaPane('memo');
-      toastM('レシピを実行しました', 'success');
-      return;
-    }
-    injectRecipeIntoMemoLocal(recipeLabel);
-  }, [granola, granolaDraft, injectRecipeIntoMemoLocal]);
-
-  const buildMtgShareMarkdown = useCallback(function () {
-    if (!granola) return '';
-    var title = granola.title || 'Meeting';
-    return [
-      '# ' + title,
-      '',
-      '## Notes',
-      granolaDraft.body || '',
-      '',
-      '## Transcript',
-      granolaDraft.transcript || '',
-      '',
-      '## Summary',
-      granolaDraft.summary || '',
-      '',
-      '## Minutes',
-      granolaDraft.minutes || '',
-    ].join('\n');
-  }, [granola, granolaDraft]);
-
-  const copyMtgShareLink = useCallback(async function () {
-    if (!granola || !granola.storageKey) return;
-    setMtgLinkBusy(true);
-    try {
-      var mode = mtgLinkAccess === 'anyone' ? 'public' : 'private';
-      var res = await runRuntimeAction('app.create_share_link', {
-        resourceType: 'meeting_note',
-        storageKey: granola.storageKey,
-        title: granola.title,
-        mode: mode,
-        markdown: buildMtgShareMarkdown().slice(0, 120000),
-      }, { silentError: true });
-      var url = res && res.ok && res.data && res.data.url;
-      if (!url && typeof window !== 'undefined' && window.location) {
-        url = window.location.origin + '/meetings?note=' + encodeURIComponent(granola.storageKey);
-      }
-      if (url && navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(url);
-      }
-      var sub = mtgLinkAccess === 'anyone'
-        ? 'Anyone with the link can view'
-        : 'Restricted link — recipients need access';
-      toastM('Link copied\n' + sub, 'success');
-    } catch (_e) {
-      toastM('コピーに失敗しました', 'warn');
-    } finally {
-      setMtgLinkBusy(false);
-    }
-  }, [granola, mtgLinkAccess, buildMtgShareMarkdown]);
-
-  const moveGranolaToTrash = useCallback(function () {
-    if (!granola || !granola.storageKey) return;
-    if (!window.confirm('この会議ノートをゴミ箱に移しますか？ローカルに保存した内容が削除されます。')) return;
-    var L = mnl();
-    if (L && L.deleteNote) L.deleteNote(granola.storageKey);
-    if (L && L.removeMeetingLogEntryByStorageKey) L.removeMeetingLogEntryByStorageKey(granola.storageKey);
-    setMtgTopShareOpen(false);
-    setGranolaMenuOpen(false);
-    setGranola(null);
-    setListTick(function (x) { return x + 1; });
-    toastM('ゴミ箱に移しました（ローカル）', 'success');
-  }, [granola]);
-
-  const mtgDraftEmail = useCallback(function () {
-    if (!granola) return;
-    var blob = [granolaDraft.body, granolaDraft.transcript, granolaDraft.summary, granolaDraft.minutes].filter(Boolean).join('\n\n');
-    void runRuntimeAction('shogun.draft_reply', {
-      format: 'email',
-      sourceText: blob,
-      meetingTitle: granola.title,
-    }, { silentError: true }).then(function (r) {
-      var c = r && r.ok && r.data && r.data.content;
-      if (c && navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(c).then(function () {
-          toastM('メール下書きをクリップボードにコピーしました', 'success');
-        }, function () {
-          toastM('下書きは取得できましたがコピーに失敗しました', 'warn');
-        });
-        return;
-      }
-      if (c) {
-        // Draft succeeded but the browser denied clipboard access (e.g. no
-        // secure context). Tell the user explicitly so they know the text
-        // isn't on their clipboard.
-        toastM('クリップボードが利用できません', 'warn');
-        return;
-      }
-      var errMsg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
-      toastM(
-        errMsg ? 'メール下書きに失敗しました — ' + errMsg : 'メール下書きを取得できませんでした',
-        'warn'
-      );
-    });
-  }, [granola, granolaDraft]);
-
-  const mtgCopyAllText = useCallback(function () {
-    var blob = [granolaDraft.body, granolaDraft.transcript, granolaDraft.summary, granolaDraft.minutes].filter(Boolean).join('\n\n');
-    if (!blob.trim()) {
-      toastM('コピーするテキストがありません', 'info');
-      return;
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      void navigator.clipboard.writeText(blob).then(function () {
-        toastM('テキストをコピーしました', 'success');
-      }, function () {
-        toastM('コピーに失敗しました', 'warn');
-      });
-    }
-  }, [granolaDraft]);
-
-  const runLocalAsk = useCallback(() => {
-    const q = (granolaAsk || '').trim();
-    if (!q) return;
-    const L = mnl();
-    const text = [granolaDraft.body, granolaDraft.transcript, granolaDraft.summary, granolaDraft.minutes].join('\n');
-    let n = 0;
-    if (L && L.countOccurrences) n = L.countOccurrences(text, q);
-    else if (q) n = Math.max(0, text.toLowerCase().split(q.toLowerCase()).length - 1);
-    toastM('\u300c' + q + '\u300d\u2192 \u3053\u306e\u30ce\u30fc\u30c8\u5185 ' + n + ' \u4ef6\u4e00\u81f4\uff08\u30ed\u30fc\u30ab\u30eb\u691c\u7d22\uff09', n ? 'success' : 'info');
-  }, [granolaAsk, granolaDraft]);
-
-  const listLocalTodos = useCallback(() => {
-    const L = mnl();
-    const blob = [granolaDraft.body, granolaDraft.transcript, granolaDraft.summary, granolaDraft.minutes].join('\n');
-    const todos = L ? L.extractTodos(blob) : [];
-    setGranolaTodos(todos);
-    toastM('ToDo ' + todos.length + '\u4ef6\uff08\u30ed\u30fc\u30ab\u30eb\u62bd\u51fa\u30fb\u30dc\u30c3\u30c8\u672a\u4f7f\u7528\uff09', todos.length ? 'success' : 'info');
-  }, [granolaDraft]);
-
-  const injectRecipeIntoMemo = useCallback(function (recipeLabel: any) {
-    void runMeetingRecipe(recipeLabel, 'memo');
-  }, [runMeetingRecipe]);
-
-  const runPostRecSlashItem = useCallback(function (item: any) {
-    setPostRecWaveMenuOpen(false);
-    if (item.kind === 'action' && item.id === 'todos') {
-      listLocalTodos();
-      return;
-    }
-    if (item.kind === 'recipe' && item.recipeLabel) {
-      void runMeetingRecipe(item.recipeLabel, 'memo');
-    }
-  }, [listLocalTodos, runMeetingRecipe]);
 
   const submitMeetingsPrompt = useCallback(function (e: any) {
     if (e) e.preventDefault();

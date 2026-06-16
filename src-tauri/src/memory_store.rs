@@ -778,6 +778,11 @@ fn kinds_json_to_value(s: &str) -> Value {
   serde_json::from_str(s).unwrap_or_else(|_| json!([]))
 }
 
+/// Parse stored `kinds_json` for API responses (graph timeline hits).
+pub fn kinds_json_to_value_pub(s: &str) -> Value {
+  kinds_json_to_value(s)
+}
+
 /// Attach FTS5 `highlight()` / `snippet()` output to a memory item row when
 /// the marker characters are actually present — i.e. the match was in that
 /// column. The frontend later splits on the markers to wrap each span in
@@ -881,6 +886,31 @@ fn matches_kinds_filter(kinds_json: &str, want: &[String]) -> bool {
   }
   let have = item_kinds_from_json(kinds_json);
   want.iter().any(|w| have.iter().any(|h| h == w))
+}
+
+/// Public wrapper for post-graph kinds filtering (timeline / memory.search).
+pub fn item_matches_kinds_filter(kinds_json: &str, want: &[String]) -> bool {
+  matches_kinds_filter(kinds_json, want)
+}
+
+/// Batch-load `kinds_json` for timeline / graph post-filters.
+pub fn kinds_json_for_ids(
+  conn: &Connection,
+  ids: &[String],
+) -> Result<std::collections::HashMap<String, String>, String> {
+  use std::collections::HashMap;
+  let mut out = HashMap::new();
+  for id in ids {
+    let kj: String = conn
+      .query_row(
+        "SELECT kinds_json FROM mem_items WHERE id = ?1",
+        [id.as_str()],
+        |r| r.get(0),
+      )
+      .unwrap_or_else(|_| "[]".to_string());
+    out.insert(id.clone(), kj);
+  }
+  Ok(out)
 }
 
 /// Build FTS5 `MATCH` query: token AND token, with minimal escaping.
@@ -1532,12 +1562,12 @@ fn tag_timeline_hit(mut hit: Value, content_type: &str) -> Value {
   hit
 }
 
-/// Unified timeline search across `mem_items` and meetings. Payload:
-/// - `query` (optional)
-/// - `limit` (default 20)
-/// - `start_ms` / `end_ms` optional epoch-ms window
-/// - `content_types`: `memory` | `meeting` (default: both)
-pub fn search_timeline(payload: &Value) -> Result<Value, String> {
+/// Merge pre-built memory timeline hits with meeting rows and finalize ordering.
+pub fn merge_timeline_from_memory_hits(
+  payload: &Value,
+  memory_hits: Vec<Value>,
+  read_path: Option<&str>,
+) -> Result<Value, String> {
   let query = payload
     .get("query")
     .and_then(|q| q.as_str())
@@ -1554,21 +1584,7 @@ pub fn search_timeline(payload: &Value) -> Result<Value, String> {
   let content_types = timeline_content_types(payload);
   let wide = (limit.saturating_mul(4)).min(200);
 
-  let mut merged: Vec<Value> = Vec::new();
-
-  if timeline_wants(&content_types, "memory") {
-    let mut mem_payload = payload.clone();
-    if let Some(obj) = mem_payload.as_object_mut() {
-      obj.remove("scope");
-      obj.insert("limit".to_string(), json!(wide));
-    }
-    let mem_result = search(&mem_payload)?;
-    if let Some(arr) = mem_result.get("hits").and_then(|v| v.as_array()) {
-      for hit in arr {
-        merged.push(tag_timeline_hit(hit.clone(), "memory"));
-      }
-    }
-  }
+  let mut merged = memory_hits;
 
   if timeline_wants(&content_types, "meeting") {
     let meeting_hits =
@@ -1585,13 +1601,51 @@ pub fn search_timeline(payload: &Value) -> Result<Value, String> {
   let total = merged.len();
   merged.truncate(limit);
 
-  Ok(json!({
+  let mut out = json!({
     "hits": merged,
     "total": total,
     "scope": "timeline",
     "echo": payload,
     "stub": false,
-  }))
+  });
+  if let Some(rp) = read_path {
+    if let Some(obj) = out.as_object_mut() {
+      obj.insert("read_path".to_string(), json!(rp));
+    }
+  }
+  Ok(out)
+}
+
+/// Unified timeline search across `mem_items` and meetings. Payload:
+/// - `query` (optional)
+/// - `limit` (default 20)
+/// - `start_ms` / `end_ms` optional epoch-ms window
+/// - `content_types`: `memory` | `meeting` (default: both)
+pub fn search_timeline(payload: &Value) -> Result<Value, String> {
+  let limit = payload
+    .get("limit")
+    .and_then(|l| l.as_u64())
+    .unwrap_or(20)
+    .clamp(1, 200) as usize;
+  let content_types = timeline_content_types(payload);
+  let wide = (limit.saturating_mul(4)).min(200);
+
+  let mut memory_hits: Vec<Value> = Vec::new();
+  if timeline_wants(&content_types, "memory") {
+    let mut mem_payload = payload.clone();
+    if let Some(obj) = mem_payload.as_object_mut() {
+      obj.remove("scope");
+      obj.insert("limit".to_string(), json!(wide));
+    }
+    let mem_result = search(&mem_payload)?;
+    if let Some(arr) = mem_result.get("hits").and_then(|v| v.as_array()) {
+      for hit in arr {
+        memory_hits.push(tag_timeline_hit(hit.clone(), "memory"));
+      }
+    }
+  }
+
+  merge_timeline_from_memory_hits(payload, memory_hits, None)
 }
 
 /// Search with optional **semantic re-ranking** (`semantic: true`, non-empty `query`, LLM key set).
@@ -1928,6 +1982,18 @@ pub fn delete_items_created_since(cutoff_ms: u64) -> Result<Value, String> {
     "cutoff_ms": cutoff_ms,
     "stub": false,
   }))
+}
+
+/// Count mem_items whose `created_at` falls in `[start_ms, end_ms)`.
+pub fn count_items_in_window(start_ms: i64, end_ms: i64) -> Result<i64, String> {
+  let conn = open_conn()?;
+  conn
+    .query_row(
+      "SELECT COUNT(*) FROM mem_items WHERE created_at >= ?1 AND created_at < ?2",
+      rusqlite::params![start_ms, end_ms],
+      |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Total items and count created in the last 24h (rolling window).
