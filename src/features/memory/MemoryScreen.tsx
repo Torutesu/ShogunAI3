@@ -6,6 +6,8 @@ import {
   MEMORY_PROVIDER_META,
   clusterScreenSessions,
   mergeIndexHitsIntoRiver,
+  isRiverSummarizableEvent,
+  buildLocalDraftSummary,
 } from './lib/runtime';
 import { MemoryDigestView } from './components/MemoryDigestView';
 import { MemorySearchView } from './components/MemorySearchView';
@@ -253,18 +255,7 @@ export function MemoryScreen() {
     if (!summaryEnabled || rawEvents.length === 0) return;
     let cancelled = false;
     const connectorItems = rawEvents
-      .filter((e) => {
-        const r = String(e.sourceRaw || '').toLowerCase();
-        const isSummarizable =
-          r === 'gmail' ||
-          r === 'google_calendar' ||
-          r === 'meetings' ||
-          r === 'meeting_note' ||
-          r === 'audio_meeting' ||
-          e.provenance === 'connector' ||
-          e.provenance === 'meeting';
-        return isSummarizable && e.memoryId && !summaryByMemId[e.memoryId];
-      })
+      .filter((e) => isRiverSummarizableEvent(e) && !summaryByMemId[e.memoryId])
       .slice(0, 30)
       .map((e) => ({
         id: e.memoryId,
@@ -469,16 +460,7 @@ export function MemoryScreen() {
       setShowRaw(false);
       return;
     }
-    const rawSrc = String(scrubbed.sourceRaw || '').toLowerCase();
-    const isSummarizable =
-      rawSrc === 'gmail' ||
-      rawSrc === 'google_calendar' ||
-      rawSrc === 'meetings' ||
-      rawSrc === 'meeting_note' ||
-      rawSrc === 'audio_meeting' ||
-      scrubbed.provenance === 'connector' ||
-      scrubbed.provenance === 'meeting';
-    if (!isSummarizable) {
+    if (!isRiverSummarizableEvent(scrubbed)) {
       setScrubSummary(null);
       setShowRaw(true);
       return;
@@ -491,7 +473,7 @@ export function MemoryScreen() {
       setScrubSummaryLoading(false);
       return;
     }
-    setScrubSummary(null);
+    setScrubSummary(buildLocalDraftSummary(scrubbed));
     setScrubSummaryLoading(true);
 
     let cancelled = false;

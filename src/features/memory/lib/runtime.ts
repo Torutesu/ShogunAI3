@@ -41,6 +41,40 @@ export function memoryProvenanceLabel(prov: any): { en: string; jp: string } {
   return { en: 'User', jp: '手動' };
 }
 
+/** Items eligible for River batch/single summarize (excludes raw screen captures). */
+export function isRiverSummarizableEvent(e: any): boolean {
+  if (!e?.memoryId) return false;
+  if (e.provenance === 'screen') return false;
+  const raw = String(e.sourceRaw || '').toLowerCase();
+  if (raw === 'capture_ax' || raw === 'capture_sampler') return false;
+  return Boolean(String(e.title || '').trim() || String(e.snippet || '').trim());
+}
+
+/** Instant client-side preview while the server summary loads or when LLM is off. */
+export function buildLocalDraftSummary(event: any): any {
+  const titleRaw = String(event.title || '').trim();
+  const snippetRaw = String(event.snippet || '').trim();
+  const title = titleRaw || extractWindowLabel(snippetRaw) || '(no title)';
+  const firstLine = snippetRaw
+    .split(/\n|[。.]/)[0]
+    ?.trim()
+    .slice(0, 180);
+  return {
+    targetId: event.memoryId,
+    targetKind: 'item',
+    title: title.slice(0, 80),
+    keyPoints: firstLine ? [firstLine] : [],
+    priority: 'medium',
+    model: 'local_preview',
+    sourceType: event.provenance === 'meeting' ? 'meeting' : 'memory',
+  };
+}
+
+export function isHeuristicSummary(summary: any): boolean {
+  const model = String(summary?.model || '');
+  return model.startsWith('heuristic') || model === 'local_preview';
+}
+
 export function memoryHitToRiverEvent(hit: any): any {
   const ts = hit.created_at != null ? Number(hit.created_at) : Date.now();
   const d = new Date(ts);

@@ -7,6 +7,7 @@ import {
   memoryProvenanceLabel,
   renderHighlighted,
   openMemoryEntryInChat,
+  isHeuristicSummary,
 } from '../lib/runtime';
 
 function shouldShowSummaryReason(summary: any): boolean {
@@ -130,8 +131,8 @@ export function MemoryRiverView({
                   </span>
                 )}
                 {batchSummarizing > 0 && (
-                  <span style={{marginLeft:8, color:'var(--gold)'}} title={`Summarizing ${batchSummarizing} item(s)…`}>
-                    · summarizing {batchSummarizing}
+                  <span style={{marginLeft:8, color:'var(--gold)'}} title={`Processing ${batchSummarizing} item(s)…`}>
+                    · processing {batchSummarizing}
                   </span>
                 )}
               </span>
@@ -204,6 +205,12 @@ export function MemoryRiverView({
           }}>
             <div style={{display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap'}}>
               <div style={{fontSize:18, fontWeight:600, lineHeight:1.3, wordBreak:'break-word', flex:1, minWidth:0}}>{scrubSummary.title}</div>
+              {isHeuristicSummary(scrubSummary) && (
+                <span className="t-mono" style={{fontSize:9, color:'var(--text-dim)', letterSpacing:'0.1em', padding:'2px 6px', border:'1px solid var(--border)', borderRadius:4}}>
+                  <span className="en-only">DRAFT</span>
+                  <span className="jp">暫定</span>
+                </span>
+              )}
               {pinned && (
                 <span className="t-mono" style={{fontSize:9, color:'var(--gold)', letterSpacing:'0.12em', padding:'2px 6px', border:'1px solid var(--gold-dim)', borderRadius:4}}>
                   <span className="en-only">PINNED</span>
@@ -295,6 +302,12 @@ export function MemoryRiverView({
           </div>
           );
         })()}
+        {!timelineLoading && scrubSummaryLoading && scrubSummary?.model === 'local_preview' && (
+          <div style={{padding:'10px 14px', marginBottom:12, color:'var(--text-dim)', fontSize:11, border:'1px dashed var(--border)', borderRadius:10, background:'color-mix(in srgb, var(--surface) 92%, var(--bg))'}}>
+            <span className="en-only">Fetching server summary… showing local preview.</span>
+            <span className="jp">要約を取得中… ローカルプレビューを表示しています。</span>
+          </div>
+        )}
         {!timelineLoading && scrubSummaryLoading && !scrubSummary && (
           <div style={{padding:'20px 18px', marginBottom:16, color:'var(--text-dim)', fontSize:13, textAlign:'center', border:'1px solid var(--border)', borderRadius:12, background:'var(--surface)'}}>
             <span className="en-only">Generating summary…</span>

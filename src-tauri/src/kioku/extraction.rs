@@ -196,6 +196,10 @@ pub fn is_billing_error(err: &str) -> bool {
     "insufficient credit",
     "billing",
     "payment required",
+    "resource_exhausted",
+    "quota exceeded",
+    "exceeded your current quota",
+    "billing account",
   ]
   .iter()
   .any(|m| lower.contains(m))
@@ -223,6 +227,11 @@ impl AnthropicExtractionClient {
   }
 
   /// Default Stage-2 model per `docs/kioku-cost-budget.md` §1.1.
+  pub fn default_model() -> Self {
+    Self::new("gemini-2.5-flash")
+  }
+
+  #[allow(dead_code)]
   pub fn haiku_4_5() -> Self {
     Self::new("claude-haiku-4-5")
   }
@@ -803,8 +812,8 @@ pub struct WorkerConfig {
 impl Default for WorkerConfig {
   fn default() -> Self {
     WorkerConfig {
-      model: "claude-haiku-4-5".to_string(),
-      fallback_model: "claude-haiku-4-5".to_string(),
+      model: "gemini-2.5-flash".to_string(),
+      fallback_model: "gemini-2.5-flash".to_string(),
       monthly_cap_usd: crate::cost_ledger::DEFAULT_MONTHLY_CAP_USD,
       cap_action: crate::cost_ledger::CAP_ACTION_PAUSE_EXTRACTION.to_string(),
       poll_interval_secs: 30,
@@ -1806,8 +1815,8 @@ mod tests {
   fn worker_config_default_has_worker_disabled() {
     let cfg = resolve_worker_config(&serde_json::json!({}));
     assert!(!cfg.enabled);
-    assert_eq!(cfg.model, "claude-haiku-4-5");
-    assert_eq!(cfg.fallback_model, "claude-haiku-4-5");
+    assert_eq!(cfg.model, "gemini-2.5-flash");
+    assert_eq!(cfg.fallback_model, "gemini-2.5-flash");
     assert_eq!(cfg.poll_interval_secs, 30);
     assert_eq!(cfg.max_jobs_per_tick, 5);
     assert_eq!(cfg.monthly_cap_usd, crate::cost_ledger::DEFAULT_MONTHLY_CAP_USD);

@@ -207,6 +207,13 @@ pub fn pipeline_smoke() -> Result<Value, String> {
     )
     .map_err(|e| e.to_string())?;
   let failed_billing = crate::kioku::extraction::count_failed_billing_jobs(&conn).unwrap_or(0);
+  let edges_active: i64 = conn
+    .query_row(
+      "SELECT COUNT(*) FROM mem_edges WHERE valid_to IS NULL",
+      [],
+      |r| r.get(0),
+    )
+    .unwrap_or(0);
 
   Ok(json!({
     "ok": worker && meeting_on && llm_ready && failed_billing == 0,
@@ -219,6 +226,7 @@ pub fn pipeline_smoke() -> Result<Value, String> {
     "failed_billing_jobs": failed_billing,
     "billing_blocked": failed_billing > 0,
     "meeting_captures": meeting_captures,
+    "edges_active": edges_active,
     "read_path": crate::context_assembly::read_path_mode(&settings),
   }))
 }

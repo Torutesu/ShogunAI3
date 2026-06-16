@@ -314,6 +314,7 @@ if (command === "shogun_kioku_pipeline_smoke") {
     failed_billing_jobs: 0,
     billing_blocked: false,
     meeting_captures: 0,
+    edges_active: 0,
     read_path: mockKiokuReadPath(g),
     stub: true,
     echo,

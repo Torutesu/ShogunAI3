@@ -237,7 +237,7 @@ fn ensure_shape(mut v: Value) -> Value {
       o.entry("cap_action".to_string())
         .or_insert(json!("pause_extraction"));
       o.entry("fallback_model".to_string())
-        .or_insert(json!("claude-haiku-4-5"));
+        .or_insert(json!("gemini-2.5-flash"));
     }
     let mtg = sections
       .entry("meetings".to_string())
@@ -259,7 +259,7 @@ fn ensure_shape(mut v: Value) -> Value {
       .or_insert_with(|| json!({}));
     if let Some(o) = llm.as_object_mut() {
       o.entry("extractionModel".to_string())
-        .or_insert(json!("claude-haiku-4-5"));
+        .or_insert(json!("gemini-2.5-flash"));
     }
   }
   v
@@ -631,7 +631,7 @@ mod tests {
     );
     assert_eq!(
       doc.pointer("/sections/llm/extractionModel").and_then(|v| v.as_str()),
-      Some("claude-haiku-4-5")
+      Some("gemini-2.5-flash")
     );
     assert!(!guard.path.exists(), "load() must not create the file");
   }

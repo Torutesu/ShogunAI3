@@ -10,7 +10,11 @@ use rusqlite::{params_from_iter, Connection};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-const MODEL: &str = "claude-haiku-4-5-20251001";
+const MODEL_FALLBACK: &str = "gemini-2.5-flash";
+
+fn resolve_judge_model() -> String {
+  crate::llm::resolve_tool_model(None).unwrap_or_else(|_| MODEL_FALLBACK.to_string())
+}
 
 const JUDGE_SYSTEM_PROMPT: &str = "You are evaluating whether an AI assistant's reply respected a set of rules the user previously accepted into their personal AI assistant.
 
@@ -107,11 +111,12 @@ async fn call_judge(
   let user_content = build_user_prompt(user_msg, assistant_msg, lessons);
   let tool = judge_tool();
 
+  let model = resolve_judge_model();
   match crate::llm::anthropic_tool_complete(
     JUDGE_SYSTEM_PROMPT,
     &user_content,
     &tool,
-    MODEL,
+    &model,
   )
   .await
   {

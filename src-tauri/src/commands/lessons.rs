@@ -33,7 +33,8 @@ pub async fn shogun_lesson_capture_rejection(payload: serde_json::Value) -> Resu
     }
   });
 
-  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, "claude-haiku-4-5-20251001").await {
+  let model = llm::resolve_tool_model(None).unwrap_or_else(|_| "gemini-2.5-flash".to_string());
+  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, &model).await {
     Ok(input) => input
       .get("rule")
       .and_then(|v| v.as_str())
@@ -134,7 +135,8 @@ pub async fn shogun_lesson_capture_tool_failure(payload: serde_json::Value) -> R
     }
   });
 
-  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, "claude-haiku-4-5-20251001").await {
+  let model = llm::resolve_tool_model(None).unwrap_or_else(|_| "gemini-2.5-flash".to_string());
+  let rule = match crate::llm::anthropic_tool_complete(system, &user_content, &tool, &model).await {
     Ok(input) => input
       .get("rule")
       .and_then(|v| v.as_str())

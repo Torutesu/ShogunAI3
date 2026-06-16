@@ -6,7 +6,14 @@
 use crate::summarizer_store::{Summary, SCHEMA_VERSION};
 use serde_json::{json, Value};
 
-pub const SUMMARIZER_MODEL: &str = "claude-sonnet-4-6";
+pub const SUMMARIZER_MODEL: &str = "gemini-2.5-flash";
+
+/// Model for summarizer tool_use — settings override, else provider default.
+pub fn resolve_summarizer_model() -> String {
+  crate::llm::resolve_tool_model(Some("/sections/llm/summarizerModel"))
+    .or_else(|_| crate::llm::resolve_tool_model(None))
+    .unwrap_or_else(|_| SUMMARIZER_MODEL.to_string())
+}
 
 /// Anthropic tool_use で使う schema。emit_memory_summary ツール 1 本。
 pub fn emit_memory_summary_tool() -> Value {
@@ -280,8 +287,9 @@ pub async fn summarize_item(item: &Value, lang: &str) -> Result<Summary, String>
   let user_content = render_item_for_llm(item);
   let tool = emit_memory_summary_tool();
   let system = system_prompt_for_lang(lang);
+  let model = resolve_summarizer_model();
 
-  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
+  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, &model).await {
     Ok(tool_input) => match build_summary_from_tool_input(item, source_type, &tool_input, lang) {
       Ok(s) => Ok(s),
       Err(e) => {
@@ -361,7 +369,7 @@ fn build_summary_from_tool_input(item: &Value, source_type: &str, input: &Value,
     source_type: source_type.to_string(),
     priority,
     reason,
-    model: SUMMARIZER_MODEL.to_string(),
+    model: resolve_summarizer_model(),
     schema_version: SCHEMA_VERSION,
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: serde_json::to_string(input).unwrap_or_default(),
@@ -449,8 +457,9 @@ pub async fn summarize_entity_rollup(
 
   let tool = emit_memory_summary_tool();
   let system = entity_rollup_system_prompt(lang);
+  let model = resolve_summarizer_model();
 
-  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
+  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, &model).await {
     Ok(tool_input) => {
       let title = tool_input
         .get("title")
@@ -474,7 +483,7 @@ pub async fn summarize_entity_rollup(
         source_type: "entity_rollup".into(),
         priority: "medium".into(),
         reason,
-        model: SUMMARIZER_MODEL.to_string(),
+        model: resolve_summarizer_model(),
         schema_version: SCHEMA_VERSION,
         generated_at: crate::memory_store::now_ms() as i64,
         raw_json: serde_json::to_string(&tool_input).unwrap_or_default(),
@@ -803,8 +812,9 @@ pub async fn summarize_year_rollup(year_start_ms: i64, lang: &str) -> Result<Sum
   let user_content = render_year_context(&monthly, &id);
   let tool = emit_memory_summary_tool();
   let system = rollup_system_prompt_for_lang(lang, RollupKind::Year);
+  let model = resolve_summarizer_model();
 
-  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
+  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, &model).await {
     Ok(tool_input) => match build_rollup_from_tool_input(&id, RollupKind::Year, &tool_input, lang) {
       Ok(s) => Ok(s),
       Err(e) => {
@@ -1081,8 +1091,9 @@ async fn summarize_rollup(
   let user_content = render_rollup_context(&context_items, &id, kind);
   let tool = emit_memory_summary_tool();
   let system = rollup_system_prompt_for_lang(lang, kind);
+  let model = resolve_summarizer_model();
 
-  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await {
+  match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, &model).await {
     Ok(tool_input) => match build_rollup_from_tool_input(&id, kind, &tool_input, lang) {
       Ok(s) => Ok(s),
       Err(e) => {
@@ -1188,7 +1199,7 @@ fn build_rollup_from_tool_input(id: &str, kind: RollupKind, input: &Value, lang:
     source_type: kind.target_kind().into(),
     priority: "medium".into(), // rollups are ambient, never HIGH
     reason,
-    model: SUMMARIZER_MODEL.to_string(),
+    model: resolve_summarizer_model(),
     schema_version: SCHEMA_VERSION,
     generated_at: crate::memory_store::now_ms() as i64,
     raw_json: serde_json::to_string(input).unwrap_or_default(),

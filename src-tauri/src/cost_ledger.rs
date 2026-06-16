@@ -73,7 +73,7 @@ pub fn evaluate_cap_status(
     CAP_ACTION_FALLBACK_TO_LIGHTER => {
       let model = fallback_model
         .map(str::to_string)
-        .unwrap_or_else(|| "claude-haiku-4-5".to_string());
+        .unwrap_or_else(|| "gemini-2.5-flash".to_string());
       CapStatus::ProceedWithFallback { model }
     }
     CAP_ACTION_PAUSE_CAPTURE => CapStatus::Pause {
@@ -111,6 +111,28 @@ pub fn month_start_ms_utc(now_ms: i64) -> i64 {
 /// Compute the dollar cost of an Anthropic call given token usage.
 /// Returns `None` for unknown models so callers can log/alarm rather than
 /// silently undercount.
+pub const PRICE_GEMINI_25_FLASH_INPUT_PER_M: f64 = 0.15;
+pub const PRICE_GEMINI_25_FLASH_OUTPUT_PER_M: f64 = 0.60;
+
+/// Lookup per-model input/output USD per 1M tokens. Unknown models return None.
+fn model_pricing(model: &str) -> Option<(f64, f64)> {
+  match model {
+    "claude-haiku-4-5" => Some((PRICE_HAIKU_4_5_INPUT_PER_M, PRICE_HAIKU_4_5_OUTPUT_PER_M)),
+    "claude-sonnet-4-6" => Some((PRICE_SONNET_4_6_INPUT_PER_M, PRICE_SONNET_4_6_OUTPUT_PER_M)),
+    "claude-opus-4-7" => Some((PRICE_OPUS_4_7_INPUT_PER_M, PRICE_OPUS_4_7_OUTPUT_PER_M)),
+    "gemini-2.5-flash" => Some((PRICE_GEMINI_25_FLASH_INPUT_PER_M, PRICE_GEMINI_25_FLASH_OUTPUT_PER_M)),
+    _ if model.contains("gemini-2.5-flash") => {
+      Some((PRICE_GEMINI_25_FLASH_INPUT_PER_M, PRICE_GEMINI_25_FLASH_OUTPUT_PER_M))
+    }
+    _ if model.contains("gemini-2.0-flash") => Some((0.10, 0.40)),
+    _ if model.starts_with("gemini") => Some((PRICE_GEMINI_25_FLASH_INPUT_PER_M, PRICE_GEMINI_25_FLASH_OUTPUT_PER_M)),
+    _ => None,
+  }
+}
+
+/// Compute the dollar cost of an LLM call given token usage.
+/// Returns `None` for unknown models so callers can log/alarm rather than
+/// silently undercount.
 pub fn calc_cost(model: &str, input_tokens: i64, output_tokens: i64) -> Option<f64> {
   calc_cost_with_cache(model, input_tokens, 0, 0, output_tokens)
 }
@@ -126,12 +148,7 @@ pub fn calc_cost_with_cache(
   cache_read_tokens: i64,
   output_tokens: i64,
 ) -> Option<f64> {
-  let (inp_per_m, out_per_m) = match model {
-    "claude-haiku-4-5" => (PRICE_HAIKU_4_5_INPUT_PER_M, PRICE_HAIKU_4_5_OUTPUT_PER_M),
-    "claude-sonnet-4-6" => (PRICE_SONNET_4_6_INPUT_PER_M, PRICE_SONNET_4_6_OUTPUT_PER_M),
-    "claude-opus-4-7" => (PRICE_OPUS_4_7_INPUT_PER_M, PRICE_OPUS_4_7_OUTPUT_PER_M),
-    _ => return None,
-  };
+  let (inp_per_m, out_per_m) = model_pricing(model)?;
   let inp = input_tokens.max(0) as f64;
   let cw = cache_creation_tokens.max(0) as f64;
   let cr = cache_read_tokens.max(0) as f64;
@@ -427,7 +444,7 @@ mod tests {
       Some("claude-haiku-4-5"),
     );
     match s {
-      CapStatus::ProceedWithFallback { model } => assert_eq!(model, "claude-haiku-4-5"),
+      CapStatus::ProceedWithFallback { model } => assert_eq!(model, "gemini-2.5-flash"),
       other => panic!("expected fallback, got {:?}", other),
     }
   }

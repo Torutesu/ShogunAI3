@@ -721,6 +721,138 @@ pub fn build_anthropic_tool_request_body(
   })
 }
 
+/// Resolve the model id for tool_use calls (summarizer, extraction, lessons).
+/// Prefers an explicit settings path, then `/sections/llm/model`, then the
+/// provider default inferred from the stored API key.
+pub fn resolve_tool_model(model_setting_path: Option<&str>) -> Result<String, String> {
+  let key = crate::secrets::get_llm_api_key()?
+    .filter(|k| !k.trim().is_empty())
+    .ok_or_else(|| "LLM API key not configured".to_string())?;
+  let provider = crate::llm_providers::detect_provider(&key);
+  let settings = crate::settings_store::load().unwrap_or(json!({}));
+  if let Some(path) = model_setting_path {
+    if let Some(m) = settings.pointer(path).and_then(|v| v.as_str()) {
+      let m = m.trim();
+      if !m.is_empty() {
+        return Ok(m.to_string());
+      }
+    }
+  }
+  if let Some(m) = settings.pointer("/sections/llm/model").and_then(|v| v.as_str()) {
+    let m = m.trim();
+    if !m.is_empty() {
+      return Ok(m.to_string());
+    }
+  }
+  Ok(crate::llm_providers::default_chat_model(provider).to_string())
+}
+
+/// Convert an Anthropic-style tool definition to OpenAI `tools[]` function format.
+pub fn anthropic_tool_to_openai_function(tool: &serde_json::Value) -> Result<serde_json::Value, String> {
+  let name = tool
+    .get("name")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "tool.name required".to_string())?;
+  let description = tool.get("description").cloned().unwrap_or(json!(""));
+  let parameters = tool
+    .get("input_schema")
+    .cloned()
+    .or_else(|| tool.get("parameters").cloned())
+    .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+  Ok(json!({
+    "type": "function",
+    "function": {
+      "name": name,
+      "description": description,
+      "parameters": parameters,
+    }
+  }))
+}
+
+/// OpenAI-compatible `/chat/completions` body for structured tool output.
+pub fn build_openai_tool_request_body(
+  model: &str,
+  system: &str,
+  user: &str,
+  tool: &serde_json::Value,
+  max_tokens: i64,
+) -> Result<serde_json::Value, String> {
+  let tool_name = tool
+    .get("name")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| "tool.name required".to_string())?;
+  let openai_tool = anthropic_tool_to_openai_function(tool)?;
+  Ok(json!({
+    "model": model,
+    "max_tokens": max_tokens,
+    "temperature": 0.2,
+    "messages": [
+      { "role": "system", "content": system },
+      { "role": "user", "content": user }
+    ],
+    "tools": [openai_tool],
+    "tool_choice": { "type": "function", "function": { "name": tool_name } },
+  }))
+}
+
+/// Parse an OpenAI-style chat completion that returned `tool_calls`.
+pub fn parse_openai_tool_response(
+  parsed: &serde_json::Value,
+  tool_name: &str,
+  fallback_model: &str,
+) -> Result<AnthropicToolResult, String> {
+  let usage = parsed.get("usage");
+  let input_tokens = usage
+    .and_then(|u| u.get("prompt_tokens"))
+    .and_then(|v| v.as_i64())
+    .unwrap_or(0);
+  let output_tokens = usage
+    .and_then(|u| u.get("completion_tokens"))
+    .and_then(|v| v.as_i64())
+    .unwrap_or(0);
+  let resolved_model = parsed
+    .get("model")
+    .and_then(|v| v.as_str())
+    .unwrap_or(fallback_model)
+    .to_string();
+
+  let choices = parsed
+    .get("choices")
+    .and_then(|v| v.as_array())
+    .ok_or_else(|| "OpenAI response missing choices array".to_string())?;
+  let message = choices
+    .first()
+    .and_then(|c| c.get("message"))
+    .ok_or_else(|| "OpenAI response missing message".to_string())?;
+  let tool_calls = message
+    .get("tool_calls")
+    .and_then(|v| v.as_array())
+    .ok_or_else(|| "OpenAI response missing tool_calls".to_string())?;
+
+  for tc in tool_calls {
+    let func = tc
+      .get("function")
+      .ok_or_else(|| "tool_call missing function".to_string())?;
+    if func.get("name").and_then(|n| n.as_str()) == Some(tool_name) {
+      let args_str = func
+        .get("arguments")
+        .and_then(|a| a.as_str())
+        .unwrap_or("{}");
+      let input: serde_json::Value = serde_json::from_str(args_str)
+        .map_err(|e| format!("tool arguments JSON parse: {}", e))?;
+      return Ok(AnthropicToolResult {
+        input,
+        input_tokens,
+        output_tokens,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        resolved_model,
+      });
+    }
+  }
+  Err(format!("OpenAI response has no tool_call for {}", tool_name))
+}
+
 /// Pure helper that turns a parsed Anthropic Messages response into an
 /// `AnthropicToolResult`. Extracted from `anthropic_tool_complete_with_usage`
 /// so tests can exercise usage / cache token parsing without HTTP.
@@ -810,6 +942,7 @@ pub async fn anthropic_tool_complete_with_usage_opts(
 ) -> Result<AnthropicToolResult, String> {
   let key = crate::secrets::get_llm_api_key()?
     .ok_or_else(|| "LLM API key not configured".to_string())?;
+  let provider = crate::llm_providers::detect_provider(&key);
 
   let tool_name = tool
     .get("name")
@@ -817,41 +950,76 @@ pub async fn anthropic_tool_complete_with_usage_opts(
     .ok_or_else(|| "tool.name required".to_string())?
     .to_string();
 
-  let body = build_anthropic_tool_request_body(model, system, user, tool, 1024, opts);
-
   let client = reqwest::Client::builder()
     .timeout(std::time::Duration::from_secs(60))
     .build()
     .map_err(|e| format!("reqwest build: {}", e))?;
 
-  let resp = client
-    .post("https://api.anthropic.com/v1/messages")
-    .header("x-api-key", key.trim())
-    .header("anthropic-version", "2023-06-01")
-    .header("content-type", "application/json")
+  let (url, headers, body, provider_label) = if provider == crate::llm_providers::LlmProvider::Anthropic {
+    let body = build_anthropic_tool_request_body(model, system, user, tool, 1024, opts);
+    (
+      "https://api.anthropic.com/v1/messages".to_string(),
+      crate::llm_providers::chat_headers(provider, &key),
+      body,
+      "Anthropic tool_use",
+    )
+  } else {
+    let (base_override, _, _) = read_llm_prefs()?;
+    let base = if base_override.is_empty() {
+      crate::llm_providers::default_base_url(provider).to_string()
+    } else {
+      base_override
+    };
+    let url = crate::llm_providers::chat_url(provider, &base);
+    let host = Url::parse(&url)
+      .ok()
+      .and_then(|u| u.host_str().map(|s| s.to_string()))
+      .ok_or_else(|| "Invalid LLM URL".to_string())?;
+    let extra_hosts = read_extra_llm_hosts();
+    crate::llm_providers::validate_host_for_provider(provider, &host, &extra_hosts)?;
+    let body = build_openai_tool_request_body(model, system, user, tool, 1024)?;
+    (
+      url,
+      crate::llm_providers::chat_headers(provider, &key),
+      body,
+      "LLM tool_use",
+    )
+  };
+
+  let mut req = client.post(&url);
+  for (name, value) in headers {
+    req = req.header(name, value);
+  }
+  let resp = req
     .json(&body)
     .send()
     .await
-    .map_err(|e| format!("Anthropic tool_use network error: {}", e))?;
+    .map_err(|e| format!("{} network error: {}", provider_label, e))?;
 
   let status = resp.status();
   let text = resp
     .text()
     .await
-    .map_err(|e| format!("Anthropic tool_use body: {}", e))?;
+    .map_err(|e| format!("{} body: {}", provider_label, e))?;
 
   if !status.is_success() {
     return Err(format!(
-      "Anthropic tool_use {}: {}",
+      "{} {}: {}",
+      provider_label,
       status,
       text.chars().take(300).collect::<String>(),
     ));
   }
 
   let parsed: serde_json::Value = serde_json::from_str(&text)
-    .map_err(|e| format!("Anthropic tool_use JSON parse: {}", e))?;
+    .map_err(|e| format!("{} JSON parse: {}", provider_label, e))?;
 
-  parse_anthropic_tool_response(&parsed, &tool_name, model).map_err(|e| {
+  let result = if provider == crate::llm_providers::LlmProvider::Anthropic {
+    parse_anthropic_tool_response(&parsed, &tool_name, model)
+  } else {
+    parse_openai_tool_response(&parsed, &tool_name, model)
+  };
+  result.map_err(|e| {
     format!(
       "{}: {}",
       e,
@@ -866,74 +1034,8 @@ pub async fn anthropic_tool_complete(
   tool: &serde_json::Value,
   model: &str,
 ) -> Result<serde_json::Value, String> {
-  let key = crate::secrets::get_llm_api_key()?
-    .ok_or_else(|| "LLM API key not configured".to_string())?;
-
-  let tool_name = tool
-    .get("name")
-    .and_then(|v| v.as_str())
-    .ok_or_else(|| "tool.name required".to_string())?
-    .to_string();
-
-  let body = serde_json::json!({
-    "model": model,
-    "max_tokens": 1024,
-    "system": system,
-    "messages": [{ "role": "user", "content": user }],
-    "tools": [tool],
-    "tool_choice": { "type": "tool", "name": tool_name },
-  });
-
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(60))
-    .build()
-    .map_err(|e| format!("reqwest build: {}", e))?;
-
-  let resp = client
-    .post("https://api.anthropic.com/v1/messages")
-    .header("x-api-key", key.trim())
-    .header("anthropic-version", "2023-06-01")
-    .header("content-type", "application/json")
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("Anthropic tool_use network error: {}", e))?;
-
-  let status = resp.status();
-  let text = resp
-    .text()
-    .await
-    .map_err(|e| format!("Anthropic tool_use body: {}", e))?;
-
-  if !status.is_success() {
-    return Err(format!("Anthropic tool_use {}: {}", status, text.chars().take(300).collect::<String>()));
-  }
-
-  let parsed: serde_json::Value = serde_json::from_str(&text)
-    .map_err(|e| format!("Anthropic tool_use JSON parse: {}", e))?;
-
-  // Expect content = [{ type: "tool_use", name: tool_name, input: { ... } }, ...]
-  let content = parsed
-    .get("content")
-    .and_then(|v| v.as_array())
-    .ok_or_else(|| "Anthropic response missing content array".to_string())?;
-
-  for item in content {
-    if item.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-      && item.get("name").and_then(|n| n.as_str()) == Some(tool_name.as_str())
-    {
-      return item
-        .get("input")
-        .cloned()
-        .ok_or_else(|| "tool_use missing input".to_string());
-    }
-  }
-
-  Err(format!(
-    "Anthropic response has no tool_use for {}: {}",
-    tool_name,
-    text.chars().take(300).collect::<String>()
-  ))
+  let res = anthropic_tool_complete_with_usage(system, user, tool, model).await?;
+  Ok(res.input)
 }
 
 #[cfg(test)]
@@ -1025,5 +1127,38 @@ mod tests {
     let parsed = parse_anthropic_tool_response(&resp, "emit_facts", "claude-haiku-4-5").expect("ok");
     assert_eq!(parsed.cache_creation_input_tokens, 0);
     assert_eq!(parsed.cache_read_input_tokens, 0);
+  }
+
+  #[test]
+  fn build_openai_tool_body_uses_function_schema() {
+    let body = build_openai_tool_request_body("gemini-2.5-flash", "sys", "user", &dummy_tool(), 1024)
+      .expect("body");
+    assert_eq!(body["model"], "gemini-2.5-flash");
+    let tools = body["tools"].as_array().expect("tools");
+    assert_eq!(tools[0]["type"], "function");
+    assert_eq!(tools[0]["function"]["name"], "emit_facts");
+    assert_eq!(body["tool_choice"]["function"]["name"], "emit_facts");
+  }
+
+  #[test]
+  fn parse_openai_tool_response_reads_tool_calls() {
+    let resp = json!({
+      "model": "gemini-2.5-flash",
+      "choices": [{
+        "message": {
+          "tool_calls": [{
+            "function": {
+              "name": "emit_facts",
+              "arguments": "{\"facts\":[]}"
+            }
+          }]
+        }
+      }],
+      "usage": { "prompt_tokens": 100, "completion_tokens": 20 }
+    });
+    let parsed = parse_openai_tool_response(&resp, "emit_facts", "gemini-2.5-flash").expect("ok");
+    assert_eq!(parsed.input_tokens, 100);
+    assert_eq!(parsed.output_tokens, 20);
+    assert_eq!(parsed.input["facts"], json!([]));
   }
 }

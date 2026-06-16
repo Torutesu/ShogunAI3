@@ -12,7 +12,11 @@ use std::collections::HashMap;
 
 use crate::lessons::{cosine_similarity, list_active, Lesson};
 
-const MODEL: &str = "claude-haiku-4-5-20251001";
+const MODEL_FALLBACK: &str = "gemini-2.5-flash";
+
+fn resolve_judge_model() -> String {
+  crate::llm::resolve_tool_model(None).unwrap_or_else(|_| MODEL_FALLBACK.to_string())
+}
 const TOP_K: usize = 3;
 const FETCH_LIMIT: usize = 1000;
 
@@ -58,7 +62,8 @@ fn judge_tool() -> Value {
 async fn judge_contradiction(older_rule: &str, newer_rule: &str) -> Option<bool> {
   let user_msg = format!("OLDER: {}\nNEWER: {}", older_rule, newer_rule);
   let tool = judge_tool();
-  match crate::llm::anthropic_tool_complete(JUDGE_SYSTEM_PROMPT, &user_msg, &tool, MODEL).await {
+  let model = resolve_judge_model();
+  match crate::llm::anthropic_tool_complete(JUDGE_SYSTEM_PROMPT, &user_msg, &tool, &model).await {
     Ok(input) => input
       .get("contradicts")
       .and_then(|v| v.as_bool()),
