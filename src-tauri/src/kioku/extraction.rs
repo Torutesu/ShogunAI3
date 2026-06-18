@@ -77,8 +77,8 @@ pub fn extraction_tool_input_schema() -> Value {
           "type": "object",
           "properties": {
             "entity_id": {
-              "type": ["string", "null"],
-              "description": "Upstream identifier (e.g. calendar event id) when the source supplies one."
+              "type": "string",
+              "description": "Upstream identifier (e.g. calendar event id). Omit when unknown."
             },
             "entity_name": {
               "type": "string",
@@ -309,6 +309,8 @@ pub fn classify_anthropic_error(err: &str) -> ExtractionError {
     "504",
     "overloaded",
     "rate limit",
+    "malformed_function_call",
+    "missing tool_calls",
   ] {
     if lower.contains(marker) {
       return ExtractionError::Transient(err.to_string());
@@ -326,7 +328,9 @@ impl ExtractionClient for AnthropicExtractionClient {
 
     // Bridge async → sync. The worker driver calls this from a blocking task,
     // so creating a current_thread runtime here is cheap and isolated.
-    let opts = crate::llm::AnthropicToolRequestOptions { enable_prompt_cache: true };
+    // Gemini's OpenAI-compatible tool route rejects Anthropic-style prompt cache.
+    let enable_cache = !model.to_lowercase().contains("gemini");
+    let opts = crate::llm::AnthropicToolRequestOptions { enable_prompt_cache: enable_cache };
     let result = tauri::async_runtime::block_on(async move {
       crate::llm::anthropic_tool_complete_with_usage_opts(&system, &user, &tool, &model, opts)
         .await
@@ -448,6 +452,7 @@ pub fn run_worker_tick<C: ExtractionClient>(
   cap_action: &str,
   fallback_model: Option<&str>,
   max_jobs_per_tick: usize,
+  active_model: &str,
 ) -> Result<TickReport, String> {
   let month_start = crate::cost_ledger::month_start_ms_utc(now_ms);
   let spent = crate::cost_ledger::sum_cost_in_window(conn, month_start, now_ms)?;
@@ -472,7 +477,7 @@ pub fn run_worker_tick<C: ExtractionClient>(
       });
     }
     crate::cost_ledger::CapStatus::ProceedWithFallback { model } => (true, Some(model.clone())),
-    crate::cost_ledger::CapStatus::Proceed => (false, None),
+    crate::cost_ledger::CapStatus::Proceed => (false, Some(active_model.to_string())),
   };
 
   let mut report = TickReport {
@@ -612,10 +617,11 @@ pub fn process_one_job<C: ExtractionClient>(
       } else {
         None
       };
+      let resolved_model = resp.model.clone();
       crate::cost_ledger::record(
         &crate::cost_ledger::LedgerEntry {
           recorded_at_ms: now_ms,
-          model: resp.model,
+          model: resolved_model.clone(),
           purpose: crate::cost_ledger::PURPOSE_EXTRACTION.into(),
           input_tokens: resp.input_tokens,
           output_tokens: resp.output_tokens,
@@ -640,7 +646,7 @@ pub fn process_one_job<C: ExtractionClient>(
           "UPDATE extraction_jobs
              SET status = 'done', finished_at = ?1, model = ?2
            WHERE id = ?3",
-          params![now_ms, "claude-haiku-4-5", job_id],
+          params![now_ms, resolved_model, job_id],
         )
         .map_err(|e| format!("process_one_job mark job done: {}", e))?;
 
@@ -936,7 +942,7 @@ pub fn run_worker_tick_from_settings(now_ms: i64) -> Result<Option<TickReport>, 
     crate::cost_ledger::CapStatus::Proceed => cfg.model.clone(),
   };
 
-  let client = AnthropicExtractionClient::new(active_model);
+  let client = AnthropicExtractionClient::new(active_model.clone());
   let report = run_worker_tick(
     &client,
     &conn,
@@ -945,6 +951,7 @@ pub fn run_worker_tick_from_settings(now_ms: i64) -> Result<Option<TickReport>, 
     &cfg.cap_action,
     Some(&cfg.fallback_model),
     cfg.max_jobs_per_tick,
+    &active_model,
   )?;
   Ok(Some(report))
 }
@@ -1996,6 +2003,7 @@ mod tests {
       crate::cost_ledger::CAP_ACTION_PAUSE_EXTRACTION,
       None,
       5,
+      "gemini-2.5-flash",
     )
     .unwrap();
     assert!(report.paused);
@@ -2042,6 +2050,7 @@ mod tests {
       crate::cost_ledger::CAP_ACTION_PAUSE_EXTRACTION,
       None,
       10,
+      "gemini-2.5-flash",
     )
     .unwrap();
     assert!(!report.paused);
@@ -2074,6 +2083,7 @@ mod tests {
       crate::cost_ledger::CAP_ACTION_PAUSE_EXTRACTION,
       None,
       2,
+      "gemini-2.5-flash",
     )
     .unwrap();
     assert_eq!(report.jobs_processed, 2);
@@ -2116,6 +2126,7 @@ mod tests {
       crate::cost_ledger::CAP_ACTION_FALLBACK_TO_LIGHTER,
       Some("claude-haiku-4-5"),
       5,
+      "claude-sonnet-4-6",
     )
     .unwrap();
     assert!(report.used_fallback);
