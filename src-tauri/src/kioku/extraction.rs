@@ -196,9 +196,6 @@ pub fn is_billing_error(err: &str) -> bool {
     "insufficient credit",
     "billing",
     "payment required",
-    "resource_exhausted",
-    "quota exceeded",
-    "exceeded your current quota",
     "billing account",
   ]
   .iter()
@@ -291,10 +288,14 @@ impl AnthropicExtractionClient {
 /// Categorize an error string from `llm::anthropic_tool_complete_with_usage`
 /// into transient (retry) vs permanent (give up).
 pub fn classify_anthropic_error(err: &str) -> ExtractionError {
+  let lower = err.to_lowercase();
+  // Rate-limit responses should back off per job, not pause the whole worker for 6h.
+  if lower.contains("429") || lower.contains("rate limit") || lower.contains("resource_exhausted") {
+    return ExtractionError::Transient(err.to_string());
+  }
   if is_billing_error(err) {
     return ExtractionError::BillingBlocked(err.to_string());
   }
-  let lower = err.to_lowercase();
   // Anthropic-specific transient signals
   for marker in [
     "network error",
@@ -2160,6 +2161,15 @@ mod tests {
         ExtractionError::Transient(_) => {}
         _ => panic!("expected transient for: {}", msg),
       }
+    }
+  }
+
+  #[test]
+  fn classify_quota_429_as_transient_not_billing_pause() {
+    let err = "LLM tool_use 429 Too Many Requests: You exceeded your current quota";
+    match classify_anthropic_error(err) {
+      ExtractionError::Transient(_) => {}
+      other => panic!("expected transient, got {:?}", other),
     }
   }
 
