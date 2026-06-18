@@ -23,9 +23,9 @@ export function PaneKiokuGraph() {
 
   const [monthlyCap, setMonthlyCap] = useState('10');
   const [capAction, setCapAction] = useState('pause_extraction');
-  const [fallbackModel, setFallbackModel] = useState('claude-haiku-4-5');
+  const [fallbackModel, setFallbackModel] = useState('gemini-2.5-flash');
 
-  const [extractionModel, setExtractionModel] = useState('claude-haiku-4-5');
+  const [extractionModel, setExtractionModel] = useState('gemini-2.5-flash');
 
   const [sliBadSuccessLt, setSliBadSuccessLt] = useState('95');
   const [sliBadP95Gt, setSliBadP95Gt] = useState('3000');

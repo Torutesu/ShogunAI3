@@ -884,14 +884,27 @@ pub fn resolve_worker_config(settings: &serde_json::Value) -> WorkerConfig {
   cfg
 }
 
+/// Align configured extraction models with the Keychain provider (e.g. swap
+/// stale `claude-haiku-4-5` when the user saved a Gemini key).
+pub fn coerce_worker_models(cfg: &mut WorkerConfig, key: &str) {
+  let provider = crate::llm_providers::resolve_provider(key, &cfg.model);
+  cfg.model = crate::llm_providers::normalize_model_for_provider(provider, &cfg.model);
+  let fb_provider = crate::llm_providers::resolve_provider(key, &cfg.fallback_model);
+  cfg.fallback_model =
+    crate::llm_providers::normalize_model_for_provider(fb_provider, &cfg.fallback_model);
+}
+
 /// Run a single tick using settings loaded from disk + the canonical
 /// `AnthropicExtractionClient`. Returns `Ok(None)` when the worker is
 /// disabled by settings.
 pub fn run_worker_tick_from_settings(now_ms: i64) -> Result<Option<TickReport>, String> {
   let settings = crate::settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
-  let cfg = resolve_worker_config(&settings);
+  let mut cfg = resolve_worker_config(&settings);
   if !cfg.enabled {
     return Ok(None);
+  }
+  if let Ok(Some(key)) = crate::secrets::get_llm_api_key() {
+    coerce_worker_models(&mut cfg, &key);
   }
 
   let conn = crate::memory_store::open_conn()?;
@@ -1830,6 +1843,16 @@ mod tests {
     });
     let cfg = resolve_worker_config(&s);
     assert_eq!(cfg.model, "claude-sonnet-4-6");
+  }
+
+  #[test]
+  fn coerce_worker_models_swaps_claude_for_gemini_key() {
+    let mut cfg = resolve_worker_config(&serde_json::json!({
+      "sections": { "llm": { "extractionModel": "claude-haiku-4-5" } }
+    }));
+    coerce_worker_models(&mut cfg, "AIzaSyDummyKey1234567890");
+    assert_eq!(cfg.model, "gemini-2.5-flash");
+    assert_eq!(cfg.fallback_model, "gemini-2.5-flash");
   }
 
   #[test]

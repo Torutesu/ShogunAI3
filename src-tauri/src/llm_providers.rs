@@ -90,6 +90,24 @@ pub fn resolve_provider(key: &str, model_override: &str) -> LlmProvider {
     infer_provider_from_model(model_override).unwrap_or(from_key)
 }
 
+/// Reconcile a configured model id with the detected provider (e.g. stale
+/// `claude-haiku-4-5` after switching the Keychain key to Gemini).
+pub fn normalize_model_for_provider(provider: LlmProvider, model: &str) -> String {
+    let m = model.trim();
+    if m.is_empty() {
+        return default_chat_model(provider).to_string();
+    }
+    let ml = m.to_lowercase();
+    match provider {
+        LlmProvider::Gemini if ml.contains("claude") => default_chat_model(provider).to_string(),
+        LlmProvider::Anthropic if ml.starts_with("gemini") => default_chat_model(provider).to_string(),
+        LlmProvider::OpenAI if ml.contains("claude") || ml.starts_with("gemini") => {
+            default_chat_model(provider).to_string()
+        }
+        _ => m.to_string(),
+    }
+}
+
 pub fn default_base_url(provider: LlmProvider) -> &'static str {
     match provider {
         LlmProvider::OpenAI => "https://api.openai.com/v1",
@@ -547,6 +565,22 @@ mod tests {
         assert_eq!(
             resolve_provider("not-a-known-prefix", "gemini-2.5-flash"),
             LlmProvider::Gemini
+        );
+    }
+
+    #[test]
+    fn normalize_model_gemini_strips_stale_claude_id() {
+        assert_eq!(
+            normalize_model_for_provider(LlmProvider::Gemini, "claude-haiku-4-5"),
+            "gemini-2.5-flash"
+        );
+    }
+
+    #[test]
+    fn normalize_model_anthropic_strips_stale_gemini_id() {
+        assert_eq!(
+            normalize_model_for_provider(LlmProvider::Anthropic, "gemini-2.5-flash"),
+            "claude-sonnet-4-5-20250929"
         );
     }
 

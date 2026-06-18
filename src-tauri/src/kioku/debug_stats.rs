@@ -141,12 +141,12 @@ pub fn query_cost_stats(
   let fallback_model = settings
     .pointer("/sections/kioku_cost/fallback_model")
     .and_then(|v| v.as_str())
-    .unwrap_or("claude-haiku-4-5")
+    .unwrap_or("gemini-2.5-flash")
     .to_string();
   let extraction_model = settings
     .pointer("/sections/llm/extractionModel")
     .and_then(|v| v.as_str())
-    .unwrap_or("claude-haiku-4-5")
+    .unwrap_or("gemini-2.5-flash")
     .to_string();
 
   let status = match crate::cost_ledger::evaluate_cap_status(

@@ -166,13 +166,7 @@ pub async fn chat_complete(
   } else {
     model_override
   };
-  // Stale settings often keep a Claude id after switching the BYOK key to Gemini.
-  let model_lc = model.to_lowercase();
-  if provider == crate::llm_providers::LlmProvider::Gemini && model_lc.contains("claude") {
-    model = crate::llm_providers::default_chat_model(provider).to_string();
-  } else if provider == crate::llm_providers::LlmProvider::Anthropic && model_lc.starts_with("gemini") {
-    model = crate::llm_providers::default_chat_model(provider).to_string();
-  }
+  model = crate::llm_providers::normalize_model_for_provider(provider, &model);
   let messages_in = payload
     .get("messages")
     .and_then(|m| m.as_array())
@@ -1000,8 +994,9 @@ pub async fn anthropic_tool_complete_with_usage_opts(
 ) -> Result<AnthropicToolResult, String> {
   let key = crate::secrets::get_llm_api_key()?
     .ok_or_else(|| "LLM API key not configured".to_string())?;
-  let (base_override, model_override, _) = read_llm_prefs()?;
-  let provider = crate::llm_providers::resolve_provider(&key, &model_override);
+  let provider = crate::llm_providers::resolve_provider(&key, model);
+  let resolved_model = crate::llm_providers::normalize_model_for_provider(provider, model);
+  let (base_override, _, _) = read_llm_prefs()?;
 
   let tool_name = tool
     .get("name")
@@ -1015,7 +1010,7 @@ pub async fn anthropic_tool_complete_with_usage_opts(
     .map_err(|e| format!("reqwest build: {}", e))?;
 
   let (url, headers, body, provider_label) = if provider == crate::llm_providers::LlmProvider::Anthropic {
-    let body = build_anthropic_tool_request_body(model, system, user, tool, 1024, opts);
+    let body = build_anthropic_tool_request_body(&resolved_model, system, user, tool, 1024, opts);
     (
       "https://api.anthropic.com/v1/messages".to_string(),
       crate::llm_providers::chat_headers(provider, &key),
@@ -1026,7 +1021,7 @@ pub async fn anthropic_tool_complete_with_usage_opts(
     let (base_override, _, _) = read_llm_prefs()?;
     let extra_hosts = read_extra_llm_hosts();
     let (_base, url) = crate::llm_providers::resolve_chat_url(provider, &base_override, &extra_hosts)?;
-    let body = build_openai_tool_request_body(model, system, user, tool, 1024)?;
+    let body = build_openai_tool_request_body(&resolved_model, system, user, tool, 1024)?;
     (
       url,
       crate::llm_providers::chat_headers(provider, &key),
@@ -1064,9 +1059,9 @@ pub async fn anthropic_tool_complete_with_usage_opts(
     .map_err(|e| format!("{} JSON parse: {}", provider_label, e))?;
 
   let result = if provider == crate::llm_providers::LlmProvider::Anthropic {
-    parse_anthropic_tool_response(&parsed, &tool_name, model)
+    parse_anthropic_tool_response(&parsed, &tool_name, &resolved_model)
   } else {
-    parse_openai_tool_response(&parsed, &tool_name, model)
+    parse_openai_tool_response(&parsed, &tool_name, &resolved_model)
   };
   result.map_err(|e| {
     format!(

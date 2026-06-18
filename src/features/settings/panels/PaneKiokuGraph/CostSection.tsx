@@ -28,15 +28,16 @@ export function CostSection({
   return (
     <div className="s-card" style={{ padding: 20, marginBottom: 16 }}>
       <h3 style={{ marginTop: 0 }}>BYOK extraction cost</h3>
-      <Row title="Extraction model" desc="Anthropic ID used by AnthropicExtractionClient. Sonnet / Opus increase quality + cost (3x / 15x).">
+      <Row title="Extraction model" desc="Model id sent to the LLM for KIOKU fact extraction. Gemini keys auto-route to generativelanguage.googleapis.com.">
         <select
           className="s-select"
           value={extractionModel}
           onChange={(e) => { const v = e.target.value; setExtractionModel(v); persistLLMModel(v); }}
         >
-          <option value="claude-haiku-4-5">claude-haiku-4-5 (default, ~$9/mo median)</option>
-          <option value="claude-sonnet-4-6">claude-sonnet-4-6 (3x cost)</option>
-          <option value="claude-opus-4-7">claude-opus-4-7 (15x cost)</option>
+          <option value="gemini-2.5-flash">gemini-2.5-flash (default, Gemini)</option>
+          <option value="claude-haiku-4-5">claude-haiku-4-5 (Anthropic)</option>
+          <option value="claude-sonnet-4-6">claude-sonnet-4-6 (Anthropic, 3x cost)</option>
+          <option value="claude-opus-4-7">claude-opus-4-7 (Anthropic, 15x cost)</option>
         </select>
       </Row>
       <Row title="Monthly cap (USD)" desc="When this month's cost_ledger total reaches the cap, cap_action below decides what happens.">
@@ -68,6 +69,7 @@ export function CostSection({
           value={fallbackModel}
           onChange={(e) => { const v = e.target.value; setFallbackModel(v); persistCost({ fallback_model: v }); }}
         >
+          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
           <option value="claude-haiku-4-5">claude-haiku-4-5</option>
           <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
         </select>
