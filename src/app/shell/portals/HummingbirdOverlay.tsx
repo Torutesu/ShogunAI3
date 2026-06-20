@@ -1,5 +1,27 @@
+import { useEffect, useMemo, useState } from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon } from '@/shared/icons';
+
+type HummingbirdMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+type HummingbirdContextAudit = {
+  frontmostApp: string | null;
+  frontmostBundleId: string | null;
+  frontmostWindowTitle: string | null;
+  axSnapshotSource: string | null;
+  axTextSignalQuality: string | null;
+  axTextSignalKeys: string[];
+  axTextChars: number | null;
+};
+
+type HummingbirdResponseAudit = {
+  liveScreenContextIncluded: boolean | null;
+  liveScreenContextChars: number | null;
+  memoryHits: number | null;
+};
 
 export interface HummingbirdOverlayProps {
   open: boolean;
@@ -12,9 +34,126 @@ export interface HummingbirdOverlayProps {
   executeAction: (actionKey: string, payload: any, options?: any) => Promise<any>;
 }
 
+function latestByRole(messages: HummingbirdMessage[], role: HummingbirdMessage['role']): string {
+  return [...messages].reverse().find((message) => message.role === role)?.content || '';
+}
+
+function contextAuditFromPayload(data: any): HummingbirdContextAudit | null {
+  if (!data || typeof data !== 'object') return null;
+  const keys = Array.isArray(data.axTextSignalKeys)
+    ? data.axTextSignalKeys.filter((key: unknown) => typeof key === 'string' && key.trim())
+    : [];
+  return {
+    frontmostApp: typeof data.frontmostApp === 'string' ? data.frontmostApp : null,
+    frontmostBundleId: typeof data.frontmostBundleId === 'string' ? data.frontmostBundleId : null,
+    frontmostWindowTitle: typeof data.frontmostWindowTitle === 'string' ? data.frontmostWindowTitle : null,
+    axSnapshotSource: typeof data.axSnapshotSource === 'string' ? data.axSnapshotSource : null,
+    axTextSignalQuality: typeof data.axTextSignalQuality === 'string' ? data.axTextSignalQuality : null,
+    axTextSignalKeys: keys,
+    axTextChars: typeof data.axTextChars === 'number' ? data.axTextChars : null,
+  };
+}
+
+function contextStatusLabel(audit: HummingbirdContextAudit | null, loading: boolean, ja: boolean): string {
+  if (loading) return ja ? '確認中' : 'Checking';
+  if (!audit) return ja ? '文脈未取得' : 'Context pending';
+  const quality = audit.axTextSignalQuality || 'unknown';
+  const app = audit.frontmostApp || 'unknown';
+  return `${app} · ${quality}`;
+}
+
+function responseAuditFromPayload(data: any): HummingbirdResponseAudit {
+  const memoryTotal = data && typeof data === 'object' && data.memoryAssembly && typeof data.memoryAssembly.total === 'number'
+    ? data.memoryAssembly.total
+    : null;
+  return {
+    liveScreenContextIncluded: data && typeof data === 'object' && typeof data.liveScreenContextIncluded === 'boolean'
+      ? data.liveScreenContextIncluded
+      : null,
+    liveScreenContextChars: data && typeof data === 'object' && typeof data.liveScreenContextChars === 'number'
+      ? data.liveScreenContextChars
+      : null,
+    memoryHits: memoryTotal,
+  };
+}
+
+function responseAuditLabel(audit: HummingbirdResponseAudit | null, ja: boolean): string | null {
+  if (!audit) return null;
+  const screen = audit.liveScreenContextIncluded === true
+    ? `${ja ? '画面文脈' : 'Screen context'} ${audit.liveScreenContextChars ?? 0} chars`
+    : audit.liveScreenContextIncluded === false
+      ? (ja ? '画面文脈なし' : 'No screen context attached')
+      : (ja ? '画面文脈は未確認' : 'Screen context not reported');
+  const memory = audit.memoryHits != null
+    ? `${ja ? 'Memory' : 'Memory'} ${audit.memoryHits} hits`
+    : null;
+  return memory ? `${screen} · ${memory}` : screen;
+}
+
 export function HummingbirdOverlay(props: HummingbirdOverlayProps) {
-  if (!props.open) return null;
+  const { executeAction, open } = props;
   const ja = props.language === 'jp';
+  const [messages, setMessages] = useState<HummingbirdMessage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [contextAudit, setContextAudit] = useState<HummingbirdContextAudit | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [responseAudit, setResponseAudit] = useState<HummingbirdResponseAudit | null>(null);
+  const latestAssistantText = useMemo(() => latestByRole(messages, 'assistant'), [messages]);
+  const latestUserText = useMemo(() => latestByRole(messages, 'user'), [messages]);
+  const statusLabel = contextStatusLabel(contextAudit, contextLoading, ja);
+  const responseAuditText = responseAuditLabel(responseAudit, ja);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    setContextLoading(true);
+    executeAction('hummingbird.context', { source: 'overlay' }, { silentError: true })
+      .then((res) => {
+        if (cancelled) return;
+        setContextAudit(res?.ok ? contextAuditFromPayload(res.data) : null);
+      })
+      .finally(() => {
+        if (!cancelled) setContextLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [executeAction, open]);
+
+  const send = async () => {
+    const text = (props.input || '').trim();
+    if (!text || loading) return;
+    const userTurn: HummingbirdMessage = { role: 'user', content: text };
+    const next = messages.concat(userTurn);
+    setMessages(next);
+    setResponseAudit(null);
+    props.onInputChange('');
+    setLoading(true);
+    const res = await props.executeAction('chat.complete', {
+      messages: next,
+      includeScreenContext: true,
+      hummingbirdContextAudit: contextAudit,
+      memoryAssembly: {
+        query: text.slice(0, 480),
+        limit: 12,
+        semantic: true,
+      },
+    }, { silentError: true });
+    setLoading(false);
+    if (!res?.ok) {
+      props.pushToast(res?.error?.message || (ja ? 'Hummingbird の送信に失敗しました' : 'Hummingbird request failed'), 'error');
+      return;
+    }
+    const reply = typeof res.data?.message === 'string' ? res.data.message.trim() : '';
+    if (!reply) {
+      props.pushToast(ja ? '空の応答でした' : 'Empty response', 'warn');
+      return;
+    }
+    setResponseAudit(responseAuditFromPayload(res.data));
+    setMessages((prev) => prev.concat({ role: 'assistant', content: reply }));
+  };
+
+  if (!props.open) return null;
 
   return ReactDOM.createPortal(
     <div
@@ -48,55 +187,60 @@ export function HummingbirdOverlay(props: HummingbirdOverlayProps) {
           >
             <Icon name="x" size={16} />
           </button>
-          <h2 id="hummingbird-title" className="hummingbird-title">
-            <span className="en-only">Today&apos;s Priorities</span>
-            <span className="jp">今日の優先</span>
-          </h2>
+          <h2 id="hummingbird-title" className="hummingbird-title">Hummingbird</h2>
           <span className="hummingbird-actions-hint t-mono">
-            <span className="en-only">Actions</span>
-            <span className="jp">操作</span>
-            {' '}
-            <span className="kbd">⌘K</span>
+            {loading ? (ja ? '考え中' : 'Thinking') : statusLabel}
           </span>
         </div>
         <div className="hummingbird-scroll">
-          <p className="hummingbird-p">
-            <span className="en-only">
-              Data backup deadlines and plan reviews are coming up—block time on your calendar so nothing slips.
-            </span>
-            <span className="jp">
-              データバックアップの期限やプラン確認が近づいています。カレンダーに時間を確保して取りこぼしを防ぎましょう。
-            </span>
-          </p>
-          <ul className="hummingbird-ul">
-            <li>
-              <strong>求人・案件情報:</strong>{' '}
-              <span className="en-only">
-                AI lead engineer roles and executive positions surfaced on LinkedIn and YOUTRUST—worth a skim.
-              </span>
-              <span className="jp">
-                LinkedIn や YOUTRUST で AI リードエンジニアや役員クラスの求人が目立ちます。ざっと確認する価値ありです。
-              </span>
-            </li>
-          </ul>
-          <hr className="hummingbird-rule" />
-          <p className="hummingbird-p">
-            <strong>Hummingbirdからの提案:</strong>
-          </p>
-          <p className="hummingbird-p">
-            <span className="en-only">
-              From your calendar, the <strong>15:00</strong> slot lines up with a match—consider pairing it with light technical
-              research into <strong>Lovable</strong> or <strong>Railway</strong> for the <strong>SHOGUN</strong> build.
-            </span>
-            <span className="jp">
-              カレンダーでは <strong>15時</strong> 前後が空いています。{' '}
-              <strong>SHOGUN</strong> 向けに <strong>Lovable</strong> や <strong>Railway</strong> の技術調査を軽く挟むのはどうでしょう。
-            </span>
-          </p>
-          <p className="hummingbird-p hummingbird-muted">
-            <span className="en-only">Are there any specific tasks you want to proceed with first?</span>
-            <span className="jp">まず手を付けたいタスクはありますか？</span>
-          </p>
+          {messages.length === 0 ? (
+            <p className="hummingbird-p hummingbird-muted">
+              {contextAudit?.frontmostWindowTitle || contextAudit?.frontmostApp || (ja ? '現在の画面' : 'Current screen')}
+            </p>
+          ) : null}
+          {messages.map((message, index) => (
+            <div
+              key={`${message.role}-${index}`}
+              style={{
+                marginBottom: 14,
+                display: 'flex',
+                justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+              }}
+            >
+              <div
+                className="hummingbird-p"
+                style={{
+                  margin: 0,
+                  maxWidth: message.role === 'user' ? '82%' : '100%',
+                  whiteSpace: 'pre-wrap',
+                  color: message.role === 'user' ? 'rgba(255,255,255,0.9)' : undefined,
+                  background: message.role === 'user' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  border: message.role === 'user' ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                  borderRadius: message.role === 'user' ? 8 : 0,
+                  padding: message.role === 'user' ? '10px 12px' : 0,
+                }}
+              >
+                {message.content}
+              </div>
+            </div>
+          ))}
+          {loading ? (
+            <p className="hummingbird-p hummingbird-muted">
+              {ja ? '現在の画面テキストと Memory を見ながら考えています。' : 'Reading the current screen text and Memory context.'}
+            </p>
+          ) : null}
+          {!loading && responseAuditText ? (
+            <p
+              className="hummingbird-p hummingbird-muted"
+              style={{
+                borderTop: '1px solid rgba(255,255,255,0.08)',
+                marginTop: 4,
+                paddingTop: 10,
+              }}
+            >
+              {responseAuditText}
+            </p>
+          ) : null}
         </div>
         <div className="hummingbird-feedback">
           <button
@@ -104,26 +248,9 @@ export function HummingbirdOverlay(props: HummingbirdOverlayProps) {
             className="hummingbird-icon-btn"
             title="Copy"
             aria-label="Copy"
+            disabled={!latestAssistantText}
             onClick={() => {
-              const text = ja
-                ? [
-                    'データバックアップの期限やプラン確認が近づいています。',
-                    '',
-                    '求人・案件情報: LinkedIn や YOUTRUST で AI リードエンジニアや役員クラスの求人が目立ちます。',
-                    '',
-                    'Hummingbirdからの提案: カレンダーでは 15時 前後が空いています。SHOGUN 向けに Lovable や Railway の技術調査を軽く挟むのはどうでしょう。',
-                    '',
-                    'まず手を付けたいタスクはありますか？',
-                  ].join('\n')
-                : [
-                    'Data backup deadlines and plan reviews are coming up.',
-                    '',
-                    'Job leads: AI lead engineer and executive roles on LinkedIn and YOUTRUST.',
-                    '',
-                    'Hummingbird proposal: the 15:00 slot fits—consider research into Lovable or Railway for SHOGUN.',
-                    '',
-                    'Any specific tasks you want to proceed with first?',
-                  ].join('\n');
+              const text = latestAssistantText;
               if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(
                   () => props.pushToast(ja ? 'コピーしました' : 'Copied', 'success'),
@@ -134,7 +261,14 @@ export function HummingbirdOverlay(props: HummingbirdOverlayProps) {
           >
             <Icon name="copy" size={15} />
           </button>
-          <button type="button" className="hummingbird-icon-btn" title="Good response" aria-label="Good response">
+          <button
+            type="button"
+            className="hummingbird-icon-btn"
+            title="Good response"
+            aria-label="Good response"
+            disabled={!latestAssistantText}
+            onClick={() => props.pushToast(ja ? 'フィードバックを記録しました' : 'Feedback noted', 'success')}
+          >
             <Icon name="thumbsUp" size={15} />
           </button>
           <button
@@ -142,27 +276,10 @@ export function HummingbirdOverlay(props: HummingbirdOverlayProps) {
             className="hummingbird-icon-btn"
             title="Bad response"
             aria-label="Bad response"
+            disabled={!latestAssistantText}
             onClick={() => {
-              const assistantText = ja
-                ? [
-                    'データバックアップの期限やプラン確認が近づいています。カレンダーに時間を確保して取りこぼしを防ぎましょう。',
-                    '',
-                    '求人・案件情報: LinkedIn や YOUTRUST で AI リードエンジニアや役員クラスの求人が目立ちます。ざっと確認する価値ありです。',
-                    '',
-                    'Hummingbirdからの提案: カレンダーでは 15時 前後が空いています。SHOGUN 向けに Lovable や Railway の技術調査を軽く挟むのはどうでしょう。',
-                    '',
-                    'まず手を付けたいタスクはありますか？',
-                  ].join('\n')
-                : [
-                    'Data backup deadlines and plan reviews are coming up.',
-                    '',
-                    'Job leads: AI lead engineer and executive roles on LinkedIn and YOUTRUST.',
-                    '',
-                    'Hummingbird proposal: the 15:00 slot fits—consider research into Lovable or Railway for SHOGUN.',
-                    '',
-                    'Any specific tasks you want to proceed with first?',
-                  ].join('\n');
-              const userText = ja ? '今日の優先事項を教えて' : "What are today's priorities?";
+              const assistantText = latestAssistantText;
+              const userText = latestUserText || (ja ? '今日の優先事項を教えて' : "What are today's priorities?");
               if (!assistantText || !userText) return;
               props.executeAction('lesson.capture.rejection', {
                 userMsg: userText,
@@ -184,24 +301,18 @@ export function HummingbirdOverlay(props: HummingbirdOverlayProps) {
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
-                if ((props.input || '').trim()) {
-                  props.pushToast(ja ? '送信（プレビュー）' : 'Send (preview)', 'info');
-                  props.onInputChange('');
-                }
+                send();
               }
             }}
             aria-label="Ask Hummingbird"
+            disabled={loading}
           />
           <button
             type="button"
             className="hummingbird-send"
             aria-label="Send"
-            onClick={() => {
-              if ((props.input || '').trim()) {
-                props.pushToast(ja ? '送信（プレビュー）' : 'Send (preview)', 'info');
-                props.onInputChange('');
-              }
-            }}
+            disabled={loading || !(props.input || '').trim()}
+            onClick={send}
           >
             <Icon name="arrowUp" size={16} />
           </button>

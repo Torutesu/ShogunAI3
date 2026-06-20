@@ -75,10 +75,7 @@ pub(crate) fn capture_context_from_frontmost(
                 ax_parts.push(t.to_string());
             }
         }
-        if !ax_parts
-            .iter()
-            .any(|p| macos_ax::ax_text_has_content_signal(p))
-        {
+        if macos_ax::ax_text_needs_deeper_fallback(&ax_parts.join("\n\n")) {
             if let Some(tree) = macos_ax::focused_window_ax_tree(4, 120, 8_000) {
                 let t = tree.trim();
                 if !t.is_empty() {
@@ -108,6 +105,8 @@ pub(crate) fn capture_context_from_frontmost(
         let ax_diagnostics =
             macos_ax::focused_ax_diagnostics(snapshot_present, tree_present || window_tree_present);
         let ax_text_signal_present = macos_ax::ax_text_has_content_signal(&ax);
+        let ax_text_signal_keys = macos_ax::ax_text_signal_keys(&ax);
+        let ax_text_signal_quality = macos_ax::ax_text_signal_quality(&ax);
         let ax_text_chars = ax.chars().count();
         let ax_line_count = ax.lines().filter(|line| !line.trim().is_empty()).count();
         let ax_clip: String = ax.chars().take(4_000).collect();
@@ -122,6 +121,8 @@ pub(crate) fn capture_context_from_frontmost(
           "axSnapshotSource": ax_source,
           "axDiagnostics": ax_diagnostics,
           "axTextSignalPresent": ax_text_signal_present,
+          "axTextSignalKeys": ax_text_signal_keys,
+          "axTextSignalQuality": ax_text_signal_quality,
           "axTextChars": ax_text_chars,
           "axLineCount": ax_line_count,
           "stub": false,
@@ -141,6 +142,8 @@ pub(crate) fn capture_context_from_frontmost(
           "axSnapshotSource": "unavailable",
           "axDiagnostics": crate::macos_ax::focused_ax_diagnostics(false, false),
           "axTextSignalPresent": false,
+          "axTextSignalKeys": [],
+          "axTextSignalQuality": "none",
           "axTextChars": 0,
           "axLineCount": 0,
           "stub": false,

@@ -56,8 +56,11 @@ fn resolve_api_key() -> Result<String, String> {
             return Ok(t);
         }
     }
-    secrets::get_llm_api_key()?
-        .filter(|k| k.trim().starts_with("sk-ant-"))
+    secrets::get_llm_api_keys()?
+        .into_iter()
+        .find(|k| {
+            crate::llm_providers::detect_provider(k) == crate::llm_providers::LlmProvider::Anthropic
+        })
         .ok_or_else(not_configured_msg)
 }
 

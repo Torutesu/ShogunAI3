@@ -168,6 +168,7 @@ pub struct CaptureContext {
     pub window_title: Option<String>,
     pub url: Option<String>,
     pub captured_at_ms: i64,
+    pub filter_meta_json: Option<String>,
 }
 
 /// What the extraction client returns on a successful call.
@@ -194,6 +195,8 @@ pub enum ExtractionError {
     Permanent(String),
     /// Anthropic billing / credit exhaustion — job stays queued; worker pauses.
     BillingBlocked(String),
+    /// Authentication/configuration block — job stays queued; worker pauses.
+    AuthBlocked(String),
 }
 
 /// True when an API error indicates billing/credit exhaustion (not a job defect).
@@ -210,8 +213,44 @@ pub fn is_billing_error(err: &str) -> bool {
     .any(|m| lower.contains(m))
 }
 
+/// True when an API error indicates the configured LLM key cannot authenticate.
+pub fn is_auth_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    [
+        "401",
+        "403",
+        "unauthorized",
+        "unauthenticated",
+        "forbidden",
+        "authentication_error",
+        "permission_error",
+        "invalid api key",
+        "invalid x-api-key",
+    ]
+    .iter()
+    .any(|m| lower.contains(m))
+}
+
+/// True when a provider says the request should be retried after a short
+/// quota/rate-limit window rather than blocked as a billing configuration.
+pub fn is_retryable_rate_limit_error(err: &str) -> bool {
+    let lower = err.to_lowercase();
+    lower.contains("429")
+        || lower.contains("too many requests")
+        || lower.contains("rate limit")
+        || lower.contains("resource_exhausted")
+        || lower.contains("retry in")
+}
+
 /// Backoff before retrying after a billing block (6 h).
 pub const BILLING_RETRY_BACKOFF_MS: i64 = 6 * 60 * 60 * 1000;
+
+/// Backoff before retrying after an auth/configuration block (1 h).
+pub const AUTH_RETRY_BACKOFF_MS: i64 = 60 * 60 * 1000;
+
+/// Running jobs older than this are assumed to have been interrupted by a prior
+/// app shutdown/crash and are put back on the queue by the next worker tick.
+pub const RUNNING_STALE_AFTER_MS: i64 = 15 * 60 * 1000;
 
 /// Extraction client abstraction. Production wires Anthropic; tests pass a
 /// fake that returns canned responses.
@@ -240,7 +279,7 @@ impl AnthropicExtractionClient {
 
     fn build_system_prompt() -> String {
         String::from(
-      "You extract structured FACTS from a single capture (screen / a11y / connector excerpt).\n\
+            "You extract structured FACTS from a single capture (screen / a11y / connector excerpt).\n\
        Each fact is a triple of (entity, fact_type, claim) plus a confidence in [0,1].\n\
        \n\
        RULES:\n\
@@ -254,7 +293,28 @@ impl AnthropicExtractionClient {
        - confidence reflects extraction certainty, not subject importance.\n\
        \n\
        Output ONLY by calling the emit_extracted_facts tool.",
-    )
+        )
+    }
+
+    fn build_json_system_prompt() -> String {
+        String::from(
+            "You extract structured FACTS from a single capture (screen / a11y / connector excerpt).\n\
+       Each fact is a triple of (entity, fact_type, claim) plus a confidence in [0,1].\n\
+       \n\
+       RULES:\n\
+       - Emit at most 8 facts; quality over quantity.\n\
+       - Skip captures that contain no durable knowledge (e.g. random scrolling).\n\
+       - Use existing entity_id when the source supplies one; otherwise omit it.\n\
+       - fact_type is a stable predicate name in lowercase_with_underscores\n\
+         (works_at, scheduled_at, status, decision, follows_up, ...).\n\
+       - claim is the human-readable statement, kept under 200 characters.\n\
+       - node_kind must be one of: entity, event, decision, task, note, capture_summary.\n\
+       - confidence reflects extraction certainty, not subject importance.\n\
+       \n\
+       Return ONLY valid JSON with this exact top-level shape:\n\
+       {\"facts\":[{\"entity_id\":null,\"entity_name\":\"...\",\"fact_type\":\"...\",\"claim\":\"...\",\"confidence\":0.0,\"node_kind\":\"note\",\"related_ids\":[],\"edge_types_for_related\":[]}]}\n\
+       If there are no durable facts, return {\"facts\":[]}.",
+        )
     }
 
     fn build_user_message(ctx: &CaptureContext) -> String {
@@ -270,6 +330,14 @@ impl AnthropicExtractionClient {
             s.push_str(&format!("- url: {}\n", u));
         }
         s.push_str(&format!("- captured_at_ms: {}\n", ctx.captured_at_ms));
+        if let Some(meta) = ctx
+            .filter_meta_json
+            .as_deref()
+            .map(str::trim)
+            .filter(|meta| !meta.is_empty())
+        {
+            s.push_str(&format!("- capture_meta: {}\n", meta));
+        }
         s.push_str("\nCapture body:\n");
         if let Some(text) = &ctx.raw_text {
             // Cap input at 8000 chars to bound input cost.
@@ -293,10 +361,16 @@ impl AnthropicExtractionClient {
 /// Categorize an error string from `llm::anthropic_tool_complete_with_usage`
 /// into transient (retry) vs permanent (give up).
 pub fn classify_anthropic_error(err: &str) -> ExtractionError {
+    let lower = err.to_lowercase();
+    if is_auth_error(err) {
+        return ExtractionError::AuthBlocked(err.to_string());
+    }
+    if is_retryable_rate_limit_error(err) {
+        return ExtractionError::Transient(err.to_string());
+    }
     if is_billing_error(err) {
         return ExtractionError::BillingBlocked(err.to_string());
     }
-    let lower = err.to_lowercase();
     // Anthropic-specific transient signals
     for marker in [
         "network error",
@@ -321,30 +395,92 @@ pub fn classify_anthropic_error(err: &str) -> ExtractionError {
 
 impl ExtractionClient for AnthropicExtractionClient {
     fn extract(&self, ctx: &CaptureContext) -> Result<ExtractionResponse, ExtractionError> {
-        let system = Self::build_system_prompt();
         let user = Self::build_user_message(ctx);
-        let tool = Self::build_tool();
-        let model = self.model.clone();
+        let key = crate::secrets::get_llm_api_key()
+            .map_err(ExtractionError::AuthBlocked)?
+            .ok_or_else(|| ExtractionError::AuthBlocked("LLM API key not configured".into()))?;
+        let provider = crate::llm_providers::detect_provider(&key);
+        if provider == crate::llm_providers::LlmProvider::Anthropic {
+            let system = Self::build_system_prompt();
+            let tool = Self::build_tool();
+            let model = self.model.clone();
 
-        // Bridge async → sync. The worker driver calls this from a blocking task,
-        // so creating a current_thread runtime here is cheap and isolated.
-        let opts = crate::llm::AnthropicToolRequestOptions {
-            enable_prompt_cache: true,
-        };
-        let result = tauri::async_runtime::block_on(async move {
-            crate::llm::anthropic_tool_complete_with_usage_opts(&system, &user, &tool, &model, opts)
+            // Bridge async → sync. The worker driver calls this from a blocking task,
+            // so creating a current_thread runtime here is cheap and isolated.
+            let opts = crate::llm::AnthropicToolRequestOptions {
+                enable_prompt_cache: true,
+            };
+            let user_for_tool = user.clone();
+            let result = tauri::async_runtime::block_on(async move {
+                crate::llm::anthropic_tool_complete_with_usage_opts(
+                    &system,
+                    &user_for_tool,
+                    &tool,
+                    &model,
+                    opts,
+                )
                 .await
-        });
+            });
 
+            match result {
+                Ok(res) => {
+                    let payload: ExtractedFactsPayload =
+                        match serde_json::from_value(res.input.clone()) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return Err(ExtractionError::Permanent(format!(
+                                "tool_use input did not match ExtractedFactsPayload: {} (raw: {})",
+                                e,
+                                res.input.to_string().chars().take(200).collect::<String>(),
+                            )));
+                            }
+                        };
+                    return Ok(ExtractionResponse {
+                        facts: payload.facts,
+                        model: res.resolved_model,
+                        input_tokens: res.input_tokens,
+                        output_tokens: res.output_tokens,
+                        cache_creation_input_tokens: res.cache_creation_input_tokens,
+                        cache_read_input_tokens: res.cache_read_input_tokens,
+                    });
+                }
+                Err(e) => {
+                    crate::memory_obs::emit(
+                        "kioku_anthropic_tool_failed_fallback",
+                        &[("error", crate::memory_obs::clip_preview(&e))],
+                    );
+                }
+            }
+        }
+
+        let system = Self::build_json_system_prompt();
+        let model = self.model.clone();
+        let result = tauri::async_runtime::block_on(async move {
+            crate::llm::json_chat_complete(&system, &user, Some(&model), Some(1024)).await
+        });
         let res = match result {
             Ok(r) => r,
+            Err(e) if e.contains("Invalid JSON from model") => {
+                crate::memory_obs::emit(
+                    "kioku_json_extraction_non_json_fallback",
+                    &[("error", crate::memory_obs::clip_preview(&e))],
+                );
+                return Ok(ExtractionResponse {
+                    facts: Vec::new(),
+                    model: self.model.clone(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                });
+            }
             Err(e) => return Err(classify_anthropic_error(&e)),
         };
         let payload: ExtractedFactsPayload = match serde_json::from_value(res.input.clone()) {
             Ok(p) => p,
             Err(e) => {
                 return Err(ExtractionError::Permanent(format!(
-                    "tool_use input did not match ExtractedFactsPayload: {} (raw: {})",
+                    "json extraction output did not match ExtractedFactsPayload: {} (raw: {})",
                     e,
                     res.input.to_string().chars().take(200).collect::<String>(),
                 )));
@@ -353,10 +489,10 @@ impl ExtractionClient for AnthropicExtractionClient {
         Ok(ExtractionResponse {
             facts: payload.facts,
             model: res.resolved_model,
-            input_tokens: res.input_tokens,
-            output_tokens: res.output_tokens,
-            cache_creation_input_tokens: res.cache_creation_input_tokens,
-            cache_read_input_tokens: res.cache_read_input_tokens,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
         })
     }
 }
@@ -374,6 +510,12 @@ pub enum JobOutcome {
         next_attempt_at_ms: i64,
         reason: String,
     },
+    /// Provider rate limit; current and eligible queued jobs are parked briefly.
+    RateLimitedPaused {
+        attempts: i64,
+        next_attempt_at_ms: i64,
+        reason: String,
+    },
     Failed {
         reason: String,
     },
@@ -382,6 +524,10 @@ pub enum JobOutcome {
     },
     /// Billing/credit block — worker should pause; job stays queued.
     BillingPaused {
+        reason: String,
+    },
+    /// Auth/configuration block — worker should pause; job stays queued.
+    BlockedPaused {
         reason: String,
     },
 }
@@ -425,6 +571,43 @@ pub fn pick_next_eligible_job(
             }
         })?;
     Ok(row)
+}
+
+pub fn requeue_stale_running_jobs(conn: &rusqlite::Connection, now_ms: i64) -> Result<i64, String> {
+    let stale_before = now_ms.saturating_sub(RUNNING_STALE_AFTER_MS);
+    let changed = conn
+        .execute(
+            "UPDATE extraction_jobs
+        SET status = 'queued',
+            last_error = COALESCE(last_error, 'transient: reclaimed stale running job'),
+            next_attempt_at = ?1,
+            started_at = NULL
+      WHERE status = 'running'
+        AND started_at IS NOT NULL
+        AND started_at <= ?2",
+            rusqlite::params![now_ms, stale_before],
+        )
+        .map_err(|e| format!("requeue_stale_running_jobs: {}", e))?;
+    Ok(changed as i64)
+}
+
+fn park_queued_jobs_for_blocker(
+    conn: &rusqlite::Connection,
+    now_ms: i64,
+    next_attempt_at: i64,
+    last_error: &str,
+) -> Result<i64, String> {
+    let changed = conn
+        .execute(
+            "UPDATE extraction_jobs
+        SET last_error = ?1,
+            next_attempt_at = ?2
+      WHERE status = 'queued'
+        AND (next_attempt_at IS NULL OR next_attempt_at <= ?3)",
+            rusqlite::params![last_error, next_attempt_at, now_ms],
+        )
+        .map_err(|e| format!("park_queued_jobs_for_blocker: {}", e))?;
+    Ok(changed as i64)
 }
 
 /// Per-tick summary returned by `run_worker_tick`. Useful for observability
@@ -475,6 +658,14 @@ pub fn run_worker_tick<C: ExtractionClient>(
         crate::cost_ledger::CapStatus::Proceed => (false, None),
     };
 
+    let reclaimed = requeue_stale_running_jobs(conn, now_ms)?;
+    if reclaimed > 0 {
+        log::warn!(
+            "kioku worker reclaimed {} stale running extraction job(s)",
+            reclaimed
+        );
+    }
+
     let mut report = TickReport {
         jobs_processed: 0,
         jobs_skipped_no_capture: 0,
@@ -495,9 +686,20 @@ pub fn run_worker_tick<C: ExtractionClient>(
         match outcome {
             JobOutcome::Done { .. } => report.jobs_processed += 1,
             JobOutcome::Retry { .. } => report.jobs_retrying += 1,
+            JobOutcome::RateLimitedPaused { reason, .. } => {
+                report.jobs_retrying += 1;
+                report.paused = true;
+                report.paused_reason = Some(reason);
+                break;
+            }
             JobOutcome::Failed { .. } => report.jobs_failed += 1,
             JobOutcome::Skipped { .. } => report.jobs_skipped_no_capture += 1,
             JobOutcome::BillingPaused { reason } => {
+                report.paused = true;
+                report.paused_reason = Some(reason);
+                break;
+            }
+            JobOutcome::BlockedPaused { reason } => {
                 report.paused = true;
                 report.paused_reason = Some(reason);
                 break;
@@ -684,11 +886,21 @@ pub fn process_one_job<C: ExtractionClient>(
                             params![last_error, next_at, job_id],
                         )
                         .map_err(|e| format!("process_one_job mark queued for retry: {}", e))?;
-                        Ok(JobOutcome::Retry {
-                            attempts,
-                            next_attempt_at_ms: next_at,
-                            reason: last_error,
-                        })
+                        if is_retryable_rate_limit_error(&msg) {
+                            let _ =
+                                park_queued_jobs_for_blocker(conn, now_ms, next_at, &last_error);
+                            Ok(JobOutcome::RateLimitedPaused {
+                                attempts,
+                                next_attempt_at_ms: next_at,
+                                reason: last_error,
+                            })
+                        } else {
+                            Ok(JobOutcome::Retry {
+                                attempts,
+                                next_attempt_at_ms: next_at,
+                                reason: last_error,
+                            })
+                        }
                     }
                 }
                 ExtractionError::Permanent(msg) => {
@@ -704,6 +916,7 @@ pub fn process_one_job<C: ExtractionClient>(
                 }
                 ExtractionError::BillingBlocked(msg) => {
                     let last_error = format!("billing_blocked: {}", msg);
+                    let next_at = now_ms.saturating_add(BILLING_RETRY_BACKOFF_MS);
                     conn.execute(
                         "UPDATE extraction_jobs
                  SET status = 'queued',
@@ -711,14 +924,27 @@ pub fn process_one_job<C: ExtractionClient>(
                      last_error = ?1,
                      next_attempt_at = ?2
                WHERE id = ?3",
-                        params![
-                            last_error,
-                            now_ms.saturating_add(BILLING_RETRY_BACKOFF_MS),
-                            job_id,
-                        ],
+                        params![last_error, next_at, job_id,],
                     )
                     .map_err(|e| format!("process_one_job mark billing queued: {}", e))?;
+                    let _ = park_queued_jobs_for_blocker(conn, now_ms, next_at, &last_error);
                     Ok(JobOutcome::BillingPaused { reason: last_error })
+                }
+                ExtractionError::AuthBlocked(msg) => {
+                    let last_error = format!("auth_blocked: {}", msg);
+                    let next_at = now_ms.saturating_add(AUTH_RETRY_BACKOFF_MS);
+                    conn.execute(
+                        "UPDATE extraction_jobs
+                 SET status = 'queued',
+                     attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+                     last_error = ?1,
+                     next_attempt_at = ?2
+               WHERE id = ?3",
+                        params![last_error, next_at, job_id,],
+                    )
+                    .map_err(|e| format!("process_one_job mark auth queued: {}", e))?;
+                    let _ = park_queued_jobs_for_blocker(conn, now_ms, next_at, &last_error);
+                    Ok(JobOutcome::BlockedPaused { reason: last_error })
                 }
             }
         }
@@ -786,6 +1012,99 @@ pub fn count_failed_billing_jobs(conn: &Connection) -> Result<i64, String> {
         |r| r.get(0),
     )
     .map_err(|e| e.to_string())
+}
+
+pub fn count_failed_auth_jobs(conn: &Connection) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM extraction_jobs
+       WHERE status = 'failed'
+         AND (
+           last_error LIKE '%auth_blocked%'
+           OR last_error LIKE '%401%'
+           OR last_error LIKE '%403%'
+           OR last_error LIKE '%Unauthorized%'
+           OR last_error LIKE '%unauthorized%'
+           OR last_error LIKE '%unauthenticated%'
+           OR last_error LIKE '%forbidden%'
+           OR last_error LIKE '%invalid api key%'
+           OR last_error LIKE '%invalid x-api-key%'
+         )",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn count_billing_blocked_jobs(conn: &Connection) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM extraction_jobs
+       WHERE status IN ('failed', 'queued')
+         AND (
+           last_error LIKE '%credit balance%'
+           OR last_error LIKE '%purchase credits%'
+           OR last_error LIKE '%billing_blocked%'
+         )",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn count_auth_blocked_jobs(conn: &Connection) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM extraction_jobs
+       WHERE status IN ('failed', 'queued')
+         AND (
+           last_error LIKE '%auth_blocked%'
+           OR last_error LIKE '%401%'
+           OR last_error LIKE '%403%'
+           OR last_error LIKE '%Unauthorized%'
+           OR last_error LIKE '%unauthorized%'
+           OR last_error LIKE '%unauthenticated%'
+           OR last_error LIKE '%forbidden%'
+           OR last_error LIKE '%invalid api key%'
+           OR last_error LIKE '%invalid x-api-key%'
+         )",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub fn requeue_failed_blocked_extraction_jobs(
+    conn: &Connection,
+    now_ms: i64,
+) -> Result<RequeueReport, String> {
+    let requeued = conn
+        .execute(
+            "UPDATE extraction_jobs
+         SET status = 'queued',
+             attempts = 0,
+             last_error = NULL,
+             finished_at = NULL,
+             next_attempt_at = ?1
+       WHERE status = 'failed'
+         AND (
+           last_error LIKE '%credit balance%'
+           OR last_error LIKE '%purchase credits%'
+           OR last_error LIKE '%billing_blocked%'
+           OR last_error LIKE '%auth_blocked%'
+           OR last_error LIKE '%401%'
+           OR last_error LIKE '%403%'
+           OR last_error LIKE '%Unauthorized%'
+           OR last_error LIKE '%unauthorized%'
+           OR last_error LIKE '%unauthenticated%'
+           OR last_error LIKE '%forbidden%'
+           OR last_error LIKE '%invalid api key%'
+           OR last_error LIKE '%invalid x-api-key%'
+         )",
+            params![now_ms],
+        )
+        .map_err(|e| format!("requeue_failed_blocked_extraction_jobs: {}", e))?;
+    Ok(RequeueReport {
+        requeued: requeued as i64,
+        only_billing: false,
+    })
 }
 
 // ── Worker driver (production wiring) ──────────────────────────────────────
@@ -916,6 +1235,19 @@ pub fn run_worker_tick_from_settings(now_ms: i64) -> Result<Option<TickReport>, 
         crate::cost_ledger::CapStatus::Proceed => cfg.model.clone(),
     };
 
+    if let Err(reason) = crate::llm::chat_request_preflight_cached_or_env() {
+        return Ok(Some(TickReport {
+            jobs_processed: 0,
+            jobs_skipped_no_capture: 0,
+            jobs_failed: 0,
+            jobs_retrying: 0,
+            paused: true,
+            paused_reason: Some(format!("llm_preflight_blocked: {}", reason)),
+            used_fallback: false,
+            model_used: None,
+        }));
+    }
+
     let client = AnthropicExtractionClient::new(active_model);
     let report = run_worker_tick(
         &client,
@@ -934,35 +1266,54 @@ pub fn run_worker_tick_from_settings(now_ms: i64) -> Result<Option<TickReport>, 
 /// flipping the flag at runtime turns the loop on without restart.
 pub fn start_extraction_worker(_app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
-        let cfg = crate::settings_store::load()
-            .ok()
-            .map(|s| resolve_worker_config(&s))
-            .unwrap_or_default();
-        let wait_secs = cfg.poll_interval_secs.max(5);
-        std::thread::sleep(std::time::Duration::from_secs(wait_secs));
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        match run_worker_tick_from_settings(now_ms) {
-            Ok(Some(report)) => {
-                crate::memory_obs::emit(
-                    "kioku_worker_tick",
-                    &[
-                        ("jobs_processed", report.jobs_processed.to_string()),
-                        ("jobs_failed", report.jobs_failed.to_string()),
-                        ("jobs_retrying", report.jobs_retrying.to_string()),
-                        ("paused", report.paused.to_string()),
-                        ("model_used", report.model_used.unwrap_or_default()),
-                    ],
-                );
+        let result = std::panic::catch_unwind(|| {
+            let cfg = crate::settings_store::load()
+                .ok()
+                .map(|s| resolve_worker_config(&s))
+                .unwrap_or_default();
+            let wait_secs = cfg.poll_interval_secs.max(5);
+            std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            match run_worker_tick_from_settings(now_ms) {
+                Ok(Some(report)) => {
+                    crate::memory_obs::emit(
+                        "kioku_worker_tick",
+                        &[
+                            ("jobs_processed", report.jobs_processed.to_string()),
+                            ("jobs_failed", report.jobs_failed.to_string()),
+                            ("jobs_retrying", report.jobs_retrying.to_string()),
+                            ("paused", report.paused.to_string()),
+                            (
+                                "paused_reason",
+                                report.paused_reason.clone().unwrap_or_default(),
+                            ),
+                            ("model_used", report.model_used.unwrap_or_default()),
+                        ],
+                    );
+                }
+                Ok(None) => {
+                    // Worker disabled — quiet no-op.
+                }
+                Err(e) => {
+                    crate::memory_obs::emit(
+                        "kioku_worker_tick_failed",
+                        &[("error", crate::memory_obs::clip_preview(&e))],
+                    );
+                    log::warn!("kioku worker tick failed: {}", e);
+                }
             }
-            Ok(None) => {
-                // Worker disabled — quiet no-op.
-            }
-            Err(e) => {
-                log::warn!("kioku worker tick failed: {}", e);
-            }
+        });
+        if result.is_err() {
+            crate::memory_obs::emit(
+                "kioku_worker_tick_panic",
+                &[(
+                    "error",
+                    "panic recovered; worker loop continuing".to_string(),
+                )],
+            );
         }
     });
 }
@@ -973,7 +1324,7 @@ fn fetch_capture_context(
 ) -> Result<Option<CaptureContext>, String> {
     let row = conn
         .query_row(
-            "SELECT type, raw_text, app_bundle_id, window_title, url, captured_at
+            "SELECT type, raw_text, app_bundle_id, window_title, url, captured_at, filter_meta_json
        FROM mem_captures WHERE id = ?1",
             params![capture_id],
             |r| {
@@ -984,6 +1335,7 @@ fn fetch_capture_context(
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, i64>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )
@@ -995,6 +1347,7 @@ fn fetch_capture_context(
         window_title: r.3,
         url: r.4,
         captured_at_ms: r.5,
+        filter_meta_json: r.6,
     }))
 }
 
@@ -2165,6 +2518,8 @@ mod tests {
             "Anthropic tool_use 529: overloaded",
             "Anthropic tool_use 500: internal",
             "Anthropic tool_use 503: service unavailable",
+            "LLM API error 429 Too Many Requests provider=gemini model=gemini-2.5-flash: quota exceeded for metric generate_content_free_tier_requests. Please retry in 19s. Check billing details.",
+            "Gemini RESOURCE_EXHAUSTED: retry in 20s",
         ] {
             match classify_anthropic_error(msg) {
                 ExtractionError::Transient(_) => {}
@@ -2177,8 +2532,6 @@ mod tests {
     fn classify_4xx_and_parse_errors_as_permanent() {
         for msg in [
             "Anthropic tool_use 400: bad request",
-            "Anthropic tool_use 401: unauthenticated",
-            "Anthropic tool_use 403: forbidden",
             "Anthropic tool_use JSON parse: expected value",
             "Anthropic response missing content array",
             "tool_use missing input",
@@ -2186,6 +2539,20 @@ mod tests {
             match classify_anthropic_error(msg) {
                 ExtractionError::Permanent(_) => {}
                 _ => panic!("expected permanent for: {}", msg),
+            }
+        }
+    }
+
+    #[test]
+    fn classify_auth_errors_as_blocked_not_permanent() {
+        for msg in [
+            "Anthropic tool_use 401: unauthenticated",
+            "Anthropic tool_use 403: forbidden",
+            "Anthropic tool_use 401 Unauthorized: invalid x-api-key",
+        ] {
+            match classify_anthropic_error(msg) {
+                ExtractionError::AuthBlocked(_) => {}
+                other => panic!("expected AuthBlocked for: {} got {:?}", msg, other),
             }
         }
     }
@@ -2201,12 +2568,16 @@ mod tests {
             window_title: Some("Slack | #shogun-eng".into()),
             url: None,
             captured_at_ms: 1_714_000_000_000,
+            filter_meta_json: Some(
+                r#"{"ax_text_signal_quality":"strong","ax_text_signal_keys":["text"]}"#.into(),
+            ),
         };
         let msg = AnthropicExtractionClient::build_user_message(&ctx);
         assert!(msg.contains("kind: screen_app"));
         assert!(msg.contains("app_bundle_id: com.tinyspeck.slackmacgap"));
         assert!(msg.contains("window_title: Slack | #shogun-eng"));
         assert!(msg.contains("captured_at_ms: 1714000000000"));
+        assert!(msg.contains("capture_meta: {\"ax_text_signal_quality\":\"strong\""));
         // Body must have been clipped to 8000 chars (plus the metadata header).
         assert!(
             msg.chars().count() < 9000,
@@ -2224,9 +2595,37 @@ mod tests {
             window_title: None,
             url: None,
             captured_at_ms: 1_714_000_000_000,
+            filter_meta_json: None,
         };
         let msg = AnthropicExtractionClient::build_user_message(&ctx);
         assert!(msg.contains("(no raw_text"), "got: {}", msg);
+    }
+
+    #[test]
+    fn fetch_capture_context_preserves_filter_meta_json() {
+        let conn = open_test_conn();
+        let cap_id = crate::mem_captures::record(
+            &crate::mem_captures::CaptureInput {
+                kind: "screen_ax".into(),
+                raw_text: Some("Selected text".into()),
+                app_bundle_id: Some("com.example.app".into()),
+                captured_at_ms: 1_000,
+                filter_meta_json: Some(
+                    r#"{"ax_source":"focused_window_tree","ax_text_signal_quality":"strong"}"#
+                        .into(),
+                ),
+                ..Default::default()
+            },
+            &conn,
+        )
+        .expect("record capture");
+        let ctx = fetch_capture_context(&conn, cap_id)
+            .expect("fetch context")
+            .expect("context");
+        assert_eq!(
+            ctx.filter_meta_json.as_deref(),
+            Some(r#"{"ax_source":"focused_window_tree","ax_text_signal_quality":"strong"}"#)
+        );
     }
 
     #[test]
@@ -2413,7 +2812,7 @@ mod tests {
     fn process_one_job_retries_on_transient_with_backoff() {
         let conn = open_test_conn();
         let (_cap_id, job_id) = seed_capture_and_job(&conn, 1_000);
-        let client = FakeClient::err_transient("429 rate limit");
+        let client = FakeClient::err_transient("temporary network timeout");
         let outcome = process_one_job(job_id, &client, 2_000, &conn).expect("returned");
         match outcome {
             JobOutcome::Retry {
@@ -2425,7 +2824,7 @@ mod tests {
                 // First attempt: 60 s backoff
                 assert_eq!(next_attempt_at_ms, 2_000 + 60_000);
                 assert!(reason.contains("transient"));
-                assert!(reason.contains("429 rate limit"));
+                assert!(reason.contains("temporary network timeout"));
             }
             other => panic!("expected Retry, got {:?}", other),
         }
@@ -2439,6 +2838,26 @@ mod tests {
         assert_eq!(status, "queued");
         assert_eq!(attempts, 1);
         assert_eq!(next_at, Some(2_000 + 60_000));
+    }
+
+    #[test]
+    fn process_one_job_parks_tick_on_rate_limit_transient() {
+        let conn = open_test_conn();
+        let (_cap_id, job_id) = seed_capture_and_job(&conn, 1_000);
+        let client = FakeClient::err_transient("429 rate limit");
+        let outcome = process_one_job(job_id, &client, 2_000, &conn).expect("returned");
+        match outcome {
+            JobOutcome::RateLimitedPaused {
+                attempts,
+                next_attempt_at_ms,
+                reason,
+            } => {
+                assert_eq!(attempts, 1);
+                assert_eq!(next_attempt_at_ms, 2_000 + 60_000);
+                assert!(reason.contains("429 rate limit"));
+            }
+            other => panic!("expected RateLimitedPaused, got {:?}", other),
+        }
     }
 
     #[test]
@@ -3049,6 +3468,53 @@ mod tests {
     }
 
     #[test]
+    fn process_one_job_auth_blocked_requeues_without_failed_status() {
+        let conn = open_test_conn();
+        let (_cap_id, job_id) = seed_capture_and_job(&conn, 1_000);
+        let client = FakeClient {
+            response: std::cell::RefCell::new(Some(Err(ExtractionError::AuthBlocked(
+                "401 Unauthorized".into(),
+            )))),
+        };
+        let outcome = process_one_job(job_id, &client, 2_000, &conn).expect("returned");
+        assert!(matches!(outcome, JobOutcome::BlockedPaused { .. }));
+        let (status, last_err, attempts, next_at): (String, Option<String>, i64, Option<i64>) =
+            conn.query_row(
+                "SELECT status, last_error, attempts, next_attempt_at FROM extraction_jobs WHERE id = ?1",
+                params![job_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .expect("row");
+        assert_eq!(status, "queued");
+        assert_eq!(attempts, 0);
+        assert!(last_err.unwrap().contains("auth_blocked"));
+        assert_eq!(next_at, Some(2_000 + AUTH_RETRY_BACKOFF_MS));
+    }
+
+    #[test]
+    fn requeue_stale_running_jobs_returns_interrupted_jobs_to_queue() {
+        let conn = open_test_conn();
+        let (_cap_id, job_id) = seed_capture_and_job(&conn, 1_000);
+        conn.execute(
+            "UPDATE extraction_jobs SET status = 'running', started_at = ?1 WHERE id = ?2",
+            params![10_000, job_id],
+        )
+        .unwrap();
+        let changed = requeue_stale_running_jobs(&conn, 10_000 + RUNNING_STALE_AFTER_MS + 1)
+            .expect("requeue");
+        assert_eq!(changed, 1);
+        let (status, started_at): (String, Option<i64>) = conn
+            .query_row(
+                "SELECT status, started_at FROM extraction_jobs WHERE id = ?1",
+                params![job_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("row");
+        assert_eq!(status, "queued");
+        assert_eq!(started_at, None);
+    }
+
+    #[test]
     fn requeue_failed_billing_jobs_resets_status() {
         let conn = open_test_conn();
         let (_cap_id, job_id) = seed_capture_and_job(&conn, 1_000);
@@ -3068,5 +3534,32 @@ mod tests {
             )
             .expect("row");
         assert_eq!(status, "queued");
+    }
+
+    #[test]
+    fn requeue_failed_blocked_jobs_resets_auth_and_billing_status() {
+        let conn = open_test_conn();
+        let (_cap_a, job_a) = seed_capture_and_job(&conn, 1_000);
+        let (_cap_b, job_b) = seed_capture_and_job(&conn, 2_000);
+        conn.execute(
+            "UPDATE extraction_jobs SET status='failed', last_error='permanent: Anthropic tool_use 401 Unauthorized' WHERE id=?1",
+            params![job_a],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE extraction_jobs SET status='failed', last_error='billing_blocked: credit balance is too low' WHERE id=?1",
+            params![job_b],
+        )
+        .unwrap();
+        let report = requeue_failed_blocked_extraction_jobs(&conn, 5_000).expect("requeue");
+        assert_eq!(report.requeued, 2);
+        let queued: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM extraction_jobs WHERE status = 'queued'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(queued, 2);
     }
 }

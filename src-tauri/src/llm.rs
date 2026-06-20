@@ -51,6 +51,86 @@ fn privacy_allows_chat_server_memory_assembly() -> bool {
         .unwrap_or(true)
 }
 
+fn payload_allows_live_screen_context(payload: &Value) -> bool {
+    payload
+        .get("includeScreenContext")
+        .or_else(|| payload.get("screenContext"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+fn value_string<'a>(value: &'a Value, pointer: &str) -> Option<&'a str> {
+    value
+        .pointer(pointer)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn format_live_screen_context_for_prompt(ctx: &Value, max_ax_chars: usize) -> Option<String> {
+    if ctx
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .map(|enabled| !enabled)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let frontmost_app =
+        value_string(ctx, "/frontmostApp").or_else(|| value_string(ctx, "/frontmostFocus/appName"));
+    let frontmost_bundle = value_string(ctx, "/frontmostBundleId")
+        .or_else(|| value_string(ctx, "/frontmostFocus/bundleId"));
+    let window_title = value_string(ctx, "/frontmostWindowTitle")
+        .or_else(|| value_string(ctx, "/frontmostFocus/windowTitle"));
+    let ax_snapshot = value_string(ctx, "/axSnapshot").unwrap_or("");
+    if frontmost_app.is_none() && window_title.is_none() && ax_snapshot.is_empty() {
+        return None;
+    }
+
+    let ax_source = value_string(ctx, "/axSnapshotSource");
+    let ax_quality = value_string(ctx, "/axTextSignalQuality");
+    let ax_chars = ctx.pointer("/axTextChars").and_then(|v| v.as_u64());
+    let ax_keys = ctx
+        .pointer("/axTextSignalKeys")
+        .and_then(|v| v.as_array())
+        .map(|keys| {
+            keys.iter()
+                .filter_map(|key| key.as_str().map(str::trim).filter(|s| !s.is_empty()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut out = String::new();
+    if let Some(app) = frontmost_app {
+        out.push_str(&format!("- frontmost_app: {app}\n"));
+    }
+    if let Some(bundle) = frontmost_bundle {
+        out.push_str(&format!("- bundle_id: {bundle}\n"));
+    }
+    if let Some(title) = window_title {
+        out.push_str(&format!("- window_title: {title}\n"));
+    }
+    if let Some(source) = ax_source {
+        out.push_str(&format!("- ax_source: {source}\n"));
+    }
+    if let Some(quality) = ax_quality {
+        out.push_str(&format!("- ax_text_signal_quality: {quality}\n"));
+    }
+    if !ax_keys.is_empty() {
+        out.push_str(&format!("- ax_text_signal_keys: {}\n", ax_keys.join(", ")));
+    }
+    if let Some(chars) = ax_chars {
+        out.push_str(&format!("- ax_text_chars: {chars}\n"));
+    }
+    if !ax_snapshot.is_empty() {
+        let clipped: String = ax_snapshot.chars().take(max_ax_chars).collect();
+        out.push_str("\nAX text snapshot:\n");
+        out.push_str(&clipped);
+    }
+    Some(out)
+}
+
 pub fn read_llm_prefs() -> Result<(String, String, u64), String> {
     let doc = settings_store::load()?;
     let llm = doc.pointer("/sections/llm");
@@ -108,31 +188,301 @@ fn resolve_chat_endpoint(
     base_override: &str,
     extra_hosts: &[String],
 ) -> Result<String, String> {
-    let base = if base_override.trim().is_empty() {
-        crate::llm_providers::default_base_url(provider).to_string()
+    fn resolve_with_base(
+        provider: crate::llm_providers::LlmProvider,
+        base_override: &str,
+        extra_hosts: &[String],
+    ) -> Result<String, String> {
+        let base = if base_override.trim().is_empty() {
+            crate::llm_providers::default_base_url(provider).to_string()
+        } else {
+            base_override.trim().to_string()
+        };
+        let url = crate::llm_providers::chat_url(provider, &base);
+        let host = Url::parse(&url)
+            .ok()
+            .and_then(|u| u.host_str().map(|s| s.to_string()))
+            .ok_or_else(|| invalid_llm_url_message(provider, base_override, &url))?;
+        crate::llm_providers::validate_host_for_provider(provider, &host, extra_hosts)?;
+        Ok(url)
+    }
+
+    let override_trimmed = base_override.trim();
+    if override_trimmed.is_empty() || provider == crate::llm_providers::LlmProvider::Custom {
+        return resolve_with_base(provider, override_trimmed, extra_hosts);
+    }
+
+    match resolve_with_base(provider, override_trimmed, extra_hosts) {
+        Ok(url) => Ok(url),
+        Err(override_err) => {
+            let default_base = crate::llm_providers::default_base_url(provider);
+            if default_base.is_empty() {
+                return Err(override_err);
+            }
+            resolve_with_base(provider, "", extra_hosts).map_err(|default_err| {
+                format!(
+                    "{}; default {} endpoint also failed: {}",
+                    override_err,
+                    provider.as_str(),
+                    default_err
+                )
+            })
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ChatCandidate {
+    key: String,
+    provider: crate::llm_providers::LlmProvider,
+    model: String,
+    url: String,
+}
+
+fn provider_rank(provider: crate::llm_providers::LlmProvider) -> usize {
+    match provider {
+        crate::llm_providers::LlmProvider::Gemini => 0,
+        crate::llm_providers::LlmProvider::Anthropic => 1,
+        crate::llm_providers::LlmProvider::OpenAI => 2,
+        crate::llm_providers::LlmProvider::Custom => 3,
+    }
+}
+
+fn provider_for_key_and_model(
+    key: &str,
+    requested_model: &str,
+    has_base_override: bool,
+) -> crate::llm_providers::LlmProvider {
+    let detected = crate::llm_providers::detect_provider(key);
+    if detected != crate::llm_providers::LlmProvider::Custom || has_base_override {
+        return detected;
+    }
+    for provider in [
+        crate::llm_providers::LlmProvider::Gemini,
+        crate::llm_providers::LlmProvider::Anthropic,
+        crate::llm_providers::LlmProvider::OpenAI,
+    ] {
+        if crate::llm_providers::model_matches_provider(provider, requested_model) {
+            return provider;
+        }
+    }
+    detected
+}
+
+fn chat_candidates_from_keys(
+    requested_model: &str,
+    keys: Vec<String>,
+) -> Result<Vec<ChatCandidate>, String> {
+    if keys.is_empty() {
+        return Err(
+            "LLM API key is not set. Open Settings → Model & API and save your key.".to_string(),
+        );
+    }
+    let (base_override, _, _) = read_llm_prefs()?;
+    let extra_hosts = read_extra_llm_hosts();
+    let has_base_override = !base_override.trim().is_empty();
+    let mut keyed: Vec<(usize, String)> = keys
+        .into_iter()
+        .enumerate()
+        .map(|(idx, key)| {
+            let provider = provider_for_key_and_model(&key, requested_model, has_base_override);
+            let model_match =
+                crate::llm_providers::model_matches_provider(provider, requested_model);
+            let score = if model_match { 0 } else { 100 } + provider_rank(provider) * 10 + idx;
+            (score, key)
+        })
+        .collect();
+    keyed.sort_by_key(|(score, _)| *score);
+
+    let mut candidates = Vec::new();
+    let mut skipped = Vec::new();
+    for (_, key) in keyed {
+        let provider = provider_for_key_and_model(&key, requested_model, has_base_override);
+        let model = crate::llm_providers::chat_model_for_provider(provider, requested_model);
+        if model.trim().is_empty() {
+            skipped.push(format!("{}: no model configured", provider.as_str()));
+            continue;
+        }
+        match resolve_chat_endpoint(provider, &base_override, &extra_hosts) {
+            Ok(url) => candidates.push(ChatCandidate {
+                key,
+                provider,
+                model,
+                url,
+            }),
+            Err(e) => skipped.push(format!("{}: {}", provider.as_str(), e)),
+        }
+    }
+    if candidates.is_empty() {
+        Err(format!(
+            "No usable LLM provider candidates. {}",
+            skipped.join(" | ")
+        ))
     } else {
-        base_override.trim().to_string()
-    };
-    let url = crate::llm_providers::chat_url(provider, &base);
-    let host = Url::parse(&url)
-        .ok()
-        .and_then(|u| u.host_str().map(|s| s.to_string()))
-        .ok_or_else(|| invalid_llm_url_message(provider, base_override, &url))?;
-    crate::llm_providers::validate_host_for_provider(provider, &host, extra_hosts)?;
-    Ok(url)
+        Ok(candidates)
+    }
+}
+
+fn chat_candidates(requested_model: &str) -> Result<Vec<ChatCandidate>, String> {
+    chat_candidates_from_keys(requested_model, secrets::get_llm_api_keys()?)
+}
+
+async fn post_chat_candidate(
+    candidate: &ChatCandidate,
+    messages: &[Value],
+    max_tokens: u64,
+) -> Result<String, String> {
+    let body =
+        crate::llm_providers::chat_body(candidate.provider, &candidate.model, messages, max_tokens);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut req = client.post(&candidate.url);
+    for (name, value) in crate::llm_providers::chat_headers(candidate.provider, &candidate.key) {
+        req = req.header(name, value);
+    }
+    let resp = req
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let snippet: String = text.chars().take(800).collect();
+        return Err(format!(
+            "LLM API error {} provider={} model={}: {}",
+            status,
+            candidate.provider.as_str(),
+            candidate.model,
+            snippet
+        ));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "Invalid JSON from LLM: {} — body: {}",
+            e,
+            text.chars().take(200).collect::<String>()
+        )
+    })?;
+    crate::llm_providers::extract_chat_text(candidate.provider, &v)
+}
+
+async fn post_chat_with_fallback(
+    candidates: &[ChatCandidate],
+    messages_for: impl Fn(crate::llm_providers::LlmProvider) -> Vec<Value>,
+    max_tokens: u64,
+    has_images: bool,
+) -> Result<(String, ChatCandidate), String> {
+    let mut errors = Vec::new();
+    for candidate in candidates {
+        if has_images
+            && !crate::llm_providers::model_supports_vision(candidate.provider, &candidate.model)
+        {
+            errors.push(format!(
+                "{}:{} does not support image input",
+                candidate.provider.as_str(),
+                candidate.model
+            ));
+            continue;
+        }
+        let messages = messages_for(candidate.provider);
+        match post_chat_candidate(candidate, &messages, max_tokens).await {
+            Ok(text) => return Ok((text, candidate.clone())),
+            Err(e) => {
+                crate::memory_obs::emit(
+                    "llm_provider_attempt_failed",
+                    &[
+                        ("provider", candidate.provider.as_str().to_string()),
+                        ("model", candidate.model.clone()),
+                        ("error", crate::memory_obs::clip_preview(&e)),
+                    ],
+                );
+                errors.push(e);
+            }
+        }
+    }
+    Err(format!(
+        "All LLM provider attempts failed: {}",
+        errors.join(" | ")
+    ))
+}
+
+fn anthropic_api_key() -> Result<String, String> {
+    secrets::get_llm_api_keys()?
+        .into_iter()
+        .find(|key| {
+            crate::llm_providers::detect_provider(key)
+                == crate::llm_providers::LlmProvider::Anthropic
+        })
+        .ok_or_else(|| "Anthropic API key not configured".to_string())
 }
 
 pub fn chat_request_preflight() -> Result<(), String> {
-    let key = secrets::get_llm_api_key()?
-        .filter(|k| !k.trim().is_empty())
-        .ok_or_else(|| {
-            "LLM API key is not set. Open Settings → Model & API and save your key.".to_string()
-        })?;
-    let provider = crate::llm_providers::detect_provider(&key);
-    let (base_override, _, _) = read_llm_prefs()?;
-    let extra_hosts = read_extra_llm_hosts();
-    let _ = resolve_chat_endpoint(provider, &base_override, &extra_hosts)?;
+    let (_, model, _) = read_llm_prefs()?;
+    let _ = chat_candidates(&model)?;
     Ok(())
+}
+
+pub fn chat_request_preflight_cached_or_env() -> Result<(), String> {
+    let (_, model, _) = read_llm_prefs()?;
+    let keys = secrets::get_cached_or_env_llm_api_keys();
+    if keys.is_empty() {
+        secrets::load_llm_api_keys_in_background();
+        return Err(
+            "LLM key is locked or not loaded. Allow the macOS Keychain prompt, open Settings → Model & API once, or set GEMINI_API_KEY / ANTHROPIC_API_KEY."
+                .to_string(),
+        );
+    }
+    let _ = chat_candidates_from_keys(&model, keys)?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonChatResult {
+    pub input: Value,
+    pub resolved_model: String,
+}
+
+/// Provider-routed JSON completion used by internal structured tasks that do
+/// not need Anthropic tool_use. The prompt asks for JSON-only output and the
+/// parser tolerates fenced/prose-wrapped JSON via `extract_json_object_from_llm_text`.
+pub async fn json_chat_complete(
+    system: &str,
+    user: &str,
+    model_override: Option<&str>,
+    max_tokens_override: Option<u64>,
+) -> Result<JsonChatResult, String> {
+    let (_, settings_model, settings_max_tokens) = read_llm_prefs()?;
+    let requested_model = model_override
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let trimmed = settings_model.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .unwrap_or_default();
+    let max_tokens = max_tokens_override.unwrap_or(settings_max_tokens);
+    let candidates = chat_candidates(&requested_model)?;
+    let messages_for = |_provider: crate::llm_providers::LlmProvider| {
+        vec![
+            json!({ "role": "system", "content": system }),
+            json!({ "role": "user", "content": user }),
+        ]
+    };
+    let (content, used) =
+        post_chat_with_fallback(&candidates, messages_for, max_tokens, false).await?;
+    let input = extract_json_object_from_llm_text(&content)?;
+    Ok(JsonChatResult {
+        input,
+        resolved_model: used.model,
+    })
 }
 
 pub async fn chat_complete(
@@ -140,20 +490,8 @@ pub async fn chat_complete(
     chat_ring: Option<&crate::memory_debug::RingBuffer>,
 ) -> Result<Value, String> {
     let chat_start = std::time::Instant::now();
-    let key = secrets::get_llm_api_key()?
-        .filter(|k| !k.trim().is_empty())
-        .ok_or_else(|| {
-            "LLM API key is not set. Open Settings → Model & API and save your key.".to_string()
-        })?;
-    let provider = crate::llm_providers::detect_provider(&key);
-    let (base_override, model_override, max_tokens) = read_llm_prefs()?;
-    let model = if model_override.is_empty() {
-        crate::llm_providers::default_chat_model(provider).to_string()
-    } else {
-        model_override
-    };
-    let extra_hosts = read_extra_llm_hosts();
-    let url = resolve_chat_endpoint(provider, &base_override, &extra_hosts)?;
+    let (_, model_override, max_tokens) = read_llm_prefs()?;
+    let candidates = chat_candidates(&model_override)?;
     let messages_in = payload
         .get("messages")
         .and_then(|m| m.as_array())
@@ -168,25 +506,20 @@ pub async fn chat_complete(
                 .map(|a| !a.is_empty())
                 .unwrap_or(false)
     });
-    if has_images && !crate::llm_providers::model_supports_vision(provider, &model) {
-        return Err(format!(
-      "vision_not_supported: Model \"{}\" does not support image input. Choose a vision-capable model in Settings → Model & API (e.g. gpt-4o, claude-sonnet, gemini-2.5-flash).",
-      model
-    ));
-    }
-    let mut messages: Vec<Value> = Vec::new();
+    let mut prefix_messages: Vec<Value> = Vec::new();
     let mut memory_assembly_hits: Vec<context_assembly::Hit> = Vec::new();
+    let mut live_screen_context_block: Option<String> = None;
     // Phase 2 Stage 3 (T8.3): user-defined KIOKU rules ride at the very top of
     // every system prompt so the model can't override them via later context.
     // Returns None when no rules are configured — quiet no-op for fresh installs.
     if let Some(rules_msg) = crate::kioku_rules::leading_system_message() {
-        messages.push(rules_msg);
+        prefix_messages.push(rules_msg);
     }
     if let Some(ctx) = payload.get("memoryContext").and_then(|v| v.as_str()) {
         let ctx = ctx.trim();
         if !ctx.is_empty() {
             let clipped: String = ctx.chars().take(12_000).collect();
-            messages.push(json!({
+            prefix_messages.push(json!({
         "role": "system",
         "content": format!(
           "Relevant entries from the user's local SHOGUN memory index:\n\n{}\n\nUse this context when it helps answer.",
@@ -255,7 +588,7 @@ pub async fn chat_complete(
                 });
             }
             if !block.is_empty() {
-                messages.push(json!({
+                prefix_messages.push(json!({
           "role": "system",
           "content": format!(
             "Additional context assembled from the local memory index (provenance tags in brackets):\n\n{}\n\nUse when helpful.",
@@ -265,12 +598,43 @@ pub async fn chat_complete(
             }
         }
     }
+    if privacy_allows_chat_server_memory_assembly() && payload_allows_live_screen_context(payload) {
+        let ctx = crate::hummingbird::capture_context();
+        if let Some(block) = format_live_screen_context_for_prompt(&ctx, 4_000) {
+            crate::memory_obs::emit(
+                "chat_live_screen_context",
+                &[
+                    ("block_chars", block.chars().count().to_string()),
+                    (
+                        "ax_quality",
+                        value_string(&ctx, "/axTextSignalQuality")
+                            .unwrap_or("unknown")
+                            .to_string(),
+                    ),
+                    (
+                        "ax_source",
+                        value_string(&ctx, "/axSnapshotSource")
+                            .unwrap_or("unknown")
+                            .to_string(),
+                    ),
+                ],
+            );
+            prefix_messages.push(json!({
+              "role": "system",
+              "content": format!(
+                "Current screen text context captured through macOS Accessibility (text only, no screenshot). It may be partial; use it as immediate context when relevant and do not infer beyond it.\n\n{}",
+                block
+              ),
+            }));
+            live_screen_context_block = Some(block);
+        }
+    }
     if payload
         .get("webSearch")
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
     {
-        messages.push(json!({
+        prefix_messages.push(json!({
       "role": "system",
       "content": "The user enabled web-research mode. This runtime does not perform live HTTP browsing: answer from training knowledge, pasted URLs, and memory context above. If freshness matters, state that you cannot verify live web results and suggest the user paste a link or check a source.",
     }));
@@ -288,69 +652,35 @@ pub async fn chat_complete(
     let (lessons_addendum, applied_lesson_ids) =
         crate::lessons::retrieve_for_chat(&latest_user_text).await;
     if !lessons_addendum.is_empty() {
-        messages.push(serde_json::json!({
+        prefix_messages.push(serde_json::json!({
           "role": "system",
           "content": lessons_addendum,
         }));
     }
-    for m in messages_in {
-        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-        let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
-        if role == "user" {
-            if let Some(imgs) = m
-                .get("images")
-                .and_then(|v| v.as_array())
-                .filter(|a| !a.is_empty())
-            {
-                messages.push(crate::llm_providers::user_message_with_images(
-                    provider, content, imgs,
-                ));
-                continue;
+    let prefix_messages_for_attempt = prefix_messages.clone();
+    let messages_for = |provider: crate::llm_providers::LlmProvider| {
+        let mut messages = prefix_messages_for_attempt.clone();
+        for m in messages_in {
+            let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+            let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+            if role == "user" {
+                if let Some(imgs) = m
+                    .get("images")
+                    .and_then(|v| v.as_array())
+                    .filter(|a| !a.is_empty())
+                {
+                    messages.push(crate::llm_providers::user_message_with_images(
+                        provider, content, imgs,
+                    ));
+                    continue;
+                }
             }
+            messages.push(json!({ "role": role, "content": content }));
         }
-        messages.push(json!({ "role": role, "content": content }));
-    }
-    let body = crate::llm_providers::chat_body(provider, &model, &messages, max_tokens);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut req = client.post(&url);
-    for (name, value) in crate::llm_providers::chat_headers(provider, &key) {
-        req = req.header(name, value);
-    }
-    let resp = req
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Network error: {}", e))?;
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        let snippet: String = text.chars().take(800).collect();
-        let lower = snippet.to_lowercase();
-        if has_images
-            && (lower.contains("image")
-                || lower.contains("vision")
-                || lower.contains("multimodal")
-                || lower.contains("content type"))
-        {
-            return Err(format!(
-                "vision_not_supported: The API rejected image input for model \"{}\". {}",
-                model,
-                snippet.chars().take(240).collect::<String>()
-            ));
-        }
-        return Err(format!("LLM API error {}: {}", status, snippet));
-    }
-    let v: Value = serde_json::from_str(&text).map_err(|e| {
-        format!(
-            "Invalid JSON from LLM: {} — body: {}",
-            e,
-            text.chars().take(200).collect::<String>()
-        )
-    })?;
-    let content = crate::llm_providers::extract_chat_text(provider, &v)?;
+        messages
+    };
+    let (content, _used) =
+        post_chat_with_fallback(&candidates, messages_for, max_tokens, has_images).await?;
     if !applied_lesson_ids.is_empty() {
         if let Ok(conn) = crate::memory_store::open_conn() {
             if let Err(e) = crate::lessons::increment_applies(&conn, &applied_lesson_ids) {
@@ -376,6 +706,11 @@ pub async fn chat_complete(
       "message": content,
       "memoryAssemblyHits": context_assembly::hits_to_json(&memory_assembly_hits),
       "memoryReadPath": context_assembly::current_read_path(),
+      "liveScreenContextIncluded": live_screen_context_block.is_some(),
+      "liveScreenContextChars": live_screen_context_block
+        .as_ref()
+        .map(|block| block.chars().count())
+        .unwrap_or(0),
       "echo": payload,
       "stub": false,
     }))
@@ -853,8 +1188,7 @@ pub async fn anthropic_tool_complete_with_usage_opts(
     model: &str,
     opts: AnthropicToolRequestOptions,
 ) -> Result<AnthropicToolResult, String> {
-    let key = crate::secrets::get_llm_api_key()?
-        .ok_or_else(|| "LLM API key not configured".to_string())?;
+    let key = anthropic_api_key()?;
 
     let tool_name = tool
         .get("name")
@@ -906,8 +1240,7 @@ pub async fn anthropic_tool_complete(
     tool: &serde_json::Value,
     model: &str,
 ) -> Result<serde_json::Value, String> {
-    let key = crate::secrets::get_llm_api_key()?
-        .ok_or_else(|| "LLM API key not configured".to_string())?;
+    let key = anthropic_api_key()?;
 
     let tool_name = tool
         .get("name")
@@ -1056,6 +1389,99 @@ mod tests {
         );
         assert!(err.contains("Base URL"));
         assert!(err.contains("custom / local"));
+    }
+
+    #[test]
+    fn resolve_chat_endpoint_falls_back_to_vendor_default_when_override_mismatches_provider() {
+        let url = resolve_chat_endpoint(
+            crate::llm_providers::LlmProvider::Gemini,
+            "https://api.openai.com/v1",
+            &[],
+        )
+        .expect("gemini default endpoint");
+        assert!(url.contains("generativelanguage.googleapis.com"));
+        assert!(url.ends_with("/chat/completions"));
+    }
+
+    #[test]
+    fn resolve_chat_endpoint_custom_still_requires_base_url() {
+        let err =
+            resolve_chat_endpoint(crate::llm_providers::LlmProvider::Custom, "", &[]).unwrap_err();
+        assert!(err.contains("custom / local"));
+    }
+
+    #[test]
+    fn provider_for_custom_key_infers_vendor_from_requested_model_without_base_override() {
+        assert_eq!(
+            provider_for_key_and_model("not-a-prefixed-key", "gemini-2.5-flash", false),
+            crate::llm_providers::LlmProvider::Gemini
+        );
+        assert_eq!(
+            provider_for_key_and_model("not-a-prefixed-key", "claude-sonnet-4-5", false),
+            crate::llm_providers::LlmProvider::Anthropic
+        );
+    }
+
+    #[test]
+    fn provider_for_custom_key_respects_explicit_base_override() {
+        assert_eq!(
+            provider_for_key_and_model("not-a-prefixed-key", "gemini-2.5-flash", true),
+            crate::llm_providers::LlmProvider::Custom
+        );
+    }
+
+    #[test]
+    fn payload_allows_live_screen_context_defaults_on_and_honors_false() {
+        assert!(payload_allows_live_screen_context(&json!({})));
+        assert!(!payload_allows_live_screen_context(
+            &json!({ "includeScreenContext": false })
+        ));
+        assert!(!payload_allows_live_screen_context(
+            &json!({ "screenContext": false })
+        ));
+    }
+
+    #[test]
+    fn format_live_screen_context_for_prompt_includes_text_only_ax_context() {
+        let ctx = json!({
+          "enabled": true,
+          "frontmostApp": "Notes",
+          "frontmostBundleId": "com.apple.Notes",
+          "frontmostWindowTitle": "Project plan",
+          "axSnapshotSource": "focused_window_tree",
+          "axTextSignalQuality": "strong",
+          "axTextSignalKeys": ["text", "value"],
+          "axTextChars": 120,
+          "axSnapshot": "title=Project plan\ntext=Ship context pipeline",
+        });
+        let block = format_live_screen_context_for_prompt(&ctx, 1_000).expect("context block");
+        assert!(block.contains("frontmost_app: Notes"));
+        assert!(block.contains("window_title: Project plan"));
+        assert!(block.contains("ax_text_signal_quality: strong"));
+        assert!(block.contains("ax_text_signal_keys: text, value"));
+        assert!(block.contains("AX text snapshot:"));
+        assert!(block.contains("Ship context pipeline"));
+    }
+
+    #[test]
+    fn format_live_screen_context_for_prompt_clips_ax_snapshot() {
+        let ctx = json!({
+          "enabled": true,
+          "frontmostApp": "Notes",
+          "axSnapshot": "abcdef",
+        });
+        let block = format_live_screen_context_for_prompt(&ctx, 3).expect("context block");
+        assert!(block.contains("abc"));
+        assert!(!block.contains("abcdef"));
+    }
+
+    #[test]
+    fn format_live_screen_context_for_prompt_omits_disabled_or_empty_context() {
+        assert_eq!(
+            format_live_screen_context_for_prompt(&json!({ "enabled": false }), 100),
+            None
+        );
+        assert_eq!(format_live_screen_context_for_prompt(&json!({}), 100), None);
     }
 
     #[test]

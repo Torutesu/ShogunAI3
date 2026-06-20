@@ -35,13 +35,28 @@ pub fn shogun_kioku_extraction_requeue(payload: Value) -> Result<Value, String> 
         .get("only_billing")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let only_blocked = payload
+        .get("only_blocked")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let conn = memory_store::open_conn()?;
     let now_ms = ts() as i64;
-    let report =
-        crate::kioku::extraction::requeue_failed_extraction_jobs(&conn, only_billing, now_ms)?;
+    let (report, mode) = if only_blocked {
+        (
+            crate::kioku::extraction::requeue_failed_blocked_extraction_jobs(&conn, now_ms)?,
+            "blocked",
+        )
+    } else {
+        (
+            crate::kioku::extraction::requeue_failed_extraction_jobs(&conn, only_billing, now_ms)?,
+            if only_billing { "billing" } else { "all" },
+        )
+    };
     Ok(json!({
       "requeued": report.requeued,
       "only_billing": report.only_billing,
+      "only_blocked": only_blocked,
+      "mode": mode,
       "stub": false,
       "echo": payload,
     }))

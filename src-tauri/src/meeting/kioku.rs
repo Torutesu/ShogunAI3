@@ -210,9 +210,15 @@ pub fn pipeline_smoke() -> Result<Value, String> {
         )
         .map_err(|e| e.to_string())?;
     let failed_billing = crate::kioku::extraction::count_failed_billing_jobs(&conn).unwrap_or(0);
+    let failed_auth = crate::kioku::extraction::count_failed_auth_jobs(&conn).unwrap_or(0);
+    let billing_blocked_jobs =
+        crate::kioku::extraction::count_billing_blocked_jobs(&conn).unwrap_or(failed_billing);
+    let auth_blocked_jobs =
+        crate::kioku::extraction::count_auth_blocked_jobs(&conn).unwrap_or(failed_auth);
+    let blocked_jobs = billing_blocked_jobs.saturating_add(auth_blocked_jobs);
 
     Ok(json!({
-      "ok": worker && meeting_on && llm_ready && failed_billing == 0,
+      "ok": worker && meeting_on && llm_ready && blocked_jobs == 0,
       "worker_enabled": worker,
       "meeting_extraction_enabled": meeting_on,
       "capture_to_mem_captures": capture_path,
@@ -220,7 +226,12 @@ pub fn pipeline_smoke() -> Result<Value, String> {
       "queued_jobs": queued_jobs,
       "failed_jobs": failed_total,
       "failed_billing_jobs": failed_billing,
-      "billing_blocked": failed_billing > 0,
+      "failed_auth_jobs": failed_auth,
+      "billing_blocked_jobs": billing_blocked_jobs,
+      "auth_blocked_jobs": auth_blocked_jobs,
+      "blocked_jobs": blocked_jobs,
+      "billing_blocked": billing_blocked_jobs > 0,
+      "auth_blocked": auth_blocked_jobs > 0,
       "meeting_captures": meeting_captures,
       "read_path": crate::context_assembly::read_path_mode(&settings),
     }))

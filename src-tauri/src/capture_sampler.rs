@@ -54,6 +54,8 @@ pub struct SamplerDecisionSnapshot {
     pub window_title: Option<String>,
     pub ax_source: Option<String>,
     pub ax_reason: Option<String>,
+    pub ax_text_signal_keys: Vec<String>,
+    pub ax_text_signal_quality: Option<String>,
     pub text_chars: Option<usize>,
     pub spatial_present: bool,
 }
@@ -63,6 +65,9 @@ pub struct SamplerDecisionSnapshot {
 pub struct SamplerCoverageSnapshot {
     pub total: usize,
     pub text_readable: usize,
+    pub strong_text_readable: usize,
+    pub partial_text_readable: usize,
+    pub weak_text_readable: usize,
     pub focus_only: usize,
     pub empty: usize,
     pub skipped: usize,
@@ -79,6 +84,9 @@ pub struct SamplerCoverageApp {
     pub bundle_id: Option<String>,
     pub total: usize,
     pub text_readable: usize,
+    pub strong_text_readable: usize,
+    pub partial_text_readable: usize,
+    pub weak_text_readable: usize,
     pub unreadable: usize,
     pub actionable_samples: usize,
     pub focus_only: usize,
@@ -93,6 +101,7 @@ pub struct SamplerCoverageApp {
     pub latest_actionable_reason: Option<String>,
     pub latest_actionable_ax_reason: Option<String>,
     pub latest_actionable_ax_source: Option<String>,
+    pub latest_actionable_ax_text_signal_keys: Vec<String>,
     pub latest_actionable_recommended_action: Option<String>,
 }
 
@@ -102,6 +111,9 @@ pub struct SamplerCoverageSource {
     pub source: String,
     pub total: usize,
     pub text_readable: usize,
+    pub strong_text_readable: usize,
+    pub partial_text_readable: usize,
+    pub weak_text_readable: usize,
     pub empty: usize,
 }
 
@@ -114,6 +126,9 @@ pub struct SamplerCoverageIssue {
     pub recommended_action: String,
     pub total: usize,
     pub text_readable: usize,
+    pub strong_text_readable: usize,
+    pub partial_text_readable: usize,
+    pub weak_text_readable: usize,
     pub unreadable: usize,
     pub actionable: bool,
     pub latest_at_ms: Option<u64>,
@@ -121,6 +136,7 @@ pub struct SamplerCoverageIssue {
     pub latest_bundle_id: Option<String>,
     pub latest_window_title: Option<String>,
     pub latest_ax_source: Option<String>,
+    pub latest_ax_text_signal_keys: Vec<String>,
 }
 
 pub fn last_sampler_decision_snapshot() -> Option<SamplerDecisionSnapshot> {
@@ -166,6 +182,9 @@ fn sampler_coverage_from_decisions(
         bundle_id: Option<String>,
         total: usize,
         text_readable: usize,
+        strong_text_readable: usize,
+        partial_text_readable: usize,
+        weak_text_readable: usize,
         unreadable: usize,
         actionable_samples: usize,
         focus_only: usize,
@@ -180,6 +199,7 @@ fn sampler_coverage_from_decisions(
         latest_actionable_reason: Option<String>,
         latest_actionable_ax_reason: Option<String>,
         latest_actionable_ax_source: Option<String>,
+        latest_actionable_ax_text_signal_keys: Vec<String>,
         latest_actionable_recommended_action: Option<String>,
     }
 
@@ -187,6 +207,9 @@ fn sampler_coverage_from_decisions(
     struct SourceAcc {
         total: usize,
         text_readable: usize,
+        strong_text_readable: usize,
+        partial_text_readable: usize,
+        weak_text_readable: usize,
         empty: usize,
     }
 
@@ -196,15 +219,22 @@ fn sampler_coverage_from_decisions(
         ax_reason: Option<String>,
         total: usize,
         text_readable: usize,
+        strong_text_readable: usize,
+        partial_text_readable: usize,
+        weak_text_readable: usize,
         latest_at_ms: Option<u64>,
         latest_app_name: Option<String>,
         latest_bundle_id: Option<String>,
         latest_window_title: Option<String>,
         latest_ax_source: Option<String>,
+        latest_ax_text_signal_keys: Vec<String>,
     }
 
     let mut total = 0;
     let mut text_readable = 0;
+    let mut strong_text_readable = 0;
+    let mut partial_text_readable = 0;
+    let mut weak_text_readable = 0;
     let mut focus_only = 0;
     let mut empty = 0;
     let mut skipped = 0;
@@ -215,10 +245,17 @@ fn sampler_coverage_from_decisions(
     for decision in decisions {
         total += 1;
         let readable = sampler_decision_has_text(decision);
+        let text_quality = sampler_decision_text_quality(decision);
         let focus = sampler_decision_is_focus_only(decision);
         let empty_sample = sampler_decision_is_empty(decision);
         if readable {
             text_readable += 1;
+            match text_quality {
+                "strong" => strong_text_readable += 1,
+                "partial" => partial_text_readable += 1,
+                "weak" => weak_text_readable += 1,
+                _ => {}
+            }
         }
         if focus {
             focus_only += 1;
@@ -244,6 +281,12 @@ fn sampler_coverage_from_decisions(
         }
         if readable {
             app_acc.text_readable += 1;
+            match text_quality {
+                "strong" => app_acc.strong_text_readable += 1,
+                "partial" => app_acc.partial_text_readable += 1,
+                "weak" => app_acc.weak_text_readable += 1,
+                _ => {}
+            }
         } else {
             app_acc.unreadable += 1;
         }
@@ -278,15 +321,27 @@ fn sampler_coverage_from_decisions(
         source_acc.total += 1;
         if readable {
             source_acc.text_readable += 1;
+            match text_quality {
+                "strong" => source_acc.strong_text_readable += 1,
+                "partial" => source_acc.partial_text_readable += 1,
+                "weak" => source_acc.weak_text_readable += 1,
+                _ => {}
+            }
         }
         if empty_sample {
             source_acc.empty += 1;
         }
 
-        if !readable || decision.outcome == "skipped" {
-            let reason = clean_nonempty(Some(decision.reason.as_str()))
-                .unwrap_or("unknown")
-                .to_string();
+        let weak_readable_issue =
+            readable && text_quality == "weak" && decision.outcome != "skipped";
+        if !readable || decision.outcome == "skipped" || weak_readable_issue {
+            let reason = if weak_readable_issue {
+                "weak_text_signal".to_string()
+            } else {
+                clean_nonempty(Some(decision.reason.as_str()))
+                    .unwrap_or("unknown")
+                    .to_string()
+            };
             let ax_reason = decision
                 .ax_reason
                 .as_deref()
@@ -313,6 +368,8 @@ fn sampler_coverage_from_decisions(
                     app_acc.latest_actionable_reason = Some(reason.clone());
                     app_acc.latest_actionable_ax_reason = ax_reason.clone();
                     app_acc.latest_actionable_ax_source = decision.ax_source.clone();
+                    app_acc.latest_actionable_ax_text_signal_keys =
+                        decision.ax_text_signal_keys.clone();
                     app_acc.latest_actionable_recommended_action =
                         Some(recommended_action.to_string());
                 }
@@ -326,6 +383,12 @@ fn sampler_coverage_from_decisions(
             issue_acc.total += 1;
             if readable {
                 issue_acc.text_readable += 1;
+                match text_quality {
+                    "strong" => issue_acc.strong_text_readable += 1,
+                    "partial" => issue_acc.partial_text_readable += 1,
+                    "weak" => issue_acc.weak_text_readable += 1,
+                    _ => {}
+                }
             }
             if issue_acc
                 .latest_at_ms
@@ -336,6 +399,7 @@ fn sampler_coverage_from_decisions(
                 issue_acc.latest_bundle_id = decision.bundle_id.clone();
                 issue_acc.latest_window_title = decision.window_title.clone();
                 issue_acc.latest_ax_source = decision.ax_source.clone();
+                issue_acc.latest_ax_text_signal_keys = decision.ax_text_signal_keys.clone();
             }
         }
     }
@@ -347,6 +411,9 @@ fn sampler_coverage_from_decisions(
             bundle_id: acc.bundle_id,
             total: acc.total,
             text_readable: acc.text_readable,
+            strong_text_readable: acc.strong_text_readable,
+            partial_text_readable: acc.partial_text_readable,
+            weak_text_readable: acc.weak_text_readable,
             unreadable: acc.unreadable,
             actionable_samples: acc.actionable_samples,
             focus_only: acc.focus_only,
@@ -361,6 +428,7 @@ fn sampler_coverage_from_decisions(
             latest_actionable_reason: acc.latest_actionable_reason,
             latest_actionable_ax_reason: acc.latest_actionable_ax_reason,
             latest_actionable_ax_source: acc.latest_actionable_ax_source,
+            latest_actionable_ax_text_signal_keys: acc.latest_actionable_ax_text_signal_keys,
             latest_actionable_recommended_action: acc.latest_actionable_recommended_action,
         })
         .collect::<Vec<_>>();
@@ -379,6 +447,9 @@ fn sampler_coverage_from_decisions(
             source,
             total: acc.total,
             text_readable: acc.text_readable,
+            strong_text_readable: acc.strong_text_readable,
+            partial_text_readable: acc.partial_text_readable,
+            weak_text_readable: acc.weak_text_readable,
             empty: acc.empty,
         })
         .collect::<Vec<_>>();
@@ -404,6 +475,9 @@ fn sampler_coverage_from_decisions(
                 recommended_action: recommended_action.to_string(),
                 total: acc.total,
                 text_readable: acc.text_readable,
+                strong_text_readable: acc.strong_text_readable,
+                partial_text_readable: acc.partial_text_readable,
+                weak_text_readable: acc.weak_text_readable,
                 unreadable,
                 actionable,
                 latest_at_ms: acc.latest_at_ms,
@@ -411,6 +485,7 @@ fn sampler_coverage_from_decisions(
                 latest_bundle_id: acc.latest_bundle_id,
                 latest_window_title: acc.latest_window_title,
                 latest_ax_source: acc.latest_ax_source,
+                latest_ax_text_signal_keys: acc.latest_ax_text_signal_keys,
             }
         })
         .collect::<Vec<_>>();
@@ -428,6 +503,9 @@ fn sampler_coverage_from_decisions(
     SamplerCoverageSnapshot {
         total,
         text_readable,
+        strong_text_readable,
+        partial_text_readable,
+        weak_text_readable,
         focus_only,
         empty,
         skipped,
@@ -445,6 +523,15 @@ fn sampler_decision_has_text(decision: &SamplerDecisionSnapshot) -> bool {
             .as_deref()
             .map(|source| source != "empty")
             .unwrap_or(false)
+}
+
+fn sampler_decision_text_quality(decision: &SamplerDecisionSnapshot) -> &str {
+    decision
+        .ax_text_signal_quality
+        .as_deref()
+        .map(str::trim)
+        .filter(|quality| matches!(*quality, "strong" | "partial" | "weak" | "none"))
+        .unwrap_or("none")
 }
 
 fn sampler_decision_is_focus_only(decision: &SamplerDecisionSnapshot) -> bool {
@@ -565,6 +652,10 @@ fn issue_recommendation(
             "warn",
             "Tree fallback was needed; verify the latest app still captures stable text.",
         ),
+        "weak_text_signal" => (
+            "warn",
+            "Only weak AX text signals were captured; add a content-text fallback for the latest app.",
+        ),
         _ if text_readable > 0 => (
             "info",
             "Text was readable but capture was skipped; inspect the policy or filter decision.",
@@ -584,6 +675,8 @@ fn sampler_decision(
     window_title: Option<&str>,
     ax_source: Option<&str>,
     ax_reason: Option<&str>,
+    ax_text_signal_keys: &[String],
+    ax_text_signal_quality: Option<&str>,
     text_chars: Option<usize>,
     spatial_present: bool,
 ) -> SamplerDecisionSnapshot {
@@ -596,6 +689,8 @@ fn sampler_decision(
         window_title: clean_nonempty(window_title).map(str::to_string),
         ax_source: clean_nonempty(ax_source).map(str::to_string),
         ax_reason: clean_nonempty(ax_reason).map(str::to_string),
+        ax_text_signal_keys: ax_text_signal_keys.to_vec(),
+        ax_text_signal_quality: clean_nonempty(ax_text_signal_quality).map(str::to_string),
         text_chars,
         spatial_present,
     }
@@ -1017,10 +1112,8 @@ fn build_ax_capture_text() -> AxCaptureText {
             parts.push(t.to_string());
         }
     }
-    let has_content_signal = parts
-        .iter()
-        .any(|p| macos_ax::ax_text_has_content_signal(p));
-    if !has_content_signal {
+    let needs_window_tree = macos_ax::ax_text_needs_deeper_fallback(&parts.join("\n\n"));
+    if needs_window_tree {
         if let Some(tree) = macos_ax::focused_window_ax_tree(5, 160, 12_000) {
             let t = tree.trim();
             if !t.is_empty() {
@@ -1108,6 +1201,71 @@ fn meeting_tags_for_mem_captures(app: Option<&AppHandle>) -> Option<(String, u64
     Some((id, offset))
 }
 
+fn capture_filter_meta_json(
+    meeting_tags: Option<(String, u64)>,
+    ax_source: Option<&str>,
+    ax_reason: Option<&str>,
+    ax_text_signal_keys: &[String],
+    ax_text_signal_quality: Option<&str>,
+) -> Option<String> {
+    let mut meta = serde_json::Map::new();
+    if let Some((id, offset)) = meeting_tags {
+        meta.insert("meeting_id".to_string(), json!(id));
+        meta.insert("meeting_offset_ms".to_string(), json!(offset));
+    }
+    if let Some(source) = clean_nonempty(ax_source) {
+        meta.insert("ax_source".to_string(), json!(source));
+    }
+    if let Some(reason) = clean_nonempty(ax_reason) {
+        meta.insert("ax_reason".to_string(), json!(reason));
+    }
+    let keys: Vec<&str> = ax_text_signal_keys
+        .iter()
+        .filter_map(|key| clean_nonempty(Some(key.as_str())))
+        .collect();
+    if !keys.is_empty() {
+        meta.insert("ax_text_signal_keys".to_string(), json!(keys));
+    }
+    if let Some(quality) = clean_nonempty(ax_text_signal_quality) {
+        meta.insert("ax_text_signal_quality".to_string(), json!(quality));
+    }
+    if meta.is_empty() {
+        None
+    } else {
+        Some(Value::Object(meta).to_string())
+    }
+}
+
+fn capture_meta_line(
+    ax_source: Option<&str>,
+    ax_reason: Option<&str>,
+    ax_text_signal_keys: &[String],
+    ax_text_signal_quality: Option<&str>,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(source) = clean_nonempty(ax_source) {
+        parts.push(format!("ax_source={source}"));
+    }
+    if let Some(reason) = clean_nonempty(ax_reason) {
+        parts.push(format!("ax_reason={reason}"));
+    }
+    if let Some(quality) = clean_nonempty(ax_text_signal_quality) {
+        parts.push(format!("ax_text_signal_quality={quality}"));
+    }
+    let keys: Vec<&str> = ax_text_signal_keys
+        .iter()
+        .filter_map(|key| clean_nonempty(Some(key.as_str())))
+        .collect();
+    if !keys.is_empty() {
+        parts.push(format!("ax_text_signal_keys={}", keys.join(",")));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("capture_meta={}", parts.join(" ")))
+    }
+}
+
 fn maybe_ingest_focus(
     app_handle: Option<&AppHandle>,
     app: &str,
@@ -1185,6 +1343,10 @@ fn maybe_ingest_ax(
     app_label: &str,
     app_bundle_id: Option<&str>,
     window_title: &str,
+    ax_source: Option<&str>,
+    ax_reason: Option<&str>,
+    ax_text_signal_keys: &[String],
+    ax_text_signal_quality: Option<&str>,
     spatial_context_json: Option<String>,
 ) -> IngestOutcome {
     let sig = fnv_hash(&format!(
@@ -1224,9 +1386,13 @@ fn maybe_ingest_ax(
 
     let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
     if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
-        let meeting_meta = meeting_tags_for_mem_captures(Some(app)).map(|(id, offset)| {
-            json!({ "meeting_id": id, "meeting_offset_ms": offset }).to_string()
-        });
+        let filter_meta_json = capture_filter_meta_json(
+            meeting_tags_for_mem_captures(Some(app)),
+            ax_source,
+            ax_reason,
+            ax_text_signal_keys,
+            ax_text_signal_quality,
+        );
         let input = crate::mem_captures::CaptureInput {
             kind: "screen_ax".into(),
             raw_text: Some(snippet_body.clone()),
@@ -1235,7 +1401,7 @@ fn maybe_ingest_ax(
             url: None,
             captured_at_ms: now_ms() as i64,
             spatial_context_json: spatial_context_json.clone(),
-            filter_meta_json: meeting_meta,
+            filter_meta_json,
             ..Default::default()
         };
         match memory_store::open_conn() {
@@ -1259,7 +1425,16 @@ fn maybe_ingest_ax(
             text,
         ),
     );
-    let snippet = snippet_with_spatial(&snippet_body, spatial_context_json.as_deref());
+    let snippet_with_meta = match capture_meta_line(
+        ax_source,
+        ax_reason,
+        ax_text_signal_keys,
+        ax_text_signal_quality,
+    ) {
+        Some(meta) => format!("{meta}\n\n{snippet_body}"),
+        None => snippet_body,
+    };
+    let snippet = snippet_with_spatial(&snippet_with_meta, spatial_context_json.as_deref());
     upsert_capture_row(
         Some(app),
         app_label,
@@ -1288,6 +1463,8 @@ fn run_capture_tick(app: &AppHandle) {
             None,
             None,
             None,
+            &[],
+            None,
             None,
             false,
         ));
@@ -1313,6 +1490,8 @@ fn run_capture_tick(app: &AppHandle) {
                     focus.bundle_id.as_deref(),
                     focus.window_title.as_deref(),
                     None,
+                    None,
+                    &[],
                     None,
                     None,
                     false,
@@ -1342,6 +1521,9 @@ fn run_capture_tick(app: &AppHandle) {
             if let Some(ax) = ax_capture.text.as_deref() {
                 let t = ax.trim();
                 if !t.is_empty() {
+                    let ax_text_signal_keys = macos_ax::ax_text_signal_keys(t);
+                    let ax_text_signal_quality =
+                        macos_ax::ax_text_signal_quality_for_keys(&ax_text_signal_keys);
                     if ax_capture.source.contains("tree") {
                         maybe_log_ax_tree_fallback(
                             &app_label,
@@ -1358,6 +1540,8 @@ fn run_capture_tick(app: &AppHandle) {
                             frontmost_window_title_hint.as_deref(),
                             Some(ax_capture.source),
                             Some(&ax_capture.diagnostics.reason),
+                            &ax_text_signal_keys,
+                            Some(ax_text_signal_quality),
                             Some(t.chars().count()),
                             spatial_present,
                         ));
@@ -1394,6 +1578,8 @@ fn run_capture_tick(app: &AppHandle) {
                             Some(&resolved_window_title),
                             Some(ax_capture.source),
                             Some(&ax_capture.diagnostics.reason),
+                            &ax_text_signal_keys,
+                            Some(ax_text_signal_quality),
                             Some(t.chars().count()),
                             spatial_present,
                         ));
@@ -1408,6 +1594,10 @@ fn run_capture_tick(app: &AppHandle) {
                         &app_label,
                         frontmost_bundle_id.as_deref(),
                         &resolved_window_title,
+                        Some(ax_capture.source),
+                        Some(&ax_capture.diagnostics.reason),
+                        &ax_text_signal_keys,
+                        Some(ax_text_signal_quality),
                         spatial_for_ingest.clone(),
                     );
                     record_sampler_decision(sampler_decision(
@@ -1418,6 +1608,8 @@ fn run_capture_tick(app: &AppHandle) {
                         Some(&resolved_window_title),
                         Some(ax_capture.source),
                         Some(&ax_capture.diagnostics.reason),
+                        &ax_text_signal_keys,
+                        Some(ax_text_signal_quality),
                         Some(t.chars().count()),
                         spatial_present,
                     ));
@@ -1435,6 +1627,8 @@ fn run_capture_tick(app: &AppHandle) {
                     frontmost_window_title_hint.as_deref(),
                     Some(ax_capture.source),
                     Some(&ax_capture.diagnostics.reason),
+                    &[],
+                    None,
                     None,
                     spatial_present,
                 ));
@@ -1451,6 +1645,8 @@ fn run_capture_tick(app: &AppHandle) {
                     frontmost_window_title_hint.as_deref(),
                     Some(ax_capture.source),
                     Some(&ax_capture.diagnostics.reason),
+                    &[],
+                    None,
                     None,
                     spatial_present,
                 ));
@@ -1474,6 +1670,8 @@ fn run_capture_tick(app: &AppHandle) {
                 Some(&resolved_window_title),
                 focus_ax_source,
                 focus_ax_reason.as_deref(),
+                &[],
+                None,
                 None,
                 spatial_present,
             ));
@@ -1485,6 +1683,8 @@ fn run_capture_tick(app: &AppHandle) {
                 None,
                 None,
                 None,
+                None,
+                &[],
                 None,
                 None,
                 spatial_present,
@@ -1500,6 +1700,8 @@ fn run_capture_tick(app: &AppHandle) {
             None,
             None,
             None,
+            None,
+            &[],
             None,
             None,
             false,
@@ -1566,6 +1768,55 @@ mod tests {
     }
 
     #[test]
+    fn capture_filter_meta_json_includes_ax_quality_and_meeting_tags() {
+        let keys = vec!["text".to_string(), "value".to_string()];
+        let meta = capture_filter_meta_json(
+            Some(("meeting-1".to_string(), 42)),
+            Some("focused_window_tree"),
+            Some("focused_element_weak_signal"),
+            &keys,
+            Some("strong"),
+        )
+        .expect("meta json");
+        let parsed: Value = serde_json::from_str(&meta).expect("valid json");
+        assert_eq!(parsed["meeting_id"], json!("meeting-1"));
+        assert_eq!(parsed["meeting_offset_ms"], json!(42));
+        assert_eq!(parsed["ax_source"], json!("focused_window_tree"));
+        assert_eq!(parsed["ax_reason"], json!("focused_element_weak_signal"));
+        assert_eq!(parsed["ax_text_signal_keys"], json!(["text", "value"]));
+        assert_eq!(parsed["ax_text_signal_quality"], json!("strong"));
+    }
+
+    #[test]
+    fn capture_filter_meta_json_omits_empty_ax_fields() {
+        assert_eq!(capture_filter_meta_json(None, None, None, &[], None), None);
+        let keys = vec![" ".to_string(), "title".to_string()];
+        let meta = capture_filter_meta_json(None, Some(" "), None, &keys, Some("weak"))
+            .expect("non-empty quality and keys");
+        let parsed: Value = serde_json::from_str(&meta).expect("valid json");
+        assert!(parsed.get("ax_source").is_none());
+        assert_eq!(parsed["ax_text_signal_keys"], json!(["title"]));
+        assert_eq!(parsed["ax_text_signal_quality"], json!("weak"));
+    }
+
+    #[test]
+    fn capture_meta_line_summarizes_ax_fields_for_legacy_capture() {
+        let keys = vec!["title".to_string()];
+        assert_eq!(
+            capture_meta_line(
+                Some("focused_element"),
+                Some("focused_element_fields_empty"),
+                &keys,
+                Some("weak"),
+            )
+            .as_deref(),
+            Some(
+                "capture_meta=ax_source=focused_element ax_reason=focused_element_fields_empty ax_text_signal_quality=weak ax_text_signal_keys=title"
+            )
+        );
+    }
+
+    #[test]
     fn ax_text_has_content_signal_ignores_role_only_snapshot() {
         assert!(!crate::macos_ax::ax_text_has_content_signal(
             "role=AXGroup\nwindow=Inbox"
@@ -1596,6 +1847,10 @@ mod tests {
             window_title: Some("Window".to_string()),
             ax_source: ax_source.map(str::to_string),
             ax_reason: None,
+            ax_text_signal_keys: text_chars
+                .map(|_| vec!["text".to_string()])
+                .unwrap_or_default(),
+            ax_text_signal_quality: text_chars.map(|_| "strong".to_string()),
             text_chars,
             spatial_present: false,
         }
@@ -1627,11 +1882,15 @@ mod tests {
         let coverage = sampler_coverage_from_decisions(&decisions);
         assert_eq!(coverage.total, 3);
         assert_eq!(coverage.text_readable, 1);
+        assert_eq!(coverage.strong_text_readable, 1);
+        assert_eq!(coverage.partial_text_readable, 0);
+        assert_eq!(coverage.weak_text_readable, 0);
         assert_eq!(coverage.focus_only, 1);
         assert_eq!(coverage.empty, 1);
         assert_eq!(coverage.skipped, 1);
         assert_eq!(coverage.by_app[0].app_name, "Safari");
         assert_eq!(coverage.by_app[0].text_readable, 1);
+        assert_eq!(coverage.by_app[0].strong_text_readable, 1);
         assert_eq!(coverage.by_app[0].unreadable, 1);
         assert_eq!(coverage.by_app[0].actionable_samples, 1);
         assert_eq!(
@@ -1656,6 +1915,7 @@ mod tests {
             Some("focused_element_fields_empty")
         );
         assert_eq!(coverage.by_issue[0].text_readable, 0);
+        assert_eq!(coverage.by_issue[0].strong_text_readable, 0);
         assert_eq!(coverage.by_issue[0].unreadable, 1);
         assert!(coverage.by_issue[0].actionable);
         assert_eq!(coverage.by_issue[0].severity, "warn");
@@ -1673,6 +1933,79 @@ mod tests {
         assert!(coverage.by_issue[1]
             .recommended_action
             .contains("Privacy exclusion"));
+    }
+
+    #[test]
+    fn sampler_coverage_counts_text_signal_quality() {
+        let mut weak = sampler_decision_for_test(
+            3,
+            "ingest_attempted",
+            "ax",
+            "Safari",
+            Some("focused_element"),
+            Some(20),
+        );
+        weak.ax_text_signal_quality = Some("weak".to_string());
+        weak.ax_text_signal_keys = vec!["title".to_string()];
+        let mut partial = sampler_decision_for_test(
+            2,
+            "ingest_attempted",
+            "ax",
+            "Mail",
+            Some("focused_element"),
+            Some(60),
+        );
+        partial.ax_text_signal_quality = Some("partial".to_string());
+        let strong = sampler_decision_for_test(
+            1,
+            "ingest_attempted",
+            "ax",
+            "Notes",
+            Some("focused_element"),
+            Some(120),
+        );
+        let coverage = sampler_coverage_from_decisions(&[weak, partial, strong]);
+        assert_eq!(coverage.text_readable, 3);
+        assert_eq!(coverage.strong_text_readable, 1);
+        assert_eq!(coverage.partial_text_readable, 1);
+        assert_eq!(coverage.weak_text_readable, 1);
+        let safari = coverage
+            .by_app
+            .iter()
+            .find(|row| row.app_name == "Safari")
+            .unwrap();
+        assert_eq!(safari.weak_text_readable, 1);
+        assert_eq!(safari.actionable_samples, 1);
+        assert_eq!(
+            safari.latest_actionable_reason.as_deref(),
+            Some("weak_text_signal")
+        );
+        assert_eq!(
+            safari.latest_actionable_ax_text_signal_keys,
+            vec!["title".to_string()]
+        );
+        let source = coverage
+            .by_source
+            .iter()
+            .find(|row| row.source == "focused_element")
+            .unwrap();
+        assert_eq!(source.strong_text_readable, 1);
+        assert_eq!(source.partial_text_readable, 1);
+        assert_eq!(source.weak_text_readable, 1);
+        assert_eq!(coverage.by_issue.len(), 1);
+        assert_eq!(coverage.by_issue[0].reason, "weak_text_signal");
+        assert_eq!(coverage.by_issue[0].text_readable, 1);
+        assert_eq!(coverage.by_issue[0].weak_text_readable, 1);
+        assert_eq!(
+            coverage.by_issue[0].latest_ax_text_signal_keys,
+            vec!["title".to_string()]
+        );
+        assert_eq!(coverage.by_issue[0].unreadable, 0);
+        assert!(coverage.by_issue[0].actionable);
+        assert_eq!(coverage.by_issue[0].severity, "warn");
+        assert!(coverage.by_issue[0]
+            .recommended_action
+            .contains("content-text fallback"));
     }
 
     #[test]

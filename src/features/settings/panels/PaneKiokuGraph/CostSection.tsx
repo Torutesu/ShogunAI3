@@ -28,12 +28,14 @@ export function CostSection({
   return (
     <div className="s-card" style={{ padding: 20, marginBottom: 16 }}>
       <h3 style={{ marginTop: 0 }}>BYOK extraction cost</h3>
-      <Row title="Extraction model" desc="Anthropic ID used by AnthropicExtractionClient. Sonnet / Opus increase quality + cost (3x / 15x).">
+      <Row title="Extraction model" desc="Model used by the KIOKU extraction worker. It follows the provider detected from your saved LLM key.">
         <select
           className="s-select"
           value={extractionModel}
           onChange={(e) => { const v = e.target.value; setExtractionModel(v); persistLLMModel(v); }}
         >
+          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
           <option value="claude-haiku-4-5">claude-haiku-4-5 (default, ~$9/mo median)</option>
           <option value="claude-sonnet-4-6">claude-sonnet-4-6 (3x cost)</option>
           <option value="claude-opus-4-7">claude-opus-4-7 (15x cost)</option>
@@ -68,6 +70,7 @@ export function CostSection({
           value={fallbackModel}
           onChange={(e) => { const v = e.target.value; setFallbackModel(v); persistCost({ fallback_model: v }); }}
         >
+          <option value="gemini-2.5-flash">gemini-2.5-flash</option>
           <option value="claude-haiku-4-5">claude-haiku-4-5</option>
           <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
         </select>

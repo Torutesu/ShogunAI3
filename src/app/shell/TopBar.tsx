@@ -57,7 +57,10 @@ export function TopBar({
         {active === 'chat' && (
         <div className="page-actions">
           <button
+            type="button"
             className="page-action"
+            title="Open in Hummingbird"
+            aria-label="Open in Hummingbird"
             onMouseEnter={()=>setShareTip('popout')}
             onMouseLeave={()=>setShareTip(null)}
             onClick={() => requestWriteAction(
@@ -73,6 +76,8 @@ export function TopBar({
           <button
             type="button"
             className={'page-action'+(favorited?' on':'')}
+            title="Open Hummingbird"
+            aria-label="Open Hummingbird"
             onMouseEnter={()=>setShareTip('star')}
             onMouseLeave={()=>setShareTip(null)}
             onClick={(e) => {
@@ -91,7 +96,15 @@ export function TopBar({
               </span>
             )}
           </button>
-          <button className={'page-action'+(shareOpen?' active':'')} onMouseEnter={()=>setShareTip('share')} onMouseLeave={()=>setShareTip(null)} onClick={()=>setShareOpen(v=>!v)}>
+          <button
+            type="button"
+            className={'page-action'+(shareOpen?' active':'')}
+            title="Share chat"
+            aria-label="Share chat"
+            onMouseEnter={()=>setShareTip('share')}
+            onMouseLeave={()=>setShareTip(null)}
+            onClick={()=>setShareOpen(v=>!v)}
+          >
             <Icon name="upload" size={15}/>
             {shareTip==='share' && !shareOpen && <span className="tip">Share chat</span>}
           </button>

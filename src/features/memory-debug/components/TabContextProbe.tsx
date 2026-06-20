@@ -19,13 +19,35 @@ function pct(part: number | null | undefined, total: number | null | undefined) 
   return `${Math.round((part / total) * 100)}%`;
 }
 
+function qualityBreakdown(row: {
+  strongTextReadable?: number;
+  partialTextReadable?: number;
+  weakTextReadable?: number;
+}) {
+  return `strong ${row.strongTextReadable ?? 0} · partial ${row.partialTextReadable ?? 0} · weak ${row.weakTextReadable ?? 0}`;
+}
+
+function qualityRateBreakdown(row: {
+  total?: number;
+  strongTextReadable?: number;
+  partialTextReadable?: number;
+  weakTextReadable?: number;
+}) {
+  return `strong ${pct(row.strongTextReadable, row.total)} · partial ${pct(row.partialTextReadable, row.total)} · weak ${pct(row.weakTextReadable, row.total)}`;
+}
+
+function signalKeysLabel(keys: string[] | null | undefined) {
+  return keys?.length ? `keys ${keys.join(", ")}` : "";
+}
+
 function appActionLabel(row: SamplerCoverageAppData) {
   if (row.actionableSamples > 0) {
     const reason = row.latestActionableReason
       ? `${row.latestActionableReason}${row.latestActionableAxReason ? ` · ${row.latestActionableAxReason}` : ''}`
       : "actionable";
     const source = row.latestActionableAxSource ? ` · ${row.latestActionableAxSource}` : '';
-    return `ACTION · ${row.actionableSamples} samples · ${reason}${source}`;
+    const keys = signalKeysLabel(row.latestActionableAxTextSignalKeys);
+    return `ACTION · ${row.actionableSamples} samples · ${reason}${source}${keys ? ` · ${keys}` : ''}`;
   }
   if (row.unreadable > 0) {
     return `EXPECTED · ${row.unreadable} unreadable`;
@@ -33,9 +55,35 @@ function appActionLabel(row: SamplerCoverageAppData) {
   return "OK";
 }
 
+function weakAppRankingRows(rows: SamplerCoverageAppData[], limit: number) {
+  return rows
+    .filter((row) => row.weakTextReadable > 0)
+    .slice()
+    .sort((a, b) => {
+      const weakRateA = a.total ? a.weakTextReadable / a.total : 0;
+      const weakRateB = b.total ? b.weakTextReadable / b.total : 0;
+      return weakRateB - weakRateA
+        || b.weakTextReadable - a.weakTextReadable
+        || b.actionableSamples - a.actionableSamples
+        || a.appName.localeCompare(b.appName);
+    })
+    .slice(0, limit);
+}
+
 function auditJsonForCopy(probe: ReturnType<typeof useScreenContextProbe>["probe"]) {
   if (!probe) return "";
   const context = probe.hummingbirdContext;
+  const weakAppRanking = weakAppRankingRows(probe.samplerCoverage.byApp, 8)
+    .map((row) => ({
+      appName: row.appName,
+      bundleId: row.bundleId,
+      weakRate: pct(row.weakTextReadable, row.total),
+      weakTextReadable: row.weakTextReadable,
+      total: row.total,
+      latestActionableReason: row.latestActionableReason,
+      latestActionableAxTextSignalKeys: row.latestActionableAxTextSignalKeys,
+      latestActionableRecommendedAction: row.latestActionableRecommendedAction,
+    }));
   return JSON.stringify({
     capturedAtMs: probe.capturedAtMs,
     capturedAtLocal: msToLocal(probe.capturedAtMs),
@@ -52,11 +100,14 @@ function auditJsonForCopy(probe: ReturnType<typeof useScreenContextProbe>["probe
       source: context.axSnapshotSource,
       diagnostics: context.axDiagnostics,
       textSignalPresent: context.axTextSignalPresent,
+      textSignalKeys: context.axTextSignalKeys,
+      textSignalQuality: context.axTextSignalQuality,
       textChars: context.axTextChars,
       lineCount: context.axLineCount,
       snapshotPreview: context.axSnapshot ? context.axSnapshot.slice(0, 800) : "",
       snapshotChars: context.axSnapshot.length,
     },
+    weakAppRanking,
     samplerCoverage: probe.samplerCoverage,
     lastSamplerDecision: probe.lastSamplerDecision,
   }, null, 2);
@@ -73,6 +124,8 @@ export function TabContextProbe() {
   const topIssue = coverage?.byIssue?.[0] ?? null;
   const unreadableSamples = coverage ? Math.max(coverage.total - coverage.textReadable, 0) : 0;
   const actionableIssueCount = coverage?.byIssue.filter((row) => row.actionable).length ?? 0;
+  const weakAppRanking = weakAppRankingRows(coverage?.byApp ?? [], 8);
+  const nextWeakTarget = weakAppRanking[0] ?? null;
   const recentDecisions = coverage?.recent?.slice(0, 20) ?? [];
   const axDiagnostics = context?.axDiagnostics ?? null;
   const axSnapshot = (context?.axSnapshot || '').trim();
@@ -162,6 +215,14 @@ export function TabContextProbe() {
             </td>
           </tr>
           <tr>
+            <td>strong rate</td>
+            <td>{pct(coverage?.strongTextReadable, coverage?.total)}</td>
+          </tr>
+          <tr>
+            <td>weak rate</td>
+            <td>{pct(coverage?.weakTextReadable, coverage?.total)}</td>
+          </tr>
+          <tr>
             <td>unreadable samples</td>
             <td>{unreadableSamples}</td>
           </tr>
@@ -173,7 +234,15 @@ export function TabContextProbe() {
             <td>top issue</td>
             <td>
               {topIssue
-                ? `${topIssue.actionable ? "ACTION" : "EXPECTED"} · ${topIssue.severity.toUpperCase()} · ${topIssue.reason}${topIssue.axReason ? ` · ${topIssue.axReason}` : ''} · ${topIssue.unreadable} unreadable · ${topIssue.recommendedAction}`
+                ? `${topIssue.actionable ? "ACTION" : "EXPECTED"} · ${topIssue.severity.toUpperCase()} · ${topIssue.reason}${topIssue.axReason ? ` · ${topIssue.axReason}` : ''} · ${topIssue.unreadable} unreadable${topIssue.latestAxTextSignalKeys.length ? ` · ${signalKeysLabel(topIssue.latestAxTextSignalKeys)}` : ''} · ${topIssue.recommendedAction}`
+                : "—"}
+            </td>
+          </tr>
+          <tr>
+            <td>next weak target</td>
+            <td>
+              {nextWeakTarget
+                ? `${nextWeakTarget.appName} · weak ${pct(nextWeakTarget.weakTextReadable, nextWeakTarget.total)} · ${nextWeakTarget.weakTextReadable}/${nextWeakTarget.total}${nextWeakTarget.latestActionableAxTextSignalKeys.length ? ` · ${signalKeysLabel(nextWeakTarget.latestActionableAxTextSignalKeys)}` : ''}`
                 : "—"}
             </td>
           </tr>
@@ -270,6 +339,14 @@ export function TabContextProbe() {
                 <td>{boolLabel(context?.axTextSignalPresent ?? health?.axTextSignalPresent)}</td>
               </tr>
               <tr>
+                <td>AX signal keys</td>
+                <td>{valueLabel((context?.axTextSignalKeys ?? health?.axTextSignalKeys ?? []).join(", "))}</td>
+              </tr>
+              <tr>
+                <td>AX signal quality</td>
+                <td>{valueLabel(context?.axTextSignalQuality ?? health?.axTextSignalQuality ?? null)}</td>
+              </tr>
+              <tr>
                 <td>AX text chars</td>
                 <td>{context?.axTextChars ?? health?.axTextChars ?? "—"}</td>
               </tr>
@@ -354,6 +431,21 @@ export function TabContextProbe() {
             </td>
           </tr>
           <tr>
+            <td>AX text quality</td>
+            <td>
+              {qualityBreakdown(coverage ?? {})}
+              {` · ${qualityRateBreakdown(coverage ?? {})}`}
+            </td>
+          </tr>
+          <tr>
+            <td>strong rate</td>
+            <td>{pct(coverage?.strongTextReadable, coverage?.total)}</td>
+          </tr>
+          <tr>
+            <td>weak rate</td>
+            <td>{pct(coverage?.weakTextReadable, coverage?.total)}</td>
+          </tr>
+          <tr>
             <td>focus only</td>
             <td>{coverage?.focusOnly ?? 0}</td>
           </tr>
@@ -386,6 +478,8 @@ export function TabContextProbe() {
                   <td>{row.appName}</td>
                   <td>
                     {row.textReadable}/{row.total} ({pct(row.textReadable, row.total)})
+                    {` · ${qualityBreakdown(row)}`}
+                    {` · ${qualityRateBreakdown(row)}`}
                     {row.unreadable ? ` · ${row.unreadable} unreadable` : ''}
                   </td>
                   <td>
@@ -422,7 +516,11 @@ export function TabContextProbe() {
                 <tr key={row.source}>
                   <td>{row.source}</td>
                   <td>{row.total}</td>
-                  <td>{row.textReadable} ({pct(row.textReadable, row.total)})</td>
+                  <td>
+                    {row.textReadable} ({pct(row.textReadable, row.total)})
+                    {` · ${qualityBreakdown(row)}`}
+                    {` · ${qualityRateBreakdown(row)}`}
+                  </td>
                 </tr>
               ))}
               {coverage && coverage.bySource.length === 0 ? (
@@ -434,6 +532,42 @@ export function TabContextProbe() {
           </table>
         </div>
       </div>
+
+      <h3>Weak signal ranking</h3>
+      <table className="mdbg-table" style={{ marginBottom: 12 }}>
+        <thead>
+          <tr>
+            <th>app</th>
+            <th>weak rate</th>
+            <th>weak samples</th>
+            <th>action</th>
+            <th>latest</th>
+          </tr>
+        </thead>
+        <tbody>
+          {weakAppRanking.map((row) => (
+            <tr key={`${row.appName}-${row.bundleId ?? ''}-weak`}>
+              <td>{row.appName}</td>
+              <td>{pct(row.weakTextReadable, row.total)}</td>
+              <td>{row.weakTextReadable}/{row.total}</td>
+              <td>
+                {appActionLabel(row)}
+                {row.latestActionableRecommendedAction ? ` · ${row.latestActionableRecommendedAction}` : ''}
+              </td>
+              <td>
+                {valueLabel(row.latestAxSource ?? row.latestReason)}
+                {row.latestActionableAxTextSignalKeys.length ? ` · ${signalKeysLabel(row.latestActionableAxTextSignalKeys)}` : ''}
+                {row.latestTextChars != null ? ` · ${row.latestTextChars} chars` : ''}
+              </td>
+            </tr>
+          ))}
+          {coverage && weakAppRanking.length === 0 ? (
+            <tr>
+              <td colSpan={5}>No weak text signal apps in the recent window.</td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
 
       <h3>Capture issues</h3>
       <table className="mdbg-table" style={{ marginBottom: 12 }}>
@@ -455,13 +589,17 @@ export function TabContextProbe() {
                 {row.axReason ? ` · ${row.axReason}` : ''}
               </td>
               <td>{row.total}</td>
-              <td>{row.textReadable} ({pct(row.textReadable, row.total)})</td>
+              <td>
+                {row.textReadable} ({pct(row.textReadable, row.total)})
+                {` · ${qualityBreakdown(row)}`}
+              </td>
               <td>{row.unreadable}</td>
               <td>{row.actionable ? "ACTION" : "EXPECTED"} · {row.severity.toUpperCase()} · {row.recommendedAction}</td>
               <td>
                 {valueLabel(row.latestAppName)}
                 {row.latestWindowTitle ? ` · ${row.latestWindowTitle}` : ''}
                 {row.latestAxSource ? ` · ${row.latestAxSource}` : ''}
+                {row.latestAxTextSignalKeys.length ? ` · ${signalKeysLabel(row.latestAxTextSignalKeys)}` : ''}
                 {row.latestAtMs ? ` · ${msToRelative(row.latestAtMs)}` : ''}
               </td>
             </tr>
@@ -498,7 +636,11 @@ export function TabContextProbe() {
                 {valueLabel(row.axSource)}
                 {row.axReason ? ` · ${row.axReason}` : ''}
               </td>
-              <td>{row.textChars != null ? `${row.textChars} chars` : "—"}</td>
+              <td>
+                {row.textChars != null ? `${row.textChars} chars` : "—"}
+                {row.axTextSignalQuality ? ` · ${row.axTextSignalQuality}` : ''}
+                {row.axTextSignalKeys.length ? ` · keys ${row.axTextSignalKeys.join(", ")}` : ''}
+              </td>
             </tr>
           ))}
           {coverage && recentDecisions.length === 0 ? (

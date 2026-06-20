@@ -34,7 +34,7 @@ pub fn detect_provider(key: &str) -> LlmProvider {
     if k.starts_with("sk-ant-") {
         return LlmProvider::Anthropic;
     }
-    if k.starts_with("AIza") && k.len() >= 35 {
+    if k.starts_with("AIza") && k.len() >= 20 {
         return LlmProvider::Gemini;
     }
     if k.starts_with("sk-") {
@@ -63,6 +63,34 @@ pub fn default_chat_model(provider: LlmProvider) -> &'static str {
         LlmProvider::Anthropic => "claude-sonnet-4-5-20250929",
         LlmProvider::Gemini => "gemini-2.5-flash",
         LlmProvider::Custom => "",
+    }
+}
+
+pub fn model_matches_provider(provider: LlmProvider, model: &str) -> bool {
+    let m = model.trim().to_lowercase();
+    if m.is_empty() {
+        return false;
+    }
+    match provider {
+        LlmProvider::Anthropic => m.contains("claude"),
+        LlmProvider::Gemini => m.contains("gemini"),
+        LlmProvider::OpenAI => {
+            m.starts_with("gpt-")
+                || m.starts_with("o1")
+                || m.starts_with("o3")
+                || m.starts_with("o4")
+                || m.starts_with("o5")
+        }
+        LlmProvider::Custom => true,
+    }
+}
+
+pub fn chat_model_for_provider(provider: LlmProvider, requested: &str) -> String {
+    let requested = requested.trim();
+    if !requested.is_empty() && model_matches_provider(provider, requested) {
+        requested.to_string()
+    } else {
+        default_chat_model(provider).to_string()
     }
 }
 
@@ -377,8 +405,20 @@ mod tests {
 
     #[test]
     fn detect_gemini_short_rejects() {
-        // Fewer than 35 chars with AIza prefix is not considered Gemini.
+        // Very short strings with AIza prefix are not considered Gemini.
         assert_eq!(detect_provider("AIza-short"), LlmProvider::Custom);
+    }
+
+    #[test]
+    fn chat_model_for_provider_uses_provider_default_when_requested_model_mismatches() {
+        assert_eq!(
+            chat_model_for_provider(LlmProvider::Anthropic, "gemini-2.5-flash"),
+            default_chat_model(LlmProvider::Anthropic)
+        );
+        assert_eq!(
+            chat_model_for_provider(LlmProvider::Gemini, "claude-sonnet-4-5"),
+            default_chat_model(LlmProvider::Gemini)
+        );
     }
 
     #[test]

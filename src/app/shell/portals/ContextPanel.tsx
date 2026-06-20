@@ -61,12 +61,33 @@ function pct(part: number | null | undefined, total: number | null | undefined) 
   return `${Math.round((part / total) * 100)}%`;
 }
 
+function qualityBreakdown(row: {
+  strongTextReadable?: number;
+  partialTextReadable?: number;
+  weakTextReadable?: number;
+}) {
+  return `strong ${row.strongTextReadable ?? 0} · partial ${row.partialTextReadable ?? 0} · weak ${row.weakTextReadable ?? 0}`;
+}
+
+function qualityRateBreakdown(row: {
+  total?: number;
+  strongTextReadable?: number;
+  weakTextReadable?: number;
+}) {
+  return `strong ${pct(row.strongTextReadable, row.total)} · weak ${pct(row.weakTextReadable, row.total)}`;
+}
+
+function signalKeysLabel(keys: string[] | null | undefined) {
+  return keys?.length ? `keys ${keys.join(', ')}` : '';
+}
+
 function appCoverageLabel(row: SamplerCoverageAppData) {
   if (row.actionableSamples > 0) {
     const reason = row.latestActionableReason
       ? `${row.latestActionableReason}${row.latestActionableAxReason ? ` · ${row.latestActionableAxReason}` : ''}`
       : 'actionable';
-    return `${row.actionableSamples} action · ${row.unreadable} unreadable · ${reason}`;
+    const keys = signalKeysLabel(row.latestActionableAxTextSignalKeys);
+    return `${row.actionableSamples} action · ${row.unreadable} unreadable · ${reason}${keys ? ` · ${keys}` : ''}`;
   }
   const fallback =
     row.focusOnly > 0
@@ -78,19 +99,20 @@ function appCoverageLabel(row: SamplerCoverageAppData) {
           : row.latestReason;
   const detail = row.latestTextChars != null ? `${row.latestTextChars} chars` : fallback;
   if (row.unreadable > 0) {
-    return `${row.textReadable}/${row.total} readable · ${row.unreadable} unreadable expected`;
+    return `${row.textReadable}/${row.total} readable · ${qualityBreakdown(row)} · ${row.unreadable} unreadable expected`;
   }
-  return `${row.textReadable}/${row.total} readable · ${detail ?? "no detail"}`;
+  return `${row.textReadable}/${row.total} readable · ${qualityBreakdown(row)} · ${detail ?? "no detail"}`;
 }
 
 function issueCoverageLabel(row: SamplerCoverageIssueData) {
   const where = row.latestAppName
     ? ` · ${row.latestAppName}${row.latestWindowTitle ? ` / ${row.latestWindowTitle}` : ''}`
     : '';
-  const readable = `${row.textReadable}/${row.total} readable`;
+  const readable = `${row.textReadable}/${row.total} readable · ${qualityBreakdown(row)}`;
   const priority = row.actionable ? 'Action needed' : 'Expected';
   const reason = `${row.reason}${row.axReason ? ` · ${row.axReason}` : ''}`;
-  return `${priority}: ${row.recommendedAction} (${row.severity.toUpperCase()} · ${reason} · ${readable} · ${row.unreadable} unreadable${where})`;
+  const keys = signalKeysLabel(row.latestAxTextSignalKeys);
+  return `${priority}: ${row.recommendedAction} (${row.severity.toUpperCase()} · ${reason} · ${readable} · ${row.unreadable} unreadable${keys ? ` · ${keys}` : ''}${where})`;
 }
 
 export function ContextPanel(props: ContextPanelProps) {
@@ -112,9 +134,22 @@ export function ContextPanel(props: ContextPanelProps) {
   const decision = probe?.lastSamplerDecision ?? null;
   const coverage = probe?.samplerCoverage ?? null;
   const coverageApps = (coverage?.byApp ?? []).slice(0, 3);
+  const weakCoverageApps = (coverage?.byApp ?? [])
+    .filter((row) => row.weakTextReadable > 0)
+    .slice()
+    .sort((a, b) => {
+      const weakRateA = a.total ? a.weakTextReadable / a.total : 0;
+      const weakRateB = b.total ? b.weakTextReadable / b.total : 0;
+      return weakRateB - weakRateA
+        || b.weakTextReadable - a.weakTextReadable
+        || a.appName.localeCompare(b.appName);
+    })
+    .slice(0, 3);
   const topIssue = coverage?.byIssue?.[0] ?? null;
   const unreadableSamples = coverage ? Math.max(coverage.total - coverage.textReadable, 0) : 0;
   const actionableIssueCount = coverage?.byIssue.filter((row) => row.actionable).length ?? 0;
+  const axSignalKeys = context?.axTextSignalKeys ?? health?.axTextSignalKeys ?? [];
+  const axSignalQuality = context?.axTextSignalQuality ?? health?.axTextSignalQuality ?? null;
   const axReason = axReasonLabel(context?.axDiagnostics?.reason);
   const captureFocus = capture?.frontmostFocus ?? null;
   const contextFocus = context?.frontmostFocus ?? null;
@@ -194,6 +229,8 @@ export function ContextPanel(props: ContextPanelProps) {
                       {capture?.eventsPerMinute != null ? ` · ${capture.eventsPerMinute} events/min` : ''}
                       {context?.axSnapshotSource ? ` · AX ${context.axSnapshotSource}` : ''}
                       {context?.axTextSignalPresent ? ` · ${context.axTextChars} chars` : ''}
+                      {axSignalKeys.length ? ` · signals ${axSignalKeys.join(', ')}` : ''}
+                      {axSignalQuality ? ` · quality ${axSignalQuality}` : ''}
                       {axReason ? ` · ${axReason}` : ''}
                     </div>
                     {decision ? (
@@ -215,6 +252,12 @@ export function ContextPanel(props: ContextPanelProps) {
                           <span>
                             {coverage.textReadable}/{coverage.total} readable ({pct(coverage.textReadable, coverage.total)})
                           </span>
+                        </div>
+                        <div style={{ color: 'var(--text-mute)', fontSize: 11 }}>
+                          {qualityBreakdown(coverage)}
+                        </div>
+                        <div style={{ color: 'var(--text-mute)', fontSize: 11 }}>
+                          {qualityRateBreakdown(coverage)}
                         </div>
                         <div style={{
                           display: 'grid',
@@ -249,6 +292,19 @@ export function ContextPanel(props: ContextPanelProps) {
                                 </span>
                               </div>
                             ))}
+                          </div>
+                        ) : null}
+                        {weakCoverageApps.length > 0 ? (
+                          <div
+                            style={{
+                              color: 'var(--text-mute)',
+                              fontSize: 11,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Weak apps: {weakCoverageApps.map((row) => `${row.appName} ${pct(row.weakTextReadable, row.total)}`).join(' · ')}
                           </div>
                         ) : null}
                         {topIssue ? (

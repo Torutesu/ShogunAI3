@@ -175,11 +175,15 @@ export interface HummingbirdContextData {
   axSnapshotSource: string;
   axDiagnostics: AxDiagnosticsData;
   axTextSignalPresent: boolean;
+  axTextSignalKeys: string[];
+  axTextSignalQuality: AxTextSignalQuality;
   axTextChars: number;
   axLineCount: number;
   stub: boolean;
   note?: string;
 }
+
+export type AxTextSignalQuality = "none" | "weak" | "partial" | "strong";
 
 export interface AxDiagnosticsData {
   trusted: boolean | null;
@@ -198,6 +202,8 @@ export interface ScreenContextHealthData {
   accessibilityTrusted: boolean | null;
   axSnapshotPresent: boolean;
   axTextSignalPresent: boolean;
+  axTextSignalKeys: string[];
+  axTextSignalQuality: AxTextSignalQuality;
   axTextChars: number | null;
   axLineCount: number | null;
   frontmostApp: string | null;
@@ -217,6 +223,8 @@ export interface SamplerDecisionData {
   windowTitle: string | null;
   axSource: string | null;
   axReason: string | null;
+  axTextSignalKeys: string[];
+  axTextSignalQuality: AxTextSignalQuality | null;
   textChars: number | null;
   spatialPresent: boolean;
 }
@@ -226,6 +234,9 @@ export interface SamplerCoverageAppData {
   bundleId: string | null;
   total: number;
   textReadable: number;
+  strongTextReadable: number;
+  partialTextReadable: number;
+  weakTextReadable: number;
   unreadable: number;
   actionableSamples: number;
   focusOnly: number;
@@ -240,6 +251,7 @@ export interface SamplerCoverageAppData {
   latestActionableReason: string | null;
   latestActionableAxReason: string | null;
   latestActionableAxSource: string | null;
+  latestActionableAxTextSignalKeys: string[];
   latestActionableRecommendedAction: string | null;
 }
 
@@ -247,6 +259,9 @@ export interface SamplerCoverageSourceData {
   source: string;
   total: number;
   textReadable: number;
+  strongTextReadable: number;
+  partialTextReadable: number;
+  weakTextReadable: number;
   empty: number;
 }
 
@@ -257,6 +272,9 @@ export interface SamplerCoverageIssueData {
   recommendedAction: string;
   total: number;
   textReadable: number;
+  strongTextReadable: number;
+  partialTextReadable: number;
+  weakTextReadable: number;
   unreadable: number;
   actionable: boolean;
   latestAtMs: number | null;
@@ -264,11 +282,15 @@ export interface SamplerCoverageIssueData {
   latestBundleId: string | null;
   latestWindowTitle: string | null;
   latestAxSource: string | null;
+  latestAxTextSignalKeys: string[];
 }
 
 export interface SamplerCoverageData {
   total: number;
   textReadable: number;
+  strongTextReadable: number;
+  partialTextReadable: number;
+  weakTextReadable: number;
   focusOnly: number;
   empty: number;
   skipped: number;

@@ -293,6 +293,12 @@ pub fn assemble_debug_stats(
     };
     let failed_billing_jobs =
         crate::kioku::extraction::count_failed_billing_jobs(conn).unwrap_or(0);
+    let failed_auth_jobs = crate::kioku::extraction::count_failed_auth_jobs(conn).unwrap_or(0);
+    let billing_blocked_jobs =
+        crate::kioku::extraction::count_billing_blocked_jobs(conn).unwrap_or(failed_billing_jobs);
+    let auth_blocked_jobs =
+        crate::kioku::extraction::count_auth_blocked_jobs(conn).unwrap_or(failed_auth_jobs);
+    let blocked_jobs = billing_blocked_jobs.saturating_add(auth_blocked_jobs);
 
     Ok(json!({
       "queue": queue,
@@ -310,7 +316,11 @@ pub fn assemble_debug_stats(
         "mem_items_active": graph.mem_items_active,
         "edge_density": edge_density,
         "failed_billing_jobs": failed_billing_jobs,
-        "extraction_paused": failed_billing_jobs > 0 || cost.status == "Pause",
+        "failed_auth_jobs": failed_auth_jobs,
+        "billing_blocked_jobs": billing_blocked_jobs,
+        "auth_blocked_jobs": auth_blocked_jobs,
+        "blocked_jobs": blocked_jobs,
+        "extraction_paused": blocked_jobs > 0 || cost.status == "Pause",
       },
       "meeting_pipeline": {
         "captures": meeting_captures,

@@ -60,25 +60,78 @@ fn clip(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
+const AX_TEXT_SIGNAL_PREFIXES: &[&str] = &[
+    "title=",
+    "label=",
+    "value=",
+    "placeholder=",
+    "description=",
+    "selected=",
+    "text=",
+    "url=",
+    "document=",
+    "filename=",
+    "help=",
+];
+
+const AX_STRONG_TEXT_SIGNAL_KEYS: &[&str] = &["text", "value", "selected", "description"];
+const AX_PARTIAL_TEXT_SIGNAL_KEYS: &[&str] = &["label", "url", "document", "placeholder"];
+
+fn line_has_signal_prefix(line: &str, prefix: &str) -> bool {
+    line.starts_with(prefix) || line.contains(&format!(" {prefix}"))
+}
+
 pub fn ax_text_has_content_signal(text: &str) -> bool {
     text.lines().any(|line| {
         let trimmed = line.trim_start();
-        [
-            "title=",
-            "label=",
-            "value=",
-            "placeholder=",
-            "description=",
-            "selected=",
-            "text=",
-            "url=",
-            "document=",
-            "filename=",
-            "help=",
-        ]
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix) || trimmed.contains(&format!(" {prefix}")))
+        AX_TEXT_SIGNAL_PREFIXES
+            .iter()
+            .any(|prefix| line_has_signal_prefix(trimmed, prefix))
     })
+}
+
+pub fn ax_text_signal_keys(text: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        for prefix in AX_TEXT_SIGNAL_PREFIXES {
+            if line_has_signal_prefix(trimmed, prefix) {
+                let key = prefix.trim_end_matches('=').to_string();
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+    }
+    keys
+}
+
+pub fn ax_text_signal_quality_for_keys(keys: &[String]) -> &'static str {
+    if keys.is_empty() {
+        return "none";
+    }
+    if keys
+        .iter()
+        .any(|key| AX_STRONG_TEXT_SIGNAL_KEYS.contains(&key.as_str()))
+    {
+        return "strong";
+    }
+    if keys
+        .iter()
+        .any(|key| AX_PARTIAL_TEXT_SIGNAL_KEYS.contains(&key.as_str()))
+    {
+        return "partial";
+    }
+    "weak"
+}
+
+pub fn ax_text_signal_quality(text: &str) -> &'static str {
+    let keys = ax_text_signal_keys(text);
+    ax_text_signal_quality_for_keys(&keys)
+}
+
+pub fn ax_text_needs_deeper_fallback(text: &str) -> bool {
+    ax_text_signal_quality(text) != "strong"
 }
 
 /// Format an [`AxFields`] into the newline-joined snapshot string the sampler
@@ -1195,6 +1248,53 @@ mod tests {
         ));
         assert!(ax_text_has_content_signal(
             "ax_tree:\n- role=AXStaticText filename=roadmap.md"
+        ));
+    }
+
+    #[test]
+    fn ax_text_signal_keys_reports_unique_keys_in_detection_order() {
+        assert_eq!(
+            ax_text_signal_keys(
+                "role=AXWebArea\nwindow=Inbox\ntitle=Inbox\nvalue=Project notes\nax_tree:\n- role=AXButton label=Archive\n- role=AXTextArea text=Draft"
+            ),
+            vec![
+                "title".to_string(),
+                "value".to_string(),
+                "label".to_string(),
+                "text".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ax_text_signal_quality_classifies_signal_strength() {
+        assert_eq!(ax_text_signal_quality("role=AXWebArea"), "none");
+        assert_eq!(
+            ax_text_signal_quality("role=AXWebArea\ntitle=Inbox"),
+            "weak"
+        );
+        assert_eq!(
+            ax_text_signal_quality("role=AXWebArea\nurl=https://example.com"),
+            "partial"
+        );
+        assert_eq!(
+            ax_text_signal_quality("role=AXTextArea\ntext=Visible editor line"),
+            "strong"
+        );
+    }
+
+    #[test]
+    fn ax_text_needs_deeper_fallback_until_strong_content_exists() {
+        assert!(ax_text_needs_deeper_fallback("role=AXWebArea"));
+        assert!(ax_text_needs_deeper_fallback("role=AXWebArea\ntitle=Inbox"));
+        assert!(ax_text_needs_deeper_fallback(
+            "role=AXWebArea\nurl=https://example.com"
+        ));
+        assert!(!ax_text_needs_deeper_fallback(
+            "role=AXTextArea\ntext=Visible editor line"
+        ));
+        assert!(!ax_text_needs_deeper_fallback(
+            "role=AXWebArea\ntitle=Inbox\nvalue=Project notes"
         ));
     }
 

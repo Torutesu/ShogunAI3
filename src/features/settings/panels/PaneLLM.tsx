@@ -19,6 +19,7 @@ export function PaneLLM() {
   const [keyConfigured, setKeyConfigured] = useState(false);
   const [keyProvider, setKeyProvider] = useState<string | null>(null);
   const [keyPreview, setKeyPreview] = useState<string | null>(null);
+  const [keyProviders, setKeyProviders] = useState<Array<{ provider: string; keyPreview?: string }>>([]);
   const [backfillLimit, setBackfillLimit] = useState(40);
   const [backfillDelayMs, setBackfillDelayMs] = useState(0);
   const [backfillBusy, setBackfillBusy] = useState(false);
@@ -48,6 +49,7 @@ export function PaneLLM() {
       setKeyConfigured(r.data.configured);
       setKeyProvider(typeof r.data.provider === 'string' ? r.data.provider : null);
       setKeyPreview(typeof r.data.keyPreview === 'string' ? r.data.keyPreview : null);
+      setKeyProviders(Array.isArray(r.data.providers) ? r.data.providers : []);
     }
   }, [run]);
 
@@ -176,12 +178,17 @@ export function PaneLLM() {
           />
           {keyConfigured && keyProvider && (
             <div className="s-field-hint" style={{ marginTop: 6, fontSize: 11 }}>
-              Provider: {
+              Primary provider: {
                 keyProvider === 'openai' ? 'OpenAI' :
                 keyProvider === 'anthropic' ? 'Anthropic (Claude)' :
                 keyProvider === 'gemini' ? 'Google Gemini' :
                 'Custom / Local'
               }{keyPreview ? ` — ${keyPreview}` : ''}
+            </div>
+          )}
+          {keyProviders.length > 1 && (
+            <div className="s-field-hint" style={{ marginTop: 6, fontSize: 11 }}>
+              Fallback keys: {keyProviders.map((p) => `${p.provider}${p.keyPreview ? ` ${p.keyPreview}` : ''}`).join(' · ')}
             </div>
           )}
           {customProviderNeedsBaseUrl && (

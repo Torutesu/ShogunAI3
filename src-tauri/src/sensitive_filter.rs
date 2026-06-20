@@ -293,8 +293,10 @@ fn payment_domain_in_text(rules: &PaymentRules, ax_text: &str) -> bool {
             .map(|sep| {
                 let prefix = &tok[..sep];
                 prefix
-                    .rfind(|c: char| !c.is_ascii_alphabetic())
-                    .map(|i| i + 1)
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| !c.is_ascii_alphabetic())
+                    .map(|(i, c)| i + c.len_utf8())
                     .unwrap_or(0)
             })
             .unwrap_or(0);
@@ -530,6 +532,15 @@ mod tests {
         assert!(is_payment_signal(
             &r,
             "role=AXTextField\nvalue=https://checkout.stripe.com/pay/cs_xyz\nwindow=Checkout"
+        ));
+    }
+
+    #[test]
+    fn payment_domain_url_with_unicode_prefix_does_not_panic() {
+        let r = payment_rules_with(vec!["stripe.com"], false);
+        assert!(!is_payment_signal(
+            &r,
+            "description=https://youtu.be/rlvuddnfl7w?si=wivngb1wztgspr31"
         ));
     }
 

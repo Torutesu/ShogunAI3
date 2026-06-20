@@ -328,21 +328,35 @@ pub fn app_llm_api_key_set(payload: Value) -> Result<Value, String> {
 
 #[tauri::command]
 pub fn app_llm_api_key_status(_payload: serde_json::Value) -> Result<serde_json::Value, String> {
-    match secrets::get_llm_api_key()? {
-        Some(k) if !k.trim().is_empty() => {
-            let provider = crate::llm_providers::detect_provider(&k);
-            Ok(serde_json::json!({
-              "configured": true,
-              "provider": provider.as_str(),
-              "keyPreview": crate::llm_providers::key_preview(&k),
-            }))
-        }
-        _ => Ok(serde_json::json!({
+    let keys = secrets::get_llm_api_keys()?;
+    if keys.is_empty() {
+        return Ok(serde_json::json!({
           "configured": false,
           "provider": null,
           "keyPreview": null,
-        })),
+          "providers": [],
+        }));
     }
+    let providers: Vec<serde_json::Value> = keys
+        .iter()
+        .map(|k| {
+            let provider = crate::llm_providers::detect_provider(k);
+            serde_json::json!({
+              "provider": provider.as_str(),
+              "keyPreview": crate::llm_providers::key_preview(k),
+            })
+        })
+        .collect();
+    let primary = providers
+        .first()
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    Ok(serde_json::json!({
+      "configured": true,
+      "provider": primary.get("provider").and_then(|v| v.as_str()).unwrap_or("custom"),
+      "keyPreview": primary.get("keyPreview").and_then(|v| v.as_str()).unwrap_or("***"),
+      "providers": providers,
+    }))
 }
 
 #[tauri::command]
@@ -394,6 +408,11 @@ fn screen_context_health_snapshot(
     let ax_snapshot_present = ax_snapshot.map(str::trim).is_some_and(|s| !s.is_empty());
     let ax_text_signal_present = ax_text_signal_present
         .unwrap_or_else(|| ax_snapshot.is_some_and(crate::macos_ax::ax_text_has_content_signal));
+    let ax_text_signal_keys = ax_snapshot
+        .map(crate::macos_ax::ax_text_signal_keys)
+        .unwrap_or_default();
+    let ax_text_signal_quality =
+        crate::macos_ax::ax_text_signal_quality_for_keys(&ax_text_signal_keys);
     let frontmost_app = frontmost_focus.map(|f| f.app_name.clone());
     let frontmost_bundle_id = frontmost_focus.and_then(|f| f.bundle_id.clone());
     let window_title = frontmost_focus.and_then(|f| f.window_title.clone());
@@ -423,6 +442,8 @@ fn screen_context_health_snapshot(
             });
         } else if !ax_text_signal_present {
             issues.push("AX snapshot has no readable text signal");
+        } else if ax_text_signal_quality == "weak" {
+            issues.push("AX snapshot only exposes weak text signals");
         }
         if issues.is_empty() {
             "ok"
@@ -459,6 +480,8 @@ fn screen_context_health_snapshot(
       "accessibilityTrusted": accessibility_trusted,
       "axSnapshotPresent": ax_snapshot_present,
       "axTextSignalPresent": ax_text_signal_present,
+      "axTextSignalKeys": ax_text_signal_keys,
+      "axTextSignalQuality": ax_text_signal_quality,
       "axTextChars": ax_text_chars,
       "axLineCount": ax_line_count,
       "frontmostApp": frontmost_app,
@@ -1032,6 +1055,8 @@ mod tests {
         assert_eq!(health["state"], "ok");
         assert_eq!(health["axSnapshotPresent"], true);
         assert_eq!(health["axTextSignalPresent"], true);
+        assert_eq!(health["axTextSignalKeys"], json!(["title", "value"]));
+        assert_eq!(health["axTextSignalQuality"], "strong");
     }
 
     #[test]
@@ -1078,6 +1103,33 @@ mod tests {
     }
 
     #[test]
+    fn screen_context_health_snapshot_warns_when_ax_only_has_weak_signal() {
+        let health = screen_context_health_snapshot(
+            Some(&focus(
+                "Safari",
+                Some("com.apple.Safari"),
+                Some("Inbox"),
+                Some("ax"),
+            )),
+            Some(true),
+            Some("role=AXWebArea\ntitle=Inbox\nwindow=Inbox"),
+            Some("focused_element"),
+            Some("focused_element_snapshot"),
+            Some(true),
+            Some(40),
+            Some(3),
+        );
+        assert_eq!(health["state"], "warn");
+        assert_eq!(health["axTextSignalPresent"], true);
+        assert_eq!(health["axTextSignalKeys"], json!(["title"]));
+        assert_eq!(health["axTextSignalQuality"], "weak");
+        assert_eq!(
+            health["message"],
+            "AX snapshot only exposes weak text signals."
+        );
+    }
+
+    #[test]
     fn screen_context_health_snapshot_marks_window_tree_fallback_as_readable() {
         let health = screen_context_health_snapshot(
             Some(&focus(
@@ -1119,6 +1171,7 @@ mod tests {
         assert_eq!(health["state"], "warn");
         assert_eq!(health["axSnapshotPresent"], true);
         assert_eq!(health["axTextSignalPresent"], false);
+        assert_eq!(health["axTextSignalKeys"], json!([]));
     }
 
     #[test]
