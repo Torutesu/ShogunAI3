@@ -43,8 +43,7 @@ fn read_doc(dir: &Path, rel: &Path) -> Result<String, String> {
             .map_err(|e| format!("{}: {}", primary.display(), e));
     }
     let with_up = dir.join("_up_").join(rel);
-    std::fs::read_to_string(&with_up)
-        .map_err(|e| format!("{}: {}", with_up.display(), e))
+    std::fs::read_to_string(&with_up).map_err(|e| format!("{}: {}", with_up.display(), e))
 }
 
 pub fn load_from_dir(dir: &Path, lang: &str) -> Result<Value, String> {
@@ -75,7 +74,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join("docs")).unwrap();
         fs::write(dir.path().join("docs/TERMS_OF_SERVICE.md"), "# 利用規約\n").unwrap();
-        fs::write(dir.path().join("docs/TERMS_OF_SERVICE_EN.md"), "# Terms of Service\n").unwrap();
+        fs::write(
+            dir.path().join("docs/TERMS_OF_SERVICE_EN.md"),
+            "# Terms of Service\n",
+        )
+        .unwrap();
         fs::write(dir.path().join("docs/PRIVACY.ja.md"), "# プライバシー\n").unwrap();
         fs::write(dir.path().join("PRIVACY.md"), "# Privacy\n").unwrap();
         dir
@@ -109,7 +112,11 @@ mod tests {
     fn missing_resource_returns_err() {
         let dir = tempfile::tempdir().unwrap();
         let err = load_from_dir(dir.path(), "en").unwrap_err();
-        assert!(err.contains("terms"), "expected error to mention 'terms', got: {}", err);
+        assert!(
+            err.contains("terms"),
+            "expected error to mention 'terms', got: {}",
+            err
+        );
     }
 
     /// Tauri-2 packaged builds copy `..`-prefixed bundle resources under
@@ -120,7 +127,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let up = dir.path().join("_up_");
         fs::create_dir_all(up.join("docs")).unwrap();
-        fs::write(up.join("docs/TERMS_OF_SERVICE_EN.md"), "# Terms (packaged)\n").unwrap();
+        fs::write(
+            up.join("docs/TERMS_OF_SERVICE_EN.md"),
+            "# Terms (packaged)\n",
+        )
+        .unwrap();
         fs::write(up.join("PRIVACY.md"), "# Privacy (packaged)\n").unwrap();
         let v = load_from_dir(dir.path(), "en").expect("ok");
         assert_eq!(v["terms"], "# Terms (packaged)\n");

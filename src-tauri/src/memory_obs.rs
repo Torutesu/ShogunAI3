@@ -73,10 +73,7 @@ mod tests {
     fn format_event_appends_fields_in_order() {
         let out = format_event(
             "assemble_hits_done",
-            &[
-                ("hits", "7".to_string()),
-                ("elapsed_ms", "14".to_string()),
-            ],
+            &[("hits", "7".to_string()), ("elapsed_ms", "14".to_string())],
         );
         assert_eq!(out, "event=assemble_hits_done hits=7 elapsed_ms=14");
     }
@@ -146,9 +143,7 @@ mod tests {
         testing_logger::setup();
         emit("unit_probe", &[("k", "v".to_string())]);
         testing_logger::validate(|logs| {
-            let found = logs
-                .iter()
-                .find(|l| l.target == "shogun::memory_obs");
+            let found = logs.iter().find(|l| l.target == "shogun::memory_obs");
             let f = found.expect("no shogun::memory_obs event captured");
             assert_eq!(f.body, "event=unit_probe k=v");
             assert_eq!(f.level, log::Level::Info);

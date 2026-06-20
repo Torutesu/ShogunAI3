@@ -26,14 +26,20 @@ export function PaneAppearance() {
       <div className="s-field-label" style={{ marginBottom: 10 }}>Color Mode</div>
       <div className="s-appearance-grid">
         {[['light', 'Light'], ['dark', 'Dark'], ['auto', 'Match System']].map(([k, l]) => (
-          <div key={k} onClick={() => { setMode(k as string); scheduleAppearanceLive(run, { colorMode: k as string, extraWideChat: wide, codeBlockWrap: wrap, fontSize }); }} className={'s-color-card ' + (mode === k ? 'active' : '')}>
+          <button
+            key={k}
+            type="button"
+            onClick={() => { setMode(k as string); scheduleAppearanceLive(run, { colorMode: k as string, extraWideChat: wide, codeBlockWrap: wrap, fontSize }); }}
+            className={'s-color-card ' + (mode === k ? 'active' : '')}
+            aria-pressed={mode === k}
+          >
             <div className="s-color-preview" data-mode={k}>
               <div className="s-color-bar"><span /><span /><span /></div>
               <div className="s-color-title">What's on your mind?</div>
               <div className="s-color-input" />
             </div>
             <div style={{ marginTop: 8, fontSize: 12, textAlign: 'center', color: mode === k ? 'var(--gold)' : 'var(--text-mute)' }}>{l}</div>
-          </div>
+          </button>
         ))}
       </div>
       <div className="s-card">

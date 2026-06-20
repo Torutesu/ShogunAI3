@@ -5,15 +5,13 @@
 
 use app_lib::{kioku_mcp, mcp_server, meeting_mcp, meeting_recipes, memory_mcp};
 use rmcp::{
-    ServerHandler,
-    ErrorData as McpError,
-    ServiceExt,
     model::{
         CallToolRequestParam, CallToolResult, Content, Implementation, ListToolsResult,
         PaginatedRequestParam, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
     },
     service::{RequestContext, RoleServer},
     transport::stdio,
+    ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -73,7 +71,10 @@ impl ServerHandler for ShogunService {
                 })
             })
             .collect();
-        Ok(ListToolsResult { tools, next_cursor: None })
+        Ok(ListToolsResult {
+            tools,
+            next_cursor: None,
+        })
     }
 
     async fn call_tool(
@@ -106,7 +107,11 @@ impl ServerHandler for ShogunService {
                     .unwrap_or_default();
                 let content: Vec<Content> = texts
                     .into_iter()
-                    .filter_map(|t| t.get("text").and_then(|x| x.as_str()).map(|s| Content::text(s.to_string())))
+                    .filter_map(|t| {
+                        t.get("text")
+                            .and_then(|x| x.as_str())
+                            .map(|s| Content::text(s.to_string()))
+                    })
                     .collect();
                 if content.is_empty() {
                     tracing::warn!(
@@ -126,8 +131,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 

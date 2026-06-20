@@ -2,6 +2,7 @@ import React from 'react';
 import { Icon } from '@/shared/icons';
 import { Pane } from '../components/Pane';
 import { Field } from '../components/Field';
+import { Toggle } from '../components/Toggle';
 import { ProductLegalLinks } from '../components/ProductLegalLinks';
 import { useRuntimeActions, useSettingsSection } from '../lib/hooks';
 import { isProfilePhotoDataUrlSetting, imageFileToAvatarDataUrl } from '../lib/utils';
@@ -16,12 +17,20 @@ export interface GeneralSettingsState extends Record<string, unknown> {
   email: string;
 }
 
+export interface DeveloperSettingsState extends Record<string, unknown> {
+  memoryDebugger: boolean;
+}
+
 const GENERAL_DEFAULTS: GeneralSettingsState = {
   name: '',
   avatarGlyph: '',
   avatarImageDataUrl: '',
   aliases: '',
   email: '',
+};
+
+const DEVELOPER_DEFAULTS: DeveloperSettingsState = {
+  memoryDebugger: false,
 };
 
 function generalFromSections(sections: Record<string, unknown>): GeneralSettingsState | null {
@@ -37,6 +46,15 @@ function generalFromSections(sections: Record<string, unknown>): GeneralSettings
   };
 }
 
+function developerFromSections(sections: Record<string, unknown>): DeveloperSettingsState | null {
+  const g = sections.developer;
+  if (!g || typeof g !== 'object') return null;
+  const row = g as Record<string, unknown>;
+  return {
+    memoryDebugger: typeof row.memoryDebugger === 'boolean' ? row.memoryDebugger : DEVELOPER_DEFAULTS.memoryDebugger,
+  };
+}
+
 function dispatchProfileChanged(state: GeneralSettingsState): void {
   try {
     window.dispatchEvent(
@@ -49,6 +67,14 @@ function dispatchProfileChanged(state: GeneralSettingsState): void {
         },
       }),
     );
+  } catch {
+    /* ignore */
+  }
+}
+
+function dispatchSettingsRefreshed(): void {
+  try {
+    window.dispatchEvent(new CustomEvent('shogun-settings-refresh'));
   } catch {
     /* ignore */
   }
@@ -74,6 +100,20 @@ export function PaneGeneral() {
     GENERAL_DEFAULTS,
   );
   const { name, avatarGlyph, avatarImageDataUrl, aliases, email } = profile;
+  const [developer, , saveDeveloper] = useSettingsSection(
+    {
+      section: 'developer',
+      fromSections: developerFromSections,
+      toPayload: (s) => ({
+        memoryDebugger: s.memoryDebugger,
+      }),
+      onSaved: ({ ok }) => {
+        if (ok) dispatchSettingsRefreshed();
+      },
+    },
+    DEVELOPER_DEFAULTS,
+  );
+  const { memoryDebugger } = developer;
   const [clerkState, setClerkState] = React.useState({ enabled: false, signedIn: false, label: '' });
   const photoInputRef = React.useRef<HTMLInputElement>(null);
   const saveProfile = React.useCallback(
@@ -162,6 +202,27 @@ export function PaneGeneral() {
         </div>
         <ProductLegalLinks />
       </div>
+      <Field
+        label="Developer tools"
+        hint="Local development only. Enables the Memory DBG screen in the sidebar without restarting the app."
+      >
+        <div className="row" style={{ gap: 14, justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: 'var(--text)' }}>Memory DBG</div>
+            <div className="s-field-hint" style={{ marginTop: 2 }}>
+              <span className="en-only">Show the Memory Debug screen in the sidebar.</span>
+              <span className="jp">サイドバーに Memory Debug 画面を表示します。</span>
+            </div>
+          </div>
+          <Toggle
+            on={memoryDebugger}
+            onClick={() => {
+              void saveDeveloper({ memoryDebugger: !memoryDebugger });
+            }}
+            ariaLabel="Memory DBG"
+          />
+        </div>
+      </Field>
       <Field
         label="Clerk account"
         hint="Free tier: sign in with email, Google, etc. (in-app overlay). Add your dev URL and shogun-ai:// under Clerk → Redirect URLs if OAuth redirects fail; the app may fall back to the system browser. For Touch ID / Face ID on this device without a paid Clerk plan, use Privacy → Biometric app lock. When Clerk is enabled, Clerk's own Terms of Service and Privacy Policy (clerk.com) apply to authentication and account data processed by Clerk, in addition to SHOGUN's documents."

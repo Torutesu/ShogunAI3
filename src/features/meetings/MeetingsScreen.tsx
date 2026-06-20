@@ -534,7 +534,16 @@ export function MeetingsScreen() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [granola, granolaMenuOpen, granolaTodos, closeGranola, mtgTopShareOpen, mtgLinkAccessMenuOpen]);
+  }, [
+    granola,
+    granolaMenuOpen,
+    granolaTodos,
+    closeGranola,
+    mtgTopShareOpen,
+    mtgLinkAccessMenuOpen,
+    setMtgTopShareOpen,
+    setMtgLinkAccessMenuOpen,
+  ]);
 
   const {
     applyStubTranscript,
@@ -690,6 +699,7 @@ export function MeetingsScreen() {
     backendRecActive, systemAudioRunning, screenCaptureGranted, contextTimelineItems, contextTimelineLoading,
     permissionActionBusy, openMeetingScreenCaptureSettings, requestMeetingScreenCaptureAccess,
     startMicOnlyRecording, injectRecipeIntoMemo, runPostRecSlashItem,
+    setMtgTopShareOpen, setMtgLinkAccess, setMtgLinkAccessMenuOpen, setMtgShareSearch,
   ]);
 
   return (
@@ -863,27 +873,36 @@ export function MeetingsScreen() {
               const dateLabel = date
                 ? date.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
                 : '';
+              const openImportedRecording = function () {
+                setMeetingDetail({ meeting: m, segments: null, loading: true, filter: '' });
+                runRuntimeAction(
+                  'meetings.transcript.get',
+                  { meeting_id: m.id },
+                  { silentError: true },
+                ).then(function (r) {
+                  const segs = r && r.ok && Array.isArray(r.data && r.data.segments)
+                    ? r.data.segments
+                    : [];
+                  setMeetingDetail((prev: any) => (
+                    prev && prev.meeting && prev.meeting.id === m.id
+                      ? { ...prev, segments: segs, loading: false }
+                      : prev
+                  ));
+                });
+              };
               return (
                 <div
                   key={m.id}
                   className="card card-interactive"
                   style={{padding:14, display:'flex', gap:14, alignItems:'center', cursor:'pointer'}}
-                  onClick={function () {
-                    setMeetingDetail({ meeting: m, segments: null, loading: true, filter: '' });
-                    runRuntimeAction(
-                      'meetings.transcript.get',
-                      { meeting_id: m.id },
-                      { silentError: true },
-                    ).then(function (r) {
-                      const segs = r && r.ok && Array.isArray(r.data && r.data.segments)
-                        ? r.data.segments
-                        : [];
-                      setMeetingDetail((prev: any) => (
-                        prev && prev.meeting && prev.meeting.id === m.id
-                          ? { ...prev, segments: segs, loading: false }
-                          : prev
-                      ));
-                    });
+                  onClick={openImportedRecording}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={function (e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openImportedRecording();
+                    }
                   }}
                 >
                   <span style={{flexShrink:0, display:'inline-flex'}}><Icon name="calendar" size={14} className="gold"/></span>

@@ -24,6 +24,7 @@ export function PaneLLM() {
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState<{ index: number; total: number } | null>(null);
   const [memorySemanticDefault, setMemorySemanticDefault] = useState(true);
+  const customProviderNeedsBaseUrl = keyConfigured && keyProvider === 'custom' && !baseUrl.trim();
 
   React.useEffect(() => {
     // Native progress is bridged to a DOM CustomEvent by ipc-client.
@@ -181,6 +182,11 @@ export function PaneLLM() {
                 keyProvider === 'gemini' ? 'Google Gemini' :
                 'Custom / Local'
               }{keyPreview ? ` — ${keyPreview}` : ''}
+            </div>
+          )}
+          {customProviderNeedsBaseUrl && (
+            <div className="s-field-hint" style={{ marginTop: 8, color: 'var(--gold)' }}>
+              Custom / local keys need a Base URL. Enter your proxy or local endpoint here so SHOGUN can call the LLM directly.
             </div>
           )}
           <div className="row" style={{ marginTop: 10 }}>

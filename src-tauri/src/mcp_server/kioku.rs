@@ -2,7 +2,9 @@
 //! (graph traversal — Task 8).
 
 use super::content_text;
-use crate::{kioku_debug_stats, kioku_edge_types, kioku_graph_traversal, memory_store, settings_store};
+use crate::{
+    kioku_debug_stats, kioku_edge_types, kioku_graph_traversal, memory_store, settings_store,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -11,7 +13,9 @@ pub(super) fn handle_debug_stats(_args: &Value) -> Result<Value, String> {
     let settings = settings_store::load()?;
     let now_ms = chrono::Utc::now().timestamp_millis();
     let stats = kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)?;
-    Ok(content_text(&serde_json::to_string(&stats).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&stats).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
@@ -40,10 +44,7 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .unwrap_or(10)
         .max(1);
-    let max_depth_raw = args
-        .get("max_depth")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(2);
+    let max_depth_raw = args.get("max_depth").and_then(|v| v.as_u64()).unwrap_or(2);
     let max_depth = max_depth_raw.clamp(1, 3) as u32;
     let kinds_owned: Vec<String> = args
         .get("kinds")
@@ -80,7 +81,9 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
     };
 
     if entry_ids.is_empty() {
-        return Ok(content_text(&serde_json::to_string(&json!({"hits": []})).map_err(|e| e.to_string())?));
+        return Ok(content_text(
+            &serde_json::to_string(&json!({"hits": []})).map_err(|e| e.to_string())?,
+        ));
     }
 
     // Traverse using the full canonical edge taxonomy (vs `DEFAULT_EDGE_TYPES`,
@@ -109,7 +112,9 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
     };
 
     if nodes.is_empty() {
-        return Ok(content_text(&serde_json::to_string(&json!({"hits": []})).map_err(|e| e.to_string())?));
+        return Ok(content_text(
+            &serde_json::to_string(&json!({"hits": []})).map_err(|e| e.to_string())?,
+        ));
     }
 
     // Decay lookup for ranking. Similarity is empty (we don't compute
@@ -118,12 +123,15 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
     let node_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
     let decay_lookup = kioku_graph_traversal::fetch_decay_scores(&conn, &node_ids)?;
     let similarity_lookup: HashMap<String, f64> = HashMap::new();
-    let ranked = kioku_graph_traversal::rank_subgraph_hits(&nodes, &decay_lookup, &similarity_lookup);
+    let ranked =
+        kioku_graph_traversal::rank_subgraph_hits(&nodes, &decay_lookup, &similarity_lookup);
 
     // Take top N.
     let top_ids: Vec<String> = ranked.iter().take(limit).map(|r| r.id.clone()).collect();
     if top_ids.is_empty() {
-        return Ok(content_text(&serde_json::to_string(&json!({"hits": []})).map_err(|e| e.to_string())?));
+        return Ok(content_text(
+            &serde_json::to_string(&json!({"hits": []})).map_err(|e| e.to_string())?,
+        ));
     }
 
     // Inline bodies. memory_store::fetch takes a payload {"ids": [...]}.
@@ -145,7 +153,11 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
     let hits: Vec<Value> = items
         .into_iter()
         .map(|mut item| {
-            if let Some(id) = item.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+            if let Some(id) = item
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+            {
                 if let Some((score, depth)) = meta.get(&id) {
                     if let Some(obj) = item.as_object_mut() {
                         obj.insert("score".to_string(), json!(*score));
@@ -157,7 +169,9 @@ pub(super) fn handle_related(args: &Value) -> Result<Value, String> {
         })
         .collect();
 
-    Ok(content_text(&serde_json::to_string(&json!({"hits": hits})).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&json!({"hits": hits})).map_err(|e| e.to_string())?,
+    ))
 }
 
 #[cfg(test)]

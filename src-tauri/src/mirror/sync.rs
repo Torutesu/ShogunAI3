@@ -142,7 +142,6 @@ impl SyncEngine {
         })
     }
 
-
     /// Unlock the engine: derive MasterKey from passphrase and cache it.
     ///
     /// # Security discipline
@@ -253,8 +252,7 @@ impl SyncEngine {
         }
 
         // Need server_url from settings.
-        let settings = crate::settings_store::load()
-            .unwrap_or_else(|_| json!({ "sections": {} }));
+        let settings = crate::settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
         let server_url = settings
             .get("sections")
             .and_then(|s| s.get("cloud_mirror"))
@@ -283,8 +281,7 @@ impl SyncEngine {
     /// Run one sync cycle. Returns the number of rows successfully uploaded.
     pub(crate) fn run_cycle(&self) -> Result<u64, String> {
         // Check if mirror is enabled in settings.
-        let settings = crate::settings_store::load()
-            .unwrap_or_else(|_| json!({ "sections": {} }));
+        let settings = crate::settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
         let sections = settings.get("sections").and_then(|s| s.as_object());
 
         let enabled = sections
@@ -325,7 +322,9 @@ impl SyncEngine {
             let guard = self.client.lock().map_err(|e| e.to_string())?;
             guard.clone()
         };
-        let client = client.ok_or_else(|| "Mirror client not configured — call mirror_register first".to_string())?;
+        let client = client.ok_or_else(|| {
+            "Mirror client not configured — call mirror_register first".to_string()
+        })?;
 
         let device_id = sections
             .and_then(|s| s.get("cloud_mirror"))
@@ -362,8 +361,8 @@ impl SyncEngine {
 
         for row in &rows {
             // S11: check pause state between rows.
-            let re_settings = crate::settings_store::load()
-                .unwrap_or_else(|_| json!({ "sections": {} }));
+            let re_settings =
+                crate::settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
             let still_paused = re_settings
                 .get("sections")
                 .and_then(|s| s.as_object())
@@ -389,7 +388,11 @@ impl SyncEngine {
             let envelope = match build_blob_envelope(row, &mek, &device_id) {
                 Ok(env) => env,
                 Err(e) => {
-                    log::warn!("mirror sync: build_blob_envelope failed for {}: {}", row.id, e);
+                    log::warn!(
+                        "mirror sync: build_blob_envelope failed for {}: {}",
+                        row.id,
+                        e
+                    );
                     // Treat as permanent if it's a size error.
                     if e.contains("too large") {
                         let _ = conn.execute(
@@ -451,7 +454,9 @@ impl SyncEngine {
                                 // the failure to the user via `stats.last_error`.
                                 log::warn!(
                                     "mirror sync: row {} stuck after {} attempts: {}",
-                                    row.id, new_attempts, err
+                                    row.id,
+                                    new_attempts,
+                                    err
                                 );
                                 let _ = conn.execute(
                                     "UPDATE mem_items
@@ -466,7 +471,9 @@ impl SyncEngine {
                             } else {
                                 log::info!(
                                     "mirror sync: transient error for {} (attempt {}): {}",
-                                    row.id, new_attempts, err
+                                    row.id,
+                                    new_attempts,
+                                    err
                                 );
                                 if let Ok(mut s) = self.stats.lock() {
                                     s.last_error = Some(format!("{}", err));
@@ -499,22 +506,19 @@ impl SyncEngine {
 /// The scheduler sleeps for the configured interval, then calls run_cycle.
 /// Spawning unconditionally is safe — run_cycle is a no-op when mirror is disabled (S9).
 pub(crate) fn spawn_scheduler(app: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        loop {
-            let interval_secs = scheduler_interval_secs(&app);
-            std::thread::sleep(Duration::from_secs(interval_secs));
-            let engine = SyncEngine::global();
-            if let Err(e) = engine.run_cycle() {
-                log::warn!("mirror sync: run_cycle error: {}", e);
-            }
+    std::thread::spawn(move || loop {
+        let interval_secs = scheduler_interval_secs(&app);
+        std::thread::sleep(Duration::from_secs(interval_secs));
+        let engine = SyncEngine::global();
+        if let Err(e) = engine.run_cycle() {
+            log::warn!("mirror sync: run_cycle error: {}", e);
         }
     });
 }
 
 fn scheduler_interval_secs(_app: &tauri::AppHandle) -> u64 {
     // Read from settings if available; default 5 minutes (S6).
-    let settings = crate::settings_store::load()
-        .unwrap_or_else(|_| json!({ "sections": {} }));
+    let settings = crate::settings_store::load().unwrap_or_else(|_| json!({ "sections": {} }));
     settings
         .get("sections")
         .and_then(|s| s.get("cloud_mirror"))
@@ -606,8 +610,8 @@ pub(crate) fn build_blob_envelope(
 ) -> Result<http::BlobEnvelope, String> {
     // Step 1: build plaintext WITHOUT embedding (always required).
     let mut plaintext_obj = build_plaintext_obj_no_embedding(row);
-    let no_emb_bytes = serde_json::to_vec(&Value::Object(plaintext_obj.clone()))
-        .map_err(|e| e.to_string())?;
+    let no_emb_bytes =
+        serde_json::to_vec(&Value::Object(plaintext_obj.clone())).map_err(|e| e.to_string())?;
 
     // Step 2: hard size guard on the embedding-less form. If even THIS
     // exceeds 1MB the row is genuinely too large and must be excluded.
@@ -623,13 +627,10 @@ pub(crate) fn build_blob_envelope(
     // Step 3: try adding `embedding_b64` if present. If the embedded form
     // would push us over the cap, drop the embedding and ship the row.
     let plaintext_bytes = if let Some(ref emb) = row.embedding {
-        let emb_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            emb,
-        );
+        let emb_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, emb);
         plaintext_obj.insert("embedding_b64".to_string(), Value::String(emb_b64));
-        let with_emb_bytes = serde_json::to_vec(&Value::Object(plaintext_obj.clone()))
-            .map_err(|e| e.to_string())?;
+        let with_emb_bytes =
+            serde_json::to_vec(&Value::Object(plaintext_obj.clone())).map_err(|e| e.to_string())?;
         if with_emb_bytes.len() <= MAX_PLAINTEXT_BYTES {
             with_emb_bytes
         } else {
@@ -655,7 +656,11 @@ pub(crate) fn build_blob_envelope(
     let kinds: Vec<String> = serde_json::from_str::<Value>(&row.kinds_json)
         .ok()
         .and_then(|v| v.as_array().cloned())
-        .map(|arr| arr.into_iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.into_iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_else(|| vec!["screen".to_string()]);
 
     let provenance = row
@@ -703,7 +708,8 @@ pub(crate) fn build_blob_envelope(
     let ct = crypto::encrypt_with_ad(mek.as_bytes(), &plaintext_bytes, &ad_bytes)?;
 
     let nonce_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ct.nonce);
-    let data_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ct.ciphertext);
+    let data_b64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ct.ciphertext);
 
     Ok(http::BlobEnvelope {
         version: 1,
@@ -728,7 +734,10 @@ fn build_plaintext_obj_no_embedding(row: &MemItemRow) -> serde_json::Map<String,
     obj.insert("title".to_string(), Value::String(row.title.clone()));
     obj.insert("snippet".to_string(), Value::String(row.snippet.clone()));
     obj.insert("source".to_string(), Value::String(row.source.clone()));
-    obj.insert("kinds_json".to_string(), Value::String(row.kinds_json.clone()));
+    obj.insert(
+        "kinds_json".to_string(),
+        Value::String(row.kinds_json.clone()),
+    );
     obj.insert(
         "created_at".to_string(),
         Value::Number(serde_json::Number::from(row.created_at)),
@@ -761,7 +770,10 @@ fn build_plaintext_obj_no_embedding(row: &MemItemRow) -> serde_json::Map<String,
             .map(Value::String)
             .unwrap_or(Value::Null),
     );
-    obj.insert("sync_status".to_string(), Value::String("synced".to_string()));
+    obj.insert(
+        "sync_status".to_string(),
+        Value::String("synced".to_string()),
+    );
     obj.insert("sync_excluded_reason".to_string(), Value::Null);
     obj
 }
@@ -804,7 +816,11 @@ pub(crate) fn apply_allowlist(row: &MemItemRow, settings: &Value) -> bool {
         .and_then(|s| s.get("cloud_mirror"))
         .and_then(|m| m.get("app_allowlist"))
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     // App-allowlist check. Empty = allow all.
@@ -821,7 +837,11 @@ pub(crate) fn apply_allowlist(row: &MemItemRow, settings: &Value) -> bool {
         .and_then(|s| s.get("cloud_mirror"))
         .and_then(|m| m.get("url_allowlist"))
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     if url_allowlist.is_empty() || url_allowlist.iter().any(|a| a == "*") {
@@ -839,9 +859,11 @@ pub(crate) fn apply_allowlist(row: &MemItemRow, settings: &Value) -> bool {
 
     // Match if ANY host in the row matches ANY allowlist entry (suffix-match
     // per Phase 2.0a's `host_suffix_match`).
-    hosts
-        .iter()
-        .any(|h| url_allowlist.iter().any(|allow| host_suffix_match(h, allow)))
+    hosts.iter().any(|h| {
+        url_allowlist
+            .iter()
+            .any(|allow| host_suffix_match(h, allow))
+    })
 }
 
 /// Extract host names from any URL-like tokens in the row's `title` and
@@ -870,7 +892,10 @@ fn extract_hosts_from_row(row: &MemItemRow) -> Vec<String> {
                 continue;
             }
             let clean = tok.trim_end_matches(|c: char| {
-                matches!(c, '.' | ',' | ';' | ')' | ']' | '>' | '"' | '\'' | '!' | '?')
+                matches!(
+                    c,
+                    '.' | ',' | ';' | ')' | ']' | '>' | '"' | '\'' | '!' | '?'
+                )
             });
             if let Ok(url) = url::Url::parse(clean) {
                 if let Some(h) = url.host_str() {
@@ -915,9 +940,7 @@ fn host_suffix_match(host: &str, suffix: &str) -> bool {
     if h == s {
         return true;
     }
-    h.len() > s.len()
-        && h.as_bytes()[h.len() - s.len() - 1] == b'.'
-        && h.ends_with(&s)
+    h.len() > s.len() && h.as_bytes()[h.len() - s.len() - 1] == b'.' && h.ends_with(&s)
 }
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
@@ -974,7 +997,8 @@ fn to_sorted_value(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             // BTreeMap sorts keys lexicographically.
-            let mut btree: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+            let mut btree: std::collections::BTreeMap<String, Value> =
+                std::collections::BTreeMap::new();
             for (k, v) in map {
                 btree.insert(k.clone(), to_sorted_value(v));
             }
@@ -1255,7 +1279,10 @@ mod tests {
     fn u17_apply_allowlist_default_allows_all() {
         let row = make_row("r1");
         let settings = json!({ "sections": {} });
-        assert!(apply_allowlist(&row, &settings), "empty allowlist should allow all");
+        assert!(
+            apply_allowlist(&row, &settings),
+            "empty allowlist should allow all"
+        );
     }
 
     // ─── U18: apply_allowlist with matching source ─────────────────────────────
@@ -1438,10 +1465,7 @@ mod tests {
 
             // Assert the disposition stays Transient throughout (5xx).
             let err = http::Error::ServerError(503);
-            assert_eq!(
-                classify_error_for_retry(&err),
-                RetryDisposition::Transient
-            );
+            assert_eq!(classify_error_for_retry(&err), RetryDisposition::Transient);
 
             // Persist the increment exactly the way run_cycle does.
             conn.execute(
@@ -1673,8 +1697,7 @@ mod tests {
         // Override derive_provenance fallback by also using a non-derived source.
         row.source = "user_authored".to_string();
 
-        let env = build_blob_envelope(&row, &mek, "dev_unicode")
-            .expect("build_blob_envelope");
+        let env = build_blob_envelope(&row, &mek, "dev_unicode").expect("build_blob_envelope");
 
         // Re-create AD using the canonical helper — must round-trip since both
         // sides use the same serializer.

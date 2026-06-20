@@ -51,6 +51,15 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function mockFrontmostFocus() {
+  return {
+    appName: "Mock App",
+    bundleId: "com.example.MockApp",
+    windowTitle: "Preview document",
+    windowTitleSource: "mock",
+  };
+}
+
 function clampLimit(raw: any, fallback: number) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
@@ -458,7 +467,8 @@ switch (command) {
       stub: false,
       echo: echo,
     };
-  case "shogun_capture_status":
+  case "shogun_capture_status": {
+    const focus = mockFrontmostFocus();
     return {
       paused: false,
       permissions: {
@@ -468,9 +478,138 @@ switch (command) {
       },
       inputTapRunning: false,
       eventsPerMinute: 0,
+      frontmostFocus: focus,
       stub: false,
       echo: echo,
     };
+  }
+  case "shogun_screen_context_probe": {
+    const focus = mockFrontmostFocus();
+    const captureStatus = {
+      paused: false,
+      permissions: {
+        accessibilityTrusted: false,
+        screenCaptureGranted: false,
+        inputMonitoringGranted: false,
+      },
+      inputTapRunning: false,
+      eventsPerMinute: 0,
+      frontmostFocus: focus,
+      stub: false,
+    };
+    const hummingbirdContext = {
+      enabled: true,
+      mode: "any_app",
+      frontmostApp: focus.appName,
+      frontmostBundleId: focus.bundleId,
+      frontmostWindowTitle: focus.windowTitle,
+      frontmostFocus: focus,
+      axSnapshot: "role=AXWindow\ntitle=Preview document",
+      axSnapshotSource: "mock",
+      axDiagnostics: {
+        trusted: null,
+        focusedElementPresent: false,
+        focusedRole: null,
+        focusedWindowTitle: focus.windowTitle,
+        snapshotPresent: true,
+        treePresent: false,
+        reason: "browser_preview",
+      },
+      axTextSignalPresent: true,
+      axTextChars: 39,
+      axLineCount: 2,
+      stub: true,
+    };
+    const screenContextHealth = {
+      state: "error",
+      label: "Screen context blocked",
+      message: "Desktop runtime is not available in browser preview.",
+      accessibilityTrusted: false,
+      axSnapshotPresent: true,
+      axTextSignalPresent: true,
+      axTextChars: 39,
+      axLineCount: 2,
+      frontmostApp: focus.appName,
+      frontmostBundleId: focus.bundleId,
+      windowTitle: focus.windowTitle,
+      windowTitleSource: focus.windowTitleSource,
+      axSnapshotSource: "mock",
+      axDiagnosticReason: "browser_preview",
+    };
+    const lastSamplerDecision = {
+      capturedAtMs: Date.now(),
+      outcome: "skipped",
+      reason: "browser_preview",
+      appName: focus.appName,
+      bundleId: focus.bundleId,
+      windowTitle: focus.windowTitle,
+      axSource: "mock",
+      axReason: "browser_preview",
+      textChars: 39,
+      spatialPresent: false,
+    };
+    const samplerCoverage = {
+      total: 1,
+      textReadable: 1,
+      focusOnly: 0,
+      empty: 0,
+      skipped: 1,
+      byApp: [{
+        appName: focus.appName,
+        bundleId: focus.bundleId,
+        total: 1,
+        textReadable: 1,
+        unreadable: 0,
+        actionableSamples: 0,
+        focusOnly: 0,
+        empty: 0,
+        skipped: 1,
+        latestAtMs: lastSamplerDecision.capturedAtMs,
+        latestOutcome: lastSamplerDecision.outcome,
+        latestReason: lastSamplerDecision.reason,
+        latestAxSource: lastSamplerDecision.axSource,
+        latestTextChars: lastSamplerDecision.textChars,
+        latestActionableAtMs: null,
+        latestActionableReason: null,
+        latestActionableAxReason: null,
+        latestActionableAxSource: null,
+        latestActionableRecommendedAction: null,
+      }],
+      bySource: [{
+        source: "mock",
+        total: 1,
+        textReadable: 1,
+        empty: 0,
+      }],
+      byIssue: [{
+        reason: "browser_preview",
+        axReason: "browser_preview",
+        severity: "info",
+        recommendedAction: "Browser preview uses mock data; validate live AX capture in the desktop app.",
+        total: 1,
+        textReadable: 1,
+        unreadable: 0,
+        actionable: false,
+        latestAtMs: lastSamplerDecision.capturedAtMs,
+        latestAppName: focus.appName,
+        latestBundleId: focus.bundleId,
+        latestWindowTitle: focus.windowTitle,
+        latestAxSource: lastSamplerDecision.axSource,
+      }],
+      recent: [lastSamplerDecision],
+    };
+    return {
+      capturedAtMs: Date.now(),
+      frontmostFocus: focus,
+      captureStatus: captureStatus,
+      hummingbirdContext: hummingbirdContext,
+      screenContextHealth: screenContextHealth,
+      lastSamplerDecision: lastSamplerDecision,
+      samplerCoverage: samplerCoverage,
+      stub: false,
+      echo: echo,
+    };
+  }
   case "app_onboarding_complete":
     mergeMockSettingsSection("onboarding", { complete: true }, g);
     mergeMockSettingsSection("capture", { paused: false }, g);
@@ -1056,15 +1195,33 @@ switch (command) {
       echo: echo,
     };
   }
-  case "shogun_hummingbird_context":
+  case "shogun_hummingbird_context": {
+    const focus = mockFrontmostFocus();
     return {
       enabled: true,
       mode: "any_app",
-      frontmostApp: "Mock App",
+      frontmostApp: focus.appName,
+      frontmostBundleId: focus.bundleId,
+      frontmostWindowTitle: focus.windowTitle,
+      frontmostFocus: focus,
       axSnapshot: "role=AXWindow\ntitle=Preview document",
+      axSnapshotSource: "mock",
+      axDiagnostics: {
+        trusted: null,
+        focusedElementPresent: false,
+        focusedRole: null,
+        focusedWindowTitle: focus.windowTitle,
+        snapshotPresent: true,
+        treePresent: false,
+        reason: "browser_preview",
+      },
+      axTextSignalPresent: true,
+      axTextChars: 39,
+      axLineCount: 2,
       stub: true,
       echo: echo,
     };
+  }
   default:
     return {
       stub: true,

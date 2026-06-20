@@ -4,9 +4,11 @@ interface FilterBarProps {
   active: string;
   onChange: (id: string) => void;
   counts: Record<string, number>;
+  search: string;
+  onSearchChange: (value: string) => void;
 }
 
-export function FilterBar({ active, onChange, counts }: FilterBarProps) {
+export function FilterBar({ active, onChange, counts, search, onSearchChange }: FilterBarProps) {
   return (
     <div style={{
       display:'flex', alignItems:'center', gap:'var(--space-2)',
@@ -37,13 +39,15 @@ export function FilterBar({ active, onChange, counts }: FilterBarProps) {
       <span style={{flex:1}}/>
       <input
         type="text"
+        value={search}
+        onChange={(e) => onSearchChange(e.target.value)}
         placeholder="search ⌘F"
-        disabled
+        aria-label="Search agents"
         style={{
           background:'transparent', border:`1px solid var(--border)`,
           borderRadius:'var(--radius-sm)', padding:'var(--space-1) var(--space-3)',
-          color:'var(--text-dim)', fontSize:12, fontFamily:'inherit',
-          width:160, opacity:0.6, cursor:'not-allowed',
+          color:'var(--text)', fontSize:12, fontFamily:'inherit',
+          width:160,
         }}
       />
     </div>

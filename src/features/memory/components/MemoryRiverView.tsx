@@ -380,6 +380,7 @@ export function MemoryRiverView({
                     <div role="presentation" onMouseDown={()=>setAssignMenuOpen(() => false)} style={{position:'fixed', inset:0, zIndex:40}}/>
                     <div
                       role="menu"
+                      tabIndex={-1}
                       onMouseDown={(e)=>e.stopPropagation()}
                       style={{
                         position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:41,

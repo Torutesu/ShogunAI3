@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { IMPORT_CONFIRM_TOKEN } from '../../lib/defaults';
 
 interface MemoryDataSectionProps {
@@ -21,6 +22,13 @@ export function MemoryDataSection({
   handleExport,
   handleImportConfirm,
 }: MemoryDataSectionProps) {
+  const confirmInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!importConfirmOpen) return;
+    confirmInputRef.current?.focus();
+  }, [importConfirmOpen]);
+
   return (
     <>
       <div className="s-card" style={{ marginTop: 14 }}>
@@ -79,12 +87,12 @@ export function MemoryDataSection({
               Type <code>{IMPORT_CONFIRM_TOKEN}</code> to confirm:
             </div>
             <input
+              ref={confirmInputRef}
               className="s-input"
               style={{ width: '100%', marginBottom: 14, boxSizing: 'border-box' }}
               placeholder={IMPORT_CONFIRM_TOKEN}
               value={importConfirmText}
               onChange={(e) => setImportConfirmText(e.target.value)}
-              autoFocus
               autoComplete="off"
               spellCheck={false}
               autoCapitalize="off"

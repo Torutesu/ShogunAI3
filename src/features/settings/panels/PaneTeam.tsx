@@ -10,6 +10,9 @@ export function PaneTeam() {
   const [purpose, setPurpose] = useState('');
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
+  const sizeId = 'team-size';
+  const purposeId = 'team-purpose';
+  const emailId = 'team-email';
 
   const canSend = size.trim().length > 0 && purpose.trim().length > 0;
 
@@ -90,11 +93,12 @@ export function PaneTeam() {
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <label className="s-field-hint" style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
+          <label htmlFor={sizeId} className="s-field-hint" style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
             <span className="en-only">Team size (e.g. 5, 20, 100+)</span>
             <span className="jp">チーム規模（例: 5人 / 20人 / 100人以上）</span>
           </label>
           <input
+            id={sizeId}
             className="s-input"
             type="text"
             value={size}
@@ -105,11 +109,12 @@ export function PaneTeam() {
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <label className="s-field-hint" style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
+          <label htmlFor={purposeId} className="s-field-hint" style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
             <span className="en-only">What would you use SHOGUN for Teams for?</span>
             <span className="jp">どんな用途で使いたいですか？</span>
           </label>
           <textarea
+            id={purposeId}
             className="s-input"
             value={purpose}
             onChange={(e) => setPurpose(e.target.value)}
@@ -120,11 +125,12 @@ export function PaneTeam() {
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <label className="s-field-hint" style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
+          <label htmlFor={emailId} className="s-field-hint" style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
             <span className="en-only">Email (optional — for replies)</span>
             <span className="jp">メール（任意・返信希望の場合）</span>
           </label>
           <input
+            id={emailId}
             className="s-input"
             type="email"
             value={email}

@@ -62,6 +62,7 @@ export function AgentsScreen() {
   }, []);
 
   const [filterStatus, setFilterStatus] = useState('all');
+  const [agentSearch, setAgentSearch] = useState('');
 
   const filterCounts = useMemo(() => {
     const c: Record<string, number> = { all: effectiveAgents.length, running: 0, scheduled: 0, paused: 0, error: 0 };
@@ -74,13 +75,24 @@ export function AgentsScreen() {
   }, [effectiveAgents]);
 
   const visibleAgents = useMemo(() => {
-    if (filterStatus === 'all') return effectiveAgents;
-    return effectiveAgents.filter((a) => {
+    const q = agentSearch.trim().toLowerCase();
+    const byStatus = filterStatus === 'all' ? effectiveAgents : effectiveAgents.filter((a) => {
       const last = a.recentRuns && a.recentRuns[0];
       const eff = last && last.level === 'error' ? 'error' : a.status;
       return eff === filterStatus;
     });
-  }, [filterStatus, effectiveAgents]);
+    if (!q) return byStatus;
+    return byStatus.filter((a) => {
+      const haystack = [
+        a.name,
+        a.description,
+        a.trigger,
+        a.attention || '',
+        ...a.tools.map((t) => t.name),
+      ].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [agentSearch, filterStatus, effectiveAgents]);
 
   const editingAgent = useMemo(
     () => effectiveAgents.find((a) => a.id === editModalAgentId) || null,
@@ -257,6 +269,8 @@ export function AgentsScreen() {
         active={filterStatus}
         onChange={setFilterStatus}
         counts={filterCounts}
+        search={agentSearch}
+        onSearchChange={setAgentSearch}
       />
       {visibleAgents.length === 0 ? (
         <div style={{marginBottom:'var(--space-8)'}}>

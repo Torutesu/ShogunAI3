@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import * as ReactDOM from 'react-dom';
 
 export interface PasteTokenModalProps {
@@ -8,6 +9,13 @@ export interface PasteTokenModalProps {
 }
 
 export function PasteTokenModal(props: PasteTokenModalProps) {
+  const tokenInputRef = useRef<HTMLInputElement>(null);
+  const isOpen = !!props.pasteTokenModal;
+
+  useEffect(() => {
+    if (isOpen) tokenInputRef.current?.focus();
+  }, [isOpen]);
+
   if (!props.pasteTokenModal) return null;
   const { pasteTokenModal } = props;
   return ReactDOM.createPortal(
@@ -61,13 +69,14 @@ export function PasteTokenModal(props: PasteTokenModalProps) {
           )}
         </div>
 
-        <label style={{display:'block', fontSize:11, color:'var(--text-dim)', marginBottom:4}}>Token</label>
+        <label htmlFor="paste-token-input" style={{display:'block', fontSize:11, color:'var(--text-dim)', marginBottom:4}}>Token</label>
         <input
+          id="paste-token-input"
+          ref={tokenInputRef}
           type="password"
           value={pasteTokenModal.token}
           onChange={(e) => props.onTokenChange(e.target.value)}
           placeholder="Paste token here"
-          autoFocus
           style={{
             width:'100%',
             padding:'10px 12px',

@@ -37,7 +37,9 @@
       "../docs/TERMS_OF_SERVICE.md",
       "../docs/TERMS_OF_SERVICE_EN.md",
       "../docs/PRIVACY.ja.md",
-      "../PRIVACY.md"
+      "../PRIVACY.md",
+      "icons/tray-active.png",
+      "icons/tray-paused.png"
     ],
     "macOS": {
       "hardenedRuntime": true,
@@ -50,10 +52,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "resources": [
-      "icons/tray-active.png",
-      "icons/tray-paused.png"
     ]
   }
 }

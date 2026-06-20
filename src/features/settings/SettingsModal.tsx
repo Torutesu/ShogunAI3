@@ -60,11 +60,17 @@ export function SettingsModal({ pane, setPane, close }: {
             </div>
             <div className="s-nav-list">
               {SETTINGS_NAV.map(n => (
-                <div key={n.id} className={'s-nav ' + (resolved === n.id ? 'active' : '')} onClick={() => setPane(n.id)}>
+                <button
+                  key={n.id}
+                  type="button"
+                  className={'s-nav ' + (resolved === n.id ? 'active' : '')}
+                  aria-current={resolved === n.id ? 'page' : undefined}
+                  onClick={() => setPane(n.id)}
+                >
                   <Icon name={n.icon} size={13} />
                   <span className="en-only">{n.label}</span>
                   <span className="jp">{n.jp}</span>
-                </div>
+                </button>
               ))}
             </div>
             <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -130,15 +136,26 @@ export function SettingsModal({ pane, setPane, close }: {
           margin-bottom:24px;
         }
         .s-nav {
+          width:100%;
+          border:0;
+          background:transparent;
+          color:var(--text-mute);
+          font:inherit;
           display:flex; align-items:center; gap:8px;
           padding:7px 10px; border-radius:var(--radius-sm);
-          color:var(--text-mute); font-size:12px; cursor:pointer;
+          font-size:12px; cursor:pointer;
           margin-bottom:1px;
+          text-align:left;
+          appearance:none;
         }
         .s-nav:hover { background:var(--surface-2); color:var(--text); }
         .s-nav.active {
           background:var(--surface-2); color:var(--text);
           border:1px solid var(--border);
+        }
+        .s-nav:focus-visible {
+          outline:2px solid color-mix(in srgb, var(--gold) 35%, transparent);
+          outline-offset:-2px;
         }
         .s-nav .jp { font-family:var(--font-jp); font-weight:300; font-size:10.5px; color:var(--text-dim); margin-left:-4px; }
 
@@ -210,6 +227,7 @@ export function SettingsModal({ pane, setPane, close }: {
           background:var(--surface-2); border:1px solid var(--border);
           position:relative; cursor:pointer; transition:background 120ms;
           flex-shrink:0;
+          padding:0; appearance:none; -webkit-appearance:none;
         }
         .s-toggle[data-on="1"] { background:var(--gold); border-color:var(--gold); }
         .s-toggle-knob {
@@ -222,11 +240,21 @@ export function SettingsModal({ pane, setPane, close }: {
         }
 
         .s-color-card {
+          width:100%;
           padding:4px; border-radius:var(--radius-md);
           cursor:pointer; border:1px solid transparent;
           transition:border-color 120ms;
+          background:transparent;
+          color:inherit;
+          font:inherit;
+          appearance:none;
+          text-align:inherit;
         }
         .s-color-card.active { border-color:var(--gold); }
+        .s-color-card:focus-visible {
+          outline:2px solid color-mix(in srgb, var(--gold) 35%, transparent);
+          outline-offset:-2px;
+        }
         .s-color-preview {
           aspect-ratio:16/10; border-radius:var(--radius-sm);
           border:1px solid var(--border);

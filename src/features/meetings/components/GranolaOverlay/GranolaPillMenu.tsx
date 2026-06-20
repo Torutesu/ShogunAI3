@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon } from '@/shared/icons';
 
@@ -33,6 +34,17 @@ export function GranolaPillMenu(p: GranolaPillMenuProps) {
     pickFolder,
     addNewFolder,
   } = p;
+  const attendeesInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const menuKind = granolaPillMenu?.kind;
+
+  useEffect(() => {
+    if (menuKind === 'attendees') {
+      attendeesInputRef.current?.focus();
+    } else if (menuKind === 'folder') {
+      folderInputRef.current?.focus();
+    }
+  }, [menuKind]);
 
   if (!granolaPillMenu) return null;
 
@@ -41,6 +53,7 @@ export function GranolaPillMenu(p: GranolaPillMenuProps) {
       <div role="presentation" style={{position:'fixed', inset:0, zIndex:1300}} onMouseDown={closeGranolaPillMenu}/>
       <div
         role="menu"
+        tabIndex={-1}
         onMouseDown={function (e) { e.stopPropagation(); }}
         style={{
           position:'fixed',
@@ -84,7 +97,7 @@ export function GranolaPillMenu(p: GranolaPillMenuProps) {
             <div style={{padding:'4px 6px 8px'}}>
               <input
                 type="text"
-                autoFocus
+                ref={attendeesInputRef}
                 value={granolaAttendeesQuery}
                 onChange={function (e) { setGranolaAttendeesQuery(e.target.value); }}
                 placeholder="Add attendees…"
@@ -144,7 +157,7 @@ export function GranolaPillMenu(p: GranolaPillMenuProps) {
             <div style={{padding:'4px 6px 8px', display:'flex', alignItems:'center', gap:8}}>
               <input
                 type="text"
-                autoFocus
+                ref={folderInputRef}
                 value={granolaFolderQuery}
                 onChange={function (e) { setGranolaFolderQuery(e.target.value); }}
                 placeholder="Search"

@@ -287,21 +287,14 @@ where
                 let envelope = match client.fetch_blob(&entry.blob_id).await {
                     Ok(e) => e,
                     Err(e) => {
-                        log::warn!(
-                            "cloud-search: fetch {} failed: {e}",
-                            entry.blob_id
-                        );
+                        log::warn!("cloud-search: fetch {} failed: {e}", entry.blob_id);
                         continue;
                     }
                 };
                 let decrypted = match decrypt_envelope(&envelope, mek) {
                     Ok(d) => d,
                     Err(e) => {
-                        log::warn!(
-                            "cloud-search: decrypt {} failed: {}",
-                            entry.blob_id,
-                            e
-                        );
+                        log::warn!("cloud-search: decrypt {} failed: {}", entry.blob_id, e);
                         continue;
                     }
                 };
@@ -316,11 +309,7 @@ where
         let mem_item: MemItemPlaintext = match serde_json::from_slice(&plaintext_bytes) {
             Ok(v) => v,
             Err(e) => {
-                log::warn!(
-                    "cloud-search: deserialize {} failed: {}",
-                    entry.blob_id,
-                    e
-                );
+                log::warn!("cloud-search: deserialize {} failed: {}", entry.blob_id, e);
                 continue;
             }
         };
@@ -387,13 +376,13 @@ fn decrypt_envelope(
     // sorts keys before serializing.
     let mut ad_obj = Map::new();
     ad_obj.insert("blob_id".to_string(), Value::String(env.blob_id.clone()));
-    ad_obj.insert("device_id".to_string(), Value::String(env.device_id.clone()));
+    ad_obj.insert(
+        "device_id".to_string(),
+        Value::String(env.device_id.clone()),
+    );
     ad_obj.insert("metadata".to_string(), metadata_value);
     ad_obj.insert("schema".to_string(), Value::String(env.schema.clone()));
-    ad_obj.insert(
-        "version".to_string(),
-        Value::Number(env.version.into()),
-    );
+    ad_obj.insert("version".to_string(), Value::Number(env.version.into()));
     let ad_value = Value::Object(ad_obj);
     let ad_bytes = mirror_sync::sorted_json_for_ad(&ad_value)?;
 
@@ -423,9 +412,7 @@ fn decrypt_envelope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mirror::http::{
-        BlobEnvelope, BlobListEntry, BlobMetadata, EnvelopeCiphertext,
-    };
+    use crate::mirror::http::{BlobEnvelope, BlobListEntry, BlobMetadata, EnvelopeCiphertext};
     use mockito::Server;
     use serde_json::json;
 
@@ -466,8 +453,7 @@ mod tests {
             provenance: "screen".to_string(),
             captured_at_minute: 28872034,
         };
-        let metadata_value =
-            serde_json::to_value(&metadata).expect("BlobMetadata serializes");
+        let metadata_value = serde_json::to_value(&metadata).expect("BlobMetadata serializes");
         let ad_value = json!({
             "blob_id": blob_id,
             "device_id": device_id,
@@ -482,10 +468,8 @@ mod tests {
         let ct = crypto::encrypt_with_ad(mek.as_bytes(), &plaintext_bytes, &ad_bytes)
             .expect("encrypt_with_ad");
 
-        let nonce_b64 =
-            base64::engine::general_purpose::STANDARD.encode(&ct.nonce);
-        let data_b64 =
-            base64::engine::general_purpose::STANDARD.encode(&ct.ciphertext);
+        let nonce_b64 = base64::engine::general_purpose::STANDARD.encode(&ct.nonce);
+        let data_b64 = base64::engine::general_purpose::STANDARD.encode(&ct.ciphertext);
 
         BlobEnvelope {
             version: 1,
@@ -511,13 +495,22 @@ mod tests {
         obj.insert("id".to_string(), Value::String(id.to_string()));
         obj.insert("title".to_string(), Value::String(title.to_string()));
         obj.insert("snippet".to_string(), Value::String(snippet.to_string()));
-        obj.insert("source".to_string(), Value::String("capture_sampler".to_string()));
-        obj.insert("kinds_json".to_string(), Value::String("[\"screen\"]".to_string()));
+        obj.insert(
+            "source".to_string(),
+            Value::String("capture_sampler".to_string()),
+        );
+        obj.insert(
+            "kinds_json".to_string(),
+            Value::String("[\"screen\"]".to_string()),
+        );
         obj.insert(
             "created_at".to_string(),
             Value::Number(serde_json::Number::from(1700000000000i64)),
         );
-        obj.insert("provenance".to_string(), Value::String("screen".to_string()));
+        obj.insert(
+            "provenance".to_string(),
+            Value::String("screen".to_string()),
+        );
         if let Some(emb) = embedding {
             obj.insert("embedding_b64".to_string(), Value::String(encode_emb(emb)));
         }
@@ -639,11 +632,7 @@ mod tests {
             .lock()
             .unwrap()
             .put("k".to_string(), vec![1u8, 2, 3]);
-        let v = blob_cache()
-            .lock()
-            .unwrap()
-            .get(&"k".to_string())
-            .cloned();
+        let v = blob_cache().lock().unwrap().get(&"k".to_string()).cloned();
         assert_eq!(v, Some(vec![1u8, 2, 3]));
     }
 
@@ -663,11 +652,7 @@ mod tests {
             let mut g = blob_cache().lock().unwrap();
             g.put("overflow".to_string(), vec![0xFFu8]);
         }
-        let evicted = blob_cache()
-            .lock()
-            .unwrap()
-            .get(&"0".to_string())
-            .cloned();
+        let evicted = blob_cache().lock().unwrap().get(&"0".to_string()).cloned();
         assert!(evicted.is_none(), "expected '0' to be evicted");
         let kept = blob_cache()
             .lock()
@@ -698,16 +683,8 @@ mod tests {
             let mut g = blob_cache().lock().unwrap();
             g.put("overflow".to_string(), vec![0xFFu8]);
         }
-        let zero = blob_cache()
-            .lock()
-            .unwrap()
-            .get(&"0".to_string())
-            .cloned();
-        let one = blob_cache()
-            .lock()
-            .unwrap()
-            .get(&"1".to_string())
-            .cloned();
+        let zero = blob_cache().lock().unwrap().get(&"0".to_string()).cloned();
+        let one = blob_cache().lock().unwrap().get(&"1".to_string()).cloned();
         assert!(zero.is_some(), "'0' should still be cached after promotion");
         assert!(one.is_none(), "'1' should be evicted as new LRU");
     }
@@ -725,8 +702,7 @@ mod tests {
     #[test]
     fn decode_embedding_rejects_bad_length() {
         // Encode 5 bytes (not multiple of 4).
-        let s =
-            base64::engine::general_purpose::STANDARD.encode([0u8, 1, 2, 3, 4].as_slice());
+        let s = base64::engine::general_purpose::STANDARD.encode([0u8, 1, 2, 3, 4].as_slice());
         assert!(decode_embedding_b64(&s).is_none());
     }
 
@@ -1225,10 +1201,18 @@ mod tests {
         .expect("search");
 
         // All three blobs across both pages should produce hits.
-        assert_eq!(hits.len(), 3, "expected 3 hits across 2 pages, got {}", hits.len());
+        assert_eq!(
+            hits.len(),
+            3,
+            "expected 3 hits across 2 pages, got {}",
+            hits.len()
+        );
         let mut ids: Vec<String> = hits.iter().map(|h| h.blob_id.clone()).collect();
         ids.sort();
-        assert_eq!(ids, vec!["p1a".to_string(), "p1b".to_string(), "p2a".to_string()]);
+        assert_eq!(
+            ids,
+            vec!["p1a".to_string(), "p1b".to_string(), "p2a".to_string()]
+        );
 
         // Guard rail: each list mock must have been hit exactly once. If the
         // client failed to send the cursor, both calls would land on page-1

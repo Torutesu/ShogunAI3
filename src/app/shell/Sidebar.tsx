@@ -1,6 +1,23 @@
 import React from 'react';
 import { Icon } from '@/shared/icons';
 import { isProfilePhotoDataUrl, shellAvatarChar } from '../lib/helpers';
+import { useScreenContextProbe } from '@/features/memory-debug/hooks/useScreenContextProbe';
+import type { ScreenContextProbeData } from '@/features/memory-debug/types';
+
+type ContextPillState = 'ok' | 'warn' | 'error' | 'preview' | 'loading';
+
+function contextPillLabel(state: ContextPillState, probe: ScreenContextProbeData | null): string {
+  if (probe?.screenContextHealth?.label) return probe.screenContextHealth.label;
+  if (state === 'preview') return 'Desktop runtime required';
+  if (state === 'loading') return 'Checking context';
+  return 'Context status unknown';
+}
+
+function contextPillState(probe: ScreenContextProbeData | null, desktop: boolean, busy: boolean): ContextPillState {
+  if (!desktop) return 'preview';
+  if (!probe && busy) return 'loading';
+  return probe?.screenContextHealth?.state ?? 'loading';
+}
 
 interface SidebarProps {
   sections: any[];
@@ -71,6 +88,12 @@ export function Sidebar({
   resizeStateRef,
   beginSidebarResize,
 }: SidebarProps): React.ReactElement {
+  const { desktop, probe: contextProbe, busy: contextBusy } = useScreenContextProbe({
+    intervalMs: 10_000,
+  });
+  const contextState = contextPillState(contextProbe, desktop, contextBusy);
+  const contextLabel = contextPillLabel(contextState, contextProbe);
+
   return (
     <>
       <div className="sidebar" data-screen-label="sidebar">
@@ -81,13 +104,17 @@ export function Sidebar({
             )}
             {effectiveNav.filter(n => n.section === sec.id).map(n => (
               <React.Fragment key={n.id}>
-                <div className={'nav-item '+(active===n.id?'active':'')} onClick={() => setActive(n.id)}>
+                <button
+                  type="button"
+                  className={'nav-item '+(active===n.id?'active':'')}
+                  onClick={() => setActive(n.id)}
+                >
                   <Icon name={n.icon} size={16}/>
                   <span className="nav-label en-only">{n.label}</span>
                   {n.star && <span className="gold" style={{fontSize:8, marginLeft:-4}}>★</span>}
                   <span className="jp">{n.jp}</span>
                   {n.count && <span className="count">{n.count}</span>}
-                </div>
+                </button>
                 {/* Chat history sub-nav */}
                 {n.id==='chat' && active==='chat' && (
                   <div className="chat-subnav">
@@ -140,6 +167,18 @@ export function Sidebar({
                               return;
                             }
                             setActiveChat(it.id);
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              if (suppressChatRowClickRef.current) {
+                                suppressChatRowClickRef.current = false;
+                                return;
+                              }
+                              setActiveChat(it.id);
+                            }
                           }}
                           title={it.title}
                         >
@@ -207,6 +246,18 @@ export function Sidebar({
                             }
                             setActiveChat(it.id);
                           }}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              if (suppressChatRowClickRef.current) {
+                                suppressChatRowClickRef.current = false;
+                                return;
+                              }
+                              setActiveChat(it.id);
+                            }
+                          }}
                           title={it.title}
                         >
                           <Icon name="grip" size={10} className="grip"/>
@@ -243,19 +294,25 @@ export function Sidebar({
           <button
             type="button"
             ref={contextBtnRef}
-            className="context-enabled-pill"
+            className={`context-enabled-pill context-enabled-pill-${contextState}`}
             aria-live="polite"
             aria-expanded={contextPanelOpen}
             onClick={openContextPanel}
+            title={contextProbe?.screenContextHealth?.message ?? contextLabel}
           >
-            <span className="en-only">Context enabled</span>
-            <span className="jp">コンテキスト有効</span>
+            <span className="context-enabled-copy">
+              <span className="context-enabled-main">
+                <span className="en-only">Context enabled</span>
+                <span className="jp">コンテキスト有効</span>
+              </span>
+              <span className="context-enabled-state">{contextLabel}</span>
+            </span>
             <span className="context-enabled-dot" aria-hidden="true" />
           </button>
           <div className="user-row local-preview-row">
             <span className="s-field-hint local-preview-label" style={{fontSize:10}}><span className="en-only">Local preview</span><span className="jp">ローカルプレビュー</span></span>
           </div>
-          <div ref={userBtnRef} className="user-row user-pill" onClick={openUser}>
+          <button type="button" ref={userBtnRef} className="user-row user-pill" onClick={openUser}>
             <div
               className="avatar"
               style={{
@@ -286,7 +343,7 @@ export function Sidebar({
               <div className="t-mono" style={{fontSize:9, color:'var(--text-dim)'}}>LOCAL</div>
             </div>
             <Icon name={userOpen?'chevronDown':'chevronRight'} size={11} className="dim"/>
-          </div>
+          </button>
         </div>
       </div>
       <button

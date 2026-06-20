@@ -9,6 +9,13 @@ export interface QueryHit {
   snippet: string | null;
 }
 
+export interface FrontmostFocusData {
+  appName: string;
+  bundleId: string | null;
+  windowTitle: string | null;
+  windowTitleSource: string | null;
+}
+
 export interface QueryResult {
   hits: QueryHit[];
   draft_block: string;
@@ -143,6 +150,144 @@ export interface SyncSourceStatus {
 export interface SyncHealthData {
   google_calendar: SyncSourceStatus;
   gmail: SyncSourceStatus;
+}
+
+export interface CaptureStatusData {
+  paused: boolean;
+  permissions: {
+    accessibilityTrusted: boolean;
+    screenCaptureGranted: boolean;
+    inputMonitoringGranted: boolean;
+  };
+  inputTapRunning: boolean;
+  eventsPerMinute: number;
+  frontmostFocus: FrontmostFocusData | null;
+}
+
+export interface HummingbirdContextData {
+  enabled: boolean;
+  mode: string;
+  frontmostApp: string | null;
+  frontmostBundleId: string | null;
+  frontmostWindowTitle: string | null;
+  frontmostFocus: FrontmostFocusData | null;
+  axSnapshot: string;
+  axSnapshotSource: string;
+  axDiagnostics: AxDiagnosticsData;
+  axTextSignalPresent: boolean;
+  axTextChars: number;
+  axLineCount: number;
+  stub: boolean;
+  note?: string;
+}
+
+export interface AxDiagnosticsData {
+  trusted: boolean | null;
+  focusedElementPresent: boolean;
+  focusedRole: string | null;
+  focusedWindowTitle: string | null;
+  snapshotPresent: boolean;
+  treePresent: boolean;
+  reason: string;
+}
+
+export interface ScreenContextHealthData {
+  state: "ok" | "warn" | "error";
+  label: string;
+  message: string;
+  accessibilityTrusted: boolean | null;
+  axSnapshotPresent: boolean;
+  axTextSignalPresent: boolean;
+  axTextChars: number | null;
+  axLineCount: number | null;
+  frontmostApp: string | null;
+  frontmostBundleId: string | null;
+  windowTitle: string | null;
+  windowTitleSource: string | null;
+  axSnapshotSource: string | null;
+  axDiagnosticReason: string | null;
+}
+
+export interface SamplerDecisionData {
+  capturedAtMs: number;
+  outcome: string;
+  reason: string;
+  appName: string | null;
+  bundleId: string | null;
+  windowTitle: string | null;
+  axSource: string | null;
+  axReason: string | null;
+  textChars: number | null;
+  spatialPresent: boolean;
+}
+
+export interface SamplerCoverageAppData {
+  appName: string;
+  bundleId: string | null;
+  total: number;
+  textReadable: number;
+  unreadable: number;
+  actionableSamples: number;
+  focusOnly: number;
+  empty: number;
+  skipped: number;
+  latestAtMs: number | null;
+  latestOutcome: string | null;
+  latestReason: string | null;
+  latestAxSource: string | null;
+  latestTextChars: number | null;
+  latestActionableAtMs: number | null;
+  latestActionableReason: string | null;
+  latestActionableAxReason: string | null;
+  latestActionableAxSource: string | null;
+  latestActionableRecommendedAction: string | null;
+}
+
+export interface SamplerCoverageSourceData {
+  source: string;
+  total: number;
+  textReadable: number;
+  empty: number;
+}
+
+export interface SamplerCoverageIssueData {
+  reason: string;
+  axReason: string | null;
+  severity: "info" | "warn" | "error";
+  recommendedAction: string;
+  total: number;
+  textReadable: number;
+  unreadable: number;
+  actionable: boolean;
+  latestAtMs: number | null;
+  latestAppName: string | null;
+  latestBundleId: string | null;
+  latestWindowTitle: string | null;
+  latestAxSource: string | null;
+}
+
+export interface SamplerCoverageData {
+  total: number;
+  textReadable: number;
+  focusOnly: number;
+  empty: number;
+  skipped: number;
+  byApp: SamplerCoverageAppData[];
+  bySource: SamplerCoverageSourceData[];
+  byIssue: SamplerCoverageIssueData[];
+  recent: SamplerDecisionData[];
+}
+
+export interface ScreenContextProbeData {
+  capturedAtMs: number;
+  frontmostFocus: FrontmostFocusData | null;
+  captureStatus: CaptureStatusData;
+  hummingbirdContext: HummingbirdContextData;
+  screenContextHealth: ScreenContextHealthData;
+  lastSamplerDecision: SamplerDecisionData | null;
+  samplerCoverage: SamplerCoverageData;
+  stub: boolean;
+  echo?: Record<string, unknown>;
 }
 
 export interface DbSourceRow {

@@ -182,75 +182,66 @@ pub fn chat_headers(provider: LlmProvider, key: &str) -> Vec<(&'static str, Stri
 }
 
 /// Build multimodal user content blocks when `images` is non-empty.
-pub fn user_message_with_images(
-  provider: LlmProvider,
-  text: &str,
-  images: &[Value],
-) -> Value {
-  if images.is_empty() {
-    return json!({ "role": "user", "content": text });
-  }
-  if provider == LlmProvider::Anthropic {
-    let mut parts: Vec<Value> = Vec::new();
-    if !text.trim().is_empty() {
-      parts.push(json!({ "type": "text", "text": text }));
+pub fn user_message_with_images(provider: LlmProvider, text: &str, images: &[Value]) -> Value {
+    if images.is_empty() {
+        return json!({ "role": "user", "content": text });
     }
-    for img in images {
-      let mime = img
-        .get("mimeType")
-        .or_else(|| img.get("mime"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("image/jpeg");
-      let b64 = img.get("base64").and_then(|v| v.as_str()).unwrap_or("");
-      if b64.is_empty() {
-        continue;
-      }
-      parts.push(json!({
-        "type": "image",
-        "source": { "type": "base64", "media_type": mime, "data": b64 }
-      }));
+    if provider == LlmProvider::Anthropic {
+        let mut parts: Vec<Value> = Vec::new();
+        if !text.trim().is_empty() {
+            parts.push(json!({ "type": "text", "text": text }));
+        }
+        for img in images {
+            let mime = img
+                .get("mimeType")
+                .or_else(|| img.get("mime"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("image/jpeg");
+            let b64 = img.get("base64").and_then(|v| v.as_str()).unwrap_or("");
+            if b64.is_empty() {
+                continue;
+            }
+            parts.push(json!({
+              "type": "image",
+              "source": { "type": "base64", "media_type": mime, "data": b64 }
+            }));
+        }
+        if parts.is_empty() {
+            return json!({ "role": "user", "content": text });
+        }
+        json!({ "role": "user", "content": parts })
+    } else {
+        let mut parts: Vec<Value> = Vec::new();
+        if !text.trim().is_empty() {
+            parts.push(json!({ "type": "text", "text": text }));
+        }
+        for img in images {
+            let mime = img
+                .get("mimeType")
+                .or_else(|| img.get("mime"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("image/jpeg");
+            let b64 = img.get("base64").and_then(|v| v.as_str()).unwrap_or("");
+            if b64.is_empty() {
+                continue;
+            }
+            parts.push(json!({
+              "type": "image_url",
+              "image_url": { "url": format!("data:{};base64,{}", mime, b64) }
+            }));
+        }
+        if parts.is_empty() {
+            return json!({ "role": "user", "content": text });
+        }
+        json!({ "role": "user", "content": parts })
     }
-    if parts.is_empty() {
-      return json!({ "role": "user", "content": text });
-    }
-    json!({ "role": "user", "content": parts })
-  } else {
-    let mut parts: Vec<Value> = Vec::new();
-    if !text.trim().is_empty() {
-      parts.push(json!({ "type": "text", "text": text }));
-    }
-    for img in images {
-      let mime = img
-        .get("mimeType")
-        .or_else(|| img.get("mime"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("image/jpeg");
-      let b64 = img.get("base64").and_then(|v| v.as_str()).unwrap_or("");
-      if b64.is_empty() {
-        continue;
-      }
-      parts.push(json!({
-        "type": "image_url",
-        "image_url": { "url": format!("data:{};base64,{}", mime, b64) }
-      }));
-    }
-    if parts.is_empty() {
-      return json!({ "role": "user", "content": text });
-    }
-    json!({ "role": "user", "content": parts })
-  }
 }
 
 /// Build the request body for chat completion. Anthropic has a distinct
 /// shape (`system` lifted to top-level, no `temperature` default, no
 /// `messages[role=system]`), so we split here. For OpenAI / Gemini / Custom
 /// we pass the OpenAI standard body.
-pub fn chat_body(
-    provider: LlmProvider,
-    model: &str,
-    messages: &[Value],
-    max_tokens: u64,
-) -> Value {
+pub fn chat_body(provider: LlmProvider, model: &str, messages: &[Value], max_tokens: u64) -> Value {
     if provider == LlmProvider::Anthropic {
         let mut system_parts: Vec<String> = Vec::new();
         let mut user_assistant: Vec<Value> = Vec::new();
@@ -409,13 +400,22 @@ mod tests {
     fn detect_unknown_as_custom() {
         assert_eq!(detect_provider("hf_abcdef"), LlmProvider::Custom);
         assert_eq!(detect_provider(""), LlmProvider::Custom);
-        assert_eq!(detect_provider("  sk-ant-trimmed  "), LlmProvider::Anthropic);
+        assert_eq!(
+            detect_provider("  sk-ant-trimmed  "),
+            LlmProvider::Anthropic
+        );
     }
 
     #[test]
     fn default_base_urls() {
-        assert_eq!(default_base_url(LlmProvider::OpenAI), "https://api.openai.com/v1");
-        assert_eq!(default_base_url(LlmProvider::Anthropic), "https://api.anthropic.com/v1");
+        assert_eq!(
+            default_base_url(LlmProvider::OpenAI),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            default_base_url(LlmProvider::Anthropic),
+            "https://api.anthropic.com/v1"
+        );
         assert!(default_base_url(LlmProvider::Gemini).contains("generativelanguage"));
         assert_eq!(default_base_url(LlmProvider::Custom), "");
     }
@@ -451,28 +451,39 @@ mod tests {
     #[test]
     fn validate_host_mismatched_provider_rejects() {
         // Anthropic key sent to openai host must be rejected.
-        let err = validate_host_for_provider(LlmProvider::Anthropic, "api.openai.com", &[])
-            .unwrap_err();
+        let err =
+            validate_host_for_provider(LlmProvider::Anthropic, "api.openai.com", &[]).unwrap_err();
         assert!(err.contains("does not match host"));
     }
 
     #[test]
     fn validate_host_provider_correct_ok() {
-        assert!(validate_host_for_provider(LlmProvider::Anthropic, "api.anthropic.com", &[]).is_ok());
-        assert!(validate_host_for_provider(LlmProvider::Gemini, "generativelanguage.googleapis.com", &[]).is_ok());
+        assert!(
+            validate_host_for_provider(LlmProvider::Anthropic, "api.anthropic.com", &[]).is_ok()
+        );
+        assert!(validate_host_for_provider(
+            LlmProvider::Gemini,
+            "generativelanguage.googleapis.com",
+            &[]
+        )
+        .is_ok());
         assert!(validate_host_for_provider(LlmProvider::OpenAI, "api.openai.com", &[]).is_ok());
     }
 
     #[test]
     fn chat_headers_openai_uses_bearer() {
         let h = chat_headers(LlmProvider::OpenAI, "sk-abc");
-        assert!(h.iter().any(|(k, v)| *k == "Authorization" && v == "Bearer sk-abc"));
+        assert!(h
+            .iter()
+            .any(|(k, v)| *k == "Authorization" && v == "Bearer sk-abc"));
     }
 
     #[test]
     fn chat_headers_anthropic_uses_api_key() {
         let h = chat_headers(LlmProvider::Anthropic, "sk-ant-xyz");
-        assert!(h.iter().any(|(k, v)| *k == "x-api-key" && v == "sk-ant-xyz"));
+        assert!(h
+            .iter()
+            .any(|(k, v)| *k == "x-api-key" && v == "sk-ant-xyz"));
         assert!(h.iter().any(|(k, _)| *k == "anthropic-version"));
     }
 

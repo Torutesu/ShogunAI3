@@ -37,27 +37,27 @@ export function UserFloatMenu(props: UserFloatMenuProps) {
           </div>
         </div>
         <div className="user-float-section">
-          <div className="user-float-row" onClick={() => { props.onOpenSettings('general'); props.onClose(); }}>
+          <button type="button" className="user-float-row" onClick={() => { props.onOpenSettings('general'); props.onClose(); }}>
             <Icon name="settings" size={16}/><span className="en-only">Settings</span><span className="jp">設定</span>
             <span className="spacer"/><span className="kbd-mini">⌘,</span>
-          </div>
-          <div className="user-float-row" onClick={() => { props.onOpenSettings('download'); props.onClose(); }}>
+          </button>
+          <button type="button" className="user-float-row" onClick={() => { props.onOpenSettings('download'); props.onClose(); }}>
             <Icon name="download" size={16}/><span className="en-only">Download Mobile App</span><span className="jp">モバイルアプリ</span>
-          </div>
+          </button>
         </div>
         <div className="user-float-section" style={{borderTop:'1px solid var(--border)'}}>
-          <div className="user-float-row" onClick={() => { props.onOpenSettings('feedback'); props.onClose(); }}>
+          <button type="button" className="user-float-row" onClick={() => { props.onOpenSettings('feedback'); props.onClose(); }}>
             <Icon name="chat" size={16}/><span className="en-only">Give Feedback</span><span className="jp">フィードバック</span>
-          </div>
-          <div className="user-float-row" onClick={() => { props.onOpenSettings('support'); props.onClose(); }}>
+          </button>
+          <button type="button" className="user-float-row" onClick={() => { props.onOpenSettings('support'); props.onClose(); }}>
             <Icon name="info" size={16}/><span className="en-only">Help Center</span><span className="jp">ヘルプ</span>
-          </div>
-          <div className="user-float-row" onClick={() => { props.onOpenSettings('changelog'); props.onClose(); }}>
+          </button>
+          <button type="button" className="user-float-row" onClick={() => { props.onOpenSettings('changelog'); props.onClose(); }}>
             <Icon name="clock" size={16}/><span className="en-only">Changelog</span><span className="jp">更新履歴</span>
-          </div>
-          <div className="user-float-row gold" onClick={() => { props.onOpenSettings('referral'); props.onClose(); }}>
+          </button>
+          <button type="button" className="user-float-row gold" onClick={() => { props.onOpenSettings('referral'); props.onClose(); }}>
             <Icon name="gift" size={16}/><span className="en-only">Get 2 Months Free</span><span className="jp">2か月無料</span>
-          </div>
+          </button>
         </div>
         <div className="user-float-section" style={{borderTop:'1px solid var(--border)'}}>
           <div className="user-float-row" style={{color:'var(--text-mute)'}}>

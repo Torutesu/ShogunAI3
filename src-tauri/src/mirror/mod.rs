@@ -10,8 +10,8 @@ pub(crate) mod crypto;
 pub(crate) mod keychain;
 
 pub(crate) mod http;
-pub(crate) mod sync;
 pub(crate) mod search;
+pub(crate) mod sync;
 
 // Re-export the canonical types so consumers don't pierce into sub-modules.
 // These APIs are consumed starting in Phase 2.1.2 (sync engine + IPC commands).

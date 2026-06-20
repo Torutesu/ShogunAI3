@@ -8,6 +8,18 @@ import { SettingsHydrationContext } from '../types';
 import { AuditLogSection } from './PaneIntegrations/AuditLogSection';
 import { OAuthNotConfiguredModal } from './PaneIntegrations/OAuthNotConfiguredModal';
 
+const PLANNED_OAUTH_PROVIDERS = [
+  { slug: 'google_drive', title: 'Google Drive' },
+  { slug: 'outlook', title: 'Outlook' },
+  { slug: 'notion', title: 'Notion' },
+  { slug: 'linear', title: 'Linear' },
+  { slug: 'slack', title: 'Slack' },
+  { slug: 'github', title: 'GitHub' },
+  { slug: 'claude', title: 'Claude' },
+  { slug: 'figma', title: 'Figma' },
+  { slug: 'zapier_mcp', title: 'Zapier MCP' },
+] as const;
+
 export function PaneIntegrations() {
   const { run } = useRuntimeActions();
   React.useContext(SettingsHydrationContext);
@@ -369,16 +381,22 @@ export function PaneIntegrations() {
           >Save auto-sync</button>
         </div>
       </div>
-      {[
-        { slug: 'google_drive', title: 'Google Drive' },
-        { slug: 'outlook', title: 'Outlook' },
-        { slug: 'notion', title: 'Notion' },
-        { slug: 'linear', title: 'Linear' },
-        { slug: 'slack', title: 'Slack' },
-      ].map((s) => (
+      {PLANNED_OAUTH_PROVIDERS.map((s) => (
         <div key={s.slug} className="s-card" style={{ marginBottom: 8 }}>
-          <Row last title={<div className="row" style={{ gap: 10 }}><IntegrationLogo slug={s.slug} size={30} title={s.title} /><div style={{ fontSize: 13, fontWeight: 500 }}>{s.title}</div></div>}>
-            <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: s.slug }, { silentError: true })}>Connect</button>
+          <Row
+            last
+            title={(
+              <div className="row" style={{ gap: 10 }}>
+                <IntegrationLogo slug={s.slug} size={30} title={s.title} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{s.title}</div>
+                  <div className="s-field-hint">OAuth connector is coming soon; use agent import where available.</div>
+                </div>
+              </div>
+            )}
+          >
+            <span className="label" style={{ borderColor: 'var(--border)', marginRight: 8 }}>Coming soon</span>
+            <button className="btn btn-sm btn-secondary" type="button" disabled>Coming soon</button>
           </Row>
         </div>
       ))}

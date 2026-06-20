@@ -43,4 +43,20 @@ describe('PaneGeneral', () => {
       );
     });
   });
+
+  it('calls settings.save with the developer section when Memory DBG is toggled', async () => {
+    const { executeAction } = mountPane({
+      general: { name: 'Bob' },
+      developer: { memoryDebugger: false },
+    });
+    const toggle = screen.getByRole('switch', { name: 'Memory DBG' });
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(executeAction).toHaveBeenCalledWith(
+        'settings.save',
+        expect.objectContaining({ section: 'developer', memoryDebugger: true }),
+        expect.any(Object),
+      );
+    });
+  });
 });

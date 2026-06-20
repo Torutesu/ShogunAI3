@@ -8,6 +8,11 @@ fi
 pkill -f '/ShogunAI3/node_modules/.bin/tauri dev' 2>/dev/null || true
 pkill -f 'target/debug/app' 2>/dev/null || true
 sleep 1
+remaining_app="$(pgrep -f 'target/debug/app' 2>/dev/null || true)"
+if [[ -n "$remaining_app" ]]; then
+  echo "Warning: desktop app process still running: $remaining_app"
+  exit 1
+fi
 if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "Warning: port 5173 still in use"
   exit 1

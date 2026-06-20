@@ -11,14 +11,14 @@ export function OAuthNotConfiguredModal({ onClose }: OAuthNotConfiguredModalProp
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
       }}
-      onClick={onClose}
+      onMouseDown={onClose}
     >
       <div
         style={{
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 8, padding: 24, maxWidth: 520, color: 'var(--text)',
         }}
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
       >
         <h3 style={{ margin: '0 0 12px', fontSize: 16 }}>
           <span className="en-only">OAuth credentials not configured</span>

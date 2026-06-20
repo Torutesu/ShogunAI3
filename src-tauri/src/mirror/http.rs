@@ -158,7 +158,11 @@ pub(crate) struct DeviceListResult {
 
 // ─── Status code → Error ─────────────────────────────────────────────────────
 
-fn status_to_error(status: reqwest::StatusCode, body: &str, retry_after_secs: Option<u64>) -> Error {
+fn status_to_error(
+    status: reqwest::StatusCode,
+    body: &str,
+    retry_after_secs: Option<u64>,
+) -> Error {
     match status.as_u16() {
         400 => Error::InvalidEnvelope(body.to_string()),
         401 => Error::Unauthorized,
@@ -232,7 +236,9 @@ impl Client {
     }
 
     fn auth_header(&self) -> Option<String> {
-        self.device_token.as_deref().map(|t| format!("Bearer {}", t))
+        self.device_token
+            .as_deref()
+            .map(|t| format!("Bearer {}", t))
     }
 
     /// POST /v1/devices — register this device. No auth header.
@@ -253,7 +259,10 @@ impl Client {
             .await?;
 
         if resp.status().is_success() {
-            let reg: DeviceRegistration = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let reg: DeviceRegistration = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(reg)
         } else {
             Err(map_error_response(resp).await)
@@ -261,7 +270,10 @@ impl Client {
     }
 
     /// POST /v1/blobs — upload an encrypted blob.
-    pub(crate) async fn upload_blob(&self, envelope: &BlobEnvelope) -> Result<UploadResponse, Error> {
+    pub(crate) async fn upload_blob(
+        &self,
+        envelope: &BlobEnvelope,
+    ) -> Result<UploadResponse, Error> {
         let mut req = self.http.post(self.url("/v1/blobs")).json(envelope);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
@@ -269,7 +281,10 @@ impl Client {
         let resp = req.send().await?;
 
         if resp.status().is_success() {
-            let upload: UploadResponse = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let upload: UploadResponse = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(upload)
         } else {
             Err(map_error_response(resp).await)
@@ -302,7 +317,10 @@ impl Client {
         let resp = req.send().await?;
 
         if resp.status().is_success() {
-            let list: ListBlobsResponse = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let list: ListBlobsResponse = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(list)
         } else {
             Err(map_error_response(resp).await)
@@ -322,10 +340,8 @@ impl Client {
         device_id: Option<&str>,
         cursor: Option<&str>,
     ) -> Result<ListBlobsResponse, Error> {
-        let mut params: Vec<(&str, String)> = vec![
-            ("since", since.to_string()),
-            ("until", until.to_string()),
-        ];
+        let mut params: Vec<(&str, String)> =
+            vec![("since", since.to_string()), ("until", until.to_string())];
         if let Some(d) = device_id {
             params.push(("device_id", d.to_string()));
         }
@@ -340,7 +356,10 @@ impl Client {
         let resp = req.send().await?;
 
         if resp.status().is_success() {
-            let list: ListBlobsResponse = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let list: ListBlobsResponse = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(list)
         } else {
             Err(map_error_response(resp).await)
@@ -357,7 +376,10 @@ impl Client {
         let resp = req.send().await?;
 
         if resp.status().is_success() {
-            let env: BlobEnvelope = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let env: BlobEnvelope = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(env)
         } else {
             Err(map_error_response(resp).await)
@@ -388,7 +410,10 @@ impl Client {
         let resp = self.http.get(self.url("/v1/health")).send().await?;
 
         if resp.status().is_success() {
-            let h: HealthResponse = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let h: HealthResponse = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(h)
         } else {
             Err(map_error_response(resp).await)
@@ -425,7 +450,10 @@ impl Client {
         let resp = req.send().await?;
 
         if resp.status().is_success() {
-            let rec: DeviceRecord = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let rec: DeviceRecord = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(rec)
         } else {
             Err(map_error_response(resp).await)
@@ -458,7 +486,10 @@ impl Client {
             struct DeleteWire {
                 tombstoned_blobs: u64,
             }
-            let wire: DeleteWire = resp.json().await.map_err(|e| Error::Network(e.to_string()))?;
+            let wire: DeleteWire = resp
+                .json()
+                .await
+                .map_err(|e| Error::Network(e.to_string()))?;
             Ok(wire.tombstoned_blobs)
         } else {
             Err(map_error_response(resp).await)
@@ -485,9 +516,7 @@ impl Client {
     /// aggregation with `truncated: true` rather than erroring (graceful
     /// degradation).
     #[allow(dead_code)] // consumed by Phase 2.1.4 Settings UI device management
-    pub(crate) async fn list_devices_by_aggregation(
-        &self,
-    ) -> Result<DeviceListResult, Error> {
+    pub(crate) async fn list_devices_by_aggregation(&self) -> Result<DeviceListResult, Error> {
         const MAX_AGGREGATION_PAGES: usize = 100;
 
         struct Agg {
@@ -630,7 +659,10 @@ mod tests {
 
         let client = make_client(&server, "tok");
         let env = make_envelope("01HVXXX");
-        let resp = client.upload_blob(&env).await.expect("upload_blob should succeed");
+        let resp = client
+            .upload_blob(&env)
+            .await
+            .expect("upload_blob should succeed");
 
         assert_eq!(resp.blob_id, "01HVXXX");
     }
@@ -649,8 +681,15 @@ mod tests {
 
         let client = make_client(&server, "tok");
         let env = make_envelope("01HVXXX");
-        let err = client.upload_blob(&env).await.expect_err("should be conflict");
-        assert!(matches!(err, Error::Conflict(_)), "expected Conflict, got: {:?}", err);
+        let err = client
+            .upload_blob(&env)
+            .await
+            .expect_err("should be conflict");
+        assert!(
+            matches!(err, Error::Conflict(_)),
+            "expected Conflict, got: {:?}",
+            err
+        );
     }
 
     /// I4: upload_blob 413 → Error::PayloadTooLarge.
@@ -666,8 +705,15 @@ mod tests {
 
         let client = make_client(&server, "tok");
         let env = make_envelope("01HVXXX");
-        let err = client.upload_blob(&env).await.expect_err("should be PayloadTooLarge");
-        assert!(matches!(err, Error::PayloadTooLarge), "expected PayloadTooLarge, got: {:?}", err);
+        let err = client
+            .upload_blob(&env)
+            .await
+            .expect_err("should be PayloadTooLarge");
+        assert!(
+            matches!(err, Error::PayloadTooLarge),
+            "expected PayloadTooLarge, got: {:?}",
+            err
+        );
     }
 
     /// I5: upload_blob 429 with Retry-After: 60 → Error::RateLimited(60s).
@@ -684,7 +730,10 @@ mod tests {
 
         let client = make_client(&server, "tok");
         let env = make_envelope("01HVXXX");
-        let err = client.upload_blob(&env).await.expect_err("should be RateLimited");
+        let err = client
+            .upload_blob(&env)
+            .await
+            .expect_err("should be RateLimited");
         match err {
             Error::RateLimited(d) => assert_eq!(d, Duration::from_secs(60)),
             other => panic!("expected RateLimited(60s), got: {:?}", other),
@@ -704,8 +753,15 @@ mod tests {
 
         let client = make_client(&server, "tok");
         let env = make_envelope("01HVXXX");
-        let err = client.upload_blob(&env).await.expect_err("should be ServerError");
-        assert!(matches!(err, Error::ServerError(500)), "expected ServerError(500), got: {:?}", err);
+        let err = client
+            .upload_blob(&env)
+            .await
+            .expect_err("should be ServerError");
+        assert!(
+            matches!(err, Error::ServerError(500)),
+            "expected ServerError(500), got: {:?}",
+            err
+        );
     }
 
     /// I7: list_blobs_cursor happy path with pagination.
@@ -759,7 +815,10 @@ mod tests {
             .await;
 
         let client = make_client(&server, "tok");
-        let err = client.fetch_blob("01HVXXX").await.expect_err("should be Gone");
+        let err = client
+            .fetch_blob("01HVXXX")
+            .await
+            .expect_err("should be Gone");
         assert!(matches!(err, Error::Gone), "expected Gone, got: {:?}", err);
     }
 
@@ -775,8 +834,15 @@ mod tests {
             .await;
 
         let client = make_client(&server, "tok");
-        let err = client.fetch_blob("missing_id").await.expect_err("should be NotFound");
-        assert!(matches!(err, Error::NotFound), "expected NotFound, got: {:?}", err);
+        let err = client
+            .fetch_blob("missing_id")
+            .await
+            .expect_err("should be NotFound");
+        assert!(
+            matches!(err, Error::NotFound),
+            "expected NotFound, got: {:?}",
+            err
+        );
     }
 
     /// I10: health — no auth required, returns version.
@@ -844,7 +910,11 @@ mod tests {
             .rename_device("missing_id", "Whatever")
             .await
             .expect_err("should be NotFound");
-        assert!(matches!(err, Error::NotFound), "expected NotFound, got: {:?}", err);
+        assert!(
+            matches!(err, Error::NotFound),
+            "expected NotFound, got: {:?}",
+            err
+        );
     }
 
     /// D3: rename_device 403 → Error::Forbidden.
@@ -863,7 +933,11 @@ mod tests {
             .rename_device("01HVDDD", "Nope")
             .await
             .expect_err("should be Forbidden");
-        assert!(matches!(err, Error::Forbidden), "expected Forbidden, got: {:?}", err);
+        assert!(
+            matches!(err, Error::Forbidden),
+            "expected Forbidden, got: {:?}",
+            err
+        );
     }
 
     /// D4: delete_device 200 — returns tombstoned_blobs count.

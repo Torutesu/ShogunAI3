@@ -107,19 +107,6 @@ export function MainApp(): React.ReactElement {
   const [pasteTokenModal, setPasteTokenModal] = useState<Record<string, unknown> | null>(null);
   const [toast, setToast] = useState<{ message: string; kind: ToastKind; action?: { label: string; onClick: () => void } } | null>(null);
   const { writeConfirm, writePending, setWriteConfirm, setWritePending } = useWriteConfirm();
-  const [devGate, setDevGate] = useState({ available: false });
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      try {
-        const invoke = window.__TAURI_INTERNALS__?.invoke;
-        if (!invoke) return;
-        const out = await invoke('shogun_memory_debug_gate', { payload: {} });
-        if (!cancel && out && typeof out === 'object') setDevGate(out as { available: boolean });
-      } catch { /* ignore */ }
-    })();
-    return () => { cancel = true; };
-  }, []);
 
   const toastTimerRef = useRef<number | null>(null);
   const bioWantLockRef = useRef(false);
@@ -276,6 +263,37 @@ export function MainApp(): React.ReactElement {
     executeActionRef,
     pushToastRef,
   });
+
+  const [devGate, setDevGate] = useState({ available: false });
+  const devGateMountedRef = useRef(false);
+  const refreshDevGate = useCallback(async () => {
+    try {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (invoke) {
+        const out = await invoke('shogun_memory_debug_gate', { payload: {} });
+        if (devGateMountedRef.current && out && typeof out === 'object') setDevGate(out as { available: boolean });
+        return;
+      }
+      const r = await executeAction('settings.load', {}, { silentError: true });
+      const sec = r.ok && r.data?.settings
+        ? (r.data.settings as Record<string, unknown>).sections as Record<string, unknown> | undefined
+        : undefined;
+      const developer = sec?.developer as Record<string, unknown> | undefined;
+      if (devGateMountedRef.current) setDevGate({ available: !!developer?.memoryDebugger });
+    } catch { /* ignore */ }
+  }, [executeAction]);
+  useEffect(() => {
+    devGateMountedRef.current = true;
+    void refreshDevGate();
+    return () => {
+      devGateMountedRef.current = false;
+    };
+  }, [refreshDevGate]);
+  useEffect(() => {
+    const onRefresh = () => { void refreshDevGate(); };
+    window.addEventListener('shogun-settings-refresh', onRefresh);
+    return () => window.removeEventListener('shogun-settings-refresh', onRefresh);
+  }, [refreshDevGate]);
 
   useEffect(() => {
     let cancelled = false;

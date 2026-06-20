@@ -63,7 +63,7 @@ export function EditAgentModal({ agent, onSave, onClose }: EditAgentModalProps) 
       role="dialog"
       aria-modal="true"
       aria-label="Edit agent"
-      onClick={onClose}
+      onMouseDown={onClose}
       style={{
         position:'fixed', inset:0, zIndex:1000,
         background:'rgba(0,0,0,0.5)',
@@ -71,7 +71,7 @@ export function EditAgentModal({ agent, onSave, onClose }: EditAgentModalProps) 
       }}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           background:'var(--surface)',
           border:`1px solid var(--border-hi)`,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reliable macOS dev launcher: project target dir + Swift dylib + port check.
+# Reliable macOS dev launcher: project target dir cleanup + port/process checks.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,11 +12,18 @@ fi
 
 unset CARGO_TARGET_DIR
 
-SWIFT_LIB="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx/libswift_Concurrency.dylib"
 TARGET="$ROOT/src-tauri/target/debug"
-if [[ -f "$SWIFT_LIB" ]]; then
-  mkdir -p "$TARGET"
-  ln -sf "$SWIFT_LIB" "$TARGET/libswift_Concurrency.dylib"
+if [[ -e "$TARGET/libswift_Concurrency.dylib" ]]; then
+  rm -f "$TARGET/libswift_Concurrency.dylib"
+fi
+
+if pgrep -f "$ROOT/src-tauri/target/debug/app" >/dev/null 2>&1; then
+  echo ""
+  echo "A SHOGUN desktop process is already running."
+  echo "  npm run dev:desktop:stop"
+  echo "  npm run dev:desktop"
+  echo ""
+  exit 1
 fi
 
 if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then
@@ -25,9 +32,9 @@ if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "  • Check Dock for the SHOGUN window (no need to start again)"
   echo "  • To restart cleanly:"
   echo "      npm run dev:desktop:stop"
-  echo "      npm run dev:desktop:mac"
+  echo "      npm run dev:desktop"
   echo ""
   exit 1
 fi
 
-exec npm run dev:desktop
+exec npm run dev:desktop:raw

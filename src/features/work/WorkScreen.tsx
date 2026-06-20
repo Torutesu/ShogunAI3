@@ -3,6 +3,7 @@ import React from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon } from '@/shared/icons';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { Toggle } from '@/features/settings/components/Toggle';
 
 function useWorkProjects() {
   const [projects, setProjects] = React.useState(() => {
@@ -30,6 +31,12 @@ export function WorkScreen() {
   const [memberships, setMemberships] = React.useState<Record<string, any>>({});
   // { project, memories, loading, busyId } when the detail modal is open.
   const [detail, setDetail] = React.useState<any>(null);
+  const renameInputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (renaming.id == null) return;
+    renameInputRef.current?.focus();
+  }, [renaming.id]);
 
   const visible = React.useMemo(
     () => projects.filter((p: any) => !!p.archived === showArchived),
@@ -195,17 +202,13 @@ export function WorkScreen() {
           </div>
         </div>
         <div className="row" style={{flexWrap:'wrap', gap:8, alignItems:'center'}}>
-          <label className="row" style={{gap:6, alignItems:'center', fontSize:12, color:'var(--text-dim)', cursor:'pointer', userSelect:'none'}}>
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-            />
+          <Toggle on={showArchived} onClick={() => setShowArchived((v) => !v)} />
+          <span className="row" style={{gap:6, alignItems:'center', fontSize:12, color:'var(--text-dim)', userSelect:'none'}}>
             <span>
               <span className="en-only">Show archived</span>
               <span className="jp">アーカイブを表示</span>
             </span>
-          </label>
+          </span>
         </div>
       </div>
 
@@ -271,6 +274,15 @@ export function WorkScreen() {
                 if ((e.target as HTMLElement).closest('button, input, [role="menu"]')) return;
                 openDetail(p);
               }}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (renaming.id === p.id || menuFor === p.id) return;
+                  openDetail(p);
+                }
+              }}
             >
               <div className="row" style={{gap:8, marginBottom:10, flexWrap:'wrap', alignItems:'center'}}>
                 <Icon name="work" size={14} className="gold"/>
@@ -297,7 +309,6 @@ export function WorkScreen() {
                 </button>
                 {menuFor === p.id && (
                   <div
-                    onClick={(e) => e.stopPropagation()}
                     style={{
                       position:'absolute', top:44, right:14, zIndex:5,
                       minWidth:180,
@@ -345,10 +356,10 @@ export function WorkScreen() {
                 )}
               </div>
 
-              {renaming.id === p.id ? (
+                {renaming.id === p.id ? (
                 <div className="row" style={{gap:8, alignItems:'center'}}>
                   <input
-                    autoFocus
+                    ref={renameInputRef}
                     type="text"
                     value={renaming.value}
                     onChange={(e) => setRenaming({ id: p.id, value: e.target.value })}

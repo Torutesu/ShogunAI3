@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { msToLocal, humanBytes } from './format';
+import { msToLocal, msToRelative, humanBytes } from './format';
 
 describe('msToLocal', () => {
   it('returns "—" for null', () => {
@@ -24,6 +24,28 @@ describe('msToLocal', () => {
   it('returns "—" for NaN-producing input', () => {
     // Number(NaN) produces NaN → new Date(NaN) is invalid
     expect(msToLocal(NaN)).toBe("—");
+  });
+});
+
+describe('msToRelative', () => {
+  it('returns "—" for null', () => {
+    expect(msToRelative(null, 1700000000000)).toBe("—");
+  });
+
+  it('returns "just now" for sub-minute age', () => {
+    expect(msToRelative(1699999995000, 1700000000000)).toBe("just now");
+  });
+
+  it('returns minutes for sub-hour age', () => {
+    expect(msToRelative(1699999880000, 1700000000000)).toBe("2m ago");
+  });
+
+  it('returns hours for sub-day age', () => {
+    expect(msToRelative(1699992800000, 1700000000000)).toBe("2h ago");
+  });
+
+  it('returns days for older age', () => {
+    expect(msToRelative(1699740800000, 1700000000000)).toBe("3d ago");
   });
 });
 

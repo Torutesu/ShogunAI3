@@ -39,7 +39,12 @@ export function ShareModal({
         </div>
         <div style={{fontSize:13, color:'var(--text-mute)', marginBottom:18}}>Only messages up until now will be shared</div>
         <div className="share-choices">
-          <div className={'share-choice '+(shareMode==='private'?'on':'')} onClick={()=>setShareMode('private')}>
+          <button
+            type="button"
+            className={'share-choice '+(shareMode==='private'?'on':'')}
+            aria-pressed={shareMode === 'private'}
+            onClick={()=>setShareMode('private')}
+          >
             <Icon name="lock" size={18} className={shareMode==='private'?'gold':'dim'}/>
             <div style={{flex:1}}>
               <div style={{fontSize:14, fontWeight:500}}>
@@ -49,8 +54,13 @@ export function ShareModal({
               <div style={{fontSize:12, color:'var(--text-mute)', marginTop:2}}>Only you have access</div>
             </div>
             {shareMode==='private' && <Icon name="check" size={16} className="gold"/>}
-          </div>
-          <div className={'share-choice '+(shareMode==='public'?'on':'')} onClick={()=>setShareMode('public')}>
+          </button>
+          <button
+            type="button"
+            className={'share-choice '+(shareMode==='public'?'on':'')}
+            aria-pressed={shareMode === 'public'}
+            onClick={()=>setShareMode('public')}
+          >
             <Icon name="globe" size={18} className={shareMode==='public'?'gold':'dim'}/>
             <div style={{flex:1}}>
               <div style={{fontSize:14, fontWeight:500}}>
@@ -60,7 +70,7 @@ export function ShareModal({
               <div style={{fontSize:12, color:'var(--text-mute)', marginTop:2}}>Anyone with the link can view</div>
             </div>
             {shareMode==='public' && <Icon name="check" size={16} className="gold"/>}
-          </div>
+          </button>
         </div>
         <button
           type="button"

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon } from '@/shared/icons';
 
@@ -12,6 +13,13 @@ export interface ChatWorkModalProps {
 }
 
 export function ChatWorkModal(props: ChatWorkModalProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isOpen = props.open;
+
+  useEffect(() => {
+    if (isOpen) inputRef.current?.focus();
+  }, [isOpen]);
+
   if (!props.open) return null;
   return ReactDOM.createPortal(
     <div className="chat-modal-backdrop" role="presentation" onMouseDown={props.onClose}>
@@ -24,11 +32,11 @@ export function ChatWorkModal(props: ChatWorkModalProps) {
         <div className="work-search-wrap">
           <Icon name="search" size={16}/>
           <input
+            ref={inputRef}
             type="text"
             className="work-search-input"
             placeholder="プロジェクトを検索または作成"
             value={props.query}
-            autoFocus
             onChange={(e) => props.onQueryChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {

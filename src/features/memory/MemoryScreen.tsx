@@ -601,7 +601,7 @@ export function MemoryScreen() {
             {filtersOpen && (
               <>
                 <div role="presentation" onMouseDown={()=>setFiltersOpen(false)} style={{position:'fixed', inset:0, zIndex:40}}/>
-                <div role="menu" onMouseDown={(e)=>e.stopPropagation()} style={{
+                <div role="menu" tabIndex={-1} onMouseDown={(e)=>e.stopPropagation()} style={{
                   position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41,
                   minWidth:420, padding:10, borderRadius:12,
                   border:'1px solid var(--border-hi)', background:'var(--surface-2)',

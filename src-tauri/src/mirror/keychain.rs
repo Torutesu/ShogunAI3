@@ -403,10 +403,29 @@ mod tests {
         k
     }
 
+    fn keychain_tests_enabled() -> bool {
+        std::env::var("SHOGUN_RUN_KEYCHAIN_TESTS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    }
+
+    fn skip_if_keychain_tests_disabled() -> bool {
+        if keychain_tests_enabled() {
+            return false;
+        }
+        eprintln!(
+            "skipping macOS Keychain integration test; set SHOGUN_RUN_KEYCHAIN_TESTS=1 to run"
+        );
+        true
+    }
+
     // ─── K1: save then load returns same bytes ────────────────────────────────
 
     #[test]
     fn k1_save_then_load_returns_same_bytes() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k1");
         let mk = MasterKey::from_bytes(random_key_bytes());
         save_master_key(&mk).unwrap();
@@ -418,6 +437,9 @@ mod tests {
 
     #[test]
     fn k2_load_when_nothing_saved_returns_none() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k2");
         let result = load_master_key().unwrap();
         assert!(result.is_none());
@@ -427,6 +449,9 @@ mod tests {
 
     #[test]
     fn k3_delete_idempotent() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k3");
         let mk = MasterKey::from_bytes(random_key_bytes());
         save_master_key(&mk).unwrap();
@@ -439,6 +464,9 @@ mod tests {
 
     #[test]
     fn k4_save_replaces_previous() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k4");
         let mk1 = MasterKey::from_bytes([0x11_u8; 32]);
         let mk2 = MasterKey::from_bytes([0x22_u8; 32]);
@@ -452,6 +480,9 @@ mod tests {
 
     #[test]
     fn k5_salt_round_trip() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k5");
         let salt: [u8; 16] = {
             let mut s = [0u8; 16];
@@ -471,6 +502,9 @@ mod tests {
 
     #[test]
     fn k6_ensure_salt_creates_if_missing() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k6");
 
         // No entry yet — load_salt must return None.
@@ -493,6 +527,9 @@ mod tests {
 
     #[test]
     fn k7_ensure_salt_idempotent() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k7");
         let s1 = ensure_salt().unwrap();
         let s2 = ensure_salt().unwrap();
@@ -507,13 +544,19 @@ mod tests {
 
     #[test]
     fn k8_concurrent_saves_no_panic() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         use std::thread;
 
         let _fix = KeychainFixture::new("k8");
         let service = TEST_SERVICE_OVERRIDE.with(|c| c.borrow().clone()).unwrap();
-        let account_master =
-            TEST_ACCOUNT_MASTER_OVERRIDE.with(|c| c.borrow().clone()).unwrap();
-        let account_salt = TEST_ACCOUNT_SALT_OVERRIDE.with(|c| c.borrow().clone()).unwrap();
+        let account_master = TEST_ACCOUNT_MASTER_OVERRIDE
+            .with(|c| c.borrow().clone())
+            .unwrap();
+        let account_salt = TEST_ACCOUNT_SALT_OVERRIDE
+            .with(|c| c.borrow().clone())
+            .unwrap();
         let svc = Arc::new(service);
         let acc_mk = Arc::new(account_master);
         let acc_salt = Arc::new(account_salt);
@@ -542,7 +585,10 @@ mod tests {
 
         // Verify the entry is readable on the main thread (overrides still set).
         let loaded = load_master_key().unwrap();
-        assert!(loaded.is_some(), "after concurrent writes, entry must be present");
+        assert!(
+            loaded.is_some(),
+            "after concurrent writes, entry must be present"
+        );
     }
 
     // ─── K9: bad-length read errors gracefully ────────────────────────────────
@@ -553,20 +599,29 @@ mod tests {
 
     #[test]
     fn k9_bad_length_read_errors_gracefully() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k9");
 
         // Use the low-level helper to write a 16-byte entry under the master-key
         // account — bypasses the production save_master_key (which would only
         // accept a [u8; 32]). This simulates a corrupted/mismatched keychain entry.
         let service = TEST_SERVICE_OVERRIDE.with(|c| c.borrow().clone()).unwrap();
-        let account = TEST_ACCOUNT_MASTER_OVERRIDE.with(|c| c.borrow().clone()).unwrap();
+        let account = TEST_ACCOUNT_MASTER_OVERRIDE
+            .with(|c| c.borrow().clone())
+            .unwrap();
         let mut opts = PasswordOptions::new_generic_password(&service, &account);
         opts.set_access_synchronized(Some(false));
         set_generic_password_options(&[0xBB_u8; 16], opts).unwrap();
 
         // Production load_master_key must surface a length-mismatch error.
         let result = load_master_key();
-        assert!(result.is_err(), "bad-length read must return Err, got: {:?}", result);
+        assert!(
+            result.is_err(),
+            "bad-length read must return Err, got: {:?}",
+            result
+        );
         let msg = result.unwrap_err();
         assert!(
             msg.contains("length mismatch"),
@@ -595,6 +650,9 @@ mod tests {
 
     #[test]
     fn k10_save_master_key_uses_sync_flag() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let _fix = KeychainFixture::new("k10");
         // Override the sync override BACK to true — fixture sets it false for
         // safety; here we want to exercise the production path with sync=true.
@@ -607,8 +665,8 @@ mod tests {
             Ok(()) => {
                 // Signed-binary path: the entitlement IS present (e.g. the
                 // packaged Tauri app). Verify the round-trip works.
-                let loaded = load_master_key()
-                    .expect("load_master_key after successful save must succeed");
+                let loaded =
+                    load_master_key().expect("load_master_key after successful save must succeed");
                 let loaded = loaded.expect("entry should be present after save");
                 assert_eq!(loaded.as_bytes(), &[0x42_u8; 32]);
                 // Cleanup: delete with sync=true (matching the write).
@@ -638,11 +696,17 @@ mod tests {
 
     #[test]
     fn k11_tests_clean_up_after_themselves() {
+        if skip_if_keychain_tests_disabled() {
+            return;
+        }
         let (saved_service, saved_account) = {
             let fix = KeychainFixture::new("k11");
             let mk = MasterKey::from_bytes(random_key_bytes());
             save_master_key(&mk).unwrap();
-            assert!(load_master_key().unwrap().is_some(), "entry exists during fixture");
+            assert!(
+                load_master_key().unwrap().is_some(),
+                "entry exists during fixture"
+            );
             let svc = fix.service.clone();
             let acc = fix.account_master.clone();
             (svc, acc)
@@ -658,7 +722,10 @@ mod tests {
         set_test_account_master_override(&saved_account);
 
         let after = load_master_key().unwrap();
-        assert!(after.is_none(), "K11: entry should be cleaned up after Drop");
+        assert!(
+            after.is_none(),
+            "K11: entry should be cleaned up after Drop"
+        );
 
         // Cleanup the temporary overrides we just set.
         clear_test_sync_override();

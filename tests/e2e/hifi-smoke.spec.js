@@ -263,21 +263,18 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     });
   });
 
-  test("Settings Integrations: Connect shows v1 not-implemented warn toast", async ({ page }) => {
+  test("Settings Integrations: planned OAuth providers are not clickable", async ({ page }) => {
     await openHiFi(page);
     await openSettingsModal(page);
 
     await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
     await expect(page.locator(".s-pane-head")).toContainText("Integrations");
 
-    await page
+    await expect(page
       .locator(".s-card")
       .filter({ hasText: "Slack" })
-      .getByRole("button", { name: "Connect" })
-      .click();
-    await expect(page.locator(".app-toast.warn")).toContainText(/not available in v1/i, {
-      timeout: 8000,
-    });
+      .getByRole("button", { name: "Planned" }))
+      .toBeDisabled();
     await page.locator(".s-close").click();
     await expect(page.locator(".s-modal")).toHaveCount(0);
   });

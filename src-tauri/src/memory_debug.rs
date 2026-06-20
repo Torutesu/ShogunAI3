@@ -2,6 +2,8 @@
 //! the B-1 `memory_obs` emits; exposed to the frontend via
 //! `shogun_memory_debug_recent_calls` (debug builds only).
 
+#![allow(dead_code)]
+
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::Mutex;

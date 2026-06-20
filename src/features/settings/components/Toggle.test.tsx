@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import { Toggle } from './Toggle';
 
 describe('Toggle', () => {
-  it('renders a div with class s-toggle', () => {
+  it('renders a button with class s-toggle', () => {
     const { container } = render(<Toggle on={false} onClick={vi.fn()} />);
     expect(container.querySelector('.s-toggle')).toBeInTheDocument();
   });
@@ -43,5 +43,11 @@ describe('Toggle', () => {
     const onClick = vi.fn();
     render(<Toggle on={false} onClick={onClick} />);
     expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('exposes switch semantics when labeled', () => {
+    render(<Toggle on={false} onClick={vi.fn()} ariaLabel="Memory DBG" />);
+    const toggle = screen.getByRole('switch', { name: 'Memory DBG' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
   });
 });

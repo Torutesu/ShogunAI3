@@ -20,13 +20,17 @@ pub(super) fn handle_fetch(args: &Value) -> Result<Value, String> {
         }
     }
     let result = memory_store::fetch(args)?;
-    Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&result).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_search(args: &Value) -> Result<Value, String> {
     let _ = require_string_field(args, "query")?;
     let result = memory_store::search(args)?;
-    Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&result).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_search_timeline(args: &Value) -> Result<Value, String> {
@@ -36,13 +40,17 @@ pub(super) fn handle_search_timeline(args: &Value) -> Result<Value, String> {
         obj.insert("scope".to_string(), serde_json::json!("timeline"));
     }
     let result = memory_store::search_timeline(&payload)?;
-    Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&result).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_entities(args: &Value) -> Result<Value, String> {
     let _ = require_string_field(args, "q")?;
     let result = memory_store::entities_from_catalog(args)?;
-    Ok(content_text(&serde_json::to_string(&result).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&result).map_err(|e| e.to_string())?,
+    ))
 }
 
 #[cfg(test)]

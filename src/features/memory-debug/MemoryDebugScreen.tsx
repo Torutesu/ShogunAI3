@@ -1,15 +1,17 @@
 import { useState } from 'react';
+import { TabContextProbe } from './components/TabContextProbe';
 import { TabQueryTester } from './components/TabQueryTester';
 import { TabKiokuStats } from './components/TabKiokuStats';
 import { TabRecentCalls } from './components/TabRecentCalls';
 import { TabSyncHealth } from './components/TabSyncHealth';
 import { TabDbStats } from './components/TabDbStats';
 
-type TabId = "query" | "recent" | "sync" | "stats" | "kioku";
+type TabId = "query" | "context" | "recent" | "sync" | "stats" | "kioku";
 
 function tabLabel(t: TabId): string {
   switch (t) {
     case "query": return "Query Tester";
+    case "context": return "Context";
     case "recent": return "Recent Calls";
     case "sync": return "Sync Health";
     case "stats": return "DB Stats";
@@ -18,7 +20,7 @@ function tabLabel(t: TabId): string {
   }
 }
 
-const TABS: TabId[] = ["query", "recent", "sync", "stats", "kioku"];
+const TABS: TabId[] = ["query", "context", "recent", "sync", "stats", "kioku"];
 
 export function MemoryDebugScreen() {
   const [tab, setTab] = useState<TabId>("query");
@@ -36,6 +38,7 @@ export function MemoryDebugScreen() {
         </div>
       </div>
       {tab === "query" && <TabQueryTester />}
+      {tab === "context" && <TabContextProbe />}
       {tab === "recent" && <TabRecentCalls />}
       {tab === "sync" && <TabSyncHealth />}
       {tab === "stats" && <TabDbStats />}

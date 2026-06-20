@@ -14,6 +14,18 @@ export function msToLocal(ms: number | null | undefined): string {
   }
 }
 
+/** Format a millisecond timestamp as a rough relative age, or "—" for falsy/invalid input. */
+export function msToRelative(ms: number | null | undefined, nowMs: number = Date.now()): string {
+  if (!ms) return "—";
+  const time = Number(ms);
+  if (!Number.isFinite(time) || !Number.isFinite(nowMs)) return "—";
+  const diff = Math.max(0, nowMs - time);
+  if (diff < 60_000) return "just now";
+  if (diff < 60 * 60_000) return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 24 * 60 * 60_000) return `${Math.round(diff / (60 * 60_000))}h ago`;
+  return `${Math.round(diff / (24 * 60 * 60_000))}d ago`;
+}
+
 /** Format a byte count into a human-readable string (e.g. "1.0 KB"). */
 export function humanBytes(n: number | null | undefined): string {
   if (!n || n < 1024) return `${n || 0} B`;

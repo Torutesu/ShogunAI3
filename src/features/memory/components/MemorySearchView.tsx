@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { memoryProviderKey, MEMORY_PROVIDER_META } from '../lib/runtime';
 import { ShogunHighlight } from '@/shared/lib/highlight';
@@ -17,6 +17,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
   const [targetWorkspace, setTargetWorkspace] = useState('');
   const [busy, setBusy] = useState(false);
   const [newDraft, setNewDraft] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +45,10 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
     }, 220);
     return () => clearTimeout(t);
   }, [query]);
+
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
 
   const toggleOne = useCallback((id: string) => {
     setSelected((prev) => {
@@ -107,11 +112,11 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
     <div style={{flex:1, padding:'24px 40px 40px', minHeight:0, display:'flex', flexDirection:'column', gap:14}}>
       <div className="row" style={{gap:10, alignItems:'center'}}>
         <input
+          ref={searchInputRef}
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search indexed memory…"
-          autoFocus
           style={{
             flex:1, padding:'10px 14px', borderRadius:10,
             border:'1px solid var(--border-hi)', background:'var(--bg)',

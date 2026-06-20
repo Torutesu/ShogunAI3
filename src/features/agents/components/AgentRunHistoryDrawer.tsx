@@ -139,11 +139,16 @@ export function AgentRunHistoryDrawer({ agent, nowMs, onClose }: AgentRunHistory
 
   return (
     <>
-      <div
+      <button
+        type="button"
+        aria-label="Close run history"
         onClick={onClose}
+        tabIndex={-1}
         style={{
+          all:'unset',
           position:'fixed', inset:0, zIndex:999,
           background:'rgba(0,0,0,0.4)',
+          cursor:'default',
         }}
       />
       <div

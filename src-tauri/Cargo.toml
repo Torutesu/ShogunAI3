@@ -75,6 +75,7 @@ core-foundation = "0.10"
 block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSWorkspace", "NSRunningApplication"] }
 objc2-local-authentication = "0.3.2"
 # screencapturekit 6.x pulls apple-metal, which requires macOS 26 SDK unavailable on CI.
 screencapturekit = { version = "=2.1.0", features = ["macos_13_0"] }

@@ -27,25 +27,33 @@ fn parse_meetings_list_args(args: &Value) -> Result<MeetingsListArgs, String> {
 pub(super) fn handle_meetings_list(args: &Value) -> Result<Value, String> {
     let p = parse_meetings_list_args(args)?;
     let rows = meeting_store::list_meetings(p.from_ms, p.to_ms, p.limit)?;
-    Ok(content_text(&serde_json::to_string(&rows).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&rows).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_meeting_get(args: &Value) -> Result<Value, String> {
     let id = require_string_field(args, "meeting_id")?;
     let detail = meeting_store::get_meeting_detail(&id)?;
-    Ok(content_text(&serde_json::to_string(&detail).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&detail).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_meeting_transcript(args: &Value) -> Result<Value, String> {
     let id = require_string_field(args, "meeting_id")?;
     let segments = meeting_store::list_transcript_final(&id)?;
-    Ok(content_text(&serde_json::to_string(&segments).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&segments).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_meeting_notes(args: &Value) -> Result<Value, String> {
     let id = require_string_field(args, "meeting_id")?;
     let blocks = meeting_store::list_note_blocks(&id)?;
-    Ok(content_text(&serde_json::to_string(&blocks).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&blocks).map_err(|e| e.to_string())?,
+    ))
 }
 
 pub(super) fn handle_meetings_search(args: &Value) -> Result<Value, String> {
@@ -61,7 +69,9 @@ pub(super) fn handle_meetings_search(args: &Value) -> Result<Value, String> {
         .map(|n| n as usize)
         .unwrap_or(25);
     let hits = meeting_store::search_meetings_fts(query, limit)?;
-    Ok(content_text(&serde_json::to_string(&hits).map_err(|e| e.to_string())?))
+    Ok(content_text(
+        &serde_json::to_string(&hits).map_err(|e| e.to_string())?,
+    ))
 }
 
 #[cfg(test)]

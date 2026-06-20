@@ -28,13 +28,13 @@ export function TopBar({
 }: TopBarProps): React.ReactElement {
   return (
     <div className="topbar">
-      <div className="brand" onClick={()=>setActive('home')} style={{cursor:'pointer'}} title="Shogun AI · Home">
+      <button type="button" className="brand" onClick={()=>setActive('home')} title="Shogun AI · Home">
         <Kamon size={26} color="var(--text)"/>
         <div>
           <div className="brand-title en-only">Shogun AI</div>
           <div className="brand-jp jp">Shogun AI</div>
         </div>
-      </div>
+      </button>
       <div
         className="cmdk"
         role="button"

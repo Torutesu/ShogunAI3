@@ -125,7 +125,8 @@ fn derive_subkey(mk: &MasterKey, info: &[u8]) -> [u8; KEY_LEN] {
     let hk = Hkdf::<Sha256>::new(None, &mk.0);
     let mut out = [0u8; KEY_LEN];
     // HKDF expand cannot fail for output lengths ≤ 255 * HashLen (8160 bytes for SHA-256).
-    hk.expand(info, &mut out).expect("HKDF expand cannot fail for 32-byte output");
+    hk.expand(info, &mut out)
+        .expect("HKDF expand cannot fail for 32-byte output");
     out
 }
 
@@ -139,23 +140,38 @@ pub(crate) fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<Ciphertex
     let mut nonce_bytes = [0u8; 24];
     getrandom::getrandom(&mut nonce_bytes).map_err(|e| e.to_string())?;
     let nonce = XNonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|e| e.to_string())?;
-    Ok(Ciphertext { nonce: nonce_bytes, ciphertext })
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|e| e.to_string())?;
+    Ok(Ciphertext {
+        nonce: nonce_bytes,
+        ciphertext,
+    })
 }
 
 /// Encrypt `plaintext` with XChaCha20-Poly1305 AEAD using a random 24-byte nonce
 /// and explicit `associated_data` that is authenticated but not encrypted.
 ///
 /// Use this when you need to bind metadata fields to the ciphertext per RFC § 4.3.
-pub(crate) fn encrypt_with_ad(key: &[u8; KEY_LEN], plaintext: &[u8], associated_data: &[u8]) -> Result<Ciphertext, String> {
+pub(crate) fn encrypt_with_ad(
+    key: &[u8; KEY_LEN],
+    plaintext: &[u8],
+    associated_data: &[u8],
+) -> Result<Ciphertext, String> {
     use chacha20poly1305::aead::Payload;
     let cipher = XChaCha20Poly1305::new_from_slice(key).map_err(|e| e.to_string())?;
     let mut nonce_bytes = [0u8; 24];
     getrandom::getrandom(&mut nonce_bytes).map_err(|e| e.to_string())?;
     let nonce = XNonce::from_slice(&nonce_bytes);
-    let payload = Payload { msg: plaintext, aad: associated_data };
+    let payload = Payload {
+        msg: plaintext,
+        aad: associated_data,
+    };
     let ciphertext = cipher.encrypt(nonce, payload).map_err(|e| e.to_string())?;
-    Ok(Ciphertext { nonce: nonce_bytes, ciphertext })
+    Ok(Ciphertext {
+        nonce: nonce_bytes,
+        ciphertext,
+    })
 }
 
 /// Decrypt a `Ciphertext` produced by `encrypt`. Returns the original plaintext.
@@ -348,7 +364,10 @@ mod tests {
         let ct = encrypt(&k1, b"secret").unwrap();
         let result = decrypt(&k2, &ct);
         assert!(result.is_err(), "decrypt with wrong key should fail");
-        assert_eq!(result.unwrap_err(), "decryption failed (key mismatch or tampering)");
+        assert_eq!(
+            result.unwrap_err(),
+            "decryption failed (key mismatch or tampering)"
+        );
     }
 
     // ─── C9: tampered ciphertext fails ────────────────────────────────────────
@@ -361,7 +380,10 @@ mod tests {
         let mid = ct.ciphertext.len() / 2;
         ct.ciphertext[mid] ^= 0xFF;
         let result = decrypt(&key, &ct);
-        assert!(result.is_err(), "tampered ciphertext should fail authentication");
+        assert!(
+            result.is_err(),
+            "tampered ciphertext should fail authentication"
+        );
     }
 
     // ─── C10: tampered nonce fails ────────────────────────────────────────────
