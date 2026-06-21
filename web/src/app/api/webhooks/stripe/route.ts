@@ -2,12 +2,13 @@ import { headers } from 'next/headers';
 import Stripe from 'stripe';
 import { getStripe } from '@/lib/stripe';
 import { handleCheckoutSessionCompleted, handleSubscriptionChanged } from '@/lib/billing';
+import { getRequiredEnv } from '@/lib/web-config';
 
 export async function POST(req: Request) {
   const body = await req.text();
   const headerStore = await headers();
   const signature = headerStore.get('stripe-signature');
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const webhookSecret = getRequiredEnv('STRIPE_WEBHOOK_SECRET');
 
   if (!signature || !webhookSecret) {
     return Response.json({ ok: false, error: 'misconfigured' }, { status: 500 });

@@ -1154,13 +1154,41 @@ switch (command) {
     // Mock: simulate a successful in-app OAuth flow without the actual
     // browser round-trip. Real backend launches a localhost server +
     // system browser; the mock just returns metadata immediately.
+    const C = ShogunIntegrationConnectors;
+    const hasAccess = true;
+    const hasRefresh = true;
+    const hasClient = true;
+    const scopes = [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/drive.readonly",
+    ];
+    const googleProviders = ["gmail", "google_calendar", "google_drive"];
+    for (const slug of googleProviders) {
+      if (slug === "google_calendar") {
+        C?.writeGcalMock?.({
+          configured: hasAccess,
+          tokenRefreshReady: hasRefresh && hasClient,
+          importedAt: Date.now(),
+        });
+      } else if (slug === "gmail") {
+        C?.writeGmailMock?.({
+          configured: hasAccess,
+          tokenRefreshReady: hasRefresh && hasClient,
+          importedAt: Date.now(),
+        });
+      } else if (slug === "google_drive") {
+        C?.writeGDriveMock?.({
+          configured: hasAccess,
+          tokenRefreshReady: hasRefresh && hasClient,
+          importedAt: Date.now(),
+        });
+      }
+    }
     return {
       ok: true,
       provider: (echo && echo.provider) || "gmail",
-      scopes: [
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/calendar.readonly",
-      ],
+      scopes,
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
       refreshTokenPresent: true,
     };

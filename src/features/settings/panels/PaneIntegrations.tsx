@@ -27,6 +27,8 @@ export function PaneIntegrations() {
   const [googleCalRefresh, setGoogleCalRefresh] = useState(false);
   const [gmailCred, setGmailCred] = useState(false);
   const [gmailRefresh, setGmailRefresh] = useState(false);
+  const [driveCred, setDriveCred] = useState(false);
+  const [driveRefresh, setDriveRefresh] = useState(false);
   const [calAutoSync, setCalAutoSync] = useState(false);
   const [calSyncMins, setCalSyncMins] = useState(15);
   const [auditRows, setAuditRows] = useState<any[]>([]);
@@ -51,10 +53,19 @@ export function PaneIntegrations() {
     }
   }, [run]);
 
+  const refreshDriveStatus = React.useCallback(async () => {
+    const r = await run('integrations.credentials_status', { provider: 'google_drive' }, { silentError: true });
+    if (r.ok && r.data && typeof r.data.configured === 'boolean') {
+      setDriveCred(r.data.configured);
+      setDriveRefresh(!!r.data.tokenRefreshReady);
+    }
+  }, [run]);
+
   React.useEffect(() => {
     void refreshGoogleCalStatus();
     void refreshGmailStatus();
-  }, [refreshGoogleCalStatus, refreshGmailStatus]);
+    void refreshDriveStatus();
+  }, [refreshGoogleCalStatus, refreshGmailStatus, refreshDriveStatus]);
 
   React.useEffect(() => {
     void (async () => {
@@ -72,10 +83,11 @@ export function PaneIntegrations() {
     const onCred = () => {
       void refreshGoogleCalStatus();
       void refreshGmailStatus();
+      void refreshDriveStatus();
     };
     window.addEventListener('shogun-credentials-updated', onCred);
     return () => window.removeEventListener('shogun-credentials-updated', onCred);
-  }, [refreshGoogleCalStatus, refreshGmailStatus]);
+  }, [refreshGoogleCalStatus, refreshGmailStatus, refreshDriveStatus]);
 
   React.useEffect(() => {
     const key = 'shogun.integration.audit.v1';
@@ -210,11 +222,17 @@ export function PaneIntegrations() {
         }
         return;
       }
-      const label = provider === 'gmail' ? 'Gmail' : 'Google Calendar';
+      const label =
+        provider === 'gmail'
+          ? 'Gmail'
+          : provider === 'google_drive'
+            ? 'Google Drive'
+            : 'Google Calendar';
       (window as any).SHOGUN_RUNTIME?.pushToast?.(`Connected to ${label}`, 'success');
       await Promise.all([
         runRuntimeAction('integrations.credentials_status', { provider: 'gmail' }, { silentError: true }),
         runRuntimeAction('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true }),
+        runRuntimeAction('integrations.credentials_status', { provider: 'google_drive' }, { silentError: true }),
       ]);
     } finally {
       setOauthBusy(null);
@@ -222,9 +240,17 @@ export function PaneIntegrations() {
   };
 
   return (
-    <Pane title="All Integrations" jp="連携" subtitle="In-app OAuth: Click Connect on Gmail / Google Calendar to start the consent flow. CLIENT_ID/SECRET are read from scripts/.env.google-oauth (dev). For other providers, agent-based import is still supported (see legacy notes below).">
+    <Pane title="All Integrations" jp="連携" subtitle="In-app OAuth: Click Connect on Gmail / Google Calendar / Google Drive to start the consent flow. CLIENT_ID/SECRET are read from scripts/.env.google-oauth (dev). For other providers, agent-based import is still supported (see legacy notes below).">
       <div className="s-field-hint" style={{ marginBottom: 14, padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
         Workspace Integrations screen has the same agent contract. Preferred path: Tauri invoke <code style={{ fontSize: 11 }}>app_integration_import_credentials</code> with <code style={{ fontSize: 11 }}>provider: &quot;google_calendar&quot;</code> or <code style={{ fontSize: 11 }}>&quot;gmail&quot;</code>, <code style={{ fontSize: 11 }}>accessToken</code>, optional <code style={{ fontSize: 11 }}>refreshToken</code>, <code style={{ fontSize: 11 }}>expiresAt</code>, <code style={{ fontSize: 11 }}>oauthClientId</code> (for automatic token refresh). Deep-link alternative: <code style={{ fontSize: 11 }}>shogun-ai://credentials/import?provider=...</code> — prefer invoke for secrets (URLs leak to logs / history). Gmail needs scope <code style={{ fontSize: 11 }}>gmail.readonly</code> or broader.
+      </div>
+      <div className="s-field-hint" style={{ marginBottom: 14, padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+        <span className="en-only">Preview note:</span>
+        <span className="jp">プレビュー注意:</span> Slack, Notion, Linear, Outlook, GitHub, Claude, Figma, and Zapier MCP still show a warn toast for <code style={{ fontSize: 11 }}>Connect</code> in v1.
+        <div style={{ marginTop: 6 }}>
+          <span className="en-only">Supported today:</span>
+          <span className="jp">現在対応:</span> Gmail, Google Calendar, Google Drive, Apple Calendar, Apple Reminders, Arc, Raycast, and Obsidian.
+        </div>
       </div>
       <div className="s-card" style={{ marginBottom: 10 }}>
         <Row title={<div className="row" style={{ gap: 10 }}><IntegrationLogo slug="apple_calendar" size={30} title="Apple Calendar" /><div><div style={{ fontSize: 13, fontWeight: 500 }}>Apple Calendar <span className="label label-gold" style={{ marginLeft: 4 }}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
@@ -380,6 +406,56 @@ export function PaneIntegrations() {
             }}
           >Save auto-sync</button>
         </div>
+      </div>
+      <div className="s-card" style={{ marginBottom: 10 }}>
+        <div className="row" style={{ padding: '14px 16px' }}>
+          <IntegrationLogo slug="google_drive" size={30} title="Google Drive" />
+          <div style={{ marginLeft: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>Google Drive</div>
+            <div className="s-field-hint">Drive files → Memory ingest (read-only connector).</div>
+          </div>
+          <span className="spacer" />
+          <Icon name="chevronDown" size={12} className="dim" />
+        </div>
+        <div style={{ borderTop: '1px solid var(--border)', padding: '12px 16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-mute)' }}>Google OAuth</span>
+          <span className={'label ' + (driveCred ? 'label-success' : '')} style={{ borderColor: 'var(--border)' }}>
+            {driveCred ? 'Keychain · configured' : 'No token · Connect or import'}
+          </span>
+          {driveCred ? (
+            <span className={'label ' + (driveRefresh ? 'label-success' : '')} style={{ borderColor: 'var(--border)', fontSize: 11 }}>
+              {driveRefresh ? 'Refresh: client+refresh token' : 'Refresh: add oauthClientId + refreshToken'}
+            </span>
+          ) : null}
+          <span className="spacer" />
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => { void run('integrations.credentials_status', { provider: 'google_drive' }, { silentError: true }); void refreshDriveStatus(); }}>Refresh status</button>
+          <button
+            className="btn btn-sm btn-secondary"
+            type="button"
+            disabled={!!oauthBusy}
+            onClick={() => handleOauthConnect('google_drive')}
+          >
+            {oauthBusy === 'google_drive' ? (
+              <><span className="en-only">Connecting…</span><span className="jp">接続中…</span></>
+            ) : (
+              <><span className="en-only">Connect</span><span className="jp">接続</span></>
+            )}
+          </button>
+          <button className="btn btn-sm btn-primary" type="button" onClick={() => run('drive.sync', { maxFiles: 20 }, { successMessage: 'Google Drive synced to Memory' })}>Sync to Memory</button>
+          <button className="btn btn-sm btn-ghost" type="button" style={{ padding: '0 6px' }} onClick={() => run('integrations.toggle', { provider: 'google_drive', action: 'edit' }, { silentError: true })}><Icon name="edit" size={12} /></button>
+          <button className="btn btn-sm btn-ghost" type="button" style={{ padding: '0 6px' }} onClick={() => run('integrations.toggle', { provider: 'google_drive', action: 'settings' }, { silentError: true })}><Icon name="settings" size={12} /></button>
+        </div>
+        {!driveCred ? (
+          <div style={{ borderTop: '1px solid var(--border)', padding: '10px 16px', fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.55 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>How to import Google Drive token</div>
+            <div className="s-field-hint" style={{ marginBottom: 8 }}>
+              <span className="en-only">In-app: click Connect above. This drawer is for the agent-based fallback when scripts/.env.google-oauth is unavailable.</span>
+              <span className="jp">アプリ内: 上の Connect を押す。このドロワは scripts/.env.google-oauth が使えない場合の agent 経由代替手順です。</span>
+            </div>
+            <div>1) Get OAuth access token (+ optional refresh token / client id) with Drive scope <code style={{ fontSize: 10 }}>https://www.googleapis.com/auth/drive.readonly</code>.</div>
+            <div>2) Call <code style={{ fontSize: 10 }}>app_integration_import_credentials</code> with <code style={{ fontSize: 10 }}>provider: "google_drive"</code>.</div>
+          </div>
+        ) : null}
       </div>
       {PLANNED_OAUTH_PROVIDERS.map((s) => (
         <div key={s.slug} className="s-card" style={{ marginBottom: 8 }}>

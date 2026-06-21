@@ -1,13 +1,17 @@
 import { NextRequest } from 'next/server';
 import { assertAdmin } from '@/lib/admin-auth';
 import { inviteNextPending, inviteWaitlistEmail, isValidWaitlistEmail } from '@/lib/waitlist';
+import { getAppBaseUrl } from '@/lib/web-config';
 
 export async function POST(req: NextRequest) {
   const denied = assertAdmin(req);
   if (denied) return denied;
 
   const body = await req.json();
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+  const base = getAppBaseUrl();
+  if (!base) {
+    return Response.json({ ok: false, error: 'misconfigured', detail: 'NEXT_PUBLIC_APP_URL' }, { status: 500 });
+  }
 
   if (body.email) {
     const email = String(body.email).trim();

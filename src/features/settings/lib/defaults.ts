@@ -2,10 +2,10 @@ import { ShogunMemoryExport } from '@/shared/ipc/shogun-api';
 
 /**
  * Commercial build: customer-facing legal URLs (optional). Leave empty to rely on bundled markdown
- * (docs/TERMS_OF_SERVICE.md, docs/TERMS_OF_SERVICE_EN.md, PRIVACY.md). Replace supportMailto with your support address.
+ * (docs/TERMS_OF_SERVICE.md, docs/TERMS_OF_SERVICE_EN.md, PRIVACY.md). Wire supportMailto before shipping.
  */
 export const PRODUCT = {
-  supportMailto: 'mailto:support@yourcompany.com?subject=SHOGUN%20support',
+  supportMailto: '',
   termsJaUrl: '',
   termsEnUrl: '',
   privacyUrl: '',

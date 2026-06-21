@@ -2,7 +2,7 @@ import { Icon } from '@/shared/icons';
 import { PRODUCT } from '../lib/defaults';
 
 export function ProductLegalLinks() {
-  const hasHosted = !!(PRODUCT.termsJaUrl || PRODUCT.termsEnUrl || PRODUCT.privacyUrl);
+  const hasHosted = !!(PRODUCT.termsJaUrl || PRODUCT.termsEnUrl || PRODUCT.privacyUrl || PRODUCT.supportMailto);
   return (
     <div className="row" style={{ marginTop: 12, gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
       {PRODUCT.termsJaUrl ? (
@@ -20,9 +20,13 @@ export function ProductLegalLinks() {
           Privacy / プライバシー <Icon name="arrowUpRight" size={10} />
         </a>
       ) : null}
-      <a className="s-link" href={PRODUCT.supportMailto}>
-        Contact support / サポート <Icon name="arrowUpRight" size={10} />
-      </a>
+      {PRODUCT.supportMailto ? (
+        <a className="s-link" href={PRODUCT.supportMailto}>
+          Contact support / サポート <Icon name="arrowUpRight" size={10} />
+        </a>
+      ) : (
+        <span className="s-field-hint">Contact support is not configured yet.</span>
+      )}
       {!hasHosted ? (
         <span className="s-field-hint" style={{ fontSize: 11, maxWidth: 420 }}>
           Full legal text is supplied as markdown with your license (JP/EN Terms + Privacy). Host URLs in PRODUCT.* in source when you publish web pages.

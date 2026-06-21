@@ -2,6 +2,7 @@ import { auth, currentUser } from '@clerk/nextjs/server';
 import { getStripe } from '@/lib/stripe';
 import { normalizeEmail, validateInviteToken } from '@/lib/invites';
 import { emailsMatch } from '@/lib/email-match';
+import { getAppBaseUrl } from '@/lib/web-config';
 
 export async function POST(req: Request) {
   const { userId } = await auth();
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   }
 
   const priceId = process.env.STRIPE_PRICE_ID;
-  const base = process.env.NEXT_PUBLIC_APP_URL;
+  const base = getAppBaseUrl();
   if (!priceId || !base) {
     return Response.json({ ok: false, error: 'misconfigured' }, { status: 500 });
   }

@@ -67,4 +67,18 @@ describe('ShogunIpcClient mock transport', () => {
     expect(Array.isArray(data.brief?.items)).toBe(true);
     expect(data.memory_digest?.graph_supplemented).toBe(true);
   });
+
+  it('mock google oauth start configures drive too', async () => {
+    const client = createMockClient();
+    const startRes = await client.invoke('oauth.google.start', { provider: 'google_drive' });
+    expect(startRes.ok).toBe(true);
+
+    const statusRes = await client.invoke('integrations.credentials_status', { provider: 'google_drive' });
+    expect(statusRes.ok).toBe(true);
+    expect(statusRes.data.configured).toBe(true);
+
+    const syncRes = await client.invoke('drive.sync', { maxFiles: 10 });
+    expect(syncRes.ok).toBe(true);
+    expect(syncRes.data.ingested).toBeGreaterThan(0);
+  });
 });

@@ -20,7 +20,11 @@ export function PaneTeam() {
     if (!canSend || sending) return;
     setSending(true);
     try {
-      const recipient = (PRODUCT.supportMailto || '').replace(/^mailto:/, '').split('?')[0] || 'support@yourcompany.com';
+      const recipient = (PRODUCT.supportMailto || '').replace(/^mailto:/, '').split('?')[0];
+      if (!recipient) {
+        toast('Support email is not configured yet.', 'warn');
+        return;
+      }
       const subject = 'SHOGUN for Teams — Feedback / フィードバック';
       const bodyLines = [
         'Team size / チーム規模:',

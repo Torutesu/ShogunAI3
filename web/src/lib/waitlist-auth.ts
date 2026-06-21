@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
+import { getAllowedLpOrigins, getRequiredEnv } from '@/lib/web-config';
 
 export function assertWaitlistWebhook(req: NextRequest): Response | null {
-  const secret = process.env.WAITLIST_WEBHOOK_SECRET;
+  const secret = getRequiredEnv('WAITLIST_WEBHOOK_SECRET');
   if (!secret) {
     return Response.json({ ok: false, error: 'misconfigured' }, { status: 500 });
   }
@@ -14,10 +15,7 @@ export function assertWaitlistWebhook(req: NextRequest): Response | null {
 }
 
 export function lpCorsHeaders(req: NextRequest): HeadersInit {
-  const allowed = [
-    'https://shogunai.lovable.app',
-    process.env.NEXT_PUBLIC_LP_ORIGIN,
-  ].filter(Boolean) as string[];
+  const allowed = getAllowedLpOrigins();
 
   const origin = req.headers.get('origin');
   if (origin && allowed.includes(origin)) {

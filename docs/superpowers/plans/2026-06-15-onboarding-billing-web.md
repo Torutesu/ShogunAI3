@@ -135,8 +135,9 @@ DATABASE_URL=postgresql://user:pass@host/shogun
 ADMIN_API_KEY=change-me-in-production
 
 # App URLs
-NEXT_PUBLIC_APP_URL=http://localhost:3001
+NEXT_PUBLIC_APP_URL=https://app.shogun.ai
 NEXT_PUBLIC_DMG_DOWNLOAD_URL=https://github.com/org/shogun/releases/latest/download/ShogunAI.dmg
+NEXT_PUBLIC_LP_ORIGIN=https://shogunai.lovable.app
 ```
 
 - [ ] **Step 5: Verify dev server starts**
@@ -395,7 +396,10 @@ export async function POST(req: NextRequest) {
   }
 
   const invite = await createInvite(email);
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+  const base = process.env.NEXT_PUBLIC_APP_URL;
+  if (!base) {
+    return Response.json({ ok: false, error: 'misconfigured', detail: 'NEXT_PUBLIC_APP_URL' }, { status: 500 });
+  }
   return Response.json({
     ok: true,
     inviteUrl: `${base}/invite?token=${invite.token}`,
@@ -568,7 +572,10 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: 'email_mismatch' }, { status: 403 });
   }
 
-  const base = process.env.NEXT_PUBLIC_APP_URL!;
+  const base = process.env.NEXT_PUBLIC_APP_URL;
+  if (!base) {
+    return Response.json({ ok: false, error: 'misconfigured', detail: 'NEXT_PUBLIC_APP_URL' }, { status: 500 });
+  }
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     customer_email: primaryEmail,
