@@ -6,6 +6,7 @@ import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { useRuntimeActions } from '../lib/hooks';
 import { SettingsHydrationContext } from '../types';
 import { AuditLogSection } from './PaneIntegrations/AuditLogSection';
+import { McpClaudeSection } from './PaneIntegrations/McpClaudeSection';
 import { OAuthNotConfiguredModal } from './PaneIntegrations/OAuthNotConfiguredModal';
 
 const PLANNED_OAUTH_PROVIDERS = [
@@ -15,14 +16,13 @@ const PLANNED_OAUTH_PROVIDERS = [
   { slug: 'linear', title: 'Linear' },
   { slug: 'slack', title: 'Slack' },
   { slug: 'github', title: 'GitHub' },
-  { slug: 'claude', title: 'Claude' },
   { slug: 'figma', title: 'Figma' },
   { slug: 'zapier_mcp', title: 'Zapier MCP' },
 ] as const;
 
 export function PaneIntegrations() {
   const { run } = useRuntimeActions();
-  React.useContext(SettingsHydrationContext);
+  const { sections, refreshSections } = React.useContext(SettingsHydrationContext);
   const [googleCalCred, setGoogleCalCred] = useState(false);
   const [googleCalRefresh, setGoogleCalRefresh] = useState(false);
   const [gmailCred, setGmailCred] = useState(false);
@@ -36,6 +36,21 @@ export function PaneIntegrations() {
   const [auditProviderFilter, setAuditProviderFilter] = useState('all');
   const [oauthBusy, setOauthBusy] = React.useState<string | null>(null);
   const [oauthNotConfigured, setOauthNotConfigured] = React.useState(false);
+
+  const applyIntegrationSettings = React.useCallback((sourceSections?: Record<string, any> | null) => {
+    const integ = sourceSections && sourceSections.integrations;
+    if (!integ || typeof integ !== 'object') return;
+    setCalAutoSync(!!integ.googleCalendarAutoSync);
+    const m = Number(integ.googleCalendarSyncIntervalMins);
+    if (Number.isFinite(m)) setCalSyncMins(Math.min(1440, Math.max(5, m)));
+  }, []);
+
+  const reloadIntegrationSettings = React.useCallback(async () => {
+    const r = await run('settings.load', {}, { silentError: true });
+    const nextSections = r.ok && r.data?.settings?.sections;
+    applyIntegrationSettings(nextSections && typeof nextSections === 'object' ? nextSections : null);
+    return r;
+  }, [applyIntegrationSettings, run]);
 
   const refreshGoogleCalStatus = React.useCallback(async () => {
     const r = await run('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true });
@@ -68,16 +83,12 @@ export function PaneIntegrations() {
   }, [refreshGoogleCalStatus, refreshGmailStatus, refreshDriveStatus]);
 
   React.useEffect(() => {
-    void (async () => {
-      const r = await run('settings.load', {}, { silentError: true });
-      const sections = r.ok && r.data?.settings?.sections;
-      const integ = sections && sections.integrations;
-      if (!integ || typeof integ !== 'object') return;
-      setCalAutoSync(!!integ.googleCalendarAutoSync);
-      const m = Number(integ.googleCalendarSyncIntervalMins);
-      if (Number.isFinite(m)) setCalSyncMins(Math.min(1440, Math.max(5, m)));
-    })();
-  }, [run]);
+    applyIntegrationSettings(sections);
+  }, [applyIntegrationSettings, sections]);
+
+  React.useEffect(() => {
+    void reloadIntegrationSettings();
+  }, [reloadIntegrationSettings]);
 
   React.useEffect(() => {
     const onCred = () => {
@@ -88,6 +99,15 @@ export function PaneIntegrations() {
     window.addEventListener('shogun-credentials-updated', onCred);
     return () => window.removeEventListener('shogun-credentials-updated', onCred);
   }, [refreshGoogleCalStatus, refreshGmailStatus, refreshDriveStatus]);
+
+  React.useEffect(() => {
+    const onRefresh = () => {
+      if (refreshSections) void refreshSections();
+      void reloadIntegrationSettings();
+    };
+    window.addEventListener('shogun-settings-refresh', onRefresh);
+    return () => window.removeEventListener('shogun-settings-refresh', onRefresh);
+  }, [refreshSections, reloadIntegrationSettings]);
 
   React.useEffect(() => {
     const key = 'shogun.integration.audit.v1';
@@ -230,9 +250,9 @@ export function PaneIntegrations() {
             : 'Google Calendar';
       (window as any).SHOGUN_RUNTIME?.pushToast?.(`Connected to ${label}`, 'success');
       await Promise.all([
-        runRuntimeAction('integrations.credentials_status', { provider: 'gmail' }, { silentError: true }),
-        runRuntimeAction('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true }),
-        runRuntimeAction('integrations.credentials_status', { provider: 'google_drive' }, { silentError: true }),
+        refreshGmailStatus(),
+        refreshGoogleCalStatus(),
+        refreshDriveStatus(),
       ]);
     } finally {
       setOauthBusy(null);
@@ -252,6 +272,7 @@ export function PaneIntegrations() {
           <span className="jp">現在対応:</span> Gmail, Google Calendar, Google Drive, Apple Calendar, Apple Reminders, Arc, Raycast, and Obsidian.
         </div>
       </div>
+      <McpClaudeSection />
       <div className="s-card" style={{ marginBottom: 10 }}>
         <Row title={<div className="row" style={{ gap: 10 }}><IntegrationLogo slug="apple_calendar" size={30} title="Apple Calendar" /><div><div style={{ fontSize: 13, fontWeight: 500 }}>Apple Calendar <span className="label label-gold" style={{ marginLeft: 4 }}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
           <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: 'apple_calendar' }, { silentError: true })}>Connect</button>
@@ -402,7 +423,10 @@ export function PaneIntegrations() {
                 { section: 'integrations', googleCalendarAutoSync: calAutoSync, googleCalendarSyncIntervalMins: m },
                 { silentError: true, successMessage: 'Calendar auto-sync saved' },
               );
-              if (r.ok) setCalSyncMins(m);
+              if (r.ok) {
+                setCalSyncMins(m);
+                if (refreshSections) await refreshSections();
+              }
             }}
           >Save auto-sync</button>
         </div>

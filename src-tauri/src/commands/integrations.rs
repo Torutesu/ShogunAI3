@@ -5,6 +5,29 @@ use crate::{
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
+fn integrations_settings_navigation_payload() -> Value {
+    json!({ "settingsPane": "integrations" })
+}
+
+fn credentials_import_result_payload(
+    saved: bool,
+    provider: Option<&str>,
+    error: Option<&str>,
+    via: &str,
+) -> Value {
+    let mut payload = json!({
+      "saved": saved,
+      "via": via,
+    });
+    if let Some(value) = provider.filter(|value| !value.trim().is_empty()) {
+        payload["provider"] = json!(value);
+    }
+    if let Some(value) = error.filter(|value| !value.trim().is_empty()) {
+        payload["error"] = json!(value);
+    }
+    payload
+}
+
 #[tauri::command]
 pub fn app_integration_connect(payload: Value) -> Result<Value, String> {
     let raw = payload
@@ -177,10 +200,28 @@ pub(crate) fn persist_integration_credentials_inner(payload: &Value) -> Result<S
 
 #[tauri::command]
 pub fn app_integration_import_credentials(app: AppHandle, payload: Value) -> Result<Value, String> {
-    let slug = persist_integration_credentials_inner(&payload)?;
+    let slug = match persist_integration_credentials_inner(&payload) {
+        Ok(slug) => slug,
+        Err(error) => {
+            let provider = payload.get("provider").and_then(|value| value.as_str());
+            let _ = app.emit(
+                "credentials-imported",
+                credentials_import_result_payload(false, provider, Some(&error), "invoke"),
+            );
+            let _ = app.emit(
+                "shogun-app-navigate",
+                integrations_settings_navigation_payload(),
+            );
+            return Err(error);
+        }
+    };
     let _ = app.emit(
         "credentials-imported",
-        json!({ "saved": true, "provider": slug, "via": "invoke" }),
+        credentials_import_result_payload(true, Some(&slug), None, "invoke"),
+    );
+    let _ = app.emit(
+        "shogun-app-navigate",
+        integrations_settings_navigation_payload(),
     );
     Ok(json!({
       "saved": true,
@@ -218,15 +259,53 @@ pub fn app_integration_credentials_status(payload: Value) -> Result<Value, Strin
 
 #[tauri::command]
 pub async fn shogun_oauth_google_start(app: AppHandle, payload: Value) -> Result<Value, String> {
-    let provider = payload
-        .get("provider")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "oauth_invalid_provider".to_string())?;
+    let provider = match payload.get("provider").and_then(|v| v.as_str()) {
+        Some(provider) => provider,
+        None => {
+            let error = "oauth_invalid_provider".to_string();
+            let _ = app.emit(
+                "credentials-imported",
+                credentials_import_result_payload(false, None, Some(&error), "oauth_in_app"),
+            );
+            let _ = app.emit(
+                "shogun-app-navigate",
+                integrations_settings_navigation_payload(),
+            );
+            return Err(error);
+        }
+    };
     if provider != "gmail" && provider != "google_calendar" && provider != "google_drive" {
-        return Err("oauth_invalid_provider".into());
+        let error = "oauth_invalid_provider".to_string();
+        let _ = app.emit(
+            "credentials-imported",
+            credentials_import_result_payload(false, Some(provider), Some(&error), "oauth_in_app"),
+        );
+        let _ = app.emit(
+            "shogun-app-navigate",
+            integrations_settings_navigation_payload(),
+        );
+        return Err(error);
     }
 
-    let tokens = crate::oauth_flow::run(None).await.map_err(String::from)?;
+    let tokens = match crate::oauth_flow::run(None).await.map_err(String::from) {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            let _ = app.emit(
+                "credentials-imported",
+                credentials_import_result_payload(
+                    false,
+                    Some(provider),
+                    Some(&error),
+                    "oauth_in_app",
+                ),
+            );
+            let _ = app.emit(
+                "shogun-app-navigate",
+                integrations_settings_navigation_payload(),
+            );
+            return Err(error);
+        }
+    };
 
     // Save tokens for Google providers — a single OAuth consent grants all scopes.
     for save_provider in ["gmail", "google_calendar", "google_drive"] {
@@ -245,12 +324,32 @@ pub async fn shogun_oauth_google_start(app: AppHandle, payload: Value) -> Result
         if !tokens.scopes.is_empty() {
             save_payload["scopes"] = json!(tokens.scopes);
         }
-        persist_integration_credentials_inner(&save_payload)
-            .map_err(|e| format!("oauth_save_failed: {}", e))?;
+        if let Err(error) = persist_integration_credentials_inner(&save_payload)
+            .map_err(|e| format!("oauth_save_failed: {}", e))
+        {
+            let _ = app.emit(
+                "credentials-imported",
+                credentials_import_result_payload(
+                    false,
+                    Some(provider),
+                    Some(&error),
+                    "oauth_in_app",
+                ),
+            );
+            let _ = app.emit(
+                "shogun-app-navigate",
+                integrations_settings_navigation_payload(),
+            );
+            return Err(error);
+        }
     }
     let _ = app.emit(
         "credentials-imported",
-        json!({ "saved": true, "provider": provider, "via": "oauth_in_app" }),
+        credentials_import_result_payload(true, Some(provider), None, "oauth_in_app"),
+    );
+    let _ = app.emit(
+        "shogun-app-navigate",
+        integrations_settings_navigation_payload(),
     );
 
     Ok(json!({
@@ -300,6 +399,38 @@ pub fn shogun_oauth_google_app_set(payload: Value) -> Result<Value, String> {
     }))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{credentials_import_result_payload, integrations_settings_navigation_payload};
+    use serde_json::json;
+
+    #[test]
+    fn integration_success_routes_back_to_integrations_settings() {
+        assert_eq!(
+            integrations_settings_navigation_payload(),
+            json!({ "settingsPane": "integrations" })
+        );
+    }
+
+    #[test]
+    fn integration_failure_payload_includes_error_and_source() {
+        assert_eq!(
+            credentials_import_result_payload(
+                false,
+                Some("gmail"),
+                Some("oauth_invalid_provider"),
+                "oauth_in_app"
+            ),
+            json!({
+              "saved": false,
+              "provider": "gmail",
+              "error": "oauth_invalid_provider",
+              "via": "oauth_in_app",
+            })
+        );
+    }
+}
+
 #[tauri::command]
 pub async fn shogun_agent_run_now(payload: Value) -> Result<Value, String> {
     crate::agents::run_now_with_payload(&payload).await
@@ -321,7 +452,11 @@ pub async fn shogun_google_calendar_sync(payload: Value) -> Result<Value, String
         .unwrap_or(default_max)
         .clamp(1, cap_max) as usize;
     let past_days = days_opt.unwrap_or(0).min(366) as u32;
-    google_calendar::sync_events_to_memory(cal, max, past_days).await
+    let result = google_calendar::sync_events_to_memory(cal, max, past_days).await;
+    if result.is_ok() {
+        let _ = crate::agents::run_event_triggered_custom_agents("calendar").await;
+    }
+    result
 }
 
 #[tauri::command]

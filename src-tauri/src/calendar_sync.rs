@@ -20,6 +20,7 @@ static STATE: Mutex<CalendarSyncState> = Mutex::new(CalendarSyncState {
     last_duration_ms: None,
 });
 
+#[cfg(debug_assertions)]
 pub fn snapshot_state() -> CalendarSyncState {
     STATE.lock().map(|g| g.clone()).unwrap_or_default()
 }
@@ -89,6 +90,7 @@ pub fn spawn_background_calendar_sync() {
             match google_calendar::sync_events_to_memory("primary", 25, 0).await {
                 Ok(out) => {
                     let n = out.get("ingested").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let _ = crate::agents::run_event_triggered_custom_agents("calendar").await;
                     log::info!("calendar auto-sync: ingested {} event(s)", n);
                     crate::memory_obs::emit(
                         "calendar_sync_done",

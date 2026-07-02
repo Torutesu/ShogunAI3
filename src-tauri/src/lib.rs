@@ -1,4 +1,5 @@
 mod agents;
+mod ai_fields;
 mod app_error;
 mod app_events;
 mod auth;
@@ -12,13 +13,18 @@ mod capture_sampler;
 mod capture_tray;
 mod commands;
 mod connectors;
+mod context_actions;
 mod context_assembly;
+pub mod context_mcp;
+mod context_queries;
 mod cost_ledger;
+mod crm_update_queue;
 mod dead_letter;
 mod decay;
 mod deep_link_credentials;
 mod embed_backfill;
 mod embeddings;
+mod entity_context;
 mod extraction_jobs;
 mod google_oauth;
 mod http_retry;
@@ -125,6 +131,7 @@ pub fn run() {
         .manage(meeting_session::MeetingSessionState::default())
         .manage(meeting_mic::MeetingMicController::default())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -172,6 +179,7 @@ pub fn run() {
             rollup_sync::spawn_background_rollup_sync();
             patterns_sync::spawn_background_patterns_sync();
             supersession_sync::spawn_background_supersession_sync();
+            agents::spawn_background_custom_agent_sync();
             // KIOKU extraction worker (Phase 2 Stage 2). The thread runs from
             // boot but each tick checks `kioku_graph.worker_enabled` so it stays
             // idle until the user (or settings migration) flips the flag.
@@ -194,6 +202,24 @@ pub fn run() {
             commands::memory::shogun_memory_export,
             commands::memory::shogun_memory_import,
             commands::memory::shogun_entity_query,
+            commands::memory::shogun_entity_context_get,
+            commands::memory::shogun_context_search,
+            commands::memory::shogun_context_recent_get,
+            commands::memory::shogun_context_tasks_list,
+            commands::memory::shogun_owner_context_summary,
+            commands::memory::shogun_ai_field_list,
+            commands::memory::shogun_ai_field_upsert,
+            commands::memory::shogun_context_action_list,
+            commands::memory::shogun_context_action_audit_list,
+            commands::memory::shogun_context_action_propose,
+            commands::memory::shogun_context_action_set_status,
+            commands::memory::shogun_context_action_execute,
+            commands::memory::shogun_schedule_queue_list,
+            commands::memory::shogun_crm_update_queue_list,
+            commands::memory::shogun_schedule_queue_remove,
+            commands::memory::shogun_crm_update_queue_remove,
+            commands::memory::shogun_schedule_queue_retry,
+            commands::memory::shogun_crm_update_queue_retry,
             commands::llm::shogun_brief_get,
             commands::llm::shogun_open_pack,
             commands::llm::shogun_start_focus_session,
@@ -211,6 +237,7 @@ pub fn run() {
             commands::kioku::shogun_kioku_edge_type_proposals,
             commands::kioku::shogun_kioku_edge_type_review,
             commands::app::shogun_stats,
+            commands::app::app_navigate,
             commands::app::app_open_hummingbird,
             commands::app::app_create_share_link,
             commands::app::app_settings_load,
@@ -220,6 +247,8 @@ pub fn run() {
             commands::app::app_llm_api_key_set,
             commands::app::app_llm_api_key_status,
             commands::app::app_llm_api_key_clear,
+            commands::app::app_notification_status,
+            commands::app::app_notification_request,
             commands::integrations::app_integration_connect,
             commands::integrations::app_integration_import_credentials,
             commands::integrations::app_integration_credentials_status,
@@ -274,6 +303,8 @@ pub fn run() {
             commands::auth::auth_biometric_status,
             commands::auth::auth_biometric_authenticate,
             commands::mcp::mcp_setup_detect,
+            commands::mcp::mcp_setup_list_tools,
+            commands::mcp::mcp_setup_preview_tool,
             commands::mcp::mcp_setup_write_config,
             commands::mcp::mcp_setup_verify,
             commands::mcp::mcp_setup_complete,

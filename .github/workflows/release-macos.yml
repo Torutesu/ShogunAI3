@@ -101,6 +101,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
+          args: --config src-tauri/tauri.updater.json
 
       # Unsigned tag push → plain tauri build + gh-release (tauri-action always
       # attempts keychain import when Apple env vars are present, even if empty).

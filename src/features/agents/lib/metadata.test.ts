@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  agentNeedsAttention,
   parseTrigger,
   serializeTrigger,
   fmtRelativeTime,
@@ -213,5 +214,73 @@ describe('buildAgentSubLine', () => {
     const agent = makeAgent({ lastRunMs: nowMs - 60_000 * 60 });
     const result = buildAgentSubLine(agent, 'running', nowMs);
     expect(result).toContain(' · ');
+  });
+});
+
+describe('agentNeedsAttention', () => {
+  const nowMs = 1_700_000_000_000;
+
+  function makeAgent(overrides: Partial<AgentDemo> = {}): AgentDemo {
+    return {
+      id: 'test-agent',
+      name: 'Test Agent',
+      icon: 'bot',
+      status: 'scheduled',
+      trigger: 'every 1 hour',
+      triggerSince: '2024-01-01',
+      description: 'A test agent',
+      tools: [],
+      lastRunMs: nowMs - 60 * 60_000,
+      nextRunMs: nowMs + 60 * 60_000,
+      recentRuns: [],
+      paused: false,
+      ...overrides,
+    };
+  }
+
+  it('returns true for explicit auth expiration', () => {
+    expect(agentNeedsAttention(makeAgent({ attention: 'auth_expired' }), nowMs)).toBe(true);
+  });
+
+  it('returns true when the latest run failed', () => {
+    expect(
+      agentNeedsAttention(
+        makeAgent({
+          recentRuns: [
+            {
+              id: 'run-1',
+              atMs: nowMs - 1000,
+              t: '10:00',
+              msg: 'Failed',
+              level: 'error',
+              durationMs: 200,
+              tools: [],
+              input: '',
+              output: '',
+              memoryTouched: [],
+            },
+          ],
+        }),
+        nowMs,
+      ),
+    ).toBe(true);
+  });
+
+  it('returns true for stale scheduled agents', () => {
+    expect(
+      agentNeedsAttention(
+        makeAgent({ lastRunMs: nowMs - 25 * 60 * 60_000 }),
+        nowMs,
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false for paused agents', () => {
+    expect(
+      agentNeedsAttention(
+        makeAgent({ paused: true, attention: 'error' }),
+        nowMs,
+      ),
+    ).toBe(false);
   });
 });

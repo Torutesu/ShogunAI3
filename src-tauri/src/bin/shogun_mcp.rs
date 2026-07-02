@@ -3,7 +3,7 @@
 //!
 //! Stdout is the MCP transport — never println!. All logs go to stderr.
 
-use app_lib::{kioku_mcp, mcp_server, meeting_mcp, meeting_recipes, memory_mcp};
+use app_lib::{context_mcp, kioku_mcp, mcp_server, meeting_mcp, meeting_recipes, memory_mcp};
 use rmcp::{
     model::{
         CallToolRequestParam, CallToolResult, Content, Implementation, ListToolsResult,
@@ -47,6 +47,7 @@ impl ServerHandler for ShogunService {
         for getter in [
             meeting_mcp::tool_definitions,
             memory_mcp::tool_definitions,
+            context_mcp::tool_definitions,
             kioku_mcp::tool_definitions,
         ] {
             if let Some(items) = getter().as_array() {

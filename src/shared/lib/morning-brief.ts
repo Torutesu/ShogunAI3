@@ -232,6 +232,18 @@ function unwrapBriefGetRegistryResult(registryResult: any) {
   return { ok: true, brief: x };
 }
 
+function mapMcpToolToNativeAction(toolName: any) {
+  const key = String(toolName || "").trim();
+  switch (key) {
+    case "shogun.memory_search":
+      return "memory.search";
+    case "shogun.memory_search_timeline":
+      return "memory.timelineSearch";
+    default:
+      return key;
+  }
+}
+
 function resolveNextAction(nextAction: any, briefItem: any) {
   if (!nextAction || nextAction.type === "ignore") {
     return { skip: true };
@@ -255,7 +267,7 @@ function resolveNextAction(nextAction: any, briefItem: any) {
     }
     return {
       skip: false,
-      key: tool.tool_name,
+      key: mapMcpToolToNativeAction(tool.tool_name),
       payload: base,
     };
   }
@@ -294,6 +306,6 @@ export const ShogunMorningBrief = {
   buildBriefGetPayload: buildBriefGetPayload,
   mockBriefGetResponse: mockBriefGetResponse,
   unwrapBriefGetRegistryResult: unwrapBriefGetRegistryResult,
+  mapMcpToolToNativeAction: mapMcpToolToNativeAction,
   resolveNextAction: resolveNextAction,
 };
-

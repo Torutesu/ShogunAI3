@@ -3,6 +3,10 @@ import { GranolaPillMenu } from './GranolaOverlay/GranolaPillMenu';
 import { GranolaTopPanels } from './GranolaOverlay/GranolaTopPanels';
 import { MeetingPermissionBanner } from './MeetingPermissionBanner';
 import { MeetingContextTimeline, MeetingContextTimelineHeader } from './MeetingContextTimeline';
+import { buildMeetingChatSeed, openChatWithSeed } from '@/shared/context/chat-composer-seed';
+import { focusEntity } from '@/shared/context/entity-focus';
+import { openMeetingDetail } from '@/shared/context/context-target-navigation';
+import { openMemoryItem } from '@/features/memory/lib/runtime';
 import { MEETINGS_DOCK_SLASH_CATALOG } from '../lib/runtime';
 import { toastM, GRANOLA_CLASSES } from '../lib/runtime';
 import { useGranolaOverlay } from '../context/GranolaOverlayContext';
@@ -40,7 +44,7 @@ export function GranolaOverlay() {
     applyStubTranscript, refreshSummary, refreshMinutes,
     runMtgEnhance, ingestNoteToMemory, copyMtgShareLink,
     mtgDraftEmail, mtgCopyAllText, moveGranolaToTrash,
-    runLocalAsk, listLocalTodos,
+    runLocalAsk, runAskChat, listLocalTodos,
     startNoteRecording, stopNoteRecording,
     showPermissionBanner,
     recordingWithoutRemote,
@@ -54,6 +58,56 @@ export function GranolaOverlay() {
   } = p;
 
   if (!granola) return null;
+
+  const openContextTimelineMemory = (item: any) => {
+    const memoryId = String(item?.memory_id || '').trim();
+    const title = String(item?.title || granola.title || 'Meeting context').trim();
+    if (!memoryId) return;
+    openMemoryItem({
+      memoryId,
+      query: title,
+      view: 'river',
+    });
+  };
+
+  const askChatAboutContextTimeline = (item: any) => {
+    const meetingId = String(granola.backendMeetingId || granola.storageKey || '').trim();
+    if (!meetingId) {
+      toastM('会議 ID がないため Chat に渡せません', 'warn');
+      return;
+    }
+    const text = String(item?.text || '').trim();
+    if (!text) return;
+    const isCapture = String(item?.kind || '') === 'capture';
+    openChatWithSeed(buildMeetingChatSeed({
+      meetingId,
+      title: granola.title ?? null,
+      transcriptSnippet: isCapture ? '' : text,
+      noteSnippet: isCapture ? text : '',
+      question: isCapture
+        ? 'この画面コンテキストが会議で何を意味するか整理してください。'
+        : 'この発言の意味と次の一手を整理してください。',
+    }));
+  };
+
+  const openMeetingContextFromTimeline = (_item: any) => {
+    const meetingId = String(granola.backendMeetingId || '').trim();
+    if (!meetingId) {
+      toastM('会議 entity がまだ作成されていません', 'warn');
+      return;
+    }
+    openMeetingDetail(meetingId);
+  };
+
+  const openMeetingActionsFromTimeline = (_item: any) => {
+    const meetingId = String(granola.backendMeetingId || '').trim();
+    if (!meetingId) {
+      toastM('会議 entity がまだ作成されていません', 'warn');
+      return;
+    }
+    focusEntity(`meeting:${meetingId}`);
+    (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('actions');
+  };
 
   return (
     <div
@@ -703,6 +757,10 @@ export function GranolaOverlay() {
             <MeetingContextTimeline
               items={contextTimelineItems || []}
               loading={!!contextTimelineLoading}
+              onOpenMemory={openContextTimelineMemory}
+              onOpenMeetingContext={openMeetingContextFromTimeline}
+              onOpenMeetingActions={openMeetingActionsFromTimeline}
+              onAskChat={askChatAboutContextTimeline}
             />
           </div>
         )}
@@ -974,6 +1032,28 @@ export function GranolaOverlay() {
           }}
           onKeyDown={function (e) { if (e.key === 'Enter') { e.preventDefault(); runLocalAsk(); } }}
         />
+        <button
+          type="button"
+          onClick={runAskChat}
+          style={{
+            display:'inline-flex',
+            alignItems:'center',
+            gap:8,
+            padding:'8px 14px',
+            borderRadius:999,
+            border:'1px solid var(--border-hi)',
+            background:'color-mix(in srgb, var(--surface-2) 85%, transparent)',
+            color:'var(--text)',
+            fontSize:13,
+            fontWeight:500,
+            cursor:'pointer',
+            whiteSpace:'nowrap',
+            fontFamily:'inherit',
+          }}
+        >
+          <span style={{color:'var(--gold)', display:'inline-flex', lineHeight:0}}><Icon name="sparkles" size={15}/></span>
+          <span>Ask Chat</span>
+        </button>
         <button
           type="button"
           onClick={listLocalTodos}

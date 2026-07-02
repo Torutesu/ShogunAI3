@@ -11,6 +11,12 @@ export const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 export const NAV = [
   {id:'home',      label:'Home',         jp:'起動',   icon:'dashboard', section:'main'},
   {id:'memory',    label:'Memory',       jp:'記憶',   icon:'memory',    section:'main'},
+  {id:'founder_sales', label:'Founder Sales', jp:'営業', icon:'work', section:'main'},
+  {id:'fundraising', label:'Fundraising', jp:'調達', icon:'users', section:'main'},
+  {id:'project_memory', label:'Project Memory', jp:'案件', icon:'layers', section:'main'},
+  {id:'entity_context', label:'Entity Context', jp:'対象', icon:'memory', section:'main'},
+  {id:'ai_fields', label:'AI Fields',    jp:'追跡',   icon:'sparkles',  section:'main'},
+  {id:'actions',   label:'Actions',      jp:'行動',   icon:'bolt',      section:'main'},
   {id:'chat',      label:'Chat',         jp:'対話',   icon:'chat',      section:'main'},
   {id:'agents',    label:'Agents',       jp:'家臣',   icon:'agents',    section:'main'},
   {id:'work',      label:'Work',         jp:'任務',   icon:'work',      section:'workspace'},

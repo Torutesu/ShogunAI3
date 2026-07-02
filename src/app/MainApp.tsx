@@ -8,6 +8,12 @@ import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, lazy,
 
 const ScreenHome = lazy(() => import('@/features/home').then(m => ({ default: m.ScreenHome })));
 const ScreenMemory = lazy(() => import('@/features/memory').then(m => ({ default: m.ScreenMemory })));
+const ScreenFounderSales = lazy(() => import('@/features/founder-sales').then(m => ({ default: m.ScreenFounderSales })));
+const ScreenFundraising = lazy(() => import('@/features/fundraising').then(m => ({ default: m.ScreenFundraising })));
+const ScreenProjectMemory = lazy(() => import('@/features/project-memory').then(m => ({ default: m.ScreenProjectMemory })));
+const ScreenEntityContext = lazy(() => import('@/features/entity-context').then(m => ({ default: m.ScreenEntityContext })));
+const ScreenAiFields = lazy(() => import('@/features/ai-fields').then(m => ({ default: m.ScreenAiFields })));
+const ScreenActions = lazy(() => import('@/features/actions').then(m => ({ default: m.ScreenActions })));
 const ScreenMeetings = lazy(() => import('@/features/meetings').then(m => ({ default: m.ScreenMeetings })));
 const ScreenWork = lazy(() => import('@/features/work').then(m => ({ default: m.ScreenWork })));
 const ScreenAgents = lazy(() => import('@/features/agents').then(m => ({ default: m.ScreenAgents })));
@@ -38,10 +44,12 @@ import { Sidebar } from './shell/Sidebar';
 import { MeetingHud } from './shell/MeetingHud';
 import { MeetingPromptBanner } from './shell/MeetingPromptBanner';
 import {
+  clearPendingMeetingDetect,
   dispatchMeetingDetected,
   stashPendingMeetingDetect,
   type MeetingDetectDetail,
 } from '@/shared/lib/meeting-detect-events';
+import { openMeetingDetail } from '@/shared/context/context-target-navigation';
 import { BioLockOverlay } from './shell/BioLockOverlay';
 import { MainAppPortals } from './shell/MainAppPortals';
 
@@ -237,6 +245,7 @@ export function MainApp(): React.ReactElement {
   }, []);
 
   useAppEventBus({
+    activeScreen: active,
     activeChat,
     chats,
     workProjects,
@@ -246,10 +255,14 @@ export function MainApp(): React.ReactElement {
     executeAction,
     pushToast,
     setActive,
+    setSettingsOpen,
     setMeetingHud,
     setHummingbirdOpen,
     setContextPanelOpen,
     setHistoricalImport,
+    historicalImport,
+    historicalImportBusy,
+    setHistoricalImportBusy,
     setHistoricalImportProgress,
     setAppDetectAlerts,
     setMeetingPrompt,
@@ -652,6 +665,12 @@ export function MainApp(): React.ReactElement {
   const Screen = {
     home: ScreenHome,
     memory: ScreenMemory,
+    founder_sales: ScreenFounderSales,
+    fundraising: ScreenFundraising,
+    project_memory: ScreenProjectMemory,
+    entity_context: ScreenEntityContext,
+    ai_fields: ScreenAiFields,
+    actions: ScreenActions,
     chat: ScreenChat,
     agents: ScreenAgents,
     work: ScreenWork,
@@ -672,10 +691,17 @@ export function MainApp(): React.ReactElement {
       setMeetingHud(null);
       try {
         window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
-        window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
       } catch { /* ignore */ }
       if (r.ok) {
-        pushToast('会議を保存して終了しました', 'success');
+        if (active === 'meetings') {
+          pushToast('会議を保存して終了しました', 'success', {
+            durationMs: 7000,
+            action: {
+              label: 'Open Meeting',
+              onClick: () => openMeetingDetail(String(hud.backendMeetingId)),
+            },
+          });
+        }
       } else {
         pushToast(String(r.error || '会議の停止に失敗しました'), 'error');
       }
@@ -737,7 +763,10 @@ export function MainApp(): React.ReactElement {
           onTakeNotes={() => {
             if (meetingPrompt) acceptMeetingPrompt(meetingPrompt);
           }}
-          onDismiss={() => setMeetingPrompt(null)}
+          onDismiss={() => {
+            clearPendingMeetingDetect();
+            setMeetingPrompt(null);
+          }}
         />
         <TopBar
           active={active}

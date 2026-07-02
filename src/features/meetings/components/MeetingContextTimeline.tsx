@@ -4,12 +4,20 @@ export interface MeetingContextTimelineProps {
   items: any[];
   loading?: boolean;
   emptyHint?: string;
+  onOpenMemory?: (item: any) => void;
+  onAskChat?: (item: any) => void;
+  onOpenMeetingContext?: (item: any) => void;
+  onOpenMeetingActions?: (item: any) => void;
 }
 
 export function MeetingContextTimeline({
   items,
   loading,
   emptyHint,
+  onOpenMemory,
+  onAskChat,
+  onOpenMeetingContext,
+  onOpenMeetingActions,
 }: MeetingContextTimelineProps) {
   if (loading) {
     return (
@@ -43,6 +51,10 @@ export function MeetingContextTimeline({
         const title = item.title || (isCapture ? 'Screen' : 'Transcript');
         const text = item.text || '';
         const speaker = item.speaker;
+        const canOpenMemory = isCapture && !!String(item.memory_id || '').trim() && !!onOpenMemory;
+        const canAskChat = !!text && !!onAskChat;
+        const canOpenMeetingContext = !!onOpenMeetingContext;
+        const canOpenMeetingActions = !!onOpenMeetingActions;
         return (
           <div
             key={(item.memory_id || '') + '-' + idx}
@@ -82,6 +94,82 @@ export function MeetingContextTimeline({
               <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.45, wordBreak: 'break-word' }}>
                 {isCapture ? (title + (text ? '\n' + text : '')) : text}
               </div>
+              {(canOpenMemory || canAskChat || canOpenMeetingContext || canOpenMeetingActions) ? (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  {canOpenMemory ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenMemory?.(item)}
+                      style={{
+                        height: 24,
+                        padding: '0 8px',
+                        borderRadius: 999,
+                        border: '1px solid var(--border-hi)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Open Memory
+                    </button>
+                  ) : null}
+                  {canOpenMeetingContext ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenMeetingContext?.(item)}
+                      style={{
+                        height: 24,
+                        padding: '0 8px',
+                        borderRadius: 999,
+                        border: '1px solid var(--border-hi)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Open Meeting Detail
+                    </button>
+                  ) : null}
+                  {canOpenMeetingActions ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenMeetingActions?.(item)}
+                      style={{
+                        height: 24,
+                        padding: '0 8px',
+                        borderRadius: 999,
+                        border: '1px solid var(--border-hi)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Actions
+                    </button>
+                  ) : null}
+                  {canAskChat ? (
+                    <button
+                      type="button"
+                      onClick={() => onAskChat?.(item)}
+                      style={{
+                        height: 24,
+                        padding: '0 8px',
+                        borderRadius: 999,
+                        border: '1px solid var(--border-hi)',
+                        background: 'var(--surface)',
+                        color: 'var(--text)',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Ask Chat
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
         );

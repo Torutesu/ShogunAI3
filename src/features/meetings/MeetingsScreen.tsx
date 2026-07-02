@@ -3,6 +3,10 @@ import React from 'react';
 import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
 import { takePendingMeetingDetect } from '@/shared/lib/meeting-detect-events';
 import { Icon, Kamon } from '@/shared/icons';
+import {
+  clearPendingMeetingDetailId,
+  takePendingMeetingDetailId,
+} from '@/shared/context/native-detail-events';
 import { MtgProgressDots } from './components/MtgProgressDots';
 import { GranolaOverlay } from './components/GranolaOverlay';
 import { MtgChatDock } from './components/MtgChatDock';
@@ -49,6 +53,7 @@ export function MeetingsScreen() {
   // { meeting, segments, loading, filter } when the detail modal is open.
   const [meetingDetail, setMeetingDetail] = useState<any>(null);
   const [listTick, setListTick] = useState(0);
+  const meetingDetailRef = useRef<any>(null);
   const comingUp = useMeetingsCalendar();
   const granolaPillUi = useGranolaPillUi();
   const { allowServerMemoryAssembly, autoStartOnCalendar, autoStartOnCalendarRef } = useMeetingsScreenPrefs();
@@ -138,6 +143,10 @@ export function MeetingsScreen() {
 
   const granolaStorageKey = granola && granola.storageKey;
   useEffect(function () {
+    meetingDetailRef.current = meetingDetail;
+  }, [meetingDetail]);
+
+  useEffect(function () {
     setPostRecSessionFlag(false);
     setPostRecWaveMenuOpen(false);
   }, [granolaStorageKey]);
@@ -163,6 +172,30 @@ export function MeetingsScreen() {
     return function () { window.removeEventListener('shogun-user-meeting-log-changed', onLog); };
   }, []);
 
+  const openMeetingDetailById = useCallback(function (meetingId: string, options?: { preserveFilter?: boolean }) {
+    const mid = String(meetingId || '').trim();
+    if (!mid) return;
+    const currentFilter = options && options.preserveFilter
+      ? String(meetingDetailRef.current && meetingDetailRef.current.filter || '')
+      : '';
+    setMeetingDetail({ meeting: { id: mid }, segments: null, loading: true, filter: currentFilter });
+    runRuntimeAction('meetings.get', { meeting_id: mid }, { silentError: true }).then(function (r) {
+      if (!(r && r.ok && r.data && r.data.meeting)) {
+        const msg = (r && r.error && r.error.message) || 'Meeting not found';
+        (window as any).SHOGUN_RUNTIME?.pushToast?.(msg, 'warn');
+        setMeetingDetail((prev: any) => (prev && prev.meeting && prev.meeting.id === mid ? null : prev));
+        return;
+      }
+      const meeting = r.data.meeting;
+      const segments = Array.isArray(r.data.transcript) ? r.data.transcript : [];
+      setMeetingDetail((prev: any) => (
+        prev && prev.meeting && prev.meeting.id === mid
+          ? { ...prev, meeting, segments, loading: false }
+          : prev
+      ));
+    });
+  }, []);
+
   // Imported recordings (com.shogun.import): query the backend meetings list
   // and filter on app_bundle_id. Refreshes when a new import completes via
   // the `shogun-meetings-changed` event.
@@ -179,13 +212,39 @@ export function MeetingsScreen() {
       });
     };
     load();
-    const onChanged = function () { load(); };
+    const onChanged = function () {
+      load();
+      const openMeetingId = String(meetingDetailRef.current && meetingDetailRef.current.meeting && meetingDetailRef.current.meeting.id || '').trim();
+      if (openMeetingId) {
+        openMeetingDetailById(openMeetingId, { preserveFilter: true });
+      }
+    };
     window.addEventListener('shogun-meetings-changed', onChanged);
     return function () {
       cancelled = true;
       window.removeEventListener('shogun-meetings-changed', onChanged);
     };
-  }, []);
+  }, [openMeetingDetailById]);
+
+  useEffect(function () {
+    const onOpenMeetingDetail = function (event: Event) {
+      const detail = (event as CustomEvent<{ meetingId?: string }>).detail || {};
+      const meetingId = String(detail.meetingId || '').trim();
+      if (!meetingId) return;
+      clearPendingMeetingDetailId(meetingId);
+      openMeetingDetailById(meetingId);
+    };
+    window.addEventListener('shogun-open-meeting-detail', onOpenMeetingDetail as EventListener);
+    return function () {
+      window.removeEventListener('shogun-open-meeting-detail', onOpenMeetingDetail as EventListener);
+    };
+  }, [openMeetingDetailById]);
+
+  useEffect(function () {
+    const pendingMeetingId = takePendingMeetingDetailId();
+    if (!pendingMeetingId) return;
+    openMeetingDetailById(pendingMeetingId);
+  }, [openMeetingDetailById]);
 
   const granolaTitle = granola && granola.title;
   /** Keep MediaRecorder titleRef aligned with the note title (download filename + HUD) while recording. */
@@ -557,6 +616,7 @@ export function MeetingsScreen() {
     mtgDraftEmail,
     mtgCopyAllText,
     runLocalAsk,
+    runAskChat,
     listLocalTodos,
   } = useGranolaNoteActions({
     granola,
@@ -675,6 +735,7 @@ export function MeetingsScreen() {
     mtgCopyAllText,
     moveGranolaToTrash,
     runLocalAsk,
+    runAskChat,
     listLocalTodos,
     startNoteRecording,
     stopNoteRecording,
@@ -695,7 +756,7 @@ export function MeetingsScreen() {
     mtgTopShareOpen, mtgEnhanceBusy, mtgLinkAccess, mtgShareSearch, mtgShareOwner, mtgLinkBusy,
     mtgLinkAccessMenuOpen, audioRecSession, applyStubTranscript, refreshSummary, refreshMinutes,
     runMtgEnhance, ingestNoteToMemory, copyMtgShareLink, mtgDraftEmail, mtgCopyAllText, moveGranolaToTrash,
-    runLocalAsk, listLocalTodos, startNoteRecording, stopNoteRecording, showPermissionBanner,
+    runLocalAsk, runAskChat, listLocalTodos, startNoteRecording, stopNoteRecording, showPermissionBanner,
     backendRecActive, systemAudioRunning, screenCaptureGranted, contextTimelineItems, contextTimelineLoading,
     permissionActionBusy, openMeetingScreenCaptureSettings, requestMeetingScreenCaptureAccess,
     startMicOnlyRecording, injectRecipeIntoMemo, runPostRecSlashItem,

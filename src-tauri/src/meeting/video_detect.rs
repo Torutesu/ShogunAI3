@@ -4,6 +4,7 @@
 
 use crate::macos_frontmost::frontmost_focus_snapshot;
 use crate::meeting_auto;
+use crate::settings_store;
 use serde_json::json;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -46,6 +47,30 @@ pub fn poll_once(app: &AppHandle) {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = app;
+    }
+}
+
+fn app_detect_alerts_enabled() -> bool {
+    settings_store::load()
+        .ok()
+        .and_then(|doc| {
+            doc.pointer("/sections/meetings/appDetectAlerts")
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(true)
+}
+
+fn meeting_detect_notification_body(provider: &str, app_label: &str, auto_started: bool) -> String {
+    let label = provider_label(provider);
+    let app_name = app_label.trim();
+    if auto_started {
+        format!(
+            "{label} detected in {app_name}. SHOGUN started a live meeting session."
+        )
+    } else {
+        format!(
+            "{label} detected in {app_name}. Open SHOGUN to capture the meeting context."
+        )
     }
 }
 
@@ -222,6 +247,11 @@ fn try_detect_and_emit(
         meeting_id
     );
 
+    if app_detect_alerts_enabled() {
+        let body = meeting_detect_notification_body(&provider, app_label, meeting_id.is_some());
+        crate::app_events::notify_native("Meeting App Detected", &body);
+    }
+
     let _ = app.emit(
         "video-meeting-started",
         json!({
@@ -253,6 +283,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings_store::{save_patch, TestSettingsGuard};
 
     #[test]
     fn detect_zoom_from_app_name() {
@@ -271,5 +302,29 @@ mod tests {
     fn detect_meet_from_ax_url() {
         let found = detect_video_meeting("Join meet.google.com/abc-defg-hij");
         assert_eq!(found.as_ref().map(|x| x.0.as_str()), Some("google_meet"));
+    }
+
+    #[test]
+    fn app_detect_alerts_respects_settings() {
+        let _guard = TestSettingsGuard::new("meeting-video-detect-alerts");
+        assert!(app_detect_alerts_enabled());
+        save_patch(&json!({
+          "section": "meetings",
+          "appDetectAlerts": false
+        }))
+        .expect("save meetings settings");
+        assert!(!app_detect_alerts_enabled());
+    }
+
+    #[test]
+    fn meeting_detect_notification_body_matches_auto_start_state() {
+        assert_eq!(
+            meeting_detect_notification_body("google_meet", "Google Chrome", true),
+            "Google Meet detected in Google Chrome. SHOGUN started a live meeting session."
+        );
+        assert_eq!(
+            meeting_detect_notification_body("zoom", "Arc", false),
+            "Zoom detected in Arc. Open SHOGUN to capture the meeting context."
+        );
     }
 }

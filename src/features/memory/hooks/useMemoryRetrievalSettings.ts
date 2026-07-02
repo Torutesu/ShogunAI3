@@ -10,46 +10,56 @@ export function useMemoryRetrievalSettings() {
   const [summaryEnabled, setSummaryEnabled] = useState(true);
   const [loaded, setLoaded] = useState(false);
 
+  const applySettingsResponse = useCallback((r: any) => {
+    const mem = r?.ok && r.data?.settings?.sections?.memory;
+    if (mem && typeof mem === 'object' && typeof mem.semanticRerank === 'boolean') {
+      setSemanticMemorySearch(mem.semanticRerank);
+    }
+    if (mem && typeof mem === 'object') {
+      setSummaryEnabled(mem.enableMemorySummary !== false);
+    }
+    const graph = r?.ok && r.data?.settings?.sections?.kioku_graph;
+    if (graph && typeof graph === 'object' && typeof graph.read_path === 'string') {
+      const path = String(graph.read_path).toLowerCase();
+      setGraphReadPath(path === 'graph' ? 'graph' : 'legacy');
+    }
+    const priv = r?.ok && r.data?.settings?.sections?.privacy;
+    if (priv && typeof priv === 'object') {
+      setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
+    }
+  }, []);
+
+  const reloadSettings = useCallback(async () => {
+    const r = await runRuntimeAction('settings.load', {}, { silentError: true });
+    applySettingsResponse(r);
+    setLoaded(true);
+    return r;
+  }, [applySettingsResponse]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const r = await runRuntimeAction('settings.load', {}, { silentError: true });
       if (cancelled) return;
-      const mem = r?.ok && r.data?.settings?.sections?.memory;
-      if (mem && typeof mem === 'object' && typeof mem.semanticRerank === 'boolean') {
-        setSemanticMemorySearch(mem.semanticRerank);
-      }
-      if (mem && typeof mem === 'object') {
-        setSummaryEnabled(mem.enableMemorySummary !== false);
-      }
-      const graph = r?.ok && r.data?.settings?.sections?.kioku_graph;
-      if (graph && typeof graph === 'object' && typeof graph.read_path === 'string') {
-        const path = String(graph.read_path).toLowerCase();
-        setGraphReadPath(path === 'graph' ? 'graph' : 'legacy');
-      }
-      const priv = r?.ok && r.data?.settings?.sections?.privacy;
-      if (priv && typeof priv === 'object') {
-        setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-      }
+      applySettingsResponse(r);
       setLoaded(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySettingsResponse]);
 
   useEffect(() => {
-    const onPrivacy = () => {
-      void runRuntimeAction('settings.load', {}, { silentError: true }).then((r: any) => {
-        const priv = r?.ok && r.data?.settings?.sections?.privacy;
-        if (priv && typeof priv === 'object') {
-          setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
-        }
-      });
-    };
+    const onPrivacy = () => { void reloadSettings(); };
     window.addEventListener('shogun-privacy-settings-changed', onPrivacy);
     return () => window.removeEventListener('shogun-privacy-settings-changed', onPrivacy);
-  }, []);
+  }, [reloadSettings]);
+
+  useEffect(() => {
+    const onRefresh = () => { void reloadSettings(); };
+    window.addEventListener('shogun-settings-refresh', onRefresh);
+    return () => window.removeEventListener('shogun-settings-refresh', onRefresh);
+  }, [reloadSettings]);
 
   const withSemantic = useCallback(
     (payload: Record<string, unknown>) => {
@@ -96,6 +106,7 @@ export function useMemoryRetrievalSettings() {
     summaryEnabled,
     allowServerMemoryAssembly,
     loaded,
+    reloadSettings,
     withSemantic,
     saveSemanticRerank,
     saveGraphReadPath,

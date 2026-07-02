@@ -123,6 +123,8 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
     init_schema(&conn)?;
     ensure_embedding_column(&conn)?;
     ensure_context_layer_columns(&conn)?;
+    crate::ai_fields::ensure_ai_fields_schema(&conn)?;
+    crate::context_actions::ensure_context_actions_schema(&conn)?;
     ensure_redaction_nullable(&conn)?;
     migrate_json_if_needed(&conn)?;
     // Phase 2 Stage 1: KIOKU graph layer columns + new tables + backfill.
@@ -2032,6 +2034,7 @@ pub fn stats() -> Result<Value, String> {
 /// Extended stats for the Memory Debugger (B-2). Returns breakdown by source
 /// and provenance, FTS integrity (base vs fts row count), and embedding
 /// coverage by source. Read-only.
+#[cfg(debug_assertions)]
 pub fn stats_extended() -> Result<Value, String> {
     let conn = open_conn()?;
 

@@ -17,6 +17,7 @@ npm run lint
 npm run cycles
 npm run knip
 npm run check:actions
+npm run release:preflight
 npm run test:unit
 npm run check:rust
 npm run test:rust

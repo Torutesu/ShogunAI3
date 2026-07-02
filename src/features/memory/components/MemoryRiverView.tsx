@@ -1,6 +1,12 @@
 import type * as React from 'react';
 import { Icon } from '@/shared/icons';
+import {
+  nativeDetailDescriptorForEntityId,
+  openContextTarget,
+  openNativeDetailForEntityId,
+} from '@/shared/context/context-target-navigation';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { MemoryAiFieldPanel } from './MemoryAiFieldPanel';
 import {
   memoryProviderKey,
   MEMORY_PROVIDER_META,
@@ -76,6 +82,9 @@ export function MemoryRiverView({
   assignMemoryToWorkspace,
   allowServerMemoryAssembly,
 }: MemoryRiverViewProps) {
+  const scrubbedEntityId = String(scrubbed?.entityId || '').trim();
+  const nativeDetailDescriptor = nativeDetailDescriptorForEntityId(scrubbedEntityId);
+
   return (
     <>
     <div className="memory-scrub-stage" style={{padding:'24px 40px 24px', display:'grid', gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)', gap:20, minHeight:420}}>
@@ -532,7 +541,31 @@ export function MemoryRiverView({
                 {scrubbed.entityId && (
                   <>
                     <span className="t-mono" style={{color:'var(--text-dim)'}}>Entity</span>
-                    <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.entityId}</span>
+                    <div style={{display:'flex', flexDirection:'column', gap:8, alignItems:'flex-start'}}>
+                      <span className="t-mono" style={{color:'var(--text-mute)', wordBreak:'break-all', fontSize:11}}>{scrubbed.entityId}</span>
+                      <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          onClick={() => {
+                            openContextTarget({ targetId: scrubbedEntityId });
+                          }}
+                        >
+                          Entity Context
+                        </button>
+                        {nativeDetailDescriptor ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => {
+                              openNativeDetailForEntityId(scrubbedEntityId);
+                            }}
+                          >
+                            {nativeDetailDescriptor.label}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
@@ -545,6 +578,7 @@ export function MemoryRiverView({
             </div>
           )}
         </div>
+        <MemoryAiFieldPanel scrubbed={scrubbed} />
       </div>
     </div>
 

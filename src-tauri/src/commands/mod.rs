@@ -17,7 +17,8 @@ pub use app::{
     app_capture_pause, app_capture_resume, app_create_share_link, app_delete_account,
     app_delete_all_data, app_delete_data_range, app_diagnostics_report, app_frontend_error_report,
     app_llm_api_key_clear, app_llm_api_key_set, app_llm_api_key_status, app_onboarding_complete,
-    app_open_hummingbird, app_permissions_manage, app_privacy_pick_app, app_quit,
+    app_notification_request, app_notification_status, app_open_hummingbird,
+    app_permissions_manage, app_privacy_pick_app, app_quit,
     app_settings_export, app_settings_import, app_settings_load, app_settings_save,
     app_updates_check, app_updates_download_install, shogun_capture_live_events,
     shogun_capture_status, shogun_dead_letter_clear, shogun_dead_letter_delete,
@@ -57,12 +58,18 @@ pub use llm::{
 };
 pub use mcp::{
     mcp_setup_complete, mcp_setup_detect, mcp_setup_open_claude_app, mcp_setup_open_claude_config,
-    mcp_setup_verify, mcp_setup_write_config,
+    mcp_setup_list_tools, mcp_setup_preview_tool, mcp_setup_verify, mcp_setup_write_config,
 };
 pub use memory::{
-    shogun_entity_query, shogun_memory_debug_gate, shogun_memory_delete,
-    shogun_memory_embed_backfill, shogun_memory_embed_backfill_cancel, shogun_memory_export,
-    shogun_memory_fetch, shogun_memory_import, shogun_memory_ingest, shogun_memory_search,
+    shogun_ai_field_list, shogun_ai_field_upsert, shogun_context_action_audit_list,
+    shogun_context_action_execute, shogun_context_action_list, shogun_context_action_propose,
+    shogun_context_action_set_status, shogun_context_recent_get, shogun_context_search,
+    shogun_context_tasks_list, shogun_crm_update_queue_list, shogun_crm_update_queue_remove,
+    shogun_crm_update_queue_retry, shogun_entity_context_get, shogun_entity_query,
+    shogun_memory_debug_gate, shogun_memory_delete, shogun_memory_embed_backfill,
+    shogun_memory_embed_backfill_cancel, shogun_memory_export, shogun_memory_fetch,
+    shogun_memory_import, shogun_memory_ingest, shogun_memory_search, shogun_owner_context_summary,
+    shogun_schedule_queue_list, shogun_schedule_queue_remove, shogun_schedule_queue_retry,
 };
 #[cfg(debug_assertions)]
 pub use memory::{

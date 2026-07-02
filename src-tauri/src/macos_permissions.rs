@@ -39,6 +39,7 @@ mod imp {
             "accessibility" => {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
             }
+            "notifications" => "x-apple.systempreferences:com.apple.preference.notifications",
             "input_monitoring" | "listening_event" => {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ListeningEvent"
             }

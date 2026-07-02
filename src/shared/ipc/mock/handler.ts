@@ -1,11 +1,18 @@
 import { ShogunMorningBrief } from "@/shared/lib/morning-brief";
 import { SHOGUN_DEMO_SEED } from "@/shared/lib/demo-seed";
 import { ShogunIntegrationConnectors } from "@/shared/lib/integration-connectors";
+import { queueArtifactOwnerEntityId } from "@/shared/context/queue-artifact-meta";
 import {
+  readMockAiFields,
+  readMockContextActionAudit,
+  readMockContextActions,
   MOCK_MEMORY_INDEX_LS,
   mergeMockSettingsSection,
   readMockLlmKeyConfigured,
   readMockSettingsSections,
+  writeMockAiFields,
+  writeMockContextActionAudit,
+  writeMockContextActions,
   writeMockLlmKeyConfigured,
 } from "./settings";
 
@@ -49,6 +56,12 @@ const DEMO = SHOGUN_DEMO_SEED || null;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function normalizeMockActionType(value: unknown): string {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "queue_crm_update") return "update_crm";
+  return raw;
 }
 
 function mockFrontmostFocus() {
@@ -119,6 +132,21 @@ function writeMemoryIndex(items: any[]) {
   }
 }
 
+function dispatchActionLayerRefresh(reason: string, payload?: unknown) {
+  try {
+    g.dispatchEvent?.(
+      new CustomEvent("shogun-action-layer-refresh", {
+        detail: {
+          reason: String(reason || "unknown").trim() || "unknown",
+          payload: payload ?? null,
+        },
+      }),
+    );
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 function normalizeMemoryHit(hit: any, fallbackId: string) {
   const source = String((hit && hit.source) || "note");
   return {
@@ -173,6 +201,70 @@ function buildMemoryAssemblyBlock(memoryAssembly: any) {
       ? lines.join("\n")
       : "(no relevant local memory hits)",
   };
+}
+
+function mockQueueArtifacts(ownerEntityId: string, limit: number) {
+  const items = [
+    {
+      id: "sch-mock-1",
+      createdAt: Date.now() - 5 * 60 * 1000,
+      payload: {
+        title: "Send onboarding checklist",
+        detail: "Queue created from approved action.",
+        owner_entity_id: "workspace:demo",
+        source_action_id: "act-queue",
+      },
+      provenance: {
+        sourceAction: {
+          id: "act-queue",
+          status: "approved",
+          riskLevel: "medium",
+          title: "Queue task",
+        },
+        latestAudit: {
+          eventType: "approved",
+          detail: "Approved in review",
+        },
+      },
+    },
+    {
+      id: "crm-mock-1",
+      createdAt: Date.now() - 12 * 60 * 1000,
+      payload: {
+        title: "Update blocker field",
+        detail: "Prospect asked for security documentation before next step.",
+        owner_entity_id: "deal:acme",
+        source_action_id: "act-crm",
+      },
+      provenance: {
+        sourceAction: {
+          id: "act-crm",
+          status: "approved",
+          riskLevel: "medium",
+          title: "Queue CRM update",
+        },
+        latestAudit: {
+          eventType: "approved",
+          detail: "Approved in review",
+        },
+      },
+    },
+  ];
+  return items
+    .filter((item: any) => !ownerEntityId || queueArtifactOwnerEntityId(item) === ownerEntityId)
+    .slice(0, limit);
+}
+
+function mockRecentMeetings(ownerEntityId: string, limit: number) {
+  const meetings = DEMO && Array.isArray((DEMO as any).meetings)
+    ? (DEMO as any).meetings
+    : [];
+  if (!ownerEntityId) return meetings.slice(0, limit);
+  if (ownerEntityId.startsWith("meeting:")) {
+    const meetingId = ownerEntityId.slice("meeting:".length);
+    return meetings.filter((item: any) => String(item?.id || "").trim() === meetingId).slice(0, 1);
+  }
+  return meetings.slice(0, limit);
 }
 
 if (command === "shogun_brief_get" && ShogunMorningBrief) {
@@ -377,6 +469,21 @@ switch (command) {
     }
     return notImpl("Integration mock unavailable.");
   }
+  case "app_notification_status":
+    return {
+      granted: true,
+      promptable: false,
+      state: "Granted",
+      stub: false,
+      echo,
+    };
+  case "app_notification_request":
+    return {
+      granted: true,
+      state: "Granted",
+      stub: false,
+      echo,
+    };
   case "shogun_draft": {
     const asb = buildMemoryAssemblyBlock(echo && echo.memoryAssembly);
     let memNote = "";
@@ -395,11 +502,118 @@ switch (command) {
     };
   }
   case "shogun_schedule_action":
+    dispatchActionLayerRefresh("queue.tasks.append", echo);
     return {
       scheduled: true,
       id: "sch-mock",
       stub: false,
       echo: echo,
+    };
+  case "shogun_schedule_queue_list":
+    return {
+      items: [
+        {
+          id: "sch-mock-1",
+          createdAt: Date.now() - 5 * 60 * 1000,
+          payload: {
+            title: "Send onboarding checklist",
+            detail: "Queue created from approved action.",
+            owner_entity_id: "workspace:demo",
+            source_action_id: "act-queue",
+          },
+          provenance: {
+            sourceAction: {
+              id: "act-queue",
+              status: "approved",
+              riskLevel: "medium",
+              title: "Queue task",
+            },
+            latestAudit: {
+              eventType: "approved",
+              detail: "Approved in review",
+            },
+          },
+        },
+      ],
+      total: 1,
+      stub: false,
+      echo,
+    };
+  case "shogun_schedule_queue_remove":
+    dispatchActionLayerRefresh("queue.tasks.remove", echo);
+    return {
+      removed: true,
+      id: String((echo && echo.id) || "sch-mock-1"),
+      remaining: 0,
+      stub: false,
+      echo,
+    };
+  case "shogun_schedule_queue_retry":
+    dispatchActionLayerRefresh("queue.tasks.retry", echo);
+    return {
+      retried: true,
+      fromId: String((echo && echo.id) || "sch-mock-1"),
+      item: {
+        scheduled: true,
+        id: `sch-retry-${Date.now()}`,
+        stub: false,
+        echo,
+      },
+      stub: false,
+      echo,
+    };
+  case "shogun_crm_update_queue_list":
+    return {
+      items: [
+        {
+          id: "crm-mock-1",
+          createdAt: Date.now() - 12 * 60 * 1000,
+          payload: {
+            title: "Update blocker field",
+            detail: "Prospect asked for security documentation before next step.",
+            owner_entity_id: "deal:acme",
+            source_action_id: "act-crm",
+          },
+          provenance: {
+            sourceAction: {
+              id: "act-crm",
+              status: "approved",
+              riskLevel: "medium",
+              title: "Queue CRM update",
+            },
+            latestAudit: {
+              eventType: "approved",
+              detail: "Approved in review",
+            },
+          },
+        },
+      ],
+      total: 1,
+      stub: false,
+      echo,
+    };
+  case "shogun_crm_update_queue_remove":
+    dispatchActionLayerRefresh("queue.crm_updates.remove", echo);
+    return {
+      removed: true,
+      id: String((echo && echo.id) || "crm-mock-1"),
+      remaining: 0,
+      stub: false,
+      echo,
+    };
+  case "shogun_crm_update_queue_retry":
+    dispatchActionLayerRefresh("queue.crm_updates.retry", echo);
+    return {
+      retried: true,
+      fromId: String((echo && echo.id) || "crm-mock-1"),
+      item: {
+        queued: true,
+        id: `crm-retry-${Date.now()}`,
+        stub: false,
+        echo,
+      },
+      stub: false,
+      echo,
     };
   case "shogun_open_pack":
     return {
@@ -792,6 +1006,594 @@ switch (command) {
       echo: echo,
       stub: false,
     };
+  case "shogun_entity_context_get": {
+    const entityId = String((echo && echo.entityId) || "").trim();
+    if (!entityId) {
+      throw createError("VALIDATION_ERROR", "entityId is required");
+    }
+    const limit = Math.max(1, Number((echo && echo.limit) || 6));
+    const rollup = {
+      targetId: entityId,
+      targetKind: "entity_rollup",
+      title: `Context for ${String((echo && echo.entityLabel) || entityId)}`,
+      keyPoints: [
+        "Shared context is assembled from summaries, AI Fields, and Actions.",
+        "This mock bundle mirrors the read-only entity context path used by the MCP server.",
+      ],
+      sourceType: "entity_rollup",
+      priority: "medium",
+      reason: "mock",
+      model: "mock",
+      schemaVersion: 1,
+      generatedAt: Date.now(),
+      lang: String((echo && echo.lang) || "en"),
+    };
+    const aiFields = readMockAiFields()
+      .filter((item: any) => String(item?.ownerEntityId || "") === entityId)
+      .slice(0, limit);
+    const actions = readMockContextActions()
+      .filter((item: any) => String(item?.ownerEntityId || "") === entityId)
+      .slice(0, limit);
+    const demoHighlights = DEMO && typeof DEMO === "object" && Array.isArray((DEMO as any).memoryHighlights)
+      ? (DEMO as any).memoryHighlights
+      : [];
+    const recentSummaries = demoHighlights
+      .filter((item: any) => String(item?.entityId || "") === entityId)
+      .slice(0, limit);
+    return {
+      entityId,
+      entityLabel: String((echo && echo.entityLabel) || entityId),
+      lang: String((echo && echo.lang) || "en"),
+      rollup,
+      recentSummaries,
+      aiFields,
+      actions,
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_context_recent_get": {
+    const limit = Math.max(1, Number((echo && echo.limit) || 6));
+    const ownerEntityId = String((echo && echo.ownerEntityId) || "").trim();
+    const aiFields = readMockAiFields(g)
+      .filter((item: any) => !ownerEntityId || String(item?.ownerEntityId || "") === ownerEntityId)
+      .slice(0, limit);
+    const actions = readMockContextActions(g)
+      .filter((item: any) => !ownerEntityId || String(item?.ownerEntityId || "") === ownerEntityId)
+      .slice(0, limit);
+    const meetings = mockRecentMeetings(ownerEntityId, limit);
+    const queueArtifacts = mockQueueArtifacts(ownerEntityId, limit);
+    return {
+      ownerEntityId: ownerEntityId || null,
+      entityContext: ownerEntityId
+        ? {
+            entityId: ownerEntityId,
+            entityLabel: ownerEntityId,
+            aiFields,
+            actions,
+            recentSummaries: [],
+          }
+        : null,
+      recentAiFields: { items: aiFields, total: aiFields.length },
+      recentActions: { items: actions, total: actions.length },
+      recentMeetings: meetings,
+      recentQueueArtifacts: { items: queueArtifacts, total: queueArtifacts.length },
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_context_search": {
+    const limit = Math.max(1, Number((echo && echo.limit) || 6));
+    const query = String((echo && echo.query) || "").trim().toLowerCase();
+    if (!query) {
+      throw createError("VALIDATION_ERROR", "query is required");
+    }
+    const aiFields = readMockAiFields()
+      .filter((item: any) =>
+        [item?.fieldName, item?.instruction, item?.currentValue, item?.ownerEntityId]
+          .map((value: any) => String(value || "").toLowerCase())
+          .join(" ")
+          .includes(query))
+      .slice(0, limit);
+    const actions = readMockContextActions()
+      .filter((item: any) =>
+        [item?.actionType, item?.title, item?.detail, item?.ownerEntityId]
+          .map((value: any) => String(value || "").toLowerCase())
+          .join(" ")
+          .includes(query))
+      .slice(0, limit);
+    const memoryHighlights = DEMO && Array.isArray((DEMO as any).memoryHighlights)
+      ? (DEMO as any).memoryHighlights
+          .filter((item: any) =>
+            [item?.title, ...(Array.isArray(item?.keyPoints) ? item.keyPoints : [])]
+              .map((value: any) => String(value || "").toLowerCase())
+              .join(" ")
+              .includes(query))
+          .slice(0, limit)
+      : [];
+    return {
+      query,
+      ownerEntityId: String((echo && echo.ownerEntityId) || "").trim() || null,
+      timeline: { hits: memoryHighlights, total: memoryHighlights.length },
+      aiFields: { items: aiFields, total: aiFields.length },
+      actions: { items: actions, total: actions.length },
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_context_tasks_list": {
+    const limit = Math.max(1, Number((echo && echo.limit) || 20));
+    const statuses = Array.isArray(echo?.statuses) && echo.statuses.length
+      ? echo.statuses.map((item: any) => String(item || "").toLowerCase())
+      : ["proposed", "approved"];
+    const items = readMockContextActions()
+      .filter((item: any) => statuses.includes(String(item?.status || "").toLowerCase()))
+      .slice(0, limit);
+    return {
+      ownerEntityId: String((echo && echo.ownerEntityId) || "").trim() || null,
+      query: String((echo && echo.query) || "").trim() || null,
+      statuses,
+      items,
+      total: items.length,
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_owner_context_summary": {
+    const ownerEntityId = String((echo && echo.ownerEntityId) || "").trim();
+    if (!ownerEntityId) {
+      throw createError("VALIDATION_ERROR", "ownerEntityId is required");
+    }
+    const limit = Math.max(1, Number((echo && echo.limit) || 6));
+    const aiFields = readMockAiFields(g)
+      .filter((item: any) => String(item?.ownerEntityId || "") === ownerEntityId)
+      .slice(0, limit);
+    const actions = readMockContextActions(g)
+      .filter((item: any) => String(item?.ownerEntityId || "") === ownerEntityId)
+      .slice(0, limit);
+    const latestAudits = actions.map((item: any) => {
+      const latestAudit = readMockContextActionAudit(g)
+        .filter((audit: any) => String(audit?.actionId || "") === String(item?.id || ""))
+        .sort((a: any, b: any) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0))[0] || null;
+      return {
+        actionId: item.id,
+        latestAudit,
+      };
+    });
+    const queueArtifacts = mockQueueArtifacts(ownerEntityId, limit);
+    const actionStatusCounts = actions.reduce((acc: Record<string, number>, item: any) => {
+      const status = String(item?.status || "").trim();
+      if (status) acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, { proposed: 0, approved: 0, executed: 0, rejected: 0 });
+
+    return {
+      ownerEntityId,
+      entityContext: {
+        entityId: ownerEntityId,
+        entityLabel: ownerEntityId,
+        aiFields,
+        actions,
+        recentSummaries: [],
+      },
+      aiFields: { items: aiFields, total: aiFields.length },
+      actions: { items: actions, total: actions.length },
+      queueArtifacts: { items: queueArtifacts, total: queueArtifacts.length },
+      latestAudits,
+      summary: {
+        aiFieldCount: aiFields.length,
+        actionCount: actions.length,
+        queueArtifactCount: queueArtifacts.length,
+        actionStatusCounts,
+      },
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_ai_field_list": {
+    const id = String((echo && echo.id) || "").trim();
+    const owner = String((echo && echo.ownerEntityId) || "").trim();
+    const query = String((echo && echo.query) || "").trim().toLowerCase();
+    const items = readMockAiFields().filter((item: any) => {
+      if (id && String(item?.id || "") !== id) return false;
+      if (owner && String(item?.ownerEntityId || "") !== owner) return false;
+      if (!query) return true;
+      const haystack = [
+        item?.fieldName,
+        item?.instruction,
+        item?.currentValue,
+        item?.ownerEntityId,
+      ]
+        .map((value: any) => String(value || "").toLowerCase())
+        .join(" ");
+      return haystack.includes(query);
+    });
+    const limit = Math.max(1, Number((echo && echo.limit) || 20));
+    return {
+      items: items.slice(0, limit),
+      total: items.length,
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_ai_field_upsert": {
+    const now = Date.now();
+    const existing = readMockAiFields();
+    const prior = existing.find((item: any) => item.id === echo?.id) as any;
+    const id = String((echo && echo.id) || `af_${now}`);
+    const next = {
+      id,
+      ownerEntityId: String((echo && echo.ownerEntityId) || ""),
+      fieldName: String((echo && echo.fieldName) || ""),
+      instruction: String((echo && echo.instruction) || ""),
+      currentValue: String((echo && echo.currentValue) || ""),
+      confidence:
+        typeof echo?.confidence === "number"
+          ? Math.max(0, Math.min(1, Number(echo.confidence)))
+          : null,
+      evidenceEventIds: Array.isArray(echo?.evidenceEventIds) ? echo.evidenceEventIds : [],
+      createdAt: Number(prior?.createdAt || now),
+      lastUpdatedAt: now,
+    };
+    writeMockAiFields([next, ...existing.filter((item: any) => item.id !== id)]);
+    return { item: next, echo, stub: false };
+  }
+  case "shogun_context_action_list": {
+    const items = readMockContextActions()
+      .filter((item: any) => {
+        const owner = String((echo && echo.ownerEntityId) || "").trim();
+        const status = String((echo && echo.status) || "").trim();
+        const query = String((echo && echo.query) || "").trim().toLowerCase();
+        if (owner && String(item?.ownerEntityId || "") !== owner) return false;
+        if (status && String(item?.status || "") !== status) return false;
+        if (!query) return true;
+        const haystack = [
+          item?.actionType,
+          item?.title,
+          item?.detail,
+          item?.ownerEntityId,
+        ]
+          .map((value: any) => String(value || "").toLowerCase())
+          .join(" ");
+        return haystack.includes(query);
+      });
+    const limit = Math.max(1, Number((echo && echo.limit) || 20));
+    return {
+      items: items.slice(0, limit),
+      total: items.length,
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_context_action_audit_list": {
+    const actionId = String((echo && echo.actionId) || "").trim();
+    if (!actionId) {
+      throw createError("VALIDATION_ERROR", "actionId is required");
+    }
+    const items = readMockContextActionAudit()
+      .filter((item: any) => String(item?.actionId || "") === actionId);
+    const limit = Math.max(1, Number((echo && echo.limit) || 12));
+    return {
+      items: items
+        .sort((a: any, b: any) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0))
+        .slice(0, limit),
+      total: items.length,
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_context_action_propose": {
+    const now = Date.now();
+    const existing = readMockContextActions();
+    const audits = readMockContextActionAudit();
+    const prior = existing.find((item: any) => item.id === echo?.id) as any;
+    const id = String((echo && echo.id) || `act_${now}`);
+    const actionType = normalizeMockActionType(echo && echo.actionType);
+    const supportedActionTypes = ["follow_up_email_draft", "create_task", "update_crm"];
+    if (!supportedActionTypes.includes(actionType)) {
+      throw createError(
+        "ACTION_UNSUPPORTED",
+        `Unsupported action type: ${actionType}. Supported types: ${supportedActionTypes.join(", ")}`,
+        { id, actionType },
+      );
+    }
+    const next = {
+      id,
+      ownerEntityId: String((echo && echo.ownerEntityId) || ""),
+      actionType,
+      title: String((echo && echo.title) || ""),
+      detail: String((echo && echo.detail) || ""),
+      status: ["proposed", "approved", "executed", "rejected"].includes(String(echo?.status || ""))
+        ? String(echo?.status)
+        : "proposed",
+      riskLevel: ["low", "medium", "high", "critical"].includes(String(echo?.riskLevel || ""))
+        ? String(echo?.riskLevel)
+        : "medium",
+      sourceAiFieldId: echo?.sourceAiFieldId ? String(echo.sourceAiFieldId) : null,
+      evidenceEventIds: Array.isArray(echo?.evidenceEventIds) ? echo.evidenceEventIds : [],
+      executionResult: null,
+      executedAt: null,
+      createdAt: Number(prior?.createdAt || now),
+      updatedAt: now,
+    };
+    writeMockContextActions([next, ...existing.filter((item: any) => item.id !== id)]);
+    writeMockContextActionAudit([
+      {
+        id: `audit_${now}`,
+        actionId: id,
+        eventType: "proposed",
+        actor: "system",
+        fromStatus: null,
+        toStatus: next.status,
+        detail: `Action proposed: ${next.title}`,
+        payload: {
+          ownerEntityId: next.ownerEntityId,
+          actionType: next.actionType,
+          riskLevel: next.riskLevel,
+          sourceAiFieldId: next.sourceAiFieldId,
+          evidenceEventIds: next.evidenceEventIds,
+        },
+        createdAt: now,
+      },
+      ...audits,
+    ]);
+    dispatchActionLayerRefresh("action-proposed", { item: next });
+    return { item: next, echo, stub: false };
+  }
+  case "shogun_context_action_set_status": {
+    const id = String((echo && echo.id) || "");
+    const nextStatus = ["proposed", "approved", "executed", "rejected"].includes(String(echo?.status || ""))
+      ? String(echo?.status)
+      : "proposed";
+    const now = Date.now();
+    const existing = readMockContextActions();
+    const audits = readMockContextActionAudit();
+    const current = existing.find((item: any) => String(item?.id || "") === id);
+    if (!current) {
+      throw createError("NOT_FOUND", "Action not found", { id });
+    }
+    const nextItems = existing.map((item: any) => {
+      if (String(item?.id || "") !== id) return item;
+      return {
+        ...item,
+        status: nextStatus,
+        updatedAt: now,
+      };
+    });
+    const updated = nextItems.find((item: any) => String(item?.id || "") === id);
+    writeMockContextActions(nextItems);
+    writeMockContextActionAudit([
+      {
+        id: `audit_${now}`,
+        actionId: id,
+        eventType: "status_changed",
+        actor: "system",
+        fromStatus: String(current?.status || null),
+        toStatus: nextStatus,
+        detail: `Status changed from ${String(current?.status || "unknown")} to ${nextStatus}`,
+        payload: null,
+        createdAt: now,
+      },
+      ...audits,
+    ]);
+    dispatchActionLayerRefresh(`action-status-${nextStatus}`, { item: updated });
+    return { item: updated, echo, stub: false };
+  }
+  case "shogun_context_action_execute": {
+    const id = String((echo && echo.id) || "");
+    const now = Date.now();
+    const existing = readMockContextActions();
+    const audits = readMockContextActionAudit();
+    const current = existing.find((item: any) => String(item?.id || "") === id);
+    if (!current) {
+      throw createError("NOT_FOUND", "Action not found", { id });
+    }
+    if (String(current?.status || "") !== "approved") {
+      throw createError("ACTION_NOT_APPROVED", "Only approved actions can be executed", { id });
+    }
+    const actionType = String(current?.actionType || "");
+    let executionResult: any;
+    let sideEffect = "draft_only";
+    if (actionType === "follow_up_email_draft") {
+      executionResult = {
+        content: `# Draft\n\nSubject: Follow-up\n\n${String(current?.title || "")}\n\n${String(current?.detail || "").trim() || "Please follow up based on the approved action."}\n`,
+        title: `Draft · ${String(current?.title || "Follow-up")}`,
+        stub: false,
+        echo,
+      };
+    } else if (actionType === "create_task") {
+      executionResult = {
+        queued: {
+          scheduled: true,
+          id: `sch_${now}`,
+          stub: false,
+          echo,
+        },
+        title: String(current?.title || ""),
+        detail: String(current?.detail || ""),
+        ownerEntityId: String(current?.ownerEntityId || ""),
+      };
+      sideEffect = "queue_only";
+    } else if (actionType === "update_crm") {
+      executionResult = {
+        queued: {
+          queued: true,
+          id: `crm_${now}`,
+          stub: false,
+          echo,
+        },
+        title: String(current?.title || ""),
+        detail: String(current?.detail || ""),
+        ownerEntityId: String(current?.ownerEntityId || ""),
+      };
+      sideEffect = "crm_queue_only";
+    } else {
+      throw createError("ACTION_UNSUPPORTED", "Execution is not implemented for this action type yet", { id });
+    }
+    const nextItems = existing.map((item: any) => {
+      if (String(item?.id || "") !== id) return item;
+      return {
+        ...item,
+        status: "executed",
+        executionResult,
+        executedAt: now,
+        updatedAt: now,
+      };
+    });
+    const updated = nextItems.find((item: any) => String(item?.id || "") === id);
+    writeMockContextActions(nextItems);
+    writeMockContextActionAudit([
+      {
+        id: `audit_${now}`,
+        actionId: id,
+        eventType: "executed",
+        actor: "system",
+        fromStatus: "approved",
+        toStatus: "executed",
+        detail: `Executed action via ${sideEffect}`,
+        payload: executionResult,
+        createdAt: now,
+      },
+      ...audits,
+    ]);
+    const navigation =
+      sideEffect === "queue_only" || sideEffect === "crm_queue_only"
+        ? {
+            screen: "actions",
+            queueId: String(executionResult?.queued?.id || ""),
+            sourceActionId: id,
+            entityId: String(current?.ownerEntityId || ""),
+            aiFieldId: current?.sourceAiFieldId ? String(current.sourceAiFieldId) : null,
+          }
+        : sideEffect === "draft_only"
+          ? {
+              screen: "chat",
+              newChat: true,
+              assembleMemory: true,
+              memoryAssemblyQuery: String(current?.ownerEntityId || ""),
+              memoryAssemblyLimit: 14,
+              memoryAssemblySemantic: true,
+              text: [
+                `${String(current?.ownerEntityId || "")} の draft を shared context と合わせてレビューしてください。`,
+                `Action: ${String(current?.title || "Draft")}`,
+                `Type: ${String(current?.actionType || "follow_up_email_draft")}`,
+                String(current?.detail || "").trim()
+                  ? `Detail: ${String(current?.detail || "").trim()}`
+                  : "",
+                `Draft:\n${String(executionResult?.content || "").trim()}`,
+                "必要なら改善版の文面、抜けている論点、次の一手を提案してください。",
+              ].filter(Boolean).join("\n\n"),
+            }
+        : null;
+    dispatchActionLayerRefresh(`action-executed-${id}`, {
+      item: updated,
+      executed: true,
+      actionType,
+      sideEffect,
+      navigation,
+    });
+    return { item: updated, executed: true, actionType, sideEffect, navigation, echo, stub: false };
+  }
+  case "shogun_meeting_start": {
+    const meetingId = String((echo && echo.meeting_id) || `mtg-${Date.now()}`);
+    const title = String((echo && echo.title) || "Mock Live Meeting");
+    const provider = String((echo && echo.provider) || "google_meet");
+    const appLabel = String((echo && echo.app) || "Google Chrome");
+    const startedAt = Date.now();
+    const payload = {
+      meeting_id: meetingId,
+      provider,
+      url: String((echo && echo.url) || "https://meet.google.com/mock-room"),
+      title,
+      app: appLabel,
+      mic_started: echo?.mic_started === true,
+      system_started: echo?.system_started === true,
+      screen_capture_granted: echo?.screen_capture_granted !== false,
+      auto_started: echo?.auto_started === true,
+    };
+
+    if (echo?.source === "video_detect_auto_start") {
+      try {
+        g.dispatchEvent?.(
+          new CustomEvent("shogun-video-meeting-auto-started", { detail: payload }),
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    return {
+      started_at: startedAt,
+      state: "active",
+      ...payload,
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_meeting_stop": {
+    const meetingId = String((echo && echo.meeting_id) || "mtg-demo");
+    const endedAt = Date.now();
+    const meeting = {
+      id: meetingId,
+      started_at: endedAt - 30 * 60 * 1000,
+      ended_at: endedAt,
+      app_bundle_id: "com.shogun.mock",
+      template_id: null,
+      title: `Mock meeting ${meetingId}`,
+      participants: [],
+      state: "completed",
+      client_storage_key: null,
+    };
+    try {
+      g.dispatchEvent?.(
+        new CustomEvent("shogun-meeting-stopped", {
+          detail: { meeting_id: meetingId, reason: "manual_stop", meeting },
+        }),
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      g.dispatchEvent?.(
+        new CustomEvent("shogun-meetings-changed", {
+          detail: { meeting_id: meetingId },
+        }),
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    return {
+      meeting,
+      summary: null,
+      memory_ingest: null,
+      kioku_ingest: null,
+      echo,
+      stub: false,
+    };
+  }
+  case "shogun_meeting_get": {
+    const meetingId = String((echo && echo.meeting_id) || "mtg-demo");
+    return {
+      meeting: {
+        id: meetingId,
+        started_at: Date.now() - 30 * 60 * 1000,
+        ended_at: Date.now(),
+        app_bundle_id: "com.shogun.import",
+        template_id: null,
+        title: `Mock meeting ${meetingId}`,
+        participants: [],
+        state: "completed",
+        client_storage_key: null,
+      },
+      transcript: [
+        { segment_id: `${meetingId}:1`, speaker: "speaker_0", start_ms: 0, end_ms: 45000, text: "We need to send a follow-up with the security answers and owner." },
+        { segment_id: `${meetingId}:2`, speaker: "speaker_1", start_ms: 45000, end_ms: 90000, text: "Budget is possible this quarter if onboarding timeline is clear." },
+      ],
+      notes: [],
+      echo,
+      stub: false,
+    };
+  }
   case "shogun_stats": {
     const empty = {
       eventsToday: "0",
@@ -887,6 +1689,17 @@ switch (command) {
   case "app_open_hummingbird":
     return {
       opened: true,
+      stub: false,
+      echo: echo,
+    };
+  case "app_navigate":
+    try {
+      g.dispatchEvent?.(new CustomEvent("shogun-app-navigate", { detail: echo || {} }));
+    } catch (_) {
+      /* ignore */
+    }
+    return {
+      navigated: true,
       stub: false,
       echo: echo,
     };
@@ -1236,11 +2049,19 @@ switch (command) {
     return { saved: true, configured: true, stub: true, echo: echo };
   case "shogun_agent_run_now": {
     const agentId = String((echo && (echo.agentId || echo.agent_id)) || "").trim();
+    const custom = agentId.startsWith('custom-') || agentId.startsWith('agent-');
     return {
       agentId: agentId,
       ok: true,
       ingested: agentId === "inbox-triage" ? 3 : 2,
-      summary: agentId ? agentId + " completed (mock)" : "done",
+      title: custom ? `Draft · ${agentId || 'custom agent'}` : undefined,
+      content: custom ? `# Mock draft\n\nGenerated for ${agentId || 'custom agent'}.` : undefined,
+      custom,
+      summary: custom
+        ? `Draft created for ${agentId || 'custom agent'}`
+        : agentId
+          ? agentId + " completed (mock)"
+          : "done",
       stub: true,
       echo: echo,
     };

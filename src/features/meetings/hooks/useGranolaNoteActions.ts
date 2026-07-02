@@ -1,4 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
+import { buildMeetingChatSeed, openChatWithSeed } from '@/shared/context/chat-composer-seed';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import {
   mnl,
@@ -273,6 +274,29 @@ export function useGranolaNoteActions(params: {
     toastM(`「${q}」→ このノート内 ${n} 件一致（ローカル検索）`, n ? 'success' : 'info');
   }, [granolaAsk, granolaDraft]);
 
+  const runAskChat = useCallback(() => {
+    if (!granola) return;
+    const meetingId = String(granola.backendMeetingId || granola.storageKey || '').trim();
+    if (!meetingId) return;
+    const question = String(granolaAsk || '').trim();
+    const transcriptSnippet = String(granolaDraft.transcript || '').trim().slice(0, 1200);
+    const noteSnippet = [
+      String(granolaDraft.body || '').trim().slice(0, 700),
+      String(granolaDraft.summary || '').trim().slice(0, 500),
+      String(granolaDraft.minutes || '').trim().slice(0, 700),
+    ]
+      .filter(Boolean)
+      .join('\n---\n')
+      .slice(0, 1600);
+    openChatWithSeed(buildMeetingChatSeed({
+      meetingId,
+      title: granola.title ?? null,
+      transcriptSnippet,
+      noteSnippet,
+      question: question || 'この会議ノートの論点と次の一手を整理してください。',
+    }));
+  }, [granola, granolaAsk, granolaDraft]);
+
   const listLocalTodos = useCallback(() => {
     const L = mnl();
     const blob = [granolaDraft.body, granolaDraft.transcript, granolaDraft.summary, granolaDraft.minutes].join('\n');
@@ -314,6 +338,7 @@ export function useGranolaNoteActions(params: {
     mtgDraftEmail,
     mtgCopyAllText,
     runLocalAsk,
+    runAskChat,
     listLocalTodos,
     runPostRecSlashItem,
   };

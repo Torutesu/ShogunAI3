@@ -1,5 +1,15 @@
 import * as ReactDOM from 'react-dom';
+import { buildMeetingChatSeed, openChatWithSeed } from '@/shared/context/chat-composer-seed';
+import { focusActionTrace } from '@/shared/context/action-trace-focus';
+import {
+  openContextTarget,
+  openNativeDetailForEntityId,
+} from '@/shared/context/context-target-navigation';
+import { focusEntity } from '@/shared/context/entity-focus';
+import { openQueueArtifactInActions } from '@/shared/context/open-queue-artifact';
+import { OwnerSummaryCard } from '@/shared/context/OwnerSummaryCard';
 import { Icon } from '@/shared/icons';
+import { MeetingAiFieldPanel } from './MeetingAiFieldPanel';
 
 export interface MeetingDetailModalProps {
   meetingDetail: any;
@@ -48,7 +58,29 @@ export function MeetingDetailModal({ meetingDetail, setMeetingDetail }: MeetingD
     const ss = secs % 60;
     return `${mm}:${String(ss).padStart(2, '0')}`;
   };
+  const transcriptSnippet = segs
+    .slice(0, 4)
+    .map((seg: any) => {
+      const speaker = labelFor(seg?.speaker);
+      const text = String(seg?.text || '').trim();
+      if (!text) return '';
+      return speaker ? `${speaker}: ${text}` : text;
+    })
+    .filter(Boolean)
+    .join('\n');
   const close = () => setMeetingDetail(null);
+  const ownerEntityId = m.id ? `meeting:${String(m.id)}` : '';
+  const openChat = () => {
+    if (!m.id) return;
+    openChatWithSeed(buildMeetingChatSeed({
+      meetingId: String(m.id),
+      title: m.title,
+      startedAt: m.started_at,
+      speakerCount: speakers.length,
+      segmentCount: segs.length,
+      transcriptSnippet,
+    }));
+  };
 
   return ReactDOM.createPortal(
     <div
@@ -82,6 +114,27 @@ export function MeetingDetailModal({ meetingDetail, setMeetingDetail }: MeetingD
             <span style={{flex:1}}/>
             <button
               type="button"
+              onClick={openChat}
+              style={{
+                height: 28,
+                padding: '0 10px',
+                borderRadius: 999,
+                border: '1px solid var(--border)',
+                background: 'var(--surface-2)',
+                color: 'var(--text)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              <Icon name="sparkles" size={12}/>
+              <span>Ask Chat</span>
+            </button>
+            <button
+              type="button"
               aria-label="Close"
               onClick={close}
               style={{width:24, height:24, borderRadius:6, border:0, background:'transparent', color:'var(--text-mute)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center'}}
@@ -109,6 +162,43 @@ export function MeetingDetailModal({ meetingDetail, setMeetingDetail }: MeetingD
           />
         </div>
         <div style={{flex:1, overflowY:'auto', padding:'14px 22px 20px'}}>
+          {ownerEntityId ? (
+            <OwnerSummaryCard
+              entityId={ownerEntityId}
+              hideNativeDetail
+              onOpenQueueNativeDetail={(queueOwnerEntityId) => {
+                close();
+                openNativeDetailForEntityId(queueOwnerEntityId);
+              }}
+              onOpenQueueArtifact={(options) => {
+                focusEntity(ownerEntityId);
+                openQueueArtifactInActions(options);
+                close();
+              }}
+              onOpenEntityContext={() => {
+                openContextTarget({ targetId: ownerEntityId });
+                close();
+              }}
+              onOpenAiFields={() => {
+                focusEntity(ownerEntityId);
+                (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('ai_fields');
+                close();
+              }}
+              onOpenActions={(options) => {
+                focusEntity(ownerEntityId);
+                const actionId = String(options?.actionId || '').trim();
+                if (actionId) {
+                  focusActionTrace({
+                    actionId,
+                    aiFieldId: String(options?.aiFieldId || '').trim() || null,
+                    openAudit: options?.openAudit === true,
+                  });
+                }
+                (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('actions');
+                close();
+              }}
+            />
+          ) : null}
           {meetingDetail.loading ? (
             <div style={{padding:24, color:'var(--text-dim)', fontSize:13, textAlign:'center'}}>
               Loading transcript…
@@ -157,6 +247,7 @@ export function MeetingDetailModal({ meetingDetail, setMeetingDetail }: MeetingD
             </div>
           )}
         </div>
+        <MeetingAiFieldPanel meetingDetail={meetingDetail} onNavigateAway={close} />
       </div>
     </div>,
     document.body,

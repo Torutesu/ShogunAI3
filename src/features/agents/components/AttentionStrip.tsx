@@ -1,28 +1,26 @@
 import { Icon } from '@/shared/icons';
 import type { AgentDemo } from '../types';
-import { ATTENTION_REASONS, fmtRelativeTime } from '../lib/metadata';
+import { ATTENTION_REASONS, agentNeedsAttention, fmtRelativeTime } from '../lib/metadata';
 
 interface AttentionStripProps {
   agents: AgentDemo[];
   nowMs: number;
   onView: (id: string) => void;
   onRunNow: (id: string) => void;
+  onShowAllAttention?: () => void;
 }
 
-export function AttentionStrip({ agents, nowMs, onView, onRunNow }: AttentionStripProps) {
+export function AttentionStrip({ agents, nowMs, onView, onRunNow, onShowAllAttention }: AttentionStripProps) {
   // Derive issues: explicit `attention` flag, OR last run was error,
   // OR scheduled/cron and lastRunMs is older than 24h.
   const issues: Array<{ agent: AgentDemo; reason: string; lastRunRel: string }> = [];
   for (const a of agents) {
-    if (a.paused) continue;
+    if (!agentNeedsAttention(a, nowMs)) continue;
     const last = a.recentRuns && a.recentRuns[0];
-    const tooStale =
-      (a.status === 'scheduled' || a.trigger?.startsWith('every ')) &&
-      a.lastRunMs && (nowMs - a.lastRunMs) > 24 * 60 * 60 * 1000;
     let reason: string | null = null;
     if (a.attention === 'error' || (last && last.level === 'error')) reason = 'error';
     else if (a.attention === 'auth_expired') reason = 'auth_expired';
-    else if (a.attention === 'stale' || tooStale) reason = 'stale';
+    else reason = 'stale';
     if (reason) {
       issues.push({
         agent: a,
@@ -72,7 +70,13 @@ export function AttentionStrip({ agents, nowMs, onView, onRunNow }: AttentionStr
         <button
           type="button"
           className="t-sm"
-          onClick={() => (window as any).SHOGUN_RUNTIME?.pushToast?.(`Attention list page coming soon`, 'info')}
+          onClick={() => {
+            if (onShowAllAttention) {
+              onShowAllAttention();
+              return;
+            }
+            (window as any).SHOGUN_RUNTIME?.pushToast?.(`Attention filter opened`, 'info');
+          }}
           style={{
             all:'unset', cursor:'pointer', color:'var(--text-dim)', alignSelf:'flex-start',
             padding:'var(--space-1) var(--space-2)',

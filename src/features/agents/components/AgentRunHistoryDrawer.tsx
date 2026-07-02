@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/shared/icons';
+import { openMemoryItem } from '@/features/memory/lib/runtime';
 import type { AgentDemo, AgentRun } from '../types';
 import { AGENT_STATUS_META, SYNTHETIC_RUN_TEMPLATES, buildAgentSubLine } from '../lib/metadata';
 import { RunRow } from './RunRow';
@@ -105,9 +106,15 @@ interface AgentRunHistoryDrawerProps {
   agent: AgentDemo;
   nowMs: number;
   onClose: () => void;
+  onOpenRunOutput?: (agent: AgentDemo, run: AgentRun) => void;
 }
 
-export function AgentRunHistoryDrawer({ agent, nowMs, onClose }: AgentRunHistoryDrawerProps) {
+export function AgentRunHistoryDrawer({
+  agent,
+  nowMs,
+  onClose,
+  onOpenRunOutput,
+}: AgentRunHistoryDrawerProps) {
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const toggleExpanded = useCallback((id: string) => {
     setExpandedRunIds((prev) => {
@@ -134,7 +141,9 @@ export function AgentRunHistoryDrawer({ agent, nowMs, onClose }: AgentRunHistory
   const subLine = buildAgentSubLine(agent, status.label, nowMs);
 
   const onOpenMemory = (id: string) => {
-    (window as any).SHOGUN_RUNTIME?.pushToast?.(`Memory item view coming soon (${id})`, 'info');
+    const memoryId = String(id || '').trim();
+    if (!memoryId) return;
+    openMemoryItem({ memoryId, view: 'river' });
   };
 
   return (
@@ -224,6 +233,13 @@ export function AgentRunHistoryDrawer({ agent, nowMs, onClose }: AgentRunHistory
                       expanded={expandedRunIds.has(r.id)}
                       onToggle={() => toggleExpanded(r.id)}
                       onOpenMemory={onOpenMemory}
+                      {...(r.output
+                        ? {
+                            onOpenOutput: () => {
+                              onOpenRunOutput?.(agent, r);
+                            },
+                          }
+                        : {})}
                     />
                   ))}
                 </div>

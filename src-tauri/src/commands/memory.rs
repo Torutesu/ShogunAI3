@@ -1,7 +1,10 @@
+use crate::context_actions;
 use crate::context_assembly;
+use crate::crm_update_queue;
 use crate::memory_export;
 use crate::memory_store;
-use crate::{embed_backfill, settings_store};
+use crate::schedule_queue;
+use crate::{ai_fields, embed_backfill, settings_store};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
@@ -187,6 +190,99 @@ pub fn shogun_memory_import(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn shogun_entity_query(payload: Value) -> Result<Value, String> {
     memory_store::entities_from_catalog(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_entity_context_get(payload: Value) -> Result<Value, String> {
+    crate::entity_context::get_entity_context(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_context_search(payload: Value) -> Result<Value, String> {
+    crate::context_queries::search_context(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_context_recent_get(payload: Value) -> Result<Value, String> {
+    crate::context_queries::get_recent_context(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_context_tasks_list(payload: Value) -> Result<Value, String> {
+    crate::context_queries::list_tasks(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_owner_context_summary(payload: Value) -> Result<Value, String> {
+    crate::context_queries::owner_context_summary(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_ai_field_list(payload: Value) -> Result<Value, String> {
+    ai_fields::list_ai_fields(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_ai_field_upsert(payload: Value) -> Result<Value, String> {
+    ai_fields::upsert_ai_field(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_context_action_list(payload: Value) -> Result<Value, String> {
+    context_actions::list_context_actions(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_context_action_audit_list(payload: Value) -> Result<Value, String> {
+    context_actions::list_context_action_audit(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_context_action_propose(payload: Value) -> Result<Value, String> {
+    context_actions::propose_context_action(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_context_action_set_status(payload: Value) -> Result<Value, String> {
+    context_actions::set_context_action_status(&payload)
+}
+
+#[tauri::command]
+pub async fn shogun_context_action_execute(
+    ring: tauri::State<'_, crate::memory_debug::RingBuffer>,
+    payload: Value,
+) -> Result<Value, String> {
+    context_actions::execute_context_action(&payload, Some(&*ring)).await
+}
+
+#[tauri::command]
+pub fn shogun_schedule_queue_list(payload: Value) -> Result<Value, String> {
+    schedule_queue::list(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_crm_update_queue_list(payload: Value) -> Result<Value, String> {
+    crm_update_queue::list(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_schedule_queue_remove(payload: Value) -> Result<Value, String> {
+    schedule_queue::remove(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_crm_update_queue_remove(payload: Value) -> Result<Value, String> {
+    crm_update_queue::remove(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_schedule_queue_retry(payload: Value) -> Result<Value, String> {
+    schedule_queue::retry(&payload)
+}
+
+#[tauri::command]
+pub fn shogun_crm_update_queue_retry(payload: Value) -> Result<Value, String> {
+    crm_update_queue::retry(&payload)
 }
 
 #[cfg(debug_assertions)]

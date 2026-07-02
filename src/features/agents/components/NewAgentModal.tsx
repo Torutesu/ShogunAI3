@@ -1,11 +1,108 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { Icon } from '@/shared/icons';
+import { CUSTOM_AGENT_TOOL_OPTIONS, serializeTrigger } from '../lib/metadata';
+import type { AgentTool, TriggerForm } from '../types';
+
+interface NewAgentDraft {
+  name: string;
+  description: string;
+  prompt: string;
+  trigger: string;
+  tools: AgentTool[];
+}
+
 interface NewAgentModalProps {
   open: boolean;
   onClose: () => void;
+  onCreate: (draft: NewAgentDraft) => void;
   onOpenPlayground: () => void;
 }
 
-export function NewAgentModal({ open, onClose, onOpenPlayground }: NewAgentModalProps) {
+function buildDefaultTriggerForm(): TriggerForm {
+  return { type: 'interval', value: 1, unit: 'hour' };
+}
+
+function triggerFormValid(triggerForm: TriggerForm): boolean {
+  if (triggerForm.type === 'interval') return Number.isInteger(Number(triggerForm.value)) && Number(triggerForm.value) >= 1;
+  if (triggerForm.type === 'event') return Boolean(triggerForm.source);
+  if (triggerForm.type === 'daily') {
+    if (!/^\d{2}:\d{2}$/.test(triggerForm.time || '')) return false;
+    const parts = String(triggerForm.time || '').split(':').map(Number);
+    const h = parts[0] ?? 0;
+    const m = parts[1] ?? 0;
+    return h < 24 && m < 60;
+  }
+  if (triggerForm.type === 'weekly') return true;
+  return false;
+}
+
+export function NewAgentModal({ open, onClose, onCreate, onOpenPlayground }: NewAgentModalProps) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [triggerForm, setTriggerForm] = useState<TriggerForm>(buildDefaultTriggerForm);
+  const [selectedTools, setSelectedTools] = useState<string[]>(['memory']);
+
+  useEffect(() => {
+    if (!open) return;
+    setName('');
+    setDescription('');
+    setPrompt('');
+    setTriggerForm(buildDefaultTriggerForm());
+    setSelectedTools(['memory']);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  const fieldErrorStyle: CSSProperties = { color: 'var(--danger)', fontSize: 11, marginTop: 'var(--space-1)' };
+  const nameValid = name.trim().length >= 1;
+  const descValid = description.trim().length >= 1;
+  const promptValid = prompt.trim().length >= 8;
+  const toolsValid = selectedTools.length >= 1;
+  const scheduleValid = triggerFormValid(triggerForm);
+  const saveEnabled = nameValid && descValid && promptValid && toolsValid && scheduleValid;
+
+  const selectedToolRecords = useMemo(
+    () => CUSTOM_AGENT_TOOL_OPTIONS.filter((tool) => selectedTools.includes(tool.name)),
+    [selectedTools],
+  );
+
+  const setType = (type: TriggerForm['type']) => {
+    if (type === 'interval') setTriggerForm({ type, value: 1, unit: 'hour' });
+    else if (type === 'event') setTriggerForm({ type, source: 'calendar' });
+    else if (type === 'daily') setTriggerForm({ type, time: '12:00' });
+    else if (type === 'weekly') setTriggerForm({ type });
+  };
+
+  const toggleTool = (toolName: string) => {
+    setSelectedTools((prev) => (
+      prev.includes(toolName)
+        ? prev.filter((item) => item !== toolName)
+        : [...prev, toolName]
+    ));
+  };
+
+  const handleCreate = () => {
+    if (!saveEnabled) return;
+    onCreate({
+      name: name.trim(),
+      description: description.trim(),
+      prompt: prompt.trim(),
+      trigger: serializeTrigger(triggerForm),
+      tools: selectedToolRecords,
+    });
+  };
+
   if (!open) return null;
+
   return (
     <div
       role="dialog"
@@ -25,25 +122,242 @@ export function NewAgentModal({ open, onClose, onOpenPlayground }: NewAgentModal
           border:`1px solid var(--border-hi)`,
           borderRadius:'var(--radius-lg)',
           padding:'var(--space-8)',
-          maxWidth:480, width:'90%',
+          maxWidth:560, width:'92%',
           boxShadow:'var(--shadow-lg)',
+          display:'flex', flexDirection:'column', gap:'var(--space-5)',
         }}
       >
-        <div className="t-mono" style={{color:'var(--gold)', marginBottom:'var(--space-3)'}}>+ NEW AGENT</div>
-        <div style={{fontSize:18, fontWeight:600, marginBottom:'var(--space-3)', letterSpacing:'-0.01em'}}>
-          Custom agents — coming in v0.5
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+          <div className="t-mono" style={{color:'var(--gold)'}}>+ NEW AGENT</div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              all:'unset', cursor:'pointer',
+              padding:6, borderRadius:'var(--radius-sm)', color:'var(--text-dim)',
+            }}
+          >
+            <Icon name="x" size={14}/>
+          </button>
         </div>
-        <p className="t-sm" style={{color:'var(--text-mute)', lineHeight:1.6, marginTop:0, marginBottom:'var(--space-2)'}}>
-          The four agents above are the curated default set. Custom agent
-          creation (your own triggers, prompts, and tool selections) is
-          coming in v0.5.
+
+        <div style={{fontSize:18, fontWeight:600, letterSpacing:'-0.01em'}}>
+          Create a local custom agent
+        </div>
+
+        <p className="t-sm" style={{color:'var(--text-mute)', lineHeight:1.6, margin:0}}>
+          Start with a local-only agent that remembers its prompt, trigger, and tool set inside this app session. You can run it now against shared Memory while the full background runner keeps expanding.
         </p>
-        <p className="t-sm" style={{color:'var(--text-mute)', lineHeight:1.6, marginTop:0, marginBottom:'var(--space-6)'}}>
-          Want to experiment with agent-style prompts in the meantime?
-        </p>
-        <div className="row" style={{gap:'var(--space-2)', justifyContent:'flex-end'}}>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>Close</button>
-          <button type="button" className="btn btn-primary" onClick={onOpenPlayground}>Open Playground</button>
+
+        <div>
+          <div className="t-mono" style={{color:'var(--text-mute)', fontSize:10, marginBottom:'var(--space-2)'}}>NAME</div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            aria-invalid={!nameValid}
+            maxLength={60}
+            placeholder="Customer blocker watcher"
+            style={{
+              width:'100%',
+              padding:'var(--space-2) var(--space-3)',
+              background:'var(--surface-2)', border:`1px solid var(--border)`,
+              borderRadius:'var(--radius-sm)',
+              color:'var(--text)', fontFamily:'inherit', fontSize:14,
+            }}
+          />
+          {!nameValid && <div style={fieldErrorStyle}>Name is required.</div>}
+        </div>
+
+        <div>
+          <div className="t-mono" style={{color:'var(--text-mute)', fontSize:10, marginBottom:'var(--space-2)'}}>DESCRIPTION</div>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            aria-invalid={!descValid}
+            rows={2}
+            maxLength={240}
+            placeholder="Tracks one workstream and drafts the next step."
+            style={{
+              width:'100%',
+              padding:'var(--space-2) var(--space-3)',
+              background:'var(--surface-2)', border:`1px solid var(--border)`,
+              borderRadius:'var(--radius-sm)',
+              color:'var(--text)', fontFamily:'inherit', fontSize:13,
+              resize:'vertical',
+            }}
+          />
+          {!descValid && <div style={fieldErrorStyle}>Description is required.</div>}
+        </div>
+
+        <div>
+          <div className="t-mono" style={{color:'var(--text-mute)', fontSize:10, marginBottom:'var(--space-2)'}}>PROMPT</div>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            aria-invalid={!promptValid}
+            rows={5}
+            placeholder="Review recent memory for company:aurora, extract blockers, and draft the next follow-up with evidence."
+            style={{
+              width:'100%',
+              padding:'var(--space-2) var(--space-3)',
+              background:'var(--surface-2)', border:`1px solid var(--border)`,
+              borderRadius:'var(--radius-sm)',
+              color:'var(--text)', fontFamily:'inherit', fontSize:13,
+              resize:'vertical',
+            }}
+          />
+          {!promptValid && <div style={fieldErrorStyle}>Prompt should be at least 8 characters.</div>}
+        </div>
+
+        <div>
+          <div className="t-mono" style={{color:'var(--text-mute)', fontSize:10, marginBottom:'var(--space-2)'}}>TOOLS</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:'var(--space-2)'}}>
+            {CUSTOM_AGENT_TOOL_OPTIONS.map((tool) => {
+              const active = selectedTools.includes(tool.name);
+              return (
+                <button
+                  key={tool.name}
+                  type="button"
+                  onClick={() => toggleTool(tool.name)}
+                  aria-pressed={active}
+                  style={{
+                    all:'unset',
+                    cursor:'pointer',
+                    display:'inline-flex',
+                    alignItems:'center',
+                    gap:6,
+                    padding:'6px 10px',
+                    borderRadius:999,
+                    border:`1px solid ${active ? 'var(--gold-dim)' : 'var(--border)'}`,
+                    background: active ? 'color-mix(in srgb, var(--gold) 10%, var(--surface-2))' : 'var(--surface-2)',
+                    color: active ? 'var(--gold)' : 'var(--text-mute)',
+                    fontSize:12,
+                  }}
+                >
+                  <Icon name={tool.icon} size={12} />
+                  {tool.name}
+                </button>
+              );
+            })}
+          </div>
+          {!toolsValid && <div style={fieldErrorStyle}>Select at least one tool.</div>}
+        </div>
+
+        <div>
+          <div className="t-mono" style={{color:'var(--text-mute)', fontSize:10, marginBottom:'var(--space-2)'}}>TRIGGER</div>
+          <div style={{display:'flex', alignItems:'center', gap:'var(--space-2)', marginBottom:'var(--space-3)', flexWrap:'wrap'}}>
+            <span className="t-sm" style={{color:'var(--text-mute)'}}>Type:</span>
+            <select
+              value={triggerForm.type}
+              onChange={(e) => setType(e.target.value as TriggerForm['type'])}
+              style={{
+                padding:'var(--space-1) var(--space-3)',
+                background:'var(--surface-2)', border:`1px solid var(--border)`,
+                borderRadius:'var(--radius-sm)',
+                color:'var(--text)', fontFamily:'inherit', fontSize:13,
+              }}
+            >
+              <option value="interval">Interval</option>
+              <option value="event">Event</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+
+          {triggerForm.type === 'interval' && (
+            <div style={{display:'flex', alignItems:'center', gap:'var(--space-2)'}}>
+              <span className="t-sm" style={{color:'var(--text-mute)'}}>Every</span>
+              <input
+                type="number"
+                min={1}
+                value={triggerForm.value}
+                onChange={(e) => setTriggerForm({ ...triggerForm, value: Number(e.target.value) })}
+                style={{
+                  width:64, padding:'var(--space-1) var(--space-2)',
+                  background:'var(--surface-2)', border:`1px solid var(--border)`,
+                  borderRadius:'var(--radius-sm)',
+                  color:'var(--text)', fontFamily:'inherit', fontSize:13,
+                }}
+              />
+              <select
+                value={triggerForm.unit}
+                onChange={(e) => setTriggerForm({ ...triggerForm, unit: e.target.value })}
+                style={{
+                  padding:'var(--space-1) var(--space-3)',
+                  background:'var(--surface-2)', border:`1px solid var(--border)`,
+                  borderRadius:'var(--radius-sm)',
+                  color:'var(--text)', fontFamily:'inherit', fontSize:13,
+                }}
+              >
+                <option value="minute">minutes</option>
+                <option value="hour">hours</option>
+                <option value="day">days</option>
+              </select>
+            </div>
+          )}
+
+          {triggerForm.type === 'event' && (
+            <div style={{display:'flex', alignItems:'center', gap:'var(--space-2)'}}>
+              <span className="t-sm" style={{color:'var(--text-mute)'}}>On</span>
+              <select
+                value={triggerForm.source}
+                onChange={(e) => setTriggerForm({ ...triggerForm, source: e.target.value })}
+                style={{
+                  padding:'var(--space-1) var(--space-3)',
+                  background:'var(--surface-2)', border:`1px solid var(--border)`,
+                  borderRadius:'var(--radius-sm)',
+                  color:'var(--text)', fontFamily:'inherit', fontSize:13,
+                }}
+              >
+                <option value="calendar">calendar</option>
+                <option value="memory">memory</option>
+              </select>
+              <span className="t-sm" style={{color:'var(--text-mute)'}}>event</span>
+            </div>
+          )}
+
+          {triggerForm.type === 'daily' && (
+            <div style={{display:'flex', alignItems:'center', gap:'var(--space-2)'}}>
+              <input
+                type="time"
+                value={triggerForm.time}
+                onChange={(e) => setTriggerForm({ ...triggerForm, time: e.target.value })}
+                style={{
+                  padding:'var(--space-1) var(--space-2)',
+                  background:'var(--surface-2)', border:`1px solid var(--border)`,
+                  borderRadius:'var(--radius-sm)',
+                  color:'var(--text)', fontFamily:'inherit', fontSize:13,
+                }}
+              />
+              <span className="t-sm" style={{color:'var(--text-mute)'}}>daily</span>
+            </div>
+          )}
+
+          {triggerForm.type === 'weekly' && (
+            <div className="t-sm" style={{color:'var(--text-mute)'}}>
+              Runs once a week. You can refine the exact day and time later.
+            </div>
+          )}
+
+          {!scheduleValid && <div style={fieldErrorStyle}>Trigger format is invalid.</div>}
+        </div>
+
+        <div className="row" style={{gap:'var(--space-2)', justifyContent:'space-between', marginTop:'var(--space-2)', flexWrap:'wrap'}}>
+          <button type="button" className="btn btn-ghost" onClick={onOpenPlayground}>Open Playground Instead</button>
+          <div className="row" style={{gap:'var(--space-2)'}}>
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!saveEnabled}
+              onClick={handleCreate}
+              style={{opacity: saveEnabled ? 1 : 0.5, cursor: saveEnabled ? 'pointer' : 'not-allowed'}}
+            >
+              Create agent
+            </button>
+          </div>
         </div>
       </div>
     </div>

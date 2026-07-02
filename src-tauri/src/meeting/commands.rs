@@ -7,7 +7,7 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rusqlite::params;
 use serde_json::{json, Value};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
 pub async fn shogun_meeting_start(
@@ -130,6 +130,29 @@ pub async fn shogun_meeting_stop(
         .ok_or_else(|| "meeting_id is required".to_string())?;
     meeting_lifecycle::stop_mic_if_running(&app, &meeting_id).await?;
     let mut out = meeting_lifecycle::persist_meeting_stop(&state, &meeting_id).await?;
+    let _ = app.emit(
+        "meeting-stopped",
+        json!({
+          "meeting_id": meeting_id,
+          "reason": "manual_stop",
+          "meeting": out.get("meeting").cloned().unwrap_or(Value::Null),
+        }),
+    );
+    crate::app_events::emit(
+        "shogun-meetings-changed",
+        json!({ "meeting_id": meeting_id }),
+    );
+    let title = out
+        .get("meeting")
+        .and_then(|meeting| meeting.get("title"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(meeting_id);
+    crate::app_events::notify_native(
+        "Meeting Saved",
+        &meeting_lifecycle::meeting_saved_notification_body(title, "manual_stop"),
+    );
     if let Some(obj) = out.as_object_mut() {
         obj.insert("stub".to_string(), json!(false));
         obj.insert("echo".to_string(), payload);

@@ -11,7 +11,7 @@ If you don't have an Apple Developer enrollment yet, you can still ship beta bui
 - **Limitations**:
   - First launch shows "App could not be verified" — users must right-click → Open (macOS 14) or use System Settings → Privacy & Security → Open Anyway (macOS 15+)
   - Not recommended for general public distribution; suitable for closed beta / friends-and-family
-  - Tauri auto-updater may refuse to apply unsigned updates — users will need to re-download new builds manually
+  - Tauri auto-updater artifacts are intentionally disabled for unsigned beta builds — users will need to re-download new builds manually
 
 Skip §3-§7 below until you enroll in the Apple Developer Program.
 
@@ -29,12 +29,27 @@ Keep these in sync:
 - `src-tauri/tauri.conf.json` → `version`
 - `src-tauri/Cargo.toml` → `[package] version`
 
+Run the automated release gate before building:
+
+```bash
+npm run release:preflight
+```
+
+For a paid public release, use the stricter mode after signing, updater, and notarization secrets are configured:
+
+```bash
+npm run release:preflight:public
+```
+
+The public gate intentionally fails if the repository still presents the main download as an unsigned beta, or if signing/updater/notarization configuration is not visible through CI secrets or explicit `SHOGUN_ASSUME_*_CONFIGURED=1` overrides.
+
 ## 2. Sync frontend and build
 
 From the repository root:
 
 ```bash
 npm ci
+npm run release:preflight
 npm run build:web-dist
 npm run build:desktop
 ```
@@ -57,6 +72,12 @@ Or copy `src-tauri/tauri.signing.local.example.json` to **`src-tauri/tauri.signi
 
 ```bash
 npm run build:desktop:signed
+```
+
+Updater artifacts are opt-in because they require `TAURI_SIGNING_PRIVATE_KEY`. For updater-enabled release candidates:
+
+```bash
+TAURI_SIGNING_PRIVATE_KEY="..." TAURI_SIGNING_PRIVATE_KEY_PASSWORD="..." npm run build:desktop:updater
 ```
 
 ### 3b. CI (`.p12` + password)
@@ -123,7 +144,7 @@ Workflow: [`.github/workflows/release-macos.yml`](../.github/workflows/release-m
 
 **Triggers:**
 
-- **Tag push `v*`** — `tauri-action` builds, signs, (optionally) notarizes, and creates a **draft GitHub Release** with the DMG attached. The repo ships `bundle.createUpdaterArtifacts: true` and `plugins.updater.endpoints` points at the GitHub Releases `latest.json`, so existing installs can update automatically once the Release is published.
+- **Tag push `v*`** — `tauri-action` builds, signs, (optionally) notarizes, and creates a **draft GitHub Release** with the DMG attached. The repo keeps default `bundle.createUpdaterArtifacts: false` so unsigned beta builds work without updater keys; updater-enabled releases merge `src-tauri/tauri.updater.json`, while `plugins.updater.endpoints` points at the GitHub Releases `latest.json`.
 - **Manual** — Actions → *Release macOS (signed)* → **Run workflow**. Produces a signed DMG as a workflow artifact; does not touch Releases. Use this to sanity-check the signing path without cutting a release.
 
 Day-to-day recommended flow: run `/release` from Claude Code (see [`.claude/commands/release.md`](../.claude/commands/release.md)) — it bumps the three version files, drafts brand-safe notes, tags, pushes, and watches the run. The manual dispatch stays as a fallback.

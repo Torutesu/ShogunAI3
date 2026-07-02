@@ -195,7 +195,37 @@ pub async fn finalize_meeting(
         "shogun-meetings-changed",
         json!({ "meeting_id": meeting_id }),
     );
+    let _ = app.emit(
+        "shogun-app-navigate",
+        auto_stop_navigation_payload(meeting_id),
+    );
+    let title = out
+        .get("meeting")
+        .and_then(|meeting| meeting.get("title"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(meeting_id);
+    crate::app_events::notify_native("Meeting Saved", &meeting_saved_notification_body(title, reason));
     Ok(out)
+}
+
+fn auto_stop_navigation_payload(meeting_id: &str) -> Value {
+    json!({
+      "screen": "meetings",
+      "meetingId": meeting_id,
+    })
+}
+
+pub(crate) fn meeting_saved_notification_body(title: &str, reason: &str) -> String {
+    let reason_label = match reason.trim() {
+        "video_ended" => "the video call ended",
+        "inactivity" => "no meeting activity was detected",
+        "manual_stop" => "you ended the meeting",
+        "" => "the meeting finished",
+        other => other,
+    };
+    format!("{title} was saved because {reason_label}.")
 }
 
 pub fn touch_video_activity(app: &AppHandle) {
@@ -269,5 +299,36 @@ mod tests {
     #[test]
     fn inactivity_timeout_defaults_to_15_minutes() {
         assert_eq!(inactivity_timeout_ms(), 15 * 60_000);
+    }
+
+    #[test]
+    fn auto_stop_navigation_targets_meeting_detail() {
+        assert_eq!(
+            auto_stop_navigation_payload("mtg-42"),
+            json!({
+              "screen": "meetings",
+              "meetingId": "mtg-42",
+            })
+        );
+    }
+
+    #[test]
+    fn meeting_saved_notification_body_formats_reason_labels() {
+        assert_eq!(
+            meeting_saved_notification_body("Weekly Sync", "video_ended"),
+            "Weekly Sync was saved because the video call ended."
+        );
+        assert_eq!(
+            meeting_saved_notification_body("Weekly Sync", "inactivity"),
+            "Weekly Sync was saved because no meeting activity was detected."
+        );
+        assert_eq!(
+            meeting_saved_notification_body("Weekly Sync", "manual_stop"),
+            "Weekly Sync was saved because you ended the meeting."
+        );
+        assert_eq!(
+            meeting_saved_notification_body("Weekly Sync", ""),
+            "Weekly Sync was saved because the meeting finished."
+        );
     }
 }

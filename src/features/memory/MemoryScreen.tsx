@@ -2,10 +2,15 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Icon } from '@/shared/icons';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import {
+  clearPendingMemoryTimelineJump,
+  takePendingMemoryTimelineJump,
+} from '@/shared/context/native-detail-events';
+import {
   memoryProviderKey,
   MEMORY_PROVIDER_META,
   clusterScreenSessions,
   mergeIndexHitsIntoRiver,
+  memoryHitToRiverEvent,
 } from './lib/runtime';
 import { MemoryDigestView } from './components/MemoryDigestView';
 import { MemorySearchView } from './components/MemorySearchView';
@@ -18,6 +23,8 @@ import { useMemoryRetrievalSettings } from './hooks/useMemoryRetrievalSettings';
 
 export function MemoryScreen() {
   const [view, setView] = useState('river');
+  const [searchSeedQuery, setSearchSeedQuery] = useState('');
+  const [pendingMemoryId, setPendingMemoryId] = useState('');
   const [digestState, setDigestState] = useState({
     week: null, day: null, loading: false, error: null, generatingWeek: false, generatingDay: false,
   });
@@ -428,7 +435,23 @@ export function MemoryScreen() {
     setSelectedDayOffset(0);
   }, [timelineSpan]);
   useEffect(() => {
-    const onJump = () => {
+    const onJump = (event: Event) => {
+      const detail = (event as CustomEvent<{ query?: string; view?: string; memoryId?: string }>).detail || {};
+      clearPendingMemoryTimelineJump();
+      const nextQuery = String(detail.query || '').trim();
+      const nextView = String(detail.view || '').trim();
+      const nextMemoryId = String(detail.memoryId || '').trim();
+      if (nextMemoryId) {
+        if (nextQuery) setSearchSeedQuery(nextQuery);
+        setPendingMemoryId(nextMemoryId);
+        setView(nextView || 'river');
+        return;
+      }
+      if (nextQuery) {
+        setSearchSeedQuery(nextQuery);
+        setView(nextView || 'search');
+        return;
+      }
       setView('river');
       requestAnimationFrame(() => {
         const el = document.querySelector('.memory-scrub-stage');
@@ -440,6 +463,53 @@ export function MemoryScreen() {
     window.addEventListener('shogun-jump-memory-timeline', onJump);
     return () => window.removeEventListener('shogun-jump-memory-timeline', onJump);
   }, []);
+  useEffect(() => {
+    const pending = takePendingMemoryTimelineJump();
+    if (!pending) return;
+    const nextQuery = String(pending.query || '').trim();
+    const nextView = String(pending.view || '').trim();
+    const nextMemoryId = String(pending.memoryId || '').trim();
+    if (nextMemoryId) {
+      if (nextQuery) setSearchSeedQuery(nextQuery);
+      setPendingMemoryId(nextMemoryId);
+      setView(nextView || 'river');
+      return;
+    }
+    if (nextQuery) {
+      setSearchSeedQuery(nextQuery);
+      setView(nextView || 'search');
+    }
+  }, []);
+  useEffect(() => {
+    if (!pendingMemoryId || !events.length) return;
+    const idx = events.findIndex((item) => String(item?.memoryId || '').trim() === pendingMemoryId);
+    if (idx < 0) return;
+    setView('river');
+    setScrubIdx(() => idx);
+    setPendingMemoryId('');
+    requestAnimationFrame(() => {
+      const el = document.querySelector('.memory-scrub-stage');
+      if (el && typeof (el as any).scrollIntoView === 'function') {
+        (el as any).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }, [pendingMemoryId, events]);
+  useEffect(() => {
+    if (!pendingMemoryId || events.some((item) => String(item?.memoryId || '').trim() === pendingMemoryId)) return;
+    let cancelled = false;
+    (async () => {
+      const res = await runRuntimeAction('memory.fetch', { id: pendingMemoryId }, { silentError: true });
+      if (cancelled || !res?.ok || !Array.isArray(res.data?.items) || !res.data.items[0]) return;
+      const fetched = memoryHitToRiverEvent(res.data.items[0]);
+      setRawEvents((prev) => {
+        if (prev.some((item) => String(item?.memoryId || '').trim() === pendingMemoryId)) return prev;
+        return [fetched, ...prev];
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingMemoryId, events]);
   const { bins: _bins, maxBin: _maxBin } = useMemo(() => {
     const binCount = 64;
     const b = new Array(binCount).fill(0);
@@ -1110,6 +1180,8 @@ export function MemoryScreen() {
           workProjects={workProjects}
           assignments={workspaceAssignments}
           setAssignments={setWorkspaceAssignments}
+          seedQuery={searchSeedQuery}
+          allowServerMemoryAssembly={allowServerMemoryAssembly}
         />
       )}
 
