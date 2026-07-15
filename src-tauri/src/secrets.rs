@@ -9,6 +9,7 @@ use std::sync::{
 const SERVICE: &str = "ai.shogun.desktop";
 const USER: &str = "llm_openai_compatible_api_key";
 const CLERK_SNAPSHOT_USER: &str = "clerk_session_snapshot";
+const DEEPGRAM_USER: &str = "deepgram_api_key";
 
 // Keychain access prompts the user on macOS every call. Cache keys in
 // process memory after the first successful read so batch callers
@@ -263,6 +264,39 @@ pub fn get_clerk_snapshot() -> Result<Option<String>, String> {
 
 pub fn clear_clerk_snapshot() -> Result<(), String> {
     let entry = Entry::new(SERVICE, CLERK_SNAPSHOT_USER).map_err(|e| e.to_string())?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Deepgram (meeting transcription) API key. Audit F-2: this key used to live in
+/// `settings.json` as plaintext and leaked into `app_settings_export`; it now
+/// lives in the Keychain alongside every other secret.
+pub fn set_deepgram_api_key(key: &str) -> Result<(), String> {
+    let entry = Entry::new(SERVICE, DEEPGRAM_USER).map_err(|e| e.to_string())?;
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return clear_deepgram_api_key();
+    }
+    entry.set_password(trimmed).map_err(|e| e.to_string())
+}
+
+pub fn get_deepgram_api_key() -> Result<Option<String>, String> {
+    let entry = Entry::new(SERVICE, DEEPGRAM_USER).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(p) => {
+            let t = p.trim().to_string();
+            Ok(if t.is_empty() { None } else { Some(t) })
+        }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+pub fn clear_deepgram_api_key() -> Result<(), String> {
+    let entry = Entry::new(SERVICE, DEEPGRAM_USER).map_err(|e| e.to_string())?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),

@@ -493,6 +493,36 @@ fn screen_context_health_snapshot(
     })
 }
 
+/// Settings-document paths of known secrets that must never appear in an
+/// exported backup (audit F-2). Secrets that live in the Keychain never reach
+/// the exported document; this denylist covers any that still ride in settings.
+const EXPORT_SECRET_PATHS: &[&[&str]] = &[&["sections", "meetings", "deepgramApiKey"]];
+
+/// Clone `doc` with every known secret path removed. Pure; unit-tested.
+fn scrub_export_secrets(doc: &Value) -> Value {
+    let mut out = doc.clone();
+    for path in EXPORT_SECRET_PATHS {
+        remove_json_path(&mut out, path);
+    }
+    out
+}
+
+fn remove_json_path(value: &mut Value, path: &[&str]) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
+    };
+    let mut cur = value;
+    for seg in parents {
+        match cur.get_mut(*seg) {
+            Some(next) => cur = next,
+            None => return,
+        }
+    }
+    if let Some(obj) = cur.as_object_mut() {
+        obj.remove(*last);
+    }
+}
+
 #[tauri::command]
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn app_settings_export(payload: Value) -> Result<Value, String> {
@@ -506,7 +536,7 @@ pub fn app_settings_export(payload: Value) -> Result<Value, String> {
           "kind": "settings_backup",
           "schemaVersion": 1,
           "exportedAt": exported_at,
-          "settings": doc,
+          "settings": scrub_export_secrets(&doc),
         });
         let Some(path) = rfd::FileDialog::new()
             .set_file_name("shogun-settings.json")
@@ -1022,6 +1052,39 @@ pub fn app_delete_account(payload: Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrub_export_secrets_removes_deepgram_key_and_keeps_rest() {
+        // Audit F-2: exported settings must never carry the Deepgram key.
+        let doc = json!({
+          "sections": {
+            "meetings": { "deepgramApiKey": "dg_secret", "autoEnhance": true },
+            "privacy": { "excludedApps": [] }
+          }
+        });
+        let scrubbed = scrub_export_secrets(&doc);
+        assert!(
+            scrubbed
+                .pointer("/sections/meetings/deepgramApiKey")
+                .is_none(),
+            "deepgram key must be removed"
+        );
+        assert_eq!(
+            scrubbed.pointer("/sections/meetings/autoEnhance"),
+            Some(&json!(true)),
+            "non-secret meeting settings survive"
+        );
+        assert!(
+            scrubbed.pointer("/sections/privacy/excludedApps").is_some(),
+            "unrelated sections survive"
+        );
+    }
+
+    #[test]
+    fn scrub_export_secrets_is_noop_when_key_absent() {
+        let doc = json!({ "sections": { "meetings": {} } });
+        assert_eq!(scrub_export_secrets(&doc), doc);
+    }
 
     fn focus(
         app_name: &str,
