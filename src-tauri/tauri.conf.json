@@ -28,6 +28,12 @@
       "desktop": {
         "schemes": ["shogun-ai"]
       }
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/Torutesu/ShogunAI3/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyMzdGODU3MDdCN0ExMjAKUldRZ29iY0hWL2czc3ZsZFhoSWNIbFhGTjZoVUZnbHpWRHVVeVBlQzRtNW83MWpVMTZoMUxiUEMK"
     }
   },
   "bundle": {
