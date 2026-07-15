@@ -1987,23 +1987,57 @@ pub fn delete_items(payload: &Value) -> Result<Value, String> {
 
 /// Remove items created on or after `cutoff_ms` (e.g. "last hour" purge).
 pub fn delete_items_created_since(cutoff_ms: u64) -> Result<Value, String> {
-    let conn = open_conn()?;
+    let mut conn = open_conn()?;
+    delete_items_created_since_conn(&mut conn, cutoff_ms)
+}
+
+/// Range-delete both `mem_items` (by `created_at`) and the raw pre-extraction
+/// staging rows in `mem_captures` (by `captured_at`) in a single transaction.
+///
+/// Audit F-1: `mem_captures` holds the most sensitive artifact — the raw
+/// accessibility text, window titles and URLs captured before extraction, with
+/// only a 14-day TTL. A user-initiated "delete last N" must not leave that raw
+/// text behind, so both tables are cleared atomically. Deleting a capture row
+/// cascades into `extraction_jobs` via `ON DELETE CASCADE`.
+pub fn delete_items_created_since_conn(
+    conn: &mut Connection,
+    cutoff_ms: u64,
+) -> Result<Value, String> {
     let cutoff = cutoff_ms as i64;
-    let before: i64 = conn
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let items_before: i64 = tx
         .query_row("SELECT COUNT(*) FROM mem_items", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM mem_items WHERE created_at >= ?1",
         params![cutoff],
     )
     .map_err(|e| e.to_string())?;
-    let after: i64 = conn
+    let items_after: i64 = tx
         .query_row("SELECT COUNT(*) FROM mem_items", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    let removed = (before - after).max(0) as usize;
+
+    let captures_before: i64 = tx
+        .query_row("SELECT COUNT(*) FROM mem_captures", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM mem_captures WHERE captured_at >= ?1",
+        params![cutoff],
+    )
+    .map_err(|e| e.to_string())?;
+    let captures_after: i64 = tx
+        .query_row("SELECT COUNT(*) FROM mem_captures", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    let removed = (items_before - items_after).max(0) as usize;
+    let removed_captures = (captures_before - captures_after).max(0) as usize;
 
     Ok(json!({
       "removed": removed,
+      "removed_captures": removed_captures,
       "cutoff_ms": cutoff_ms,
       "stub": false,
     }))
@@ -2209,10 +2243,10 @@ pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_time_window, attach_fts_highlights, decode_embedding_blob, derive_provenance,
-        encode_embedding_blob, health_check_conn, interpret_quick_check, is_transient_embed_error,
-        is_valid_provenance, is_valid_redaction, row_to_item, timeline_wants, truncate_api_error,
-        HL_END, HL_START,
+        apply_time_window, attach_fts_highlights, decode_embedding_blob,
+        delete_items_created_since_conn, derive_provenance, encode_embedding_blob,
+        health_check_conn, interpret_quick_check, is_transient_embed_error, is_valid_provenance,
+        is_valid_redaction, row_to_item, timeline_wants, truncate_api_error, HL_END, HL_START,
     };
     use serde_json::json;
 
@@ -2590,6 +2624,55 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM mem_summaries", [], |r| r.get(0))
             .expect("count");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn delete_range_removes_both_mem_items_and_raw_captures() {
+        // Audit F-1: a range delete must clear the raw pre-extraction text in
+        // `mem_captures`, not just `mem_items`.
+        use rusqlite::Connection;
+        let mut conn = Connection::open_in_memory().expect("open in-memory");
+        conn.execute_batch(
+            "CREATE TABLE mem_items (
+               id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, snippet TEXT NOT NULL,
+               source TEXT NOT NULL, kinds_json TEXT NOT NULL, created_at INTEGER NOT NULL
+             );
+             CREATE TABLE mem_captures (
+               id INTEGER PRIMARY KEY AUTOINCREMENT, captured_at INTEGER NOT NULL,
+               ttl_expires_at INTEGER NOT NULL, raw_text TEXT
+             );",
+        )
+        .expect("schema");
+
+        conn.execute("INSERT INTO mem_items (id,title,snippet,source,kinds_json,created_at) VALUES ('old','t','s','x','[]',100)", []).unwrap();
+        conn.execute("INSERT INTO mem_items (id,title,snippet,source,kinds_json,created_at) VALUES ('new','t','s','x','[]',1000)", []).unwrap();
+        conn.execute("INSERT INTO mem_captures (captured_at,ttl_expires_at,raw_text) VALUES (100,200,'old-secret')", []).unwrap();
+        conn.execute("INSERT INTO mem_captures (captured_at,ttl_expires_at,raw_text) VALUES (1000,1100,'new-secret')", []).unwrap();
+
+        let res = delete_items_created_since_conn(&mut conn, 500).expect("delete");
+        assert_eq!(res.get("removed").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(res.get("removed_captures").and_then(|v| v.as_u64()), Some(1));
+
+        let items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM mem_items", [], |r| r.get(0))
+            .unwrap();
+        let new_caps: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mem_captures WHERE raw_text='new-secret'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let old_caps: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mem_captures WHERE raw_text='old-secret'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(items, 1, "only the pre-cutoff item remains");
+        assert_eq!(new_caps, 0, "post-cutoff raw capture is deleted");
+        assert_eq!(old_caps, 1, "pre-cutoff raw capture is retained");
     }
 
     // ── Phase 2.0b: sync_status / sync_excluded_reason tests ──────────────────

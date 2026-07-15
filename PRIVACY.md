@@ -1,6 +1,6 @@
-# SHOGUN AI (desktop v1) — privacy summary
+# SHOGUN AI (desktop) — privacy summary
 
-Last updated: 2026-04-19. This is a project summary, not legal advice.
+Last updated: 2026-07-15. This is a project summary, not legal advice.
 
 ## Terms of use
 
@@ -14,13 +14,50 @@ Last updated: 2026-04-19. This is a project summary, not legal advice.
 
 ## Network
 
-- **LLM**: HTTPS requests are made from Rust to the user-configured OpenAI-compatible endpoint for chat and Morning Brief generation. Payloads may include user text and snippets loaded from local memory.
-- **Third-party integrations**: v1 does not perform live OAuth or production connections to external providers; related UI is a preview.
-- **Clerk** (if enabled): Sign-in and account UI may be provided by **Clerk**; Clerk’s privacy policy applies to data processed by Clerk. See the Terms of Service section on Clerk.
+All outbound traffic below is HTTPS. Except where noted as opt-in, the app makes
+no network request until a feature that needs one is used. There is **no
+telemetry, analytics, or crash-reporting SDK** — no usage data is sent to us.
+
+- **LLM (BYOK)**: Requests go from Rust to the LLM provider you configure
+  (OpenAI-, Anthropic-, or Gemini-compatible). Hosts are restricted to an
+  allowlist (`api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`,
+  plus `localhost` and any host you add). Used for chat, Morning Brief, drafting,
+  and KIOKU memory extraction/summarization. **Payloads may include your text and
+  snippets from local memory, and — when memory extraction is enabled — captured
+  on-screen text.** Your API key is your own.
+- **Embeddings (BYOK)**: Memory item text is sent to your configured
+  OpenAI-compatible `/v1/embeddings` endpoint to build the local search index.
+- **Meeting transcription (Deepgram)**: If you use meeting capture, meeting/system
+  **audio is sent to Deepgram** (`api.deepgram.com`) for speech-to-text using your
+  Deepgram key. Audio leaves your machine for this feature.
+- **Integrations (read-only)**: When you connect a provider, the app performs
+  OAuth and reads your data into local memory. Providers include Gmail, Google
+  Calendar, Google Drive, Slack, Notion, GitHub, Linear, Zoom, Outlook, and Figma.
+  Scopes are read-only. Some providers shown in the UI are previews and not yet
+  wired to live connections.
+- **Cloud Memory Mirror (opt-in, off by default)**: If enabled, memory items are
+  **end-to-end encrypted on-device** (XChaCha20-Poly1305 with a key derived from
+  your passphrase; the server never sees your content or embeddings) and synced to
+  the mirror server URL you configure. **Metadata sent in the clear** for sync
+  bookkeeping: item kind, provenance, and a minute-precision timestamp.
+- **Billing / account (Clerk)**: If billing is enabled for your build, the app
+  asks the web service for your entitlement status using a Clerk session token;
+  sign-in and account UI are provided by Clerk. Clerk's and the payment
+  processor's privacy policies apply to data they process.
+- **App updates**: If configured, the updater checks the release endpoint baked
+  into the build.
 
 ## On-device processing
 
-Memory search/ingest/delete, settings read/write, and destructive data deletion complete on the user's machine.
+Memory search/ingest/delete, settings read/write, capture filtering (secure
+fields, excluded apps/sites, payment/incognito/time-block rules), and destructive
+data deletion complete on your machine. Captured screen text and window titles are
+**accessibility text only — no screenshots or screen-pixel capture**.
+
+## Secrets storage
+
+LLM, OAuth/connector, Clerk, Deepgram, and Cloud Mirror keys are stored in the
+macOS **Keychain**. A settings backup export never contains these keys.
 
 ## Contact
 

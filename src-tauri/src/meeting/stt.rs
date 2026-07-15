@@ -26,18 +26,32 @@ pub struct PrerecordedResult {
 }
 
 pub fn deepgram_api_key() -> Option<String> {
+    // 1. Environment override.
     if let Ok(k) = std::env::var("DEEPGRAM_API_KEY") {
         let t = k.trim().to_string();
         if !t.is_empty() {
             return Some(t);
         }
     }
+    // 2. Keychain — the canonical store (audit F-2).
+    if let Ok(Some(k)) = crate::secrets::get_deepgram_api_key() {
+        return Some(k);
+    }
+    // 3. Backward compat: older installs kept the key in settings.json. Migrate
+    //    it into the Keychain and scrub it from settings so it stops living as
+    //    plaintext and stops leaking into settings export.
     let doc = settings_store::load().ok()?;
-    doc.pointer("/sections/meetings/deepgramApiKey")
+    let legacy = doc
+        .pointer("/sections/meetings/deepgramApiKey")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(String::from)
+        .map(String::from)?;
+    let _ = crate::secrets::set_deepgram_api_key(&legacy);
+    let _ = settings_store::save_patch(&serde_json::json!({
+        "sections": { "meetings": { "deepgramApiKey": null } }
+    }));
+    Some(legacy)
 }
 
 /// Prerecorded transcription of a container file (mp3/m4a/wav/mp4/webm…).
