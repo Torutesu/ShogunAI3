@@ -139,15 +139,17 @@ test.describe("Work — projects", () => {
       { timeout: 8000 },
     );
 
-    // Toggling "Show archived" switches to the archived empty-state message
-    await page.locator('input[type="checkbox"]').check();
+    // Toggling "Show archived" switches to the archived empty-state message.
+    // The control is an accessible role="switch" toggle, not a native checkbox.
+    const showArchived = page.getByRole("switch");
+    await showArchived.click();
     await expect(page.locator(".content-inner")).toContainText(
       "No archived workspaces",
       { timeout: 5000 },
     );
 
-    // Unchecking restores the default
-    await page.locator('input[type="checkbox"]').uncheck();
+    // Toggling back restores the default
+    await showArchived.click();
     await expect(page.locator(".content-inner")).toContainText("No workspaces yet");
 
     expect(consoleErrors).toEqual([]);

@@ -273,7 +273,7 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await expect(page
       .locator(".s-card")
       .filter({ hasText: "Slack" })
-      .getByRole("button", { name: "Planned" }))
+      .getByRole("button", { name: "Coming soon" }))
       .toBeDisabled();
     await page.locator(".s-close").click();
     await expect(page.locator(".s-modal")).toHaveCount(0);
