@@ -16,6 +16,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select stable Xcode toolchain
+        # The macos-latest runner's default Xcode (26.x beta) ships a broken
+        # clang / xcode-select — `xcodebuild -find clang` aborts with
+        # "Failed to locate 'clang'", which breaks `cargo test` while compiling
+        # proc-macro dependencies (e.g. phf_macros). Switch the active developer
+        # directory to the newest STABLE Xcode present on the runner.
+        run: |
+          set -x
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          stable="$(ls -d /Applications/Xcode_1*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$stable" ]; then
+            sudo xcode-select -s "$stable"
+          fi
+          xcode-select -p
+          xcodebuild -version || true
+          clang --version
+
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
