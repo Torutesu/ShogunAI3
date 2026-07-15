@@ -6,6 +6,7 @@ import { EntitlementGate } from './EntitlementGate';
 import { McpSetupGate } from './McpSetupGate';
 import { shogunMarkdownMini } from '@/shared/lib/markdown-mini';
 import { ShogunIpcClient } from '@/shared/ipc/ipc-client';
+import { initProductTelemetry } from '@/shared/lib/product-telemetry';
 
 export function AppCore(): React.ReactElement {
   // ───────── Consent gate (TOS / Privacy) ─────────
@@ -57,6 +58,11 @@ export function AppCore(): React.ReactElement {
           sec &&
           sec.termsAcceptedVersion === expectedTerms &&
           sec.privacyAcceptedVersion === expectedPrivacy;
+        if (ok) {
+          // Opt-in product telemetry (aggregate usage only) — no-op unless the
+          // user consented AND a key was baked into this build.
+          initProductTelemetry(res.data && res.data.settings);
+        }
         setLegalGate(ok ? { status: "ok" } : { status: "consent_needed", lang: lang });
       })
       .catch(function (err: any) {
@@ -88,6 +94,9 @@ export function AppCore(): React.ReactElement {
         if (!res.ok) {
           throw new Error(String((res.error && res.error.message) || "save failed"));
         }
+        // Consent just granted in this session — start telemetry immediately
+        // if the user opted in (no-op otherwise / without a build key).
+        initProductTelemetry({ sections: { legal: { telemetryOptIn: payload.telemetryOptIn === true } } });
         setLegalGate({ status: "ok" });
       });
   }, [consentClient]);

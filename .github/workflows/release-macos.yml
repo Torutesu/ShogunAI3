@@ -103,6 +103,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Shogun AI ${{ github.ref_name }}"
@@ -123,6 +124,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Opt-in product telemetry key baked into the UI at build time.
+          # Absent secret → telemetry is compiled out (no-op regardless of the
+          # user's consent toggle). See PRIVACY.md "Optional usage statistics".
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
         run: |
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
             echo "::notice::Updater signing key present — building with auto-update artifacts."

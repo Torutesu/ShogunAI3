@@ -15,8 +15,17 @@ Last updated: 2026-07-15. This is a project summary, not legal advice.
 ## Network
 
 All outbound traffic below is HTTPS. Except where noted as opt-in, the app makes
-no network request until a feature that needs one is used. There is **no
-telemetry, analytics, or crash-reporting SDK** — no usage data is sent to us.
+no network request until a feature that needs one is used.
+
+- **Optional usage statistics (opt-in at the consent screen, uncheckable
+  anytime)**: If enabled, the app reports **aggregate usage only** — app opens
+  and which screens were visited — under an anonymous random device id. The
+  event vocabulary is a hard allowlist in code
+  (`src/shared/lib/product-telemetry.ts`); captured screen text, memory
+  content, titles, queries, and file paths have **no code path** into it. No
+  autocapture, no session recording, no email or account id. Builds without an
+  analytics key send nothing regardless of the toggle. There is no
+  crash-reporting SDK.
 
 - **LLM (BYOK)**: Requests go from Rust to the LLM provider you configure
   (OpenAI-, Anthropic-, or Gemini-compatible). Hosts are restricted to an

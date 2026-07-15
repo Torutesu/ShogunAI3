@@ -13,7 +13,10 @@ export function ConsentModal(props: any) {
   const [docs, setDocs] = useState<any>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [agreed, setAgreed] = useState(false);
-  const [telemetryOptIn, setTelemetryOptIn] = useState(false);
+  // Default ON, shown explicitly on the consent screen and freely uncheckable.
+  // Scope is aggregate-only (app opens / screen visits — never captured content);
+  // see PRIVACY.md "Optional usage statistics".
+  const [telemetryOptIn, setTelemetryOptIn] = useState(true);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [decliningUntil, setDecliningUntil] = useState<number | null>(null);
@@ -184,7 +187,7 @@ export function ConsentModal(props: any) {
                   disabled={saving}
                   onChange={function (e) { setTelemetryOptIn(e.target.checked); }}
                 />
-                Send anonymous usage telemetry (optional)
+                Share anonymous usage statistics — app opens &amp; screen visits only, never your content (optional)
               </label>
               <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
                 <button

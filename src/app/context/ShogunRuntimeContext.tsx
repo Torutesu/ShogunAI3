@@ -10,6 +10,7 @@ import React, {
 } from 'react';
 import { ShogunIpcClient, ShogunAPI, ShogunActionRegistry } from '@/shared/ipc';
 import { ShogunKeyboardShortcuts } from '@/shared/lib/keyboard-shortcuts';
+import { captureScreenViewed } from '@/shared/lib/product-telemetry';
 
 declare const window: Window & {
   SHOGUN_RUNTIME?: ShogunRuntimeValue;
@@ -249,7 +250,11 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
     __activeChatId: activeChat,
     openSettingsPane: (paneId: string) => setSettingsOpen(paneId || 'general'),
     setActiveScreen: (id: string) => {
-      if (id && typeof id === 'string') setActive(id);
+      if (id && typeof id === 'string') {
+        setActive(id);
+        // Opt-in telemetry: screen id only, never content (product-telemetry allowlist).
+        captureScreenViewed(id);
+      }
     },
     createNewChat,
     openWorkPickerForNewChat: () => {
