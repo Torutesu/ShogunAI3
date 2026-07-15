@@ -11,7 +11,31 @@ If you don't have an Apple Developer enrollment yet, you can still ship beta bui
 - **Limitations**:
   - First launch shows "App could not be verified" — users must right-click → Open (macOS 14) or use System Settings → Privacy & Security → Open Anyway (macOS 15+)
   - Not recommended for general public distribution; suitable for closed beta / friends-and-family
-  - Tauri auto-updater may refuse to apply unsigned updates — users will need to re-download new builds manually
+
+### Auto-update on the unsigned path (LP distribution)
+
+Tauri's updater uses its **own minisign keypair — independent of Apple code
+signing** — so unsigned LP builds still auto-update once the key is registered:
+
+1. The public key is committed in `tauri.conf.json` → `plugins.updater.pubkey`,
+   and the endpoint points at `releases/latest/download/latest.json`.
+2. Register the matching **private key** (generated with `npx tauri signer
+   generate`, no password) as repo secrets — one-time:
+
+   ```bash
+   gh secret set TAURI_SIGNING_PRIVATE_KEY < /path/to/shogun-updater.key
+   gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body ""
+   ```
+
+   Keep a copy of the key in a password manager. **If the key is lost, existing
+   installs can never auto-update again** (they'd need a manual re-download and
+   a new keypair).
+3. With the secret present, the unsigned release job builds
+   `createUpdaterArtifacts` (`.app.tar.gz` + `.sig`), generates `latest.json`,
+   and attaches all three to the draft Release. Without the secret it degrades
+   to DMG-only (a `::warning::` is emitted).
+4. Auto-update goes live the moment the draft Release is **published** —
+   running installs poll `latest.json` and self-update.
 
 Skip §3-§7 below until you enroll in the Apple Developer Program.
 

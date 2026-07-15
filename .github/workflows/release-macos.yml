@@ -112,13 +112,61 @@ jobs:
 
       # Unsigned tag push → plain tauri build + gh-release (tauri-action always
       # attempts keychain import when Apple env vars are present, even if empty).
+      # When TAURI_SIGNING_PRIVATE_KEY is set, also produce auto-update artifacts
+      # (.app.tar.gz + minisign .sig — independent of Apple code signing) so LP
+      # installs update themselves on the next release.
       - name: Build unsigned bundles (tag push)
         if: >-
           steps.signing.outputs.mode == 'unsigned'
           && github.event_name == 'push'
           && startsWith(github.ref, 'refs/tags/v')
-        run: npm run build:desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::notice::Updater signing key present — building with auto-update artifacts."
+            npm run build:desktop -- --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set — auto-update artifacts skipped (installs must re-download from the LP)."
+            npm run build:desktop
+          fi
         timeout-minutes: 45
+
+      - name: Generate updater manifest (latest.json)
+        if: >-
+          steps.signing.outputs.mode == 'unsigned'
+          && github.event_name == 'push'
+          && startsWith(github.ref, 'refs/tags/v')
+        env:
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          if [ "${HAS_UPDATER_KEY}" != "true" ]; then
+            echo "No updater key — skipping latest.json."
+            exit 0
+          fi
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARBALL="$(ls src-tauri/target/release/bundle/macos/*.app.tar.gz | head -1)"
+          SIG="${TARBALL}.sig"
+          # GitHub replaces spaces in asset names with dots on upload.
+          ASSET="$(basename "$TARBALL" | tr ' ' '.')"
+          python3 - "$VERSION" "$SIG" "$ASSET" <<'PY'
+          import json, sys, datetime, pathlib
+          version, sig_path, asset = sys.argv[1:4]
+          manifest = {
+              "version": version,
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": {
+                  "darwin-aarch64": {
+                      "signature": pathlib.Path(sig_path).read_text().strip(),
+                      "url": f"https://github.com/Torutesu/ShogunAI3/releases/download/v{version}/{asset}",
+                  }
+              },
+          }
+          pathlib.Path("latest.json").write_text(json.dumps(manifest, indent=2))
+          print(json.dumps(manifest, indent=2))
+          PY
 
       - name: Publish unsigned draft Release (tag push)
         if: >-
@@ -132,7 +180,11 @@ jobs:
           name: Shogun AI ${{ github.ref_name }}
           body: |
             ⚠️ **Unsigned build.** macOS will show "Apple could not verify..." on first launch. Right-click the app → **Open** to bypass Gatekeeper (or System Settings → Privacy & Security → Open Anyway).
-          files: src-tauri/target/release/bundle/dmg/*.dmg
+          files: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            latest.json
 
       # workflow_dispatch → build only, no Release side-effects.
       - name: Build bundles (manual dispatch)

@@ -1,5 +1,6 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import type { Metadata } from 'next';
+import { AnalyticsProvider } from './providers';
 
 export const metadata: Metadata = { title: 'SHOGUN AI' };
 
@@ -13,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           color: '#f5f0eb',
           fontFamily: 'system-ui, sans-serif',
         }}>
-          {children}
+          <AnalyticsProvider>{children}</AnalyticsProvider>
         </body>
       </html>
     </ClerkProvider>
