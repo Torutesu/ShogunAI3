@@ -25,6 +25,7 @@ mod http_retry;
 mod hummingbird;
 mod integration_secrets;
 mod integrations;
+mod job_runs;
 mod kioku;
 mod legal_docs;
 mod lessons;
