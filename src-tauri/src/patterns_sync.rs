@@ -67,6 +67,9 @@ pub fn spawn_background_patterns_sync() {
                             "patterns_sync_done",
                             &[("emitted", emitted.to_string())],
                         );
+                        // Audit F-7: recompute graph centrality alongside the
+                        // 24h pattern pass (no-op unless centrality_enabled).
+                        crate::kioku_centrality::recompute_centrality_if_enabled();
                     }
                     Err(e) => {
                         log::warn!("patterns_sync failed: {}", e);

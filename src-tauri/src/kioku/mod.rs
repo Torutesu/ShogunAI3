@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod capture;
+pub mod centrality;
 pub mod debug_stats;
 pub mod decision_graph;
 pub mod edge_types;
