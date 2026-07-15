@@ -69,6 +69,13 @@ jobs:
       - name: Action wiring check
         run: npm run check:actions
 
+      - name: Web app tests (vitest)
+        # Audit F-5: the Next.js web app (Stripe webhook / entitlement / invites /
+        # waitlist) was never exercised in CI. Node-only, no clang dependency.
+        run: |
+          npm ci --prefix web
+          npm run test --prefix web
+
       - name: OAuth helper syntax check
         run: node --check scripts/oauth-google.mjs
 
@@ -91,6 +98,11 @@ jobs:
           XCODE_SWIFT=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx
           export DYLD_LIBRARY_PATH="$XCODE_SWIFT:src-tauri/target/debug:src-tauri/target/debug/deps:${DYLD_LIBRARY_PATH:-}"
           npm run test:rust
+
+      - name: Cargo test (mirror-server)
+        # Audit F-5: the E2E-encryption reference server (crypto + HTTP protocol)
+        # was never run in CI. Composes with the runner's clang toolchain fix.
+        run: cargo test --manifest-path mirror-server/Cargo.toml --locked
 
       - name: Sync web-dist bundle
         run: npm run build:web-dist
