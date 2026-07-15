@@ -652,29 +652,21 @@ pub(crate) fn build_blob_envelope(
     // RFC allows any unique string).
     let blob_id = format!("blob_{}", uuid::Uuid::new_v4().simple());
 
-    // Step 4: build metadata once, share between envelope + AD (Fix #5).
-    let kinds: Vec<String> = serde_json::from_str::<Value>(&row.kinds_json)
-        .ok()
-        .and_then(|v| v.as_array().cloned())
-        .map(|arr| {
-            arr.into_iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_else(|| vec!["screen".to_string()]);
-
-    let provenance = row
-        .provenance
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| crate::memory_store::derive_provenance(&row.source).to_string());
-
     // captured_at_minute = floor(created_at_ms / 60_000).
     let captured_at_minute = (row.created_at.max(0) as u64) / 60_000;
 
+    // Audit F-15: `kinds` and `provenance` are already carried inside the
+    // encrypted payload (see build_plaintext_obj_no_embedding: `kinds_json` /
+    // `provenance`), and the server never queries them — delta sync is
+    // cursor/seq based. Shipping them again in the plaintext metadata leaked the
+    // content category (e.g. "screen") to the server for no functional reason.
+    // Send them empty. The client restores kinds/provenance from the decrypted
+    // ciphertext, and the AEAD associated-data is reconstructed per-blob from the
+    // envelope's own metadata, so this is self-consistent and previously
+    // uploaded blobs (with populated metadata) still decrypt unchanged.
     let metadata = http::BlobMetadata {
-        kinds,
-        provenance,
+        kinds: Vec::new(),
+        provenance: String::new(),
         captured_at_minute,
     };
 
@@ -1133,10 +1125,59 @@ mod tests {
         assert!(!env.blob_id.is_empty());
         assert_eq!(env.device_id, "dev_1");
         assert_eq!(env.schema, "mem_items.v1");
-        assert_eq!(env.metadata.kinds, vec!["screen"]);
-        assert_eq!(env.metadata.provenance, "screen");
+        // Audit F-15: plaintext metadata no longer leaks the content category.
+        assert!(
+            env.metadata.kinds.is_empty(),
+            "kinds must not ship in plaintext metadata"
+        );
+        assert_eq!(
+            env.metadata.provenance, "",
+            "provenance must not ship in plaintext metadata"
+        );
         assert!(!env.ciphertext.nonce.is_empty());
         assert!(!env.ciphertext.data.is_empty());
+    }
+
+    #[test]
+    fn f15_kinds_and_provenance_ride_in_ciphertext_not_plaintext_metadata() {
+        // The server must not see kinds/provenance in the clear, but the client
+        // must still recover them by decrypting the payload.
+        let row = make_row("r1");
+        let mek = make_mek();
+        let env = build_blob_envelope(&row, &mek, "dev_1").expect("build");
+
+        // Plaintext metadata is scrubbed of content category.
+        assert!(env.metadata.kinds.is_empty());
+        assert_eq!(env.metadata.provenance, "");
+
+        // Reconstruct the AD exactly as the decrypt path does (from the
+        // envelope's own metadata) and decrypt — proving AD stays consistent.
+        let ad_bytes = rebuild_ad_for(&env);
+        let nonce = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &env.ciphertext.nonce,
+        )
+        .unwrap();
+        let data = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            &env.ciphertext.data,
+        )
+        .unwrap();
+        let mut nonce_arr = [0u8; 24];
+        nonce_arr.copy_from_slice(&nonce[..24]);
+        let plaintext = crypto::decrypt_with_ad(
+            mek.as_bytes(),
+            &crypto::Ciphertext {
+                nonce: nonce_arr,
+                ciphertext: data,
+            },
+            &ad_bytes,
+        )
+        .expect("decrypt");
+        let obj: Value = serde_json::from_slice(&plaintext).unwrap();
+        // kinds/provenance survive inside the encrypted payload.
+        assert_eq!(obj.get("kinds_json").and_then(|v| v.as_str()), Some(row.kinds_json.as_str()));
+        assert_eq!(obj.get("provenance").and_then(|v| v.as_str()), row.provenance.as_deref());
     }
 
     // ─── U6: AEAD AD binding includes correct fields ──────────────────────────
