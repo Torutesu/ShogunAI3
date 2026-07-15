@@ -23,6 +23,31 @@ pub const STAGE5_SOFT_RETIRE_GRACE_DAYS: i64 = 30;
 
 const MS_PER_DAY: i64 = 86_400_000;
 
+/// Physical delete is irreversible, so it must be preceded by a fresh dry-run
+/// the operator has reviewed. A dry-run older than this (or none) blocks the
+/// physical-delete leg. Audit F-13: the migration plan mandates dry-run→review
+/// before apply, but only the flag+confirm_token were enforced in code.
+pub const STAGE5_DRY_RUN_FRESH_MS: i64 = 60 * 60 * 1000; // 1 hour
+
+/// Guard the irreversible physical-delete leg of Stage 5 apply. Non-destructive
+/// legs (soft-retire, ttl cleanup, vacuum) are unaffected. Pure so it can be
+/// unit-tested without a DB or settings.
+pub fn require_fresh_dry_run(
+    last_dry_run_ms: Option<i64>,
+    now_ms: i64,
+    do_physical_delete: bool,
+) -> Result<(), String> {
+    if !do_physical_delete {
+        return Ok(());
+    }
+    match last_dry_run_ms {
+        Some(t) if t <= now_ms && now_ms.saturating_sub(t) <= STAGE5_DRY_RUN_FRESH_MS => Ok(()),
+        _ => Err("Stage 5 physical_delete requires a dry-run within the last hour. \
+                  Run shogun_kioku_stage5_dry_run, review its output, then re-apply."
+            .to_string()),
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct SoftRetireBlock {
     pub matching_rows: i64,
@@ -419,6 +444,21 @@ pub fn vacuum_db(conn: &Connection) -> Result<(), String> {
 mod tests {
     use super::*;
     use rusqlite::params;
+
+    #[test]
+    fn require_fresh_dry_run_gates_physical_delete_only() {
+        let now = 10_000_000i64;
+        // Non-destructive legs never require a dry-run.
+        assert!(require_fresh_dry_run(None, now, false).is_ok());
+        // Physical delete with no dry-run is rejected.
+        assert!(require_fresh_dry_run(None, now, true).is_err());
+        // A dry-run within the window allows it.
+        assert!(require_fresh_dry_run(Some(now - 1000), now, true).is_ok());
+        // A stale dry-run (older than 1h) is rejected.
+        assert!(require_fresh_dry_run(Some(now - STAGE5_DRY_RUN_FRESH_MS - 1), now, true).is_err());
+        // A future timestamp (clock skew / tampering) is rejected.
+        assert!(require_fresh_dry_run(Some(now + 5000), now, true).is_err());
+    }
 
     fn open_test_conn() -> Connection {
         let conn = Connection::open_in_memory().expect("open");

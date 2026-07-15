@@ -115,6 +115,11 @@ pub fn shogun_kioku_stage5_dry_run(_payload: Value) -> Result<Value, String> {
     let conn = memory_store::open_conn()?;
     let now_ms = ts() as i64;
     let report = crate::kioku_stage5::run_dry_run(&conn, now_ms)?;
+    // Audit F-13: record when the operator last reviewed a dry-run so the
+    // irreversible physical-delete leg of apply can require a fresh one.
+    let _ = settings_store::save_patch(&json!({
+      "sections": { "kioku_graph": { "stage5_last_dry_run_at": now_ms } }
+    }));
     serde_json::to_value(&report).map_err(|e| e.to_string())
 }
 
@@ -183,6 +188,11 @@ pub fn shogun_kioku_stage5_apply(payload: Value) -> Result<Value, String> {
         });
     }
     if do_delete {
+        // Audit F-13: irreversible — require a dry-run reviewed within the last hour.
+        let last_dry_run = settings
+            .pointer("/sections/kioku_graph/stage5_last_dry_run_at")
+            .and_then(|v| v.as_i64());
+        crate::kioku_stage5::require_fresh_dry_run(last_dry_run, now_ms, true)?;
         let n = crate::kioku_stage5::physical_delete_old_capture_rows(&conn, now_ms)?;
         summary["physical_delete"] = json!({ "rows_deleted": n });
     }

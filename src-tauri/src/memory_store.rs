@@ -132,6 +132,33 @@ pub(crate) fn open_conn() -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// Interpret a SQLite `PRAGMA quick_check` result. `"ok"` means healthy; any
+/// other value is a corruption report. Pure so it is unit-tested.
+pub(crate) fn interpret_quick_check(result: &str) -> Result<(), String> {
+    if result.trim() == "ok" {
+        Ok(())
+    } else {
+        Err(format!("integrity check failed: {}", result.trim()))
+    }
+}
+
+/// Run a fast integrity + writability check on a connection.
+pub(crate) fn health_check_conn(conn: &Connection) -> Result<(), String> {
+    let result: String = conn
+        .query_row("PRAGMA quick_check", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    interpret_quick_check(&result)
+}
+
+/// Boot-time DB health check (audit F-14). Opening the connection also exercises
+/// every schema migration and proves the file is writable (WAL journal), so a
+/// corrupt / unwritable / disk-full store surfaces a clear error at startup
+/// instead of silently dropping captures later. Never panics.
+pub fn health_check() -> Result<(), String> {
+    let conn = open_conn()?;
+    health_check_conn(&conn)
+}
+
 pub(crate) fn ensure_embedding_column(conn: &Connection) -> Result<(), String> {
     let mut stmt = conn
         .prepare("PRAGMA table_info(mem_items)")
@@ -2183,8 +2210,9 @@ pub fn entities_from_catalog(payload: &Value) -> Result<Value, String> {
 mod tests {
     use super::{
         apply_time_window, attach_fts_highlights, decode_embedding_blob, derive_provenance,
-        encode_embedding_blob, is_transient_embed_error, is_valid_provenance, is_valid_redaction,
-        row_to_item, timeline_wants, truncate_api_error, HL_END, HL_START,
+        encode_embedding_blob, health_check_conn, interpret_quick_check, is_transient_embed_error,
+        is_valid_provenance, is_valid_redaction, row_to_item, timeline_wants, truncate_api_error,
+        HL_END, HL_START,
     };
     use serde_json::json;
 
@@ -2507,6 +2535,23 @@ mod tests {
             None,
         );
         assert_eq!(v.get("kinds"), Some(&json!(["note", "screen"])));
+    }
+
+    #[test]
+    fn interpret_quick_check_ok_and_corrupt() {
+        assert!(interpret_quick_check("ok").is_ok());
+        assert!(interpret_quick_check(" ok ").is_ok());
+        assert!(interpret_quick_check("*** in database main ***\nrow 5 missing").is_err());
+    }
+
+    #[test]
+    fn health_check_passes_on_a_fresh_db() {
+        // Audit F-14: a well-formed DB reports healthy.
+        use rusqlite::Connection;
+        let conn = Connection::open_in_memory().expect("open in-memory");
+        conn.execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t VALUES (1);")
+            .expect("seed");
+        assert!(health_check_conn(&conn).is_ok());
     }
 
     #[test]

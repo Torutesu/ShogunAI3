@@ -159,6 +159,19 @@ pub fn run() {
             meeting_video_detect::start_poller(app.handle().clone());
             app_events::init(app.handle());
             memory_notify::init(app.handle().clone());
+            // Audit F-14: boot-time DB health check. Opening + quick_check proves
+            // the store is readable, writable, and not corrupt, so a broken DB
+            // surfaces at startup instead of silently dropping captures later.
+            match memory_store::health_check() {
+                Ok(()) => app_events::emit("shogun-db-health", serde_json::json!({ "ok": true })),
+                Err(e) => {
+                    log::error!("DB health check failed at boot: {}", e);
+                    app_events::emit(
+                        "shogun-db-health",
+                        serde_json::json!({ "ok": false, "error": e }),
+                    );
+                }
+            }
             mirror::sync::spawn_scheduler(app.handle().clone());
             #[cfg(target_os = "macos")]
             {
