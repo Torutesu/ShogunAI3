@@ -59,8 +59,15 @@ pub fn billing_config() -> Value {
     let url = env::var("SHOGUN_WEB_APP_URL").unwrap_or_default();
     let trimmed = url.trim().trim_end_matches('/').to_string();
     let enabled = !trimmed.is_empty();
+    // Audit F-4: when SHOGUN_BILLING_STRICT=1, a missing/blank web-app URL must
+    // fail closed (paywall) instead of silently bypassing the gate — so a
+    // release build that forgot to inject the URL doesn't ship an open paywall.
+    let strict = env::var("SHOGUN_BILLING_STRICT")
+        .map(|v| v.trim() == "1" || v.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     json!({
       "enabled": enabled,
       "webAppUrl": trimmed,
+      "strict": strict,
     })
 }

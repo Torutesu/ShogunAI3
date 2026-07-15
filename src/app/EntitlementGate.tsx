@@ -7,6 +7,7 @@ import {
   fetchEntitlementFromWeb,
   isEntitlementActive,
   resolveEntitlement,
+  resolveMissingBillingConfig,
   type EntitlementStatus,
 } from '@/shared/lib/entitlement';
 
@@ -40,6 +41,15 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
       }
       const billingCfg = billingRes.data || {};
       if (!billingCfg.enabled || !billingCfg.webAppUrl) {
+        // Audit F-4: strict builds fail closed instead of silently bypassing.
+        if (resolveMissingBillingConfig(Boolean(billingCfg.strict)) === 'blocked') {
+          setGate({
+            status: 'error',
+            message:
+              'Billing is required (strict mode) but no web app URL is configured. Set SHOGUN_WEB_APP_URL for this build.',
+          });
+          return;
+        }
         setGate({ status: 'bypass' });
         return;
       }
