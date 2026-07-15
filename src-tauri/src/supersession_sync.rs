@@ -42,7 +42,11 @@ fn supersession_enabled() -> bool {
 }
 
 fn should_run() -> bool {
-    let last = STATE.lock().ok().and_then(|s| s.last_run_ms);
+    // Audit F-10: read the persisted last-success so the 30-day gate survives
+    // restarts (the LLM judge must not re-run on every boot). Fall back to the
+    // in-memory value if the DB is unavailable.
+    let last = crate::job_runs::last_success_ms(crate::job_runs::JOB_SUPERSESSION)
+        .or_else(|| STATE.lock().ok().and_then(|s| s.last_run_ms));
     match last {
         None => true,
         Some(t) => (now_ms() - t) >= 30 * 24 * 60 * 60 * 1000,
@@ -57,8 +61,10 @@ pub fn spawn_background_supersession_sync() {
             if supersession_enabled() && should_run() {
                 match crate::supersession::run_supersession().await {
                     Ok(marked) => {
+                        let ts = now_ms();
+                        crate::job_runs::mark_success(crate::job_runs::JOB_SUPERSESSION, ts);
                         if let Ok(mut s) = STATE.lock() {
-                            s.last_run_ms = Some(now_ms());
+                            s.last_run_ms = Some(ts);
                             s.last_marked_count = marked;
                             s.last_error = None;
                         }

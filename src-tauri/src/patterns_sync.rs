@@ -34,7 +34,10 @@ fn patterns_enabled() -> bool {
 }
 
 fn should_run() -> bool {
-    let last = STATE.lock().ok().and_then(|s| s.last_run_ms);
+    // Audit F-10: read the persisted last-success so the 24h gate survives
+    // restarts instead of re-running pattern detection on every boot.
+    let last = crate::job_runs::last_success_ms(crate::job_runs::JOB_PATTERNS)
+        .or_else(|| STATE.lock().ok().and_then(|s| s.last_run_ms));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -53,13 +56,13 @@ pub fn spawn_background_patterns_sync() {
             if patterns_enabled() && should_run() {
                 match crate::patterns::run_detection().await {
                     Ok(emitted) => {
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        crate::job_runs::mark_success(crate::job_runs::JOB_PATTERNS, ts);
                         if let Ok(mut s) = STATE.lock() {
-                            s.last_run_ms = Some(
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_millis() as i64)
-                                    .unwrap_or(0),
-                            );
+                            s.last_run_ms = Some(ts);
                             s.last_emitted_count = emitted;
                             s.last_error = None;
                         }
