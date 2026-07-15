@@ -981,10 +981,12 @@ pub fn app_delete_data_range(payload: Value) -> Result<Value, String> {
         }
         _ => return Err(format!("Unknown range: {}", range)),
     };
-    memory_store::delete_items_created_since(cutoff)?;
+    let result = memory_store::delete_items_created_since(cutoff)?;
     Ok(json!({
       "deleted": true,
       "range": range,
+      "removed": result.get("removed").cloned().unwrap_or(json!(0)),
+      "removedCaptures": result.get("removed_captures").cloned().unwrap_or(json!(0)),
       "stub": false,
       "echo": payload,
     }))
