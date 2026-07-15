@@ -107,6 +107,15 @@ export function resolveEntitlement(params: {
   };
 }
 
+/**
+ * Audit F-4: decide the gate outcome when billing reports no usable web-app URL.
+ * A strict build (SHOGUN_BILLING_STRICT=1) fails closed so a release that forgot
+ * to inject the URL doesn't ship an open paywall; otherwise bypass (local dev).
+ */
+export function resolveMissingBillingConfig(strict: boolean): 'bypass' | 'blocked' {
+  return strict ? 'blocked' : 'bypass';
+}
+
 export async function fetchEntitlementFromWeb(
   webAppUrl: string,
   token: string,

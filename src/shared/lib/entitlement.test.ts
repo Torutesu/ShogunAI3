@@ -5,7 +5,17 @@ import {
   isEntitlementActive,
   isGraceValid,
   resolveEntitlement,
+  resolveMissingBillingConfig,
 } from './entitlement';
+
+describe('resolveMissingBillingConfig (audit F-4)', () => {
+  it('bypasses when not strict (local dev)', () => {
+    expect(resolveMissingBillingConfig(false)).toBe('bypass');
+  });
+  it('fails closed when strict', () => {
+    expect(resolveMissingBillingConfig(true)).toBe('blocked');
+  });
+});
 
 describe('isEntitlementActive', () => {
   it('allows trialing and active', () => {
