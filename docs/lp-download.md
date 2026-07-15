@@ -2,13 +2,15 @@
 
 Mac ファースト配布用。LP の DL ボタンと welcome ページが参照する URL をここで管理します。
 
-## ダウンロード URL（v0.4.1）
+## ダウンロード URL（v0.4.2）
 
 | 用途 | URL |
 |------|-----|
 | **LP の DL ボタン（推奨）** | `https://github.com/Torutesu/ShogunAI3/releases/latest` |
-| **直接 DMG（v0.4.1 固定）** | `https://github.com/Torutesu/ShogunAI3/releases/download/v0.4.1/Shogun.AI_0.4.1_aarch64.dmg` |
+| **直接 DMG（v0.4.2 固定）** | `https://github.com/Torutesu/ShogunAI3/releases/download/v0.4.2/Shogun.AI_0.4.2_aarch64.dmg` |
 | **リリース一覧** | `https://github.com/Torutesu/ShogunAI3/releases` |
+
+> v0.4.2 の draft を Publish するまで上記 URL は 404。Publish 後に有効。
 
 > `releases/latest` は公開済みの最新 Release に飛びます。バージョンアップ時は LP の直接 DMG リンクを更新するか、`latest` のみ使う運用にしてください。
 
