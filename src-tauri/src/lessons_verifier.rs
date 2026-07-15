@@ -104,10 +104,25 @@ async fn call_judge(
     let user_content = build_user_prompt(user_msg, assistant_msg, lessons);
     let tool = judge_tool();
 
-    match crate::llm::anthropic_tool_complete(JUDGE_SYSTEM_PROMPT, &user_content, &tool, MODEL)
-        .await
+    match crate::llm::anthropic_tool_complete_with_usage(
+        JUDGE_SYSTEM_PROMPT,
+        &user_content,
+        &tool,
+        MODEL,
+    )
+    .await
     {
-        Ok(input) => {
+        Ok(res) => {
+            // Audit F-11: record judge spend against the BYOK cost ledger.
+            crate::cost_ledger::record_llm_cost(
+                &res.resolved_model,
+                res.input_tokens,
+                res.output_tokens,
+                res.cache_creation_input_tokens,
+                res.cache_read_input_tokens,
+                crate::cost_ledger::PURPOSE_JUDGE,
+            );
+            let input = res.input;
             let judgments = match input.get("judgments").and_then(|v| v.as_array()) {
                 Some(arr) => arr,
                 None => {

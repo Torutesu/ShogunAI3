@@ -8,6 +8,27 @@ use serde_json::{json, Value};
 
 pub const SUMMARIZER_MODEL: &str = "claude-sonnet-4-6";
 
+/// Tool-complete wrapper that records the call's BYOK cost against the ledger
+/// before returning the tool input, so summarizer spend is counted (audit F-11).
+/// Returns the same `Result<Value, String>` as the underlying call.
+async fn summarizer_tool_complete(
+    system: &str,
+    user: &str,
+    tool: &Value,
+    model: &str,
+) -> Result<Value, String> {
+    let res = crate::llm::anthropic_tool_complete_with_usage(system, user, tool, model).await?;
+    crate::cost_ledger::record_llm_cost(
+        &res.resolved_model,
+        res.input_tokens,
+        res.output_tokens,
+        res.cache_creation_input_tokens,
+        res.cache_read_input_tokens,
+        crate::cost_ledger::PURPOSE_SUMMARIZE,
+    );
+    Ok(res.input)
+}
+
 /// Anthropic tool_use で使う schema。emit_memory_summary ツール 1 本。
 pub fn emit_memory_summary_tool() -> Value {
     json!({
@@ -308,7 +329,7 @@ pub async fn summarize_item(item: &Value, lang: &str) -> Result<Summary, String>
     let tool = emit_memory_summary_tool();
     let system = system_prompt_for_lang(lang);
 
-    match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
+    match summarizer_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
     {
         Ok(tool_input) => match build_summary_from_tool_input(item, source_type, &tool_input, lang)
         {
@@ -500,7 +521,7 @@ pub async fn summarize_entity_rollup(
     let tool = emit_memory_summary_tool();
     let system = entity_rollup_system_prompt(lang);
 
-    match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
+    match summarizer_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
     {
         Ok(tool_input) => {
             let title = tool_input
@@ -884,7 +905,7 @@ pub async fn summarize_year_rollup(year_start_ms: i64, lang: &str) -> Result<Sum
     let tool = emit_memory_summary_tool();
     let system = rollup_system_prompt_for_lang(lang, RollupKind::Year);
 
-    match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
+    match summarizer_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
     {
         Ok(tool_input) => {
             match build_rollup_from_tool_input(&id, RollupKind::Year, &tool_input, lang) {
@@ -1188,7 +1209,7 @@ async fn summarize_rollup(
     let tool = emit_memory_summary_tool();
     let system = rollup_system_prompt_for_lang(lang, kind);
 
-    match crate::llm::anthropic_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
+    match summarizer_tool_complete(&system, &user_content, &tool, SUMMARIZER_MODEL).await
     {
         Ok(tool_input) => match build_rollup_from_tool_input(&id, kind, &tool_input, lang) {
             Ok(s) => Ok(s),

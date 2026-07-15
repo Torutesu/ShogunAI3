@@ -59,8 +59,21 @@ fn judge_tool() -> Value {
 async fn judge_contradiction(older_rule: &str, newer_rule: &str) -> Option<bool> {
     let user_msg = format!("OLDER: {}\nNEWER: {}", older_rule, newer_rule);
     let tool = judge_tool();
-    match crate::llm::anthropic_tool_complete(JUDGE_SYSTEM_PROMPT, &user_msg, &tool, MODEL).await {
-        Ok(input) => input.get("contradicts").and_then(|v| v.as_bool()),
+    match crate::llm::anthropic_tool_complete_with_usage(JUDGE_SYSTEM_PROMPT, &user_msg, &tool, MODEL)
+        .await
+    {
+        Ok(res) => {
+            // Audit F-11: record judge spend so it counts toward the BYOK ledger.
+            crate::cost_ledger::record_llm_cost(
+                &res.resolved_model,
+                res.input_tokens,
+                res.output_tokens,
+                res.cache_creation_input_tokens,
+                res.cache_read_input_tokens,
+                crate::cost_ledger::PURPOSE_JUDGE,
+            );
+            res.input.get("contradicts").and_then(|v| v.as_bool())
+        }
         Err(e) => {
             log::warn!("supersession judge failed: {}", e);
             None

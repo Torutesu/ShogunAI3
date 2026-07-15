@@ -31,6 +31,7 @@ pub const CACHE_READ_MULTIPLIER: f64 = 0.10;
 pub const PURPOSE_EXTRACTION: &str = "extraction";
 pub const PURPOSE_SUMMARIZE: &str = "summarize";
 pub const PURPOSE_EMBED: &str = "embed";
+pub const PURPOSE_JUDGE: &str = "judge";
 
 /// `settings.sections.kioku_cost.cap_action` enum.
 pub const CAP_ACTION_PAUSE_CAPTURE: &str = "pause_capture";
@@ -141,6 +142,55 @@ pub fn calc_cost_with_cache(
             + cr / 1_000_000.0 * inp_per_m * CACHE_READ_MULTIPLIER
             + out / 1_000_000.0 * out_per_m,
     )
+}
+
+/// Record an LLM call against the ledger, opening its own connection.
+///
+/// Audit F-11: the monthly cost cap only tracked KIOKU extraction, so
+/// summarizer and LLM-judge (supersession / lessons) spend was invisible and
+/// uncapped. Non-extraction call sites use this convenience helper so their
+/// BYOK spend shows up in the ledger (and thus the KIOKU cost UI) without
+/// threading a `Connection`. Unknown/embedding models price at 0 but still
+/// record token volume. Best-effort: a ledger write failure never blocks the
+/// caller's real work.
+pub fn record_llm_cost(
+    model: &str,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_creation_tokens: i64,
+    cache_read_tokens: i64,
+    purpose: &str,
+) {
+    let cost = calc_cost_with_cache(
+        model,
+        input_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
+        output_tokens,
+    )
+    .unwrap_or(0.0);
+    let recorded_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let entry = LedgerEntry {
+        recorded_at_ms,
+        model: model.to_string(),
+        purpose: purpose.to_string(),
+        input_tokens,
+        output_tokens,
+        cost_usd: cost,
+        job_id: None,
+        meta_json: None,
+    };
+    match crate::memory_store::open_conn() {
+        Ok(conn) => {
+            if let Err(e) = record(&entry, &conn) {
+                log::warn!("cost_ledger: failed to record {} cost: {}", purpose, e);
+            }
+        }
+        Err(e) => log::warn!("cost_ledger: open_conn failed recording {}: {}", purpose, e),
+    }
 }
 
 /// One row recorded in `cost_ledger`. Mirrors the table 1:1 minus auto id.
@@ -337,6 +387,29 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM cost_ledger", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn sum_cost_in_window_covers_all_llm_purposes() {
+        // Audit F-11: the monthly window sums every LLM purpose, not just
+        // extraction, so summarizer + judge spend counts toward the cap/UI.
+        let conn = open_test_conn();
+        record(&entry(1_000, PURPOSE_EXTRACTION, 2_000, 400, 0.004), &conn).unwrap();
+        record(&entry(1_100, PURPOSE_SUMMARIZE, 1_000, 200, 0.010), &conn).unwrap();
+        record(&entry(1_200, PURPOSE_JUDGE, 500, 50, 0.001), &conn).unwrap();
+
+        let total = sum_cost_in_window(&conn, 0, 10_000).expect("sum");
+        assert!(
+            (total - 0.015).abs() < 1e-9,
+            "sum must include extraction + summarize + judge, got {total}"
+        );
+
+        let purposes: i64 = conn
+            .query_row("SELECT COUNT(DISTINCT purpose) FROM cost_ledger", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(purposes, 3, "three distinct LLM purposes recorded");
     }
 
     #[test]
