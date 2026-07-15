@@ -251,6 +251,27 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `mirror.list_devices`
 - `mirror.rename_device`
 - `mirror.delete_device`
+- `notifications.status`
+- `notifications.request`
+- `ai_field.list`
+- `ai_field.upsert`
+- `action.list`
+- `action.audit_list`
+- `action.propose`
+- `action.set_status`
+- `action.execute`
+- `queue.tasks.list`
+- `queue.tasks.remove`
+- `queue.tasks.retry`
+- `queue.crm_updates.list`
+- `queue.crm_updates.remove`
+- `queue.crm_updates.retry`
+- `entity.context.get`
+- `context.search`
+- `context.recent.get`
+- `context.tasks.list`
+- `context.owner_summary.get`
+- `app.navigate`
 
 ## Quick Verification
 
