@@ -48,10 +48,15 @@ npx wrangler pages deploy lp --project-name shogun-lp
 - Waitlist endpoint 未設定時: フォームは「準備中・ベータDLは今日から使える」を返す（壊れない）。
 - PostHog は requestIdleCallback で遅延ロード。LCP に影響しない。
 
-## 残 TODO（ローンチ前チェックリスト = landing-seo-perf スキル §12）
+## ローンチ前チェックリスト（landing-seo-perf スキル §12）
 
-- [ ] OG 画像 `og-en.png` / `og-ja.png`（1200×630、≤300KB）を lp/ 直下に追加
-- [ ] `robots.txt` / `sitemap.xml`
-- [ ] 404 ページ
-- [ ] 実 Lighthouse 計測（`npx lighthouse https://syogun.com --view`）
-- [ ] Twitter/Slack で OGP 展開確認
+- [x] OG 画像 `og-en.png` / `og-ja.png`（1200×630・~52KB）— ブランド準拠、ブラウザ確認済み
+- [x] `apple-touch-icon.png`（180×180）
+- [x] `robots.txt` / `sitemap.xml`（hreflang 付き）
+- [x] 404 ページ（`404.html`・ブランド準拠）
+- [x] Mobile 375px 破綻なし（nav 折返し解消・横スクロールゼロ・確認済み）
+- [ ] 本番 Lighthouse 計測（デプロイ後 `npx lighthouse https://syogun.com --view`）
+- [ ] Twitter/Slack で OGP 実展開確認（デプロイ後）
+
+OG 画像の再生成: `scratchpad/og-{en,ja}.html` を編集 → Playwright で 1200×630 スクショ
+（`node` スクリプトで `page.screenshot({clip:{width:1200,height:630}})`）。
