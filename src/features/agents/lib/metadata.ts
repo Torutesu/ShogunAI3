@@ -69,14 +69,39 @@ export const ATTENTION_REASONS: Record<string, (a: AgentDemo & { lastRunRel?: st
   auth_expired: (a) => `${a.name} needs re-authorization.`,
 };
 
+export function agentNeedsAttention(agent: AgentDemo, nowMs: number): boolean {
+  if (agent.paused) return false;
+  const last = agent.recentRuns && agent.recentRuns[0];
+  const tooStale =
+    (agent.status === 'scheduled' || agent.trigger?.startsWith('every ')) &&
+    agent.lastRunMs != null &&
+    (nowMs - agent.lastRunMs) > 24 * 60 * 60 * 1000;
+  return (
+    agent.attention === 'error' ||
+    agent.attention === 'auth_expired' ||
+    agent.attention === 'stale' ||
+    Boolean(last && last.level === 'error') ||
+    tooStale
+  );
+}
+
 // ─── Filter options ────────────────────────────────────────────────────────
 
 export const FILTER_OPTIONS: Array<{ id: string; label: string }> = [
   { id: 'all', label: 'all' },
+  { id: 'attention', label: 'attention' },
   { id: 'running', label: 'running' },
   { id: 'scheduled', label: 'scheduled' },
   { id: 'paused', label: 'paused' },
   { id: 'error', label: 'error' },
+];
+
+export const CUSTOM_AGENT_TOOL_OPTIONS: Array<{ name: string; icon: string }> = [
+  { name: 'memory', icon: 'memory' },
+  { name: 'mail', icon: 'mail' },
+  { name: 'calendar', icon: 'calendar' },
+  { name: 'note', icon: 'note' },
+  { name: 'github', icon: 'github' },
 ];
 
 // ─── Synthetic run templates ───────────────────────────────────────────────

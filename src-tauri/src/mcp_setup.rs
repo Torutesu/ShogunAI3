@@ -1,11 +1,41 @@
-//! Claude Desktop MCP configuration helpers for the onboarding wizard.
+//! Claude Desktop MCP configuration helpers for the onboarding wizard and app settings.
 
+use crate::{context_mcp, kioku_mcp, mcp_server, meeting_mcp, memory_mcp};
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const SHOGUN_MCP_SERVER_KEY: &str = "shogun";
+
+fn sample_args_for_tool(name: &str) -> Value {
+    match name {
+        "shogun.search_context" => json!({ "query": "unlikely-query-token", "limit": 3 }),
+        "shogun.get_recent_context" => json!({ "limit": 3 }),
+        "shogun.get_customer_context" => json!({ "entityId": "company:acme", "limit": 3 }),
+        "shogun.get_project_context" => json!({ "entityId": "project:apollo", "limit": 3 }),
+        "shogun.get_meeting_summary" => json!({ "meeting_id": "meeting-demo" }),
+        "shogun.list_tasks" => json!({ "limit": 3 }),
+        "shogun.ai_fields_list" => json!({ "limit": 3 }),
+        "shogun.action_queue_list" => json!({ "limit": 3 }),
+        "shogun.action_audit_list" => json!({ "actionId": "action-demo", "limit": 3 }),
+        "shogun.queue_artifacts_list" => json!({ "limit": 3 }),
+        "shogun.owner_context_summary" => json!({ "ownerEntityId": "company:acme", "limit": 3 }),
+        "shogun.entity_context_get" => json!({ "entityId": "company:acme", "limit": 3 }),
+        "shogun.meetings_list" => json!({ "limit": 3 }),
+        "shogun.meeting_get" => json!({ "meeting_id": "meeting-demo" }),
+        "shogun.meeting_transcript" => json!({ "meeting_id": "meeting-demo" }),
+        "shogun.meeting_notes" => json!({ "meeting_id": "meeting-demo" }),
+        "shogun.meetings_search" => json!({ "query": "demo", "limit": 3 }),
+        "shogun.memory_search" => json!({ "query": "unlikely-query-token", "limit": 3 }),
+        "shogun.memory_search_timeline" => json!({ "query": "unlikely-query-token", "limit": 3 }),
+        "shogun.memory_fetch" => json!({ "ids": ["memory-demo"] }),
+        "shogun.memory_entities" => json!({ "q": "demo" }),
+        "shogun.kioku_debug_stats" => json!({}),
+        "shogun.kioku_related" => json!({ "seed_ids": ["memory-demo"], "limit": 3 }),
+        _ => json!({}),
+    }
+}
 
 pub fn home_dir() -> Result<PathBuf, String> {
     if let Ok(home) = std::env::var("HOME") {
@@ -186,6 +216,77 @@ pub fn verify_setup() -> Result<Value, String> {
     }))
 }
 
+pub fn list_shogun_mcp_tools() -> Result<Value, String> {
+    let groups = [
+        ("meetings", meeting_mcp::tool_definitions()),
+        ("memory", memory_mcp::tool_definitions()),
+        ("context", context_mcp::tool_definitions()),
+        ("kioku", kioku_mcp::tool_definitions()),
+    ];
+
+    let mut total: usize = 0;
+    let sections: Vec<Value> = groups
+        .into_iter()
+        .map(|(group_id, defs)| {
+            let items = defs
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|item| {
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let description = item
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    json!({
+                        "name": name,
+                        "description": description,
+                        "sampleArgs": sample_args_for_tool(&name),
+                    })
+                })
+                .collect::<Vec<Value>>();
+            total += items.len();
+            json!({
+                "groupId": group_id,
+                "count": items.len(),
+                "items": items,
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "total": total,
+        "sections": sections,
+        "stub": false,
+    }))
+}
+
+pub fn preview_tool(name: &str, args: &Value) -> Result<Value, String> {
+    let result = mcp_server::dispatch(name, args)?;
+    let text = result
+        .get("content")
+        .and_then(|value| value.as_array())
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("text"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(json!({
+        "ok": true,
+        "toolName": name,
+        "args": args,
+        "text": text,
+        "stub": false,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +318,40 @@ mod tests {
             merged["mcpServers"]["shogun"]["command"].as_str(),
             Some("/tmp/shogun-mcp")
         );
+    }
+
+    #[test]
+    fn list_shogun_mcp_tools_returns_grouped_tool_catalog() {
+        let payload = list_shogun_mcp_tools().expect("tool catalog");
+        let sections = payload["sections"].as_array().expect("sections");
+        assert!(!sections.is_empty());
+        let context_section = sections
+            .iter()
+            .find(|section| section["groupId"].as_str() == Some("context"))
+            .expect("context section");
+        let items = context_section["items"].as_array().expect("items");
+        assert!(
+            items.iter().any(|item| item["name"].as_str() == Some("shogun.search_context"))
+        );
+        assert_eq!(
+            items.iter()
+                .find(|item| item["name"].as_str() == Some("shogun.search_context"))
+                .and_then(|item| item.get("sampleArgs"))
+                .and_then(|value| value.get("query"))
+                .and_then(|value| value.as_str()),
+            Some("unlikely-query-token")
+        );
+        assert!(payload["total"].as_u64().unwrap_or(0) >= items.len() as u64);
+    }
+
+    #[test]
+    fn preview_tool_returns_text_payload() {
+        let payload = preview_tool("shogun.search_context", &json!({
+            "query": "unlikely-query-token",
+            "limit": 2
+        }))
+        .expect("preview");
+        assert_eq!(payload["toolName"].as_str(), Some("shogun.search_context"));
+        assert!(payload["text"].as_str().is_some());
     }
 }

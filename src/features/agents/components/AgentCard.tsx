@@ -10,13 +10,14 @@ interface AgentCardProps {
   nowMs: number;
   onOpenHistory: (id: string) => void;
   onEdit: (id: string) => void;
+  onDelete?: (id: string) => void;
   running: boolean;
   onRunNow: () => void;
   onTogglePause: () => void;
 }
 
 export function AgentCard({
-  agent, expanded, onToggle, nowMs, onOpenHistory, onEdit, running, onRunNow, onTogglePause,
+  agent, expanded, onToggle, nowMs, onOpenHistory, onEdit, onDelete, running, onRunNow, onTogglePause,
 }: AgentCardProps) {
   // If the most recent run failed, surface it as `error` regardless of
   // the schema status — operationally this is what matters.
@@ -106,6 +107,15 @@ export function AgentCard({
             >
               <Icon name="edit" size={12}/> Edit
             </button>
+            {agent.isCustom && onDelete ? (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => onDelete(agent.id)}
+              >
+                <Icon name="trash" size={12}/> Delete
+              </button>
+            ) : null}
           </div>
           {/* Recent runs */}
           <div>

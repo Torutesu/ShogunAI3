@@ -1172,10 +1172,33 @@
 }
 
 .memory-context-hit {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-2) 50%, var(--surface));
   padding: 8px 10px;
+}
+
+.memory-context-hit:disabled {
+  opacity: 1;
+}
+
+.memory-context-hit--openable {
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.memory-context-hit--openable:hover {
+  border-color: color-mix(in srgb, var(--gold) 42%, var(--border-hi));
+  background: color-mix(in srgb, var(--gold) 8%, var(--surface-2) 92%);
+}
+
+.memory-context-hit--openable:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
 
 .memory-context-hit-head {

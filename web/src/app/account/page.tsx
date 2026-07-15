@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
+import { getAppBaseUrl } from '@/lib/web-config';
 
 export const dynamic = 'force-dynamic';
 import { getLatestSubscriptionForClerkUser } from '@/lib/billing';
@@ -14,15 +15,24 @@ export default async function AccountPage() {
 
   const sub = await getLatestSubscriptionForClerkUser(userId);
   let manageUrl: string | null = null;
+  const base = getAppBaseUrl();
 
   const db = getDb();
   const [user] = await db.select().from(users).where(eq(users.clerkUserId, userId)).limit(1);
 
   if (user?.stripeCustomerId) {
+    if (!base) {
+      return (
+        <main style={{ padding: 48, maxWidth: 560, margin: '0 auto' }}>
+          <h1>Your account</h1>
+          <p>Web app URL is not configured yet. Set NEXT_PUBLIC_APP_URL before enabling billing.</p>
+        </main>
+      );
+    }
     const stripe = getStripe();
     const portal = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,
-      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/account`,
+      return_url: `${base}/account`,
     });
     manageUrl = portal.url;
   }

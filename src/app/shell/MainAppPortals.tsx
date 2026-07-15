@@ -1,6 +1,7 @@
 import React, { lazy, Suspense } from 'react';
 import { ConfirmWriteModal } from '@/shared/modals';
 import { profileStateFromSections, applySavedAppearance } from '@/app/lib/helpers';
+import { historicalImportResultNavigation } from '@/app/lib/native-navigation';
 import { ShareModal } from './ShareModal';
 import { TweaksPanel } from './TweaksPanel';
 import { FallbackWriteModal } from './FallbackWriteModal';
@@ -257,6 +258,7 @@ export function MainAppPortals(props: MainAppPortalsProps): React.ReactElement {
             ? { calendarId: 'primary', days }
             : { days };
           const res = await executeAction(actionKey, syncPayload, { silentError: true });
+          const importSucceeded = !!(res && res.ok);
           if (res && res.ok) {
             const syncData = res.data as { ingested?: number; skipped?: number } | undefined;
             const n = syncData?.ingested || 0;
@@ -272,10 +274,17 @@ export function MainAppPortals(props: MainAppPortalsProps): React.ReactElement {
             { section: provider, historicalSyncDays: days },
             { silentError: true },
           );
-          props.setHistoricalImportBusy(false);
-          props.setHistoricalImport(null);
-          props.setHistoricalImportProgress(null);
-          window.dispatchEvent(new CustomEvent('shogun-memory-index-changed'));
+          if (!importSucceeded) {
+            props.setHistoricalImportBusy(false);
+            props.setHistoricalImport(null);
+            props.setHistoricalImportProgress(null);
+            window.dispatchEvent(new CustomEvent('shogun-memory-index-changed'));
+            window.dispatchEvent(
+              new CustomEvent('shogun-app-navigate', {
+                detail: historicalImportResultNavigation(false),
+              }),
+            );
+          }
         }}
       />
 

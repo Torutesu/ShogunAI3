@@ -23,6 +23,7 @@ export interface AgentRun {
   input: string;
   output: string;
   error?: string;
+  source?: string;
   memoryTouched: MemoryRef[];
 }
 
@@ -40,6 +41,8 @@ export interface AgentDemo {
   recentRuns: AgentRun[];
   attention?: string;
   paused?: boolean;
+  isCustom?: boolean;
+  prompt?: string;
 }
 
 export interface AgentLiveEntry {
@@ -47,6 +50,8 @@ export interface AgentLiveEntry {
   agent: string;
   msg: string;
   level: 'success' | 'info' | 'error';
+  atMs?: number;
+  source?: string;
 }
 
 export interface TriggerForm {

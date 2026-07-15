@@ -9,6 +9,7 @@
 const LS_CONNECTED = "shogun.hifi.mock.integrations.connected.v1";
 const LS_GCAL = "shogun.hifi.mock.integrations.google_calendar.v1";
 const LS_GMAIL = "shogun.hifi.mock.integrations.gmail.v1";
+const LS_GDRIVE = "shogun.hifi.mock.integrations.google_drive.v1";
 
 /** @type {Record<string, string>} slug -> path under `/assets/integrations/` */
 const ICON_BY_SLUG: Record<string, string> = {
@@ -38,7 +39,6 @@ const OAUTH_V1_NOT_WIRED = new Set([
   "notion",
   "linear",
   "outlook",
-  "google_drive",
   "github",
   "claude",
   "figma",
@@ -128,6 +128,22 @@ function readGmailMock() {
   }
 }
 
+function readGDriveMock() {
+  try {
+    if (!window.localStorage) return { configured: false, tokenRefreshReady: false };
+    const raw = window.localStorage.getItem(LS_GDRIVE);
+    if (!raw) return { configured: false, tokenRefreshReady: false };
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== "object") return { configured: false, tokenRefreshReady: false };
+    return {
+      configured: !!o.configured,
+      tokenRefreshReady: !!o.tokenRefreshReady,
+    };
+  } catch (_) {
+    return { configured: false, tokenRefreshReady: false };
+  }
+}
+
 function writeGmailMock(patch: any) {
   try {
     if (!window.localStorage) return;
@@ -143,6 +159,27 @@ function writeGmailMock(patch: any) {
     })();
     const next = { ...prev, ...patch };
     window.localStorage.setItem(LS_GMAIL, JSON.stringify(next));
+    dispatchCredEvent();
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function writeGDriveMock(patch: any) {
+  try {
+    if (!window.localStorage) return;
+    const prev = (() => {
+      try {
+        const raw = window.localStorage.getItem(LS_GDRIVE);
+        if (!raw) return {};
+        const o = JSON.parse(raw);
+        return o && typeof o === "object" ? o : {};
+      } catch (_) {
+        return {};
+      }
+    })();
+    const next = { ...prev, ...patch };
+    window.localStorage.setItem(LS_GDRIVE, JSON.stringify(next));
     dispatchCredEvent();
   } catch (_) {
     /* ignore */
@@ -288,6 +325,16 @@ function mockIntegrationPayload(command: any, echo: any) {
           importedAt: Date.now(),
         });
       }
+      if (slug === "google_drive") {
+        const hasAccess = String(e.accessToken || "").trim().length > 0;
+        const hasRefresh = String(e.refreshToken || "").trim().length > 0;
+        const hasClient = String(e.oauthClientId || "").trim().length > 0;
+        writeGDriveMock({
+          configured: hasAccess,
+          tokenRefreshReady: hasRefresh && hasClient,
+          importedAt: Date.now(),
+        });
+      }
       return {
         saved: true,
         provider: slug,
@@ -317,6 +364,16 @@ function mockIntegrationPayload(command: any, echo: any) {
           echo: e,
         };
       }
+      if (slug === "google_drive") {
+        const g = readGDriveMock();
+        return {
+          configured: g.configured,
+          tokenRefreshReady: g.tokenRefreshReady,
+          provider: slug,
+          stub: false,
+          echo: e,
+        };
+      }
       return {
         configured: false,
         tokenRefreshReady: false,
@@ -327,6 +384,15 @@ function mockIntegrationPayload(command: any, echo: any) {
     }
     case "shogun_gmail_sync": {
       const g = readGmailMock();
+      const ingested = g.configured ? 2 : 0;
+      return {
+        ingested,
+        stub: false,
+        echo: e,
+      };
+    }
+    case "shogun_drive_sync": {
+      const g = readGDriveMock();
       const ingested = g.configured ? 2 : 0;
       return {
         ingested,
@@ -381,5 +447,8 @@ export const ShogunIntegrationConnectors = {
   mockIntegrationPayload,
   readGcalMock,
   readGmailMock,
+  readGDriveMock,
+  writeGcalMock,
+  writeGmailMock,
+  writeGDriveMock,
 };
-

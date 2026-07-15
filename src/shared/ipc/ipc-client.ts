@@ -186,7 +186,11 @@ import { mockTransport as runMockTransport } from "@/shared/ipc/transports/mock"
       });
       const bridges: Array<[string, string]> = [
         ["video-meeting-started", "shogun-video-meeting-started"],
+        ["video-meeting-auto-started", "shogun-video-meeting-auto-started"],
+        ["meeting-stopped", "shogun-meeting-stopped"],
         ["meeting-auto-stopped", "shogun-meeting-auto-stopped"],
+        ["shogun-app-navigate", "shogun-app-navigate"],
+        ["shogun-action-layer-refresh", "shogun-action-layer-refresh"],
         ["shogun-capture-ax-not-trusted", "shogun-capture-ax-not-trusted"],
         ["integration-security-audit", "shogun-integration-security-audit"],
         ["credentials-imported", "shogun-credentials-imported"],
@@ -194,6 +198,7 @@ import { mockTransport as runMockTransport } from "@/shared/ipc/transports/mock"
         ["shogun-meetings-changed", "shogun-meetings-changed"],
         ["shogun-memory-index-changed", "shogun-memory-index-changed"],
         ["memory-embed-backfill-progress", "shogun-memory-embed-backfill-progress"],
+        ["shogun-agents-runs-changed", "shogun-agents-runs-changed"],
       ];
       bridges.forEach(function (pair) {
         const tauriEvent = pair[0];

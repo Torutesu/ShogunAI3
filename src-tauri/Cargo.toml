@@ -1,8 +1,8 @@
 [package]
 name = "app"
 version = "0.4.1"
-description = "A Tauri App"
-authors = ["you"]
+description = "A private, local-first memory assistant for macOS."
+authors = ["Shogun AI"]
 license-file = "../LICENSE"
 edition = "2021"
 rust-version = "1.77.2"
@@ -29,6 +29,7 @@ log = "0.4"
 directories = "5"
 tauri = { version = "2.10.3", features = ["tray-icon", "image-png"] }
 tauri-plugin-log = "2"
+tauri-plugin-notification = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 thiserror = "1"
 tiny_http = "0.12"

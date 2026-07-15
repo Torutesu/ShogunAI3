@@ -16,6 +16,8 @@ pub const MIGRATION_STEPS: &[&str] = &[
     "memory_store::init_schema",
     "memory_store::ensure_embedding_column",
     "memory_store::ensure_context_layer_columns",
+    "ai_fields::ensure_ai_fields_schema",
+    "context_actions::ensure_context_actions_schema",
     "memory_store::migrate_json_if_needed",
     "kioku_graph_schema::ensure_kioku_graph_schema",
     "meeting_store::ensure_meetings_schema",

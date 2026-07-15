@@ -11,7 +11,7 @@ If you don't have an Apple Developer enrollment yet, you can still ship beta bui
 - **Limitations**:
   - First launch shows "App could not be verified" — users must right-click → Open (macOS 14) or use System Settings → Privacy & Security → Open Anyway (macOS 15+)
   - Not recommended for general public distribution; suitable for closed beta / friends-and-family
-  - Tauri auto-updater may refuse to apply unsigned updates — users will need to re-download new builds manually
+  - Tauri auto-updater artifacts are intentionally disabled for unsigned beta builds — users will need to re-download new builds manually
 
 Skip §3-§7 below until you enroll in the Apple Developer Program.
 
@@ -29,12 +29,27 @@ Keep these in sync:
 - `src-tauri/tauri.conf.json` → `version`
 - `src-tauri/Cargo.toml` → `[package] version`
 
+Run the automated release gate before building:
+
+```bash
+npm run release:preflight
+```
+
+For a paid public release, use the stricter mode after signing, updater, and notarization secrets are configured:
+
+```bash
+npm run release:preflight:public
+```
+
+The public gate intentionally fails if the repository still presents the main download as an unsigned beta, or if signing/updater/notarization configuration is not visible through CI secrets or explicit `SHOGUN_ASSUME_*_CONFIGURED=1` overrides.
+
 ## 2. Sync frontend and build
 
 From the repository root:
 
 ```bash
 npm ci
+npm run release:preflight
 npm run build:web-dist
 npm run build:desktop
 ```
@@ -57,6 +72,12 @@ Or copy `src-tauri/tauri.signing.local.example.json` to **`src-tauri/tauri.signi
 
 ```bash
 npm run build:desktop:signed
+```
+
+Updater artifacts are opt-in because they require `TAURI_SIGNING_PRIVATE_KEY`. For updater-enabled release candidates:
+
+```bash
+TAURI_SIGNING_PRIVATE_KEY="..." TAURI_SIGNING_PRIVATE_KEY_PASSWORD="..." npm run build:desktop:updater
 ```
 
 ### 3b. CI (`.p12` + password)
@@ -123,7 +144,7 @@ Workflow: [`.github/workflows/release-macos.yml`](../.github/workflows/release-m
 
 **Triggers:**
 
-- **Tag push `v*`** — `tauri-action` builds, signs, (optionally) notarizes, and creates a **draft GitHub Release** with the DMG attached. When the Tauri updater plugin is enabled, `latest.json` is attached alongside so existing installs update automatically once the Release is published.
+- **Tag push `v*`** — `tauri-action` builds, signs, (optionally) notarizes, and creates a **draft GitHub Release** with the DMG attached. The repo keeps default `bundle.createUpdaterArtifacts: false` so unsigned beta builds work without updater keys; updater-enabled releases merge `src-tauri/tauri.updater.json`, while `plugins.updater.endpoints` points at the GitHub Releases `latest.json`.
 - **Manual** — Actions → *Release macOS (signed)* → **Run workflow**. Produces a signed DMG as a workflow artifact; does not touch Releases. Use this to sanity-check the signing path without cutting a release.
 
 Day-to-day recommended flow: run `/release` from Claude Code (see [`.claude/commands/release.md`](../.claude/commands/release.md)) — it bumps the three version files, drafts brand-safe notes, tags, pushes, and watches the run. The manual dispatch stays as a fallback.
@@ -132,7 +153,7 @@ Day-to-day recommended flow: run `/release` from Claude Code (see [`.claude/comm
 |-------------------|----------|---------|
 | `APPLE_CERTIFICATE` | **Yes** | Base64-encoded **Developer ID Application** `.p12` (export cert + private key from Keychain). |
 | `APPLE_CERTIFICATE_PASSWORD` | **Yes** | Password used when exporting the `.p12`. |
-| `TAURI_SIGNING_PRIVATE_KEY` | Yes once the updater plugin ships | Tauri updater signing key (generate with `npx tauri signer generate -w ~/.tauri/shogun.key`). Used to sign the `.app.tar.gz` so clients can verify `latest.json`. Env var is passed through now; the build emits no updater artifacts until the plugin is enabled. |
+| `TAURI_SIGNING_PRIVATE_KEY` | Yes once the updater plugin ships | Tauri updater signing key (generate with `cargo tauri signer generate --ci -w ~/.tauri/shogun.key`). Used to sign the `.app.tar.gz` so clients can verify `latest.json`. |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Yes once the updater plugin ships | Passphrase for the updater signing key (blank string if you generated it without one). |
 | `APPLE_API_KEY_P8_BASE64` | No | Base64-encoded **App Store Connect API** private key (`.p8` contents). |
 | `APPLE_API_KEY_ID` | No | Key ID (e.g. `ABC123DEFG`) for notarization. |
@@ -140,4 +161,4 @@ Day-to-day recommended flow: run `/release` from Claude Code (see [`.claude/comm
 
 If the three `APPLE_API_*` optional secrets are all set, the workflow writes the `.p8` to a temp path and exports **`APPLE_API_KEY_PATH`**, **`APPLE_API_KEY`**, **`APPLE_API_ISSUER`** for Tauri's notarization step (see Tauri changelog: API key auth for `notarytool`). Otherwise the build is **signed only**; staple or re-run notarization locally per §4 if needed.
 
-For day-to-day verification, use unsigned **`ci.yml`**; use **`release-macos.yml`** only when the required secrets are configured on the repository.
+For day-to-day verification, use unsigned **`ci.yml`**; use **`release-macos.yml`** only when the required secrets are configured on the repository. If you change the updater signing key, update the `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` to match.

@@ -1,4 +1,6 @@
 import { ShogunHighlight } from '@/shared/lib/highlight';
+import { openChatWithSeed } from '@/shared/context/chat-composer-seed';
+import { jumpToMemoryTimeline } from '@/shared/context/context-target-navigation';
 
 /** Mirrors desktop `derive_provenance_from_source` when API omits `provenance`. */
 export function deriveLocalProvenance(source: any): string {
@@ -147,6 +149,15 @@ export function mergeIndexHitsIntoRiver(res: any, setEvents: any, setScrubIdx: a
   setScrubIdx(0);
 }
 
+/** Jump to Memory and focus a specific indexed item when possible. */
+export function openMemoryItem(options: {
+  memoryId: string;
+  query?: string | null;
+  view?: 'river' | 'search';
+}): void {
+  jumpToMemoryTimeline(options);
+}
+
 /** Jump to Chat with composer text + one-shot `memoryAssembly` preset. */
 export function openMemoryEntryInChat(entry: any, options?: any): void {
   const opts = options || {};
@@ -154,27 +165,14 @@ export function openMemoryEntryInChat(entry: any, options?: any): void {
   const title = String(entry.title || '').trim() || 'Memory';
   const snippet = String(entry.snippet || '');
   const lead = opts.userLead != null ? String(opts.userLead) : 'この記憶について手伝ってください。';
-  const text = lead + '\n\n**' + title + '**\n\n' + snippet.slice(0, 2000);
-  const memQ = String(opts.memoryAssemblyQuery != null ? opts.memoryAssemblyQuery : title).slice(0, 480);
-  const limRaw = opts.memoryAssemblyLimit != null ? Number(opts.memoryAssemblyLimit) : 14;
-  const limit = Number.isFinite(limRaw) ? Math.min(80, Math.max(1, Math.floor(limRaw))) : 14;
-  const semantic = opts.memoryAssemblySemantic !== false;
-  if (opts.newChat && typeof (window as any).SHOGUN_RUNTIME?.createNewChat === 'function') {
-    (window as any).SHOGUN_RUNTIME.createNewChat();
-  }
-  const detail: any = {
-    text,
+  openChatWithSeed({
+    text: lead + '\n\n**' + title + '**\n\n' + snippet.slice(0, 2000),
     webSearch: !!opts.webSearch,
     assembleMemory: allowAsm,
     autoSend: !!opts.autoSend,
-  };
-  if (allowAsm) {
-    detail.memoryAssemblyPreset = { query: memQ, limit, semantic };
-  } else {
-    detail.clearMemoryAssemblyPreset = true;
-  }
-  const dispatch = () => window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
-  (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('chat');
-  // ScreenChat mounts on demand — defer so its composer-seed listener is attached before dispatch.
-  setTimeout(dispatch, 0);
+    newChat: opts.newChat === true,
+    memoryAssemblyQuery: opts.memoryAssemblyQuery != null ? String(opts.memoryAssemblyQuery) : title,
+    memoryAssemblyLimit: opts.memoryAssemblyLimit != null ? Number(opts.memoryAssemblyLimit) : 14,
+    memoryAssemblySemantic: opts.memoryAssemblySemantic !== false,
+  });
 }

@@ -32,6 +32,23 @@ pub fn mcp_setup_verify(_payload: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub fn mcp_setup_list_tools(_payload: Value) -> Result<Value, String> {
+    mcp_setup::list_shogun_mcp_tools()
+}
+
+#[tauri::command]
+pub fn mcp_setup_preview_tool(payload: Value) -> Result<Value, String> {
+    let tool_name = payload
+        .get("toolName")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "toolName is required".to_string())?;
+    let args = payload.get("args").cloned().unwrap_or_else(|| json!({}));
+    mcp_setup::preview_tool(tool_name, &args)
+}
+
+#[tauri::command]
 pub fn mcp_setup_complete(payload: Value) -> Result<Value, String> {
     let doc = settings_store::save_patch(&json!({
       "section": "onboarding",

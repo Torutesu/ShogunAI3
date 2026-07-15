@@ -1,11 +1,13 @@
 use crate::{
-    dead_letter, google_calendar, integration_secrets, macos_ax, memory_store, paths, secrets,
-    settings_store,
+    app_events, dead_letter, google_calendar, integration_secrets, macos_ax, memory_store, paths,
+    secrets, settings_store,
 };
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
+use tauri::Manager;
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 pub(crate) fn redact_sensitive_text(input: &str) -> String {
@@ -239,6 +241,54 @@ pub fn app_open_hummingbird(app: AppHandle, payload: Value) -> Result<Value, Str
       "mode": "in_app_overlay",
       "stub": false,
       "echo": payload
+    }))
+}
+
+#[tauri::command]
+pub fn app_navigate(app: AppHandle, payload: Value) -> Result<Value, String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+    app_events::emit("shogun-app-navigate", payload.clone());
+    Ok(json!({
+      "navigated": true,
+      "echo": payload,
+    }))
+}
+
+#[tauri::command]
+pub fn app_notification_status(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let state = app
+        .notification()
+        .permission_state()
+        .map_err(|e| e.to_string())?;
+    let granted = matches!(state, tauri::plugin::PermissionState::Granted);
+    let promptable = matches!(
+        state,
+        tauri::plugin::PermissionState::Prompt | tauri::plugin::PermissionState::PromptWithRationale
+    );
+    Ok(json!({
+      "granted": granted,
+      "promptable": promptable,
+      "state": format!("{:?}", state),
+      "echo": payload,
+      "stub": false,
+    }))
+}
+
+#[tauri::command]
+pub fn app_notification_request(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let state = app
+        .notification()
+        .request_permission()
+        .map_err(|e| e.to_string())?;
+    let granted = matches!(state, tauri::plugin::PermissionState::Granted);
+    Ok(json!({
+      "granted": granted,
+      "state": format!("{:?}", state),
+      "echo": payload,
+      "stub": false,
     }))
 }
 

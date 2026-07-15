@@ -22,6 +22,10 @@ export function stashPendingMeetingDetect(detail: MeetingDetectDetail | null) {
   pendingDetect = detail;
 }
 
+export function clearPendingMeetingDetect() {
+  pendingDetect = null;
+}
+
 export function takePendingMeetingDetect(): MeetingDetectDetail | null {
   const p = pendingDetect;
   pendingDetect = null;

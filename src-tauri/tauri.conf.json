@@ -28,11 +28,18 @@
       "desktop": {
         "schemes": ["shogun-ai"]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFFRDc4NUU3MjM3QzBCMjUKUldRbEMzd2o1NFhYSG9HZXN1YTlEblBiRW1OdVZtYmFlNHRhc1ZZcHQveXM0dm85MFJtMmIyd24K",
+      "endpoints": [
+        "https://github.com/Torutesu/ShogunAI3/releases/latest/download/latest.json"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": false,
     "resources": [
       "../docs/TERMS_OF_SERVICE.md",
       "../docs/TERMS_OF_SERVICE_EN.md",

@@ -28,6 +28,8 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
 
     register("app.open_hummingbird", () => api.appOpenHummingbird({ source: "topbar" }));
     register("app.create_share_link", (payload) => api.appCreateShareLink(payload));
+    register("notifications.status", (payload) => api.appNotificationStatus(payload));
+    register("notifications.request", (payload) => api.appNotificationRequest(payload));
     register("settings.save", (payload) => api.settingsSave(payload));
     register("settings.load", (payload) => api.settingsLoad(payload));
     register("kioku.backup_db", (payload) => api.kiokuBackupDb(payload));
@@ -89,6 +91,19 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
       }
       return api.memorySearch(payload);
     });
+    register("ai_field.list", (payload) => api.aiFieldList(payload));
+    register("ai_field.upsert", (payload) => api.aiFieldUpsert(payload));
+    register("action.list", (payload) => api.contextActionList(payload));
+    register("action.audit_list", (payload) => api.contextActionAuditList(payload));
+    register("action.propose", (payload) => api.contextActionPropose(payload));
+    register("action.set_status", (payload) => api.contextActionSetStatus(payload));
+    register("action.execute", (payload) => api.contextActionExecute(payload));
+    register("queue.tasks.list", (payload) => api.scheduleQueueList(payload));
+    register("queue.crm_updates.list", (payload) => api.crmUpdateQueueList(payload));
+    register("queue.tasks.remove", (payload) => api.scheduleQueueRemove(payload));
+    register("queue.crm_updates.remove", (payload) => api.crmUpdateQueueRemove(payload));
+    register("queue.tasks.retry", (payload) => api.scheduleQueueRetry(payload));
+    register("queue.crm_updates.retry", (payload) => api.crmUpdateQueueRetry(payload));
     register("memory.timelineSearch", (payload) => api.memoryTimelineSearch(payload));
     register("memory.fetch", (payload) => api.memoryFetch(payload));
     register("memory.ingest", (payload) => api.memoryIngest(payload));
@@ -118,6 +133,11 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
     register("memory.rollup.entity.get", (payload) => api.memoryEntityRollupGet(payload));
     register("memory.summary.snooze", (payload) => api.memorySummarySnooze(payload));
     register("entity.query", (payload) => api.entityQuery(payload));
+    register("entity.context.get", (payload) => api.entityContextGet(payload));
+    register("context.search", (payload) => api.contextSearch(payload));
+    register("context.recent.get", (payload) => api.contextRecentGet(payload));
+    register("context.tasks.list", (payload) => api.contextTasksList(payload));
+    register("context.owner_summary.get", (payload) => api.ownerContextSummaryGet(payload));
     register("brief.get", (payload) => api.briefGet(payload));
     register("chat.complete", (payload) => api.chatComplete(payload));
     register("llm.save_api_key", (payload) => api.llmApiKeySet(payload));
@@ -127,6 +147,7 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
     register("shogun.draft_reply", (payload) => api.draftReply(payload));
     register("shogun.start_focus_session", (payload) => api.startFocusSession(payload));
     register("stats.get", (payload) => api.statsGet(payload));
+    register("app.navigate", (payload) => api.appNavigate(payload));
     register("draft.create", (payload) => api.draftCreate(payload));
     register("schedule.create", (payload) => api.scheduleAction(payload));
     register("auth.status", (payload) => api.authStatus(payload));
@@ -205,4 +226,3 @@ import { ShogunClerkAuth } from '@/shared/lib/clerk-auth';
 
 export const ShogunActionRegistry: { createActionRegistry: (api: typeof ShogunAPI, options?: any) => any } =
   (typeof window !== 'undefined' ? (window as any) : (globalThis as any)).ShogunActionRegistry;
-

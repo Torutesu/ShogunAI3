@@ -31,6 +31,7 @@ function defaultProps(agent: AgentDemo, overrides: Record<string, unknown> = {})
     nowMs: NOW_MS,
     onOpenHistory: vi.fn(),
     onEdit: vi.fn(),
+    onDelete: vi.fn(),
     running: false,
     onRunNow: vi.fn(),
     onTogglePause: vi.fn(),
@@ -132,6 +133,14 @@ describe('AgentCard', () => {
     render(<AgentCard {...defaultProps(agent, { expanded: true, onEdit })} />);
     fireEvent.click(screen.getByText(/Edit/));
     expect(onEdit).toHaveBeenCalledWith('daily-digest');
+  });
+
+  it('shows delete for custom agents and calls onDelete', () => {
+    const agent = makeAgent({ isCustom: true });
+    const onDelete = vi.fn();
+    render(<AgentCard {...defaultProps(agent, { expanded: true, onDelete })} />);
+    fireEvent.click(screen.getByText(/Delete/));
+    expect(onDelete).toHaveBeenCalledWith('inbox-triage');
   });
 
   it('surfaces error status when last run has level=error', () => {

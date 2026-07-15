@@ -16,6 +16,19 @@ export function useMemoryWorkspace(): {
 } {
   const [workspaceAssignments, setWorkspaceAssignments] = useState<Record<string, string>>({});
   const [workProjects, setWorkProjects] = useState<Record<string, unknown>[]>(readWorkProjects);
+  const applyWorkspaceAssignmentsResponse = useCallback((r: any) => {
+    const data = r?.data as {
+      settings?: { sections?: { workspace_memberships?: { memberships?: Record<string, string> } } };
+    } | undefined;
+    const map = data?.settings?.sections?.workspace_memberships?.memberships;
+    if (map && typeof map === 'object') setWorkspaceAssignments(map);
+    else setWorkspaceAssignments({});
+  }, []);
+  const reloadWorkspaceAssignments = useCallback(async () => {
+    const r = await runRuntimeAction('settings.load', {}, { silentError: true });
+    applyWorkspaceAssignmentsResponse(r);
+    return r;
+  }, [applyWorkspaceAssignmentsResponse]);
 
   useEffect(() => {
     const syncProjects = () => setWorkProjects(readWorkProjects());
@@ -25,14 +38,30 @@ export function useMemoryWorkspace(): {
   }, []);
 
   useEffect(() => {
-    runRuntimeAction('settings.load', {}, { silentError: true }).then((r) => {
-      const data = r?.data as {
-        settings?: { sections?: { workspace_memberships?: { memberships?: Record<string, string> } } };
-      } | undefined;
-      const map = data?.settings?.sections?.workspace_memberships?.memberships;
-      if (map && typeof map === 'object') setWorkspaceAssignments(map);
-    });
-  }, []);
+    void reloadWorkspaceAssignments();
+  }, [reloadWorkspaceAssignments]);
+
+  useEffect(() => {
+    const onWorkspaceMembershipsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ memberships?: Record<string, string> }>).detail;
+      const map = detail?.memberships;
+      if (map && typeof map === 'object') {
+        setWorkspaceAssignments(map);
+        return;
+      }
+      void reloadWorkspaceAssignments();
+    };
+    window.addEventListener('shogun-workspace-memberships-changed', onWorkspaceMembershipsChanged as EventListener);
+    return () => {
+      window.removeEventListener('shogun-workspace-memberships-changed', onWorkspaceMembershipsChanged as EventListener);
+    };
+  }, [reloadWorkspaceAssignments]);
+
+  useEffect(() => {
+    const onSettingsRefresh = () => { void reloadWorkspaceAssignments(); };
+    window.addEventListener('shogun-settings-refresh', onSettingsRefresh);
+    return () => window.removeEventListener('shogun-settings-refresh', onSettingsRefresh);
+  }, [reloadWorkspaceAssignments]);
 
   const assignMemoryToWorkspace = useCallback(async (memoryId: string, workspaceId: string | null) => {
     if (!memoryId) return;

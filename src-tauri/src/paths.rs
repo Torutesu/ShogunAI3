@@ -9,11 +9,73 @@ const ORG: &str = "Shogun";
 const APP: &str = "ShogunAI3";
 
 pub fn app_data_dir() -> Result<PathBuf, String> {
+    #[cfg(test)]
+    {
+        if let Some(dir) = test_app_data_dir_override() {
+            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            return Ok(dir);
+        }
+    }
     let dirs = ProjectDirs::from(QUALIFIER, ORG, APP)
         .ok_or_else(|| "could not resolve app data directory".to_string())?;
     let dir = dirs.data_dir().to_path_buf();
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_APP_DATA_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn test_app_data_dir_override() -> Option<PathBuf> {
+    TEST_APP_DATA_DIR.with(|cell| cell.borrow().clone())
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_app_data_dir(path: PathBuf) {
+    TEST_APP_DATA_DIR.with(|cell| *cell.borrow_mut() = Some(path));
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_app_data_dir() {
+    TEST_APP_DATA_DIR.with(|cell| *cell.borrow_mut() = None);
+}
+
+#[cfg(test)]
+pub(crate) mod testkit {
+    pub(crate) struct TestAppDataGuard {
+        path: std::path::PathBuf,
+    }
+
+    impl TestAppDataGuard {
+        pub(crate) fn new(name: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static UNIQ: AtomicU64 = AtomicU64::new(0);
+            let n = UNIQ.fetch_add(1, Ordering::Relaxed);
+            let mut path = std::env::temp_dir();
+            path.push(format!(
+                "shogun-app-data-test-{}-{}-{}",
+                std::process::id(),
+                n,
+                name
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            let _ = std::fs::create_dir_all(&path);
+            super::set_test_app_data_dir(path.clone());
+            Self { path }
+        }
+    }
+
+    impl Drop for TestAppDataGuard {
+        fn drop(&mut self) {
+            super::clear_test_app_data_dir();
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
 }
 
 /// Sum byte length of every regular file directly under the app data directory (non-recursive).

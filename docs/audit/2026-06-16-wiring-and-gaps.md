@@ -25,13 +25,12 @@ Settings → Integrations の **Connect** が warn toast を出すクラウド O
 | `notion` | Notion |
 | `linear` | Linear |
 | `outlook` | Outlook |
-| `google_drive` | Google Drive |
 | `github` | GitHub |
 | `claude` | Claude |
 | `figma` | Figma |
 | `zapier_mcp` | Zapier MCP |
 
-**実装済み（Connect 成功パスあり）:** Gmail, Google Calendar, Arc Browser, Raycast, Obsidian, Apple Calendar / Reminders（macOS）。
+**実装済み（Connect 成功パスあり）:** Gmail, Google Calendar, Google Drive, Arc Browser, Raycast, Obsidian, Apple Calendar / Reminders（macOS）。
 
 参照: `src/shared/lib/integration-connectors.ts:36–46`, `docs/action-map.md` § v1 backend behavior。
 

@@ -28,7 +28,7 @@
 
 ```bash
 # .env (repo root, for Tauri build)
-SHOGUN_WEB_APP_URL=http://localhost:3001   # or https://app.shogun.ai
+SHOGUN_WEB_APP_URL=https://app.shogun.ai   # use localhost only for local web dev
 CLERK_PUBLISHABLE_KEY=...
 CLERK_FRONTEND_API=...
 ```

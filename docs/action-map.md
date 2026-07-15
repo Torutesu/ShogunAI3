@@ -8,7 +8,7 @@ UIボタンと ActionRegistry / Runtime の対応表。
 
 ## v1 backend behavior (matches toasts)
 
-- `integrations.connect` → most cloud/OAuth providers: **`notImplemented`** (warn). **Gmail**: if Keychain has **`gmail`** credentials → marks connected; else returns **`needsCredentials`** (no `notImplemented`). Local tools **Arc / Raycast / Obsidian**: saves `connected` in settings (success path).
+- `integrations.connect` → most cloud/OAuth providers: **`notImplemented`** (warn). **Gmail / Google Calendar / Google Drive**: if Keychain has the relevant Google credentials → marks connected; else returns **`needsCredentials`** (no `notImplemented`). Local tools **Arc / Raycast / Obsidian**: saves `connected` in settings (success path).
 - `integrations.toggle` → persists **`connected`** per provider in `settings.sections.integrations.providers` (no `notImplemented`).
 - `capture.pause` / `capture.resume` → **`honestPreferenceOnly`** (info toast). Writes **`sections.capture.paused`**. Missing `paused` defaults to **`false`** (capture runs on fresh install). macOS captures app focus, AX tree, and keyboard/mouse events — **no screenshots**. **`capture.live_events`** / **`capture.status`** expose the live tail and permission snapshot. **`onboarding.complete`** marks setup done and resumes capture.
 - `permissions.manage` → optional **`target`**: `"accessibility"` (default), `"input_monitoring"`, or legacy `"screen_capture"`.
@@ -251,6 +251,27 @@ UIボタンと ActionRegistry / Runtime の対応表。
 - `mirror.list_devices`
 - `mirror.rename_device`
 - `mirror.delete_device`
+- `notifications.status`
+- `notifications.request`
+- `ai_field.list`
+- `ai_field.upsert`
+- `action.list`
+- `action.audit_list`
+- `action.propose`
+- `action.set_status`
+- `action.execute`
+- `queue.tasks.list`
+- `queue.tasks.remove`
+- `queue.tasks.retry`
+- `queue.crm_updates.list`
+- `queue.crm_updates.remove`
+- `queue.crm_updates.retry`
+- `entity.context.get`
+- `context.search`
+- `context.recent.get`
+- `context.tasks.list`
+- `context.owner_summary.get`
+- `app.navigate`
 
 ## Quick Verification
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BriefTelemetry } from '@/shared/lib/brief-telemetry';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { ACTION_LAYER_REFRESH_EVENT } from '@/shared/context/action-layer-events';
 import { resolveUserTimeZoneId } from '../lib/runtime';
 
 function readUiLang(): string {
@@ -36,7 +37,7 @@ export function useHomeBriefCards(): {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       const lang = readUiLang();
       const res = await runRuntimeAction(
         'brief.get',
@@ -68,8 +69,20 @@ export function useHomeBriefCards(): {
         const items = Array.isArray(brief.items) ? brief.items : [];
         BriefTelemetry.log(BriefTelemetry.EVENTS.BRIEF_RENDERED, { itemCount: items.length });
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void load();
+    const onRefresh = () => {
+      void load();
+    };
+    window.addEventListener('shogun-memory-index-changed', onRefresh);
+    window.addEventListener('shogun-meetings-changed', onRefresh);
+    window.addEventListener(ACTION_LAYER_REFRESH_EVENT, onRefresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('shogun-memory-index-changed', onRefresh);
+      window.removeEventListener('shogun-meetings-changed', onRefresh);
+      window.removeEventListener(ACTION_LAYER_REFRESH_EVENT, onRefresh);
+    };
   }, []);
 
   return { morningBrief, memoryDigest, setMorningBrief, setMemoryDigest };

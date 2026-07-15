@@ -3,7 +3,12 @@ import React from 'react';
 import * as ReactDOM from 'react-dom';
 import { Icon } from '@/shared/icons';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import {
+  clearPendingWorkspaceDetailId,
+  takePendingWorkspaceDetailId,
+} from '@/shared/context/native-detail-events';
 import { Toggle } from '@/features/settings/components/Toggle';
+import { WorkAiFieldPanel } from './components/WorkAiFieldPanel';
 
 function useWorkProjects() {
   const [projects, setProjects] = React.useState(() => {
@@ -29,9 +34,27 @@ export function WorkScreen() {
   const [renaming, setRenaming] = React.useState<{ id: any; value: string }>({ id: null, value: '' });
   const [menuFor, setMenuFor] = React.useState<any>(null);
   const [memberships, setMemberships] = React.useState<Record<string, any>>({});
+  const [membershipsReady, setMembershipsReady] = React.useState(false);
   // { project, memories, loading, busyId } when the detail modal is open.
   const [detail, setDetail] = React.useState<any>(null);
+  const [pendingWorkspaceDetailId, setPendingWorkspaceDetailId] = React.useState('');
   const renameInputRef = React.useRef<HTMLInputElement>(null);
+  const detailRef = React.useRef<any>(null);
+
+  const applyMembershipMap = React.useCallback((map: Record<string, any> | null | undefined) => {
+    const next = map && typeof map === 'object' ? map : {};
+    setMemberships(next);
+    setMembershipsReady(true);
+    const openProject = detailRef.current?.project;
+    if (openProject) {
+      void openDetailRef.current?.(openProject, next, true);
+    }
+  }, []);
+  const openDetailRef = React.useRef<any>(null);
+
+  React.useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
 
   React.useEffect(() => {
     if (renaming.id == null) return;
@@ -42,6 +65,39 @@ export function WorkScreen() {
     () => projects.filter((p: any) => !!p.archived === showArchived),
     [projects, showArchived],
   );
+
+  const openDetail = React.useCallback(async (
+    project: any,
+    overrideMemberships?: Record<string, any> | null,
+    overrideMembershipsReady?: boolean,
+  ) => {
+    setPendingWorkspaceDetailId('');
+    setDetail({ project, memories: [], loading: true, busyId: null });
+    const membershipMap = overrideMemberships && typeof overrideMemberships === 'object'
+      ? overrideMemberships
+      : memberships;
+    const loadedMemberships = typeof overrideMembershipsReady === 'boolean'
+      ? overrideMembershipsReady
+      : membershipsReady;
+    const ids = Object.entries(membershipMap)
+      .filter(([, w]) => w === project.id)
+      .map(([m]) => m);
+    if (ids.length === 0) {
+      if (!loadedMemberships) {
+        setPendingWorkspaceDetailId(project.id);
+        return;
+      }
+      setDetail({ project, memories: [], loading: false, busyId: null });
+      return;
+    }
+    const r = await runRuntimeAction('memory.fetch', { ids } as any, { silentError: true } as any);
+    const items = r && r.ok && Array.isArray(r.data?.items) ? r.data.items : [];
+    setDetail({ project, memories: items, loading: false, busyId: null });
+  }, [memberships, membershipsReady]);
+
+  React.useEffect(() => {
+    openDetailRef.current = openDetail;
+  }, [openDetail]);
 
   // Assignment map written by the Memory screen lives in
   // settings.sections.workspace_memberships.memberships.
@@ -54,7 +110,10 @@ export function WorkScreen() {
           && r.data && r.data.settings && r.data.settings.sections
           && r.data.settings.sections.workspace_memberships
           && r.data.settings.sections.workspace_memberships.memberships;
-        setMemberships(map && typeof map === 'object' ? map : {});
+        applyMembershipMap(map);
+      }).catch(() => {
+        if (cancelled) return;
+        applyMembershipMap({});
       });
     };
     load();
@@ -62,17 +121,22 @@ export function WorkScreen() {
       // Fast path: assignment events carry the new map directly.
       const m = ev && ev.detail && ev.detail.memberships;
       if (m && typeof m === 'object') {
-        setMemberships(m);
+        applyMembershipMap(m);
       } else {
         load();
       }
     };
+    const onSettingsRefresh = () => {
+      load();
+    };
     window.addEventListener('shogun-workspace-memberships-changed', onChanged);
+    window.addEventListener('shogun-settings-refresh', onSettingsRefresh);
     return () => {
       cancelled = true;
       window.removeEventListener('shogun-workspace-memberships-changed', onChanged);
+      window.removeEventListener('shogun-settings-refresh', onSettingsRefresh);
     };
-  }, []);
+  }, [applyMembershipMap]);
 
   const countByProject = React.useMemo(() => {
     const out: Record<string, number> = {};
@@ -113,19 +177,42 @@ export function WorkScreen() {
     return 'manual';
   }, []);
 
-  const openDetail = React.useCallback(async (project: any) => {
-    setDetail({ project, memories: [], loading: true, busyId: null });
-    const ids = Object.entries(memberships)
-      .filter(([, w]) => w === project.id)
-      .map(([m]) => m);
-    if (ids.length === 0) {
-      setDetail({ project, memories: [], loading: false, busyId: null });
+  React.useEffect(() => {
+    const onOpenWorkspaceDetail = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail || {};
+      const workspaceId = String(detail.workspaceId || '').trim();
+      if (!workspaceId) return;
+      clearPendingWorkspaceDetailId(workspaceId);
+      const project = projects.find((item: any) => String(item?.id || '').trim() === workspaceId);
+      if (!project) {
+        setPendingWorkspaceDetailId(workspaceId);
+        return;
+      }
+      void openDetail(project);
+    };
+    window.addEventListener('shogun-open-workspace-detail', onOpenWorkspaceDetail as EventListener);
+    return () => {
+      window.removeEventListener('shogun-open-workspace-detail', onOpenWorkspaceDetail as EventListener);
+    };
+  }, [openDetail, projects]);
+
+  React.useEffect(() => {
+    if (!pendingWorkspaceDetailId) return;
+    const project = projects.find((item: any) => String(item?.id || '').trim() === pendingWorkspaceDetailId);
+    if (!project) return;
+    void openDetail(project);
+  }, [openDetail, pendingWorkspaceDetailId, projects]);
+
+  React.useEffect(() => {
+    const pendingWorkspaceId = takePendingWorkspaceDetailId();
+    if (!pendingWorkspaceId) return;
+    const project = projects.find((item: any) => String(item?.id || '').trim() === pendingWorkspaceId);
+    if (!project) {
+      setPendingWorkspaceDetailId(pendingWorkspaceId);
       return;
     }
-    const r = await runRuntimeAction('memory.fetch', { ids } as any, { silentError: true } as any);
-    const items = r && r.ok && Array.isArray(r.data?.items) ? r.data.items : [];
-    setDetail({ project, memories: items, loading: false, busyId: null });
-  }, [memberships]);
+    void openDetail(project);
+  }, [openDetail, projects]);
 
   const removeFromWorkspace = React.useCallback(async (memoryId: string) => {
     if (!detail) return;
@@ -474,6 +561,7 @@ export function WorkScreen() {
                     </div>
                   ) : (
                     <div style={{display:'flex', flexDirection:'column', gap:10}}>
+                      <WorkAiFieldPanel project={detail.project} memories={items} onNavigateAway={close} />
                       {items.map((m: any) => {
                         const id = m.id;
                         const busy = detail.busyId === id;

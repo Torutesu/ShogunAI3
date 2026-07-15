@@ -1,6 +1,9 @@
 export const MOCK_SETTINGS_LS = "shogun.hifi.mock.settings.sections.v1";
 export const MOCK_LLM_KEY_LS = "shogun.hifi.mock.llm.keyConfigured.v1";
 export const MOCK_MEMORY_INDEX_LS = "shogun.hifi.mock.memory.index.v1";
+export const MOCK_AI_FIELDS_LS = "shogun.hifi.mock.ai_fields.v1";
+export const MOCK_CONTEXT_ACTIONS_LS = "shogun.hifi.mock.context_actions.v1";
+export const MOCK_CONTEXT_ACTION_AUDIT_LS = "shogun.hifi.mock.context_action_audit.v1";
 
 type MockGlobal = typeof globalThis & { localStorage?: Storage };
 
@@ -63,6 +66,75 @@ export function writeMockLlmKeyConfigured(on: boolean, global?: MockGlobal): voi
     if (!g.localStorage) return;
     if (on) g.localStorage.setItem(MOCK_LLM_KEY_LS, "1");
     else g.localStorage.removeItem(MOCK_LLM_KEY_LS);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+export function readMockAiFields(global?: MockGlobal): Record<string, unknown>[] {
+  const g = resolveGlobal(global);
+  try {
+    if (!g.localStorage) return [];
+    const raw = g.localStorage.getItem(MOCK_AI_FIELDS_LS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+export function writeMockAiFields(items: Record<string, unknown>[], global?: MockGlobal): void {
+  const g = resolveGlobal(global);
+  try {
+    if (!g.localStorage) return;
+    g.localStorage.setItem(MOCK_AI_FIELDS_LS, JSON.stringify(items));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+export function readMockContextActions(global?: MockGlobal): Record<string, unknown>[] {
+  const g = resolveGlobal(global);
+  try {
+    if (!g.localStorage) return [];
+    const raw = g.localStorage.getItem(MOCK_CONTEXT_ACTIONS_LS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+export function writeMockContextActions(items: Record<string, unknown>[], global?: MockGlobal): void {
+  const g = resolveGlobal(global);
+  try {
+    if (!g.localStorage) return;
+    g.localStorage.setItem(MOCK_CONTEXT_ACTIONS_LS, JSON.stringify(items));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+export function readMockContextActionAudit(global?: MockGlobal): Record<string, unknown>[] {
+  const g = resolveGlobal(global);
+  try {
+    if (!g.localStorage) return [];
+    const raw = g.localStorage.getItem(MOCK_CONTEXT_ACTION_AUDIT_LS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+export function writeMockContextActionAudit(items: Record<string, unknown>[], global?: MockGlobal): void {
+  const g = resolveGlobal(global);
+  try {
+    if (!g.localStorage) return;
+    g.localStorage.setItem(MOCK_CONTEXT_ACTION_AUDIT_LS, JSON.stringify(items));
   } catch (_) {
     /* ignore */
   }

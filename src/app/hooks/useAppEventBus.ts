@@ -1,14 +1,24 @@
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { applySavedAppearance, isProfilePhotoDataUrl } from '@/app/lib/helpers';
 import {
+  applyNativeNavigation,
+  historicalImportProgressNavigation,
+} from '@/app/lib/native-navigation';
+import { focusActionTrace } from '@/shared/context/action-trace-focus';
+import { buildDraftChatSeed, openChatWithSeed } from '@/shared/context/chat-composer-seed';
+import { openQueueArtifactInActions } from '@/shared/context/open-queue-artifact';
+import {
+  clearPendingMeetingDetect,
   normalizeVideoMeetingPayload,
-  stashPendingMeetingDetect,
   type MeetingDetectDetail,
 } from '@/shared/lib/meeting-detect-events';
 import type { ActionResult, ExecuteActionOptions, PushToastOptions, ToastKind } from '@/app/context/ShogunRuntimeContext';
 
 declare const window: Window & {
-  SHOGUN_RUNTIME?: { executeAction: (key: string, payload?: unknown, options?: ExecuteActionOptions) => Promise<ActionResult> };
+  SHOGUN_RUNTIME?: {
+    executeAction: (key: string, payload?: unknown, options?: ExecuteActionOptions) => Promise<ActionResult>;
+    setActiveScreen?: (screenId: string) => void;
+  };
 };
 
 type ExecuteActionFn = (
@@ -19,7 +29,35 @@ type ExecuteActionFn = (
 
 type PushToastFn = (message: string, kind?: ToastKind, options?: PushToastOptions) => void;
 
+function syncProviderLabel(provider: unknown): string {
+  switch (String(provider || '').trim()) {
+    case 'gmail':
+      return 'Gmail';
+    case 'google_calendar':
+      return 'Google Calendar';
+    case 'google_drive':
+      return 'Google Drive';
+    case 'slack':
+      return 'Slack';
+    case 'notion':
+      return 'Notion';
+    case 'github':
+      return 'GitHub';
+    case 'linear':
+      return 'Linear';
+    case 'zoom':
+      return 'Zoom';
+    case 'figma':
+      return 'Figma';
+    case 'outlook':
+      return 'Outlook';
+    default:
+      return 'Connector';
+  }
+}
+
 export interface UseAppEventBusOptions {
+  activeScreen: string;
   activeChat: string;
   chats: Record<string, unknown>[];
   workProjects: Record<string, unknown>[];
@@ -29,10 +67,14 @@ export interface UseAppEventBusOptions {
   executeAction: ExecuteActionFn;
   pushToast: PushToastFn;
   setActive: Dispatch<SetStateAction<string>>;
+  setSettingsOpen: Dispatch<SetStateAction<string | null>>;
   setMeetingHud: Dispatch<SetStateAction<Record<string, unknown> | null>>;
   setHummingbirdOpen: Dispatch<SetStateAction<boolean>>;
   setContextPanelOpen: Dispatch<SetStateAction<boolean>>;
   setHistoricalImport: Dispatch<SetStateAction<Record<string, unknown> | null>>;
+  historicalImport: Record<string, unknown> | null;
+  historicalImportBusy: boolean;
+  setHistoricalImportBusy: Dispatch<SetStateAction<boolean>>;
   setHistoricalImportProgress: Dispatch<SetStateAction<Record<string, unknown> | null>>;
   setAppDetectAlerts: Dispatch<SetStateAction<boolean>>;
   setMeetingPrompt: Dispatch<SetStateAction<MeetingDetectDetail | null>>;
@@ -49,6 +91,7 @@ export interface UseAppEventBusOptions {
 
 export function useAppEventBus(options: UseAppEventBusOptions): void {
   const {
+    activeScreen,
     activeChat,
     chats,
     workProjects,
@@ -57,10 +100,14 @@ export function useAppEventBus(options: UseAppEventBusOptions): void {
     appDetectAlerts,
     executeAction,
     setActive,
+    setSettingsOpen,
     setMeetingHud,
     setHummingbirdOpen,
     setContextPanelOpen,
     setHistoricalImport,
+    historicalImport,
+    historicalImportBusy,
+    setHistoricalImportBusy,
     setHistoricalImportProgress,
     setAppDetectAlerts,
     setMeetingPrompt,
@@ -77,6 +124,22 @@ export function useAppEventBus(options: UseAppEventBusOptions): void {
 
   executeActionRef.current = executeAction;
   pushToastRef.current = options.pushToast;
+  const historicalImportRef = useRef(historicalImport);
+  historicalImportRef.current = historicalImport;
+  const historicalImportBusyRef = useRef(historicalImportBusy);
+  historicalImportBusyRef.current = historicalImportBusy;
+
+  useEffect(() => {
+    const onNavigate = (ev: Event) => {
+      const detail = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
+      applyNativeNavigation(detail, {
+        setActiveScreen: setActive,
+        openSettingsPane: (paneId) => setSettingsOpen(paneId || 'general'),
+      });
+    };
+    window.addEventListener('shogun-app-navigate', onNavigate);
+    return () => window.removeEventListener('shogun-app-navigate', onNavigate);
+  }, [setActive, setSettingsOpen]);
 
   useEffect(() => {
     const onHud = (e: Event) => {
@@ -196,16 +259,148 @@ export function useAppEventBus(options: UseAppEventBusOptions): void {
   useEffect(() => {
     const onProgress = (ev: Event) => {
       const p = ((ev as CustomEvent).detail) || {};
-      setHistoricalImportProgress({
+      const nextProgress = {
         provider: p.provider || null,
         current: Number(p.current) || 0,
         total: p.total == null ? null : Number(p.total),
         phase: p.phase || '',
-      });
+      };
+      const activeImport = historicalImportRef.current;
+      const activeProvider = activeImport && typeof activeImport === 'object'
+        ? String((activeImport as Record<string, unknown>).provider || '')
+        : '';
+      const navigation = historicalImportProgressNavigation(nextProgress, activeProvider);
+      if (navigation && historicalImportBusyRef.current) {
+        setHistoricalImportBusy(false);
+        setHistoricalImport(null);
+        setHistoricalImportProgress(null);
+        try {
+          window.dispatchEvent(new CustomEvent('shogun-memory-index-changed'));
+          window.dispatchEvent(new CustomEvent('shogun-app-navigate', { detail: navigation }));
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      if (
+        nextProgress.phase === 'done'
+        && !historicalImportBusyRef.current
+        && activeScreen !== 'memory'
+      ) {
+        const label = syncProviderLabel(nextProgress.provider);
+        pushToastRef.current(
+          `${label} historical sync が完了しました`,
+          'success',
+          {
+            durationMs: 7000,
+            action: {
+              label: 'Open Memory',
+              onClick: () => {
+                try {
+                  window.dispatchEvent(
+                    new CustomEvent('shogun-app-navigate', {
+                      detail: { screen: 'memory' },
+                    }),
+                  );
+                } catch {
+                  /* ignore */
+                }
+              },
+            },
+          },
+        );
+      }
+      setHistoricalImportProgress(nextProgress);
     };
     window.addEventListener('shogun-historical-sync-progress', onProgress);
     return () => window.removeEventListener('shogun-historical-sync-progress', onProgress);
-  }, [setHistoricalImportProgress]);
+  }, [activeScreen, setHistoricalImport, setHistoricalImportBusy, setHistoricalImportProgress]);
+
+  useEffect(() => {
+    const onMeetingAutoStopped = (ev: Event) => {
+      const detail = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
+      const meetingId = String(detail.meeting_id || '').trim();
+      if (!meetingId) return;
+      setMeetingHud(null);
+      if (activeScreen === 'meetings') return;
+
+      const reason = String(detail.reason || '').trim();
+      const meeting = (detail.meeting && typeof detail.meeting === 'object')
+        ? detail.meeting as Record<string, unknown>
+        : null;
+      const title = String(meeting?.title || '').trim() || 'Meeting';
+      const reasonLabel = reason === 'video_ended'
+        ? 'ビデオ通話の終了により保存しました'
+        : reason === 'inactivity'
+          ? '無活動のため保存しました'
+          : '自動停止後に保存しました';
+
+      pushToastRef.current(
+        `${title} を${reasonLabel}`,
+        'info',
+        {
+          durationMs: 7000,
+          action: {
+            label: 'Open Meeting',
+            onClick: () => {
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('shogun-app-navigate', {
+                    detail: { screen: 'meetings', meetingId },
+                  }),
+                );
+              } catch {
+                /* ignore */
+              }
+            },
+          },
+        },
+      );
+    };
+
+    window.addEventListener('shogun-meeting-auto-stopped', onMeetingAutoStopped);
+    return () => window.removeEventListener('shogun-meeting-auto-stopped', onMeetingAutoStopped);
+  }, [activeScreen]);
+
+  useEffect(() => {
+    const onMeetingStopped = (ev: Event) => {
+      const detail = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
+      const meetingId = String(detail.meeting_id || '').trim();
+      if (!meetingId) return;
+      setMeetingHud(null);
+      if (activeScreen === 'meetings') return;
+
+      const meeting = (detail.meeting && typeof detail.meeting === 'object')
+        ? detail.meeting as Record<string, unknown>
+        : null;
+      const title = String(meeting?.title || '').trim() || 'Meeting';
+
+      pushToastRef.current(
+        `${title} を保存して終了しました`,
+        'success',
+        {
+          durationMs: 7000,
+          action: {
+            label: 'Open Meeting',
+            onClick: () => {
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('shogun-app-navigate', {
+                    detail: { screen: 'meetings', meetingId },
+                  }),
+                );
+              } catch {
+                /* ignore */
+              }
+            },
+          },
+        },
+      );
+    };
+
+    window.addEventListener('shogun-meeting-stopped', onMeetingStopped);
+    return () => window.removeEventListener('shogun-meeting-stopped', onMeetingStopped);
+  }, [activeScreen]);
 
   useEffect(() => {
     const AUDIT_LS_KEY = 'shogun.integration.audit.v1';
@@ -275,9 +470,13 @@ export function useAppEventBus(options: UseAppEventBusOptions): void {
   useEffect(() => {
     const onVideo = (ev: Event) => {
       const detail = normalizeVideoMeetingPayload(((ev as CustomEvent).detail) || {});
+      if (detail.auto_started) {
+        clearPendingMeetingDetect();
+        return;
+      }
       if (!shouldShowRef.current(detail)) return;
-      stashPendingMeetingDetect(detail);
       if (appDetectAlertsRef.current) {
+        clearPendingMeetingDetect();
         setMeetingPrompt(detail);
         return;
       }
@@ -286,6 +485,66 @@ export function useAppEventBus(options: UseAppEventBusOptions): void {
     window.addEventListener('shogun-video-meeting-started', onVideo);
     return () => window.removeEventListener('shogun-video-meeting-started', onVideo);
   }, [setMeetingPrompt]);
+
+  useEffect(() => {
+    const onVideoAutoStarted = (ev: Event) => {
+      const detail = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
+      const meetingId = String(detail.meeting_id || '').trim();
+      if (!meetingId) return;
+
+      clearPendingMeetingDetect();
+      setMeetingPrompt(null);
+      const title = String(detail.title || '').trim() || 'Live Meeting';
+      const startedAt = Number(detail.started_at) || Date.now();
+      const micStarted = detail.mic_started !== false;
+      const systemStarted = detail.system_started === true;
+      const screenCaptureGranted = detail.screen_capture_granted === true;
+      setMeetingHud({
+        active: true,
+        hudPhase: 'begin',
+        title,
+        startedAt,
+        storageKey: null,
+        backend: true,
+        backendMeetingId: meetingId,
+        micRunning: micStarted,
+        systemRunning: systemStarted,
+        deepgramConfigured: true,
+        systemMode: systemStarted ? 'system_audio' : 'mic_only',
+      });
+      if (activeScreen === 'meetings') return;
+      const suffix = systemStarted
+        ? '録音も開始しています'
+        : screenCaptureGranted
+          ? '会議セッションを開始しました'
+          : '会議セッションを開始しました（相手の声には画面収録の許可が必要です）';
+
+      pushToastRef.current(
+        `${title} を検知し、${suffix}`,
+        'success',
+        {
+          durationMs: 7000,
+          action: {
+            label: 'Open Meeting',
+            onClick: () => {
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('shogun-app-navigate', {
+                    detail: { screen: 'meetings', meetingId },
+                  }),
+                );
+              } catch {
+                /* ignore */
+              }
+            },
+          },
+        },
+      );
+    };
+
+    window.addEventListener('shogun-video-meeting-auto-started', onVideoAutoStarted);
+    return () => window.removeEventListener('shogun-video-meeting-auto-started', onVideoAutoStarted);
+  }, [activeScreen]);
 
   useEffect(() => {
     const onRefresh = () => {
@@ -329,6 +588,186 @@ export function useAppEventBus(options: UseAppEventBusOptions): void {
     window.addEventListener('shogun-capture-ax-not-trusted', onAxNotTrusted);
     return () => window.removeEventListener('shogun-capture-ax-not-trusted', onAxNotTrusted);
   }, [pushToastRef]);
+
+  useEffect(() => {
+    const onActionLayerRefresh = (ev: Event) => {
+      const detail = ((ev as CustomEvent).detail || {}) as Record<string, unknown>;
+      const reason = String(detail.reason || '').trim();
+      const payload = (detail.payload && typeof detail.payload === 'object')
+        ? detail.payload as Record<string, unknown>
+        : null;
+      if (!reason || activeScreen === 'actions') return;
+
+      const openActionTrace = () => {
+        const item = (payload?.item && typeof payload.item === 'object')
+          ? payload.item as Record<string, unknown>
+          : null;
+        const actionId = String(item?.id || '').trim();
+        if (!actionId) return;
+        focusActionTrace({
+          actionId,
+          aiFieldId: String(item?.sourceAiFieldId || payload?.sourceAiFieldId || '').trim() || null,
+          openAudit: false,
+        });
+        window.SHOGUN_RUNTIME?.setActiveScreen?.('actions');
+      };
+
+      const openQueueFocus = () => {
+        const item = (payload?.item && typeof payload.item === 'object')
+          ? payload.item as Record<string, unknown>
+          : null;
+        const navigation = (payload?.navigation && typeof payload.navigation === 'object')
+          ? payload.navigation as Record<string, unknown>
+          : null;
+        const executionResult = (item?.executionResult && typeof item.executionResult === 'object')
+          ? item.executionResult as Record<string, unknown>
+          : null;
+        const queued = (executionResult?.queued && typeof executionResult.queued === 'object')
+          ? executionResult.queued as Record<string, unknown>
+          : null;
+        const queueId = String(
+          navigation?.queueId
+          || queued?.id
+          || payload?.id
+          || payload?.queueId
+          || '',
+        ).trim();
+        if (!queueId) {
+          openActionTrace();
+          return;
+        }
+        openQueueArtifactInActions({
+          queueId,
+          sourceActionId: String(
+            navigation?.sourceActionId
+            || navigation?.actionId
+            || item?.id
+            || payload?.sourceActionId
+            || (payload?.echo && typeof payload.echo === 'object'
+              ? (payload.echo as Record<string, unknown>).source_action_id
+              : '')
+            || '',
+          ).trim() || null,
+          sourceAiFieldId: String(
+            navigation?.aiFieldId
+            || item?.sourceAiFieldId
+            || payload?.sourceAiFieldId
+            || (payload?.echo && typeof payload.echo === 'object'
+              ? (payload.echo as Record<string, unknown>).source_ai_field_id
+              : '')
+            || '',
+          ).trim() || null,
+          ownerEntityId: String(
+            navigation?.entityId
+            || item?.ownerEntityId
+            || payload?.ownerEntityId
+            || (payload?.echo && typeof payload.echo === 'object'
+              ? (payload.echo as Record<string, unknown>).owner_entity_id
+              : '')
+            || '',
+          ).trim() || null,
+        });
+      };
+
+      const openDraftResult = () => {
+        const item = (payload?.item && typeof payload.item === 'object')
+          ? payload.item as Record<string, unknown>
+          : null;
+        const navigation = (payload?.navigation && typeof payload.navigation === 'object')
+          ? payload.navigation as Record<string, unknown>
+          : null;
+        const executionResult = (item?.executionResult && typeof item.executionResult === 'object')
+          ? item.executionResult as Record<string, unknown>
+          : null;
+        const navigationText = String(navigation?.text || '').trim();
+        if (navigationText) {
+          const memoryAssemblyQuery = String(navigation?.memoryAssemblyQuery || '').trim();
+          openChatWithSeed({
+            text: navigationText,
+            webSearch: navigation?.webSearch === true,
+            assembleMemory: navigation?.assembleMemory !== false,
+            autoSend: navigation?.autoSend === true,
+            newChat: navigation?.newChat === true,
+            ...(Number.isFinite(Number(navigation?.memoryAssemblyLimit))
+              ? { memoryAssemblyLimit: Number(navigation?.memoryAssemblyLimit) }
+              : {}),
+            ...(memoryAssemblyQuery ? { memoryAssemblyQuery } : {}),
+            memoryAssemblySemantic: navigation?.memoryAssemblySemantic !== false,
+          });
+          return;
+        }
+        const draftContent = String(
+          executionResult?.content
+          || payload?.content
+          || '',
+        ).trim();
+        if (!draftContent) {
+          openActionTrace();
+          return;
+        }
+        openChatWithSeed(buildDraftChatSeed({
+          ownerEntityId: String(item?.ownerEntityId || '').trim(),
+          title: String(item?.title || 'Draft').trim() || 'Draft',
+          actionType: String(item?.actionType || 'follow_up_email_draft').trim() || 'follow_up_email_draft',
+          detail: String(item?.detail || '').trim(),
+          draftContent,
+        }));
+      };
+
+      if (reason.startsWith('action-executed-')) {
+        const sideEffect = String(payload?.sideEffect || '').trim();
+        const item = (payload?.item && typeof payload.item === 'object')
+          ? payload.item as Record<string, unknown>
+          : null;
+        const title = String(item?.title || 'Action').trim() || 'Action';
+        if (sideEffect === 'queue_only' || sideEffect === 'crm_queue_only') {
+          pushToastRef.current(`${title} を実行し、queue に追加しました`, 'success', {
+            durationMs: 7000,
+            action: {
+              label: 'Open Queue',
+              onClick: openQueueFocus,
+            },
+          });
+          return;
+        }
+        if (sideEffect === 'draft_only') {
+          pushToastRef.current(`${title} の draft を生成しました`, 'success', {
+            durationMs: 7000,
+            action: {
+              label: 'Open Draft',
+              onClick: openDraftResult,
+            },
+          });
+          return;
+        }
+        pushToastRef.current(`${title} を実行しました`, 'success', {
+          durationMs: 7000,
+          action: {
+            label: 'Open Action',
+            onClick: openActionTrace,
+          },
+        });
+        return;
+      }
+
+      if (reason === 'queue.tasks.append' || reason === 'queue.crm_updates.append') {
+        const echo = (payload?.echo && typeof payload.echo === 'object')
+          ? payload.echo as Record<string, unknown>
+          : null;
+        if (String(echo?.source || '').trim() === 'approved_context_action') return;
+        const title = String(echo?.title || 'Queue item').trim() || 'Queue item';
+        pushToastRef.current(`${title} を local queue に追加しました`, 'success', {
+          durationMs: 7000,
+          action: {
+            label: 'Open Queue',
+            onClick: openQueueFocus,
+          },
+        });
+      }
+    };
+    window.addEventListener('shogun-action-layer-refresh', onActionLayerRefresh);
+    return () => window.removeEventListener('shogun-action-layer-refresh', onActionLayerRefresh);
+  }, [activeScreen, pushToastRef]);
 
   useEffect(() => {
     try {

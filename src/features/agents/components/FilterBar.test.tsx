@@ -7,6 +7,7 @@ import { FILTER_OPTIONS } from '../lib/metadata';
 describe('FilterBar', () => {
   const defaultCounts: Record<string, number> = {
     all: 4,
+    attention: 2,
     running: 1,
     scheduled: 2,
     paused: 0,
@@ -33,6 +34,7 @@ describe('FilterBar', () => {
   it('shows count badge in each pill', () => {
     renderFilterBar();
     expect(screen.getByText('all (4)')).toBeInTheDocument();
+    expect(screen.getByText('attention (2)')).toBeInTheDocument();
     expect(screen.getByText('running (1)')).toBeInTheDocument();
     expect(screen.getByText('scheduled (2)')).toBeInTheDocument();
     expect(screen.getByText('paused (0)')).toBeInTheDocument();
@@ -58,6 +60,13 @@ describe('FilterBar', () => {
     renderFilterBar({ onChange });
     fireEvent.click(screen.getByText('paused (0)'));
     expect(onChange).toHaveBeenCalledWith('paused');
+  });
+
+  it('calls onChange with "attention" when attention pill clicked', () => {
+    const onChange = vi.fn();
+    renderFilterBar({ onChange });
+    fireEvent.click(screen.getByText('attention (2)'));
+    expect(onChange).toHaveBeenCalledWith('attention');
   });
 
   it('calls onChange with "error" when error pill clicked', () => {

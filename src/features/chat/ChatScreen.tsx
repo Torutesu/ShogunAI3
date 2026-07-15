@@ -1,10 +1,319 @@
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Kamon } from '@/shared/icons';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { focusEntity } from '@/shared/context/entity-focus';
+import { focusAiField } from '@/shared/context/ai-field-focus';
+import { focusActionTrace } from '@/shared/context/action-trace-focus';
+import { seedActionDraft } from '@/shared/context/action-draft';
+import { SUPPORTED_CONTEXT_ACTION_TYPE_META, type SupportedContextActionType } from '@/shared/context/action-types';
+import {
+  nativeDetailDescriptorForEntityId,
+  openContextTarget,
+  openMeetingDetail,
+  openNativeDetailForEntityId,
+} from '@/shared/context/context-target-navigation';
+import {
+  queueArtifactDetail,
+  queueArtifactOwnerEntityId,
+  queueArtifactSourceActionId,
+  queueArtifactTitle,
+} from '@/shared/context/queue-artifact-meta';
 import { normalizeSeedMemoryAssembly } from './lib/normalize-seed';
 import { SHOGUN_DEMO_SEED } from '@/shared/lib/demo-seed';
 import { BriefTelemetry } from '@/shared/lib/brief-telemetry';
 import { ShogunHighlight } from '@/shared/lib/highlight';
+
+interface ChatContextSearchPayload {
+  timeline?: { hits?: Array<Record<string, any>> | null; total?: number | null } | null;
+  aiFields?: { items?: Array<Record<string, any>> | null; total?: number | null } | null;
+  actions?: { items?: Array<Record<string, any>> | null; total?: number | null } | null;
+}
+
+interface ChatRecentContextPayload {
+  recentAiFields?: { items?: Array<Record<string, any>> | null; total?: number | null } | null;
+  recentActions?: { items?: Array<Record<string, any>> | null; total?: number | null } | null;
+  recentQueueArtifacts?: { items?: Array<Record<string, any>> | null; total?: number | null } | null;
+  recentMeetings?: Array<Record<string, any>> | null;
+}
+
+export function buildSharedContextBlock(query: string, payload: ChatContextSearchPayload | ChatRecentContextPayload): string {
+  const sections: string[] = [];
+  const timelineHits = Array.isArray((payload as ChatContextSearchPayload)?.timeline?.hits)
+    ? (payload as ChatContextSearchPayload).timeline?.hits || []
+    : [];
+  const aiFields = Array.isArray((payload as ChatContextSearchPayload)?.aiFields?.items)
+    ? (payload as ChatContextSearchPayload).aiFields?.items || []
+    : Array.isArray((payload as ChatRecentContextPayload)?.recentAiFields?.items)
+      ? (payload as ChatRecentContextPayload).recentAiFields?.items || []
+      : [];
+  const actions = Array.isArray((payload as ChatContextSearchPayload)?.actions?.items)
+    ? (payload as ChatContextSearchPayload).actions?.items || []
+    : Array.isArray((payload as ChatRecentContextPayload)?.recentActions?.items)
+      ? (payload as ChatRecentContextPayload).recentActions?.items || []
+      : [];
+  const queueArtifacts = Array.isArray((payload as ChatRecentContextPayload)?.recentQueueArtifacts?.items)
+    ? (payload as ChatRecentContextPayload).recentQueueArtifacts?.items || []
+    : [];
+  const meetings = Array.isArray((payload as ChatRecentContextPayload)?.recentMeetings)
+    ? (payload as ChatRecentContextPayload).recentMeetings || []
+    : [];
+
+  if (query) sections.push(`[context_query] ${query}`);
+
+  for (const item of timelineHits.slice(0, 4)) {
+    const title = String(item?.title || item?.targetId || item?.id || 'timeline').trim();
+    const firstPoint = Array.isArray(item?.keyPoints) ? String(item.keyPoints[0] || '').trim() : '';
+    const reason = String(item?.reason || item?.sourceType || '').trim();
+    sections.push(
+      [
+        `[timeline] ${title}`,
+        reason ? `Reason: ${reason}` : '',
+        firstPoint ? `Point: ${firstPoint}` : '',
+      ].filter(Boolean).join('\n'),
+    );
+  }
+
+  for (const item of aiFields.slice(0, 5)) {
+    const owner = String(item?.ownerEntityId || '').trim();
+    const field = String(item?.fieldName || '').trim();
+    const value = String(item?.currentValue || '').trim();
+    const instruction = String(item?.instruction || '').trim();
+    const evidence = Array.isArray(item?.evidenceEventIds) ? item.evidenceEventIds.join(', ') : '';
+    sections.push(
+      [
+        `[ai_field] ${owner} / ${field}: ${value || '(empty)'}`,
+        instruction ? `Instruction: ${instruction}` : '',
+        evidence ? `Evidence: ${evidence}` : '',
+      ].filter(Boolean).join('\n'),
+    );
+  }
+
+  for (const item of actions.slice(0, 5)) {
+    const owner = String(item?.ownerEntityId || '').trim();
+    const title = String(item?.title || '').trim();
+    const actionType = String(item?.actionType || '').trim();
+    const status = String(item?.status || '').trim();
+    const detail = String(item?.detail || '').trim();
+    sections.push(
+      [
+        `[action] ${title || actionType || '(untitled action)'}`,
+        [owner, status, actionType].filter(Boolean).join(' · '),
+        detail,
+      ].filter(Boolean).join('\n'),
+    );
+  }
+
+  for (const item of queueArtifacts.slice(0, 4)) {
+    const title = queueArtifactTitle(item).trim();
+    const owner = queueArtifactOwnerEntityId(item);
+    const actionId = queueArtifactSourceActionId(item);
+    const detail = queueArtifactDetail(item);
+    sections.push(
+      [
+        `[queue_artifact] ${title}`,
+        [owner, actionId ? `action:${actionId}` : ''].filter(Boolean).join(' · '),
+        detail,
+      ].filter(Boolean).join('\n'),
+    );
+  }
+
+  for (const item of meetings.slice(0, 3)) {
+    const title = String(item?.title || item?.meetingTitle || item?.id || 'meeting').trim();
+    const note = String(item?.summary || item?.snippet || item?.notes || '').trim();
+    sections.push(
+      [
+        `[meeting] ${title}`,
+        note,
+      ].filter(Boolean).join('\n'),
+    );
+  }
+
+  return sections.join('\n\n').slice(0, 12000);
+}
+
+export function buildSharedContextHits(payload: ChatContextSearchPayload | ChatRecentContextPayload): any[] {
+  const timelineHits = Array.isArray((payload as ChatContextSearchPayload)?.timeline?.hits)
+    ? (payload as ChatContextSearchPayload).timeline?.hits || []
+    : [];
+  const aiFields = Array.isArray((payload as ChatContextSearchPayload)?.aiFields?.items)
+    ? (payload as ChatContextSearchPayload).aiFields?.items || []
+    : Array.isArray((payload as ChatRecentContextPayload)?.recentAiFields?.items)
+      ? (payload as ChatRecentContextPayload).recentAiFields?.items || []
+      : [];
+  const actions = Array.isArray((payload as ChatContextSearchPayload)?.actions?.items)
+    ? (payload as ChatContextSearchPayload).actions?.items || []
+    : Array.isArray((payload as ChatRecentContextPayload)?.recentActions?.items)
+      ? (payload as ChatRecentContextPayload).recentActions?.items || []
+      : [];
+  const queueArtifacts = Array.isArray((payload as ChatRecentContextPayload)?.recentQueueArtifacts?.items)
+    ? (payload as ChatRecentContextPayload).recentQueueArtifacts?.items || []
+    : [];
+  const meetings = Array.isArray((payload as ChatRecentContextPayload)?.recentMeetings)
+    ? (payload as ChatRecentContextPayload).recentMeetings || []
+    : [];
+
+  return [
+    ...timelineHits.slice(0, 4).map((item, index) => ({
+      id: String(item?.id || item?.targetId || `timeline-${index}`),
+      provenance: 'timeline',
+      source: item?.sourceType || 'summary',
+      created_at: item?.generatedAt || null,
+      title: item?.title || item?.targetId || 'Timeline hit',
+      snippet: Array.isArray(item?.keyPoints) ? item.keyPoints[0] || '' : '',
+      targetId: item?.targetId || null,
+      targetKind: item?.targetKind || null,
+    })),
+    ...aiFields.slice(0, 5).map((item, index) => ({
+      id: String(item?.id || `ai-field-${index}`),
+      provenance: 'ai_field',
+      source: 'ai_field',
+      created_at: item?.lastUpdatedAt || item?.createdAt || null,
+      title: `${item?.ownerEntityId || ''} / ${item?.fieldName || ''}`,
+      snippet: item?.currentValue || item?.instruction || '',
+      ownerEntityId: item?.ownerEntityId || null,
+      fieldId: item?.id || null,
+      evidenceIds: Array.isArray(item?.evidenceEventIds) ? item.evidenceEventIds : [],
+    })),
+    ...actions.slice(0, 5).map((item, index) => ({
+      id: String(item?.id || `action-${index}`),
+      provenance: 'action',
+      source: item?.actionType || 'action',
+      created_at: item?.updatedAt || item?.createdAt || null,
+      title: item?.title || item?.actionType || 'Action',
+      snippet: item?.detail || `${item?.ownerEntityId || ''} · ${item?.status || ''}`,
+      ownerEntityId: item?.ownerEntityId || null,
+      actionId: item?.id || null,
+      fieldId: item?.sourceAiFieldId || null,
+    })),
+    ...queueArtifacts.slice(0, 4).map((item, index) => ({
+      id: String(item?.id || `queue-${index}`),
+      provenance: 'queue_artifact',
+      source: 'queue',
+      created_at: item?.createdAt || null,
+      title: queueArtifactTitle(item),
+      snippet: queueArtifactDetail(item),
+      ownerEntityId: queueArtifactOwnerEntityId(item) || null,
+      actionId: queueArtifactSourceActionId(item) || null,
+      fieldId: item?.payload?.source_ai_field_id || null,
+    })),
+    ...meetings.slice(0, 3).map((item, index) => ({
+      id: String(item?.id || item?.meetingId || `meeting-${index}`),
+      provenance: 'meeting',
+      source: 'meeting',
+      created_at: item?.started_at || item?.startedAt || item?.createdAt || null,
+      title: item?.title || item?.meetingTitle || 'Meeting',
+      snippet: item?.summary || item?.snippet || item?.notes || '',
+      meetingId: item?.id || item?.meetingId || null,
+    })),
+  ];
+}
+
+function canOpenContextHit(hit: any): boolean {
+  const provenance = String(hit?.provenance || '').trim();
+  if (provenance === 'ai_field') return Boolean(hit?.fieldId);
+  if (provenance === 'action') return Boolean(hit?.actionId);
+  if (provenance === 'queue_artifact') return Boolean(hit?.actionId || hit?.ownerEntityId);
+  if (provenance === 'meeting') return Boolean(hit?.meetingId);
+  if (provenance === 'timeline') return Boolean(hit?.targetId || hit?.title);
+  return false;
+}
+
+export function contextHitEntityId(hit: any): string | null {
+  const provenance = String(hit?.provenance || '').trim();
+  if (provenance === 'ai_field' || provenance === 'action' || provenance === 'queue_artifact') {
+    const owner = String(hit?.ownerEntityId || '').trim();
+    return owner || null;
+  }
+  if (provenance === 'meeting') {
+    const meetingId = String(hit?.meetingId || '').trim();
+    return meetingId ? `meeting:${meetingId}` : null;
+  }
+  return null;
+}
+
+export function inferActionOwnerEntityIdFromChatContext(hits: any[] | null, memoryContext: string): string {
+  if (Array.isArray(hits)) {
+    for (const hit of hits) {
+      const entityId = contextHitEntityId(hit);
+      if (entityId) return entityId;
+    }
+  }
+  const raw = String(memoryContext || '');
+  const match = raw.match(/\b(person|company|project|workspace|deal|investor|meeting|document|task|app):[A-Za-z0-9._:-]+\b/);
+  if (match) return match[0]!;
+  return 'workspace:chat';
+}
+
+export function inferSourceAiFieldIdFromChatContext(
+  hits: any[] | null,
+  ownerEntityId: string,
+): string | null {
+  if (!Array.isArray(hits) || hits.length === 0) return null;
+  const owner = String(ownerEntityId || '').trim();
+  const exact = hits.find((hit) => (
+    String(hit?.provenance || '').trim() === 'ai_field'
+    && String(hit?.ownerEntityId || '').trim() === owner
+    && String(hit?.fieldId || '').trim()
+  ));
+  if (exact) return String(exact.fieldId).trim();
+  const fallback = hits.find((hit) => (
+    String(hit?.provenance || '').trim() === 'ai_field'
+    && String(hit?.fieldId || '').trim()
+  ));
+  return fallback ? String(fallback.fieldId).trim() : null;
+}
+
+export function inferActionEvidenceIdsFromChatContext(hits: any[] | null): string[] {
+  if (!Array.isArray(hits) || hits.length === 0) return [];
+  const out = new Set<string>();
+  for (const hit of hits) {
+    const provenance = String(hit?.provenance || '').trim();
+    if (provenance === 'ai_field') {
+      const evidenceIds = Array.isArray(hit?.evidenceIds) ? hit.evidenceIds : [];
+      for (const evidenceId of evidenceIds) {
+        const normalized = String(evidenceId || '').trim();
+        if (normalized) out.add(normalized);
+      }
+      const fieldId = String(hit?.fieldId || '').trim();
+      if (fieldId) out.add(fieldId);
+      continue;
+    }
+    if (provenance === 'action') {
+      const actionId = String(hit?.actionId || hit?.id || '').trim();
+      if (actionId) out.add(actionId);
+      continue;
+    }
+    if (provenance === 'queue_artifact') {
+      const actionId = String(hit?.actionId || '').trim();
+      if (actionId) out.add(actionId);
+      else {
+        const queueId = String(hit?.id || '').trim();
+        if (queueId) out.add(queueId);
+      }
+      continue;
+    }
+    if (provenance === 'meeting') {
+      const meetingId = String(hit?.meetingId || '').trim();
+      if (meetingId) out.add(`meeting:${meetingId}`);
+      continue;
+    }
+    if (provenance === 'timeline') {
+      const targetId = String(hit?.targetId || hit?.id || '').trim();
+      if (targetId) out.add(targetId);
+    }
+  }
+  return Array.from(out).slice(0, 8);
+}
+
+export function contextHitNativeDetailKind(hit: any): 'meeting' | 'workspace' | null {
+  return nativeDetailDescriptorForEntityId(contextHitEntityId(hit) || '')?.kind || null;
+}
+
+export function openNativeDetailForContextHit(hit: any): boolean {
+  const entityId = contextHitEntityId(hit);
+  if (!entityId) return false;
+  return openNativeDetailForEntityId(entityId);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // L3 · CHAT — interaction layer (memory-aware conversations)
@@ -29,6 +338,8 @@ export function ChatScreen() {
   const [assembleMemoryOn, setAssembleMemoryOn] = useState(false);
   /** Mirrors `sections.privacy.allowChatServerMemoryAssembly` (default true). */
   const [allowServerMemoryAssembly, setAllowServerMemoryAssembly] = useState(true);
+  const [chatActionType, setChatActionType] = useState<SupportedContextActionType>('follow_up_email_draft');
+  const [chatActionRiskLevel, setChatActionRiskLevel] = useState<'low' | 'medium' | 'high' | 'critical'>('medium');
   const pendingMemoryAssemblyRef = useRef<any>(null);
   const pendingAutoSendRef = useRef(false);
   const [attachments, setAttachments] = useState<any[]>([]);
@@ -51,17 +362,22 @@ export function ChatScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       const r = await runRuntimeAction('stats.get', {}, { silentError: true });
       if (cancelled || !r.ok || !r.data) return;
       setMemoryTotal(Number(r.data.memoryTotal) || 0);
-    })();
-    return () => { cancelled = true; };
+    };
+    void load();
+    window.addEventListener('shogun-memory-index-changed', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('shogun-memory-index-changed', load);
+    };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       const r = await runRuntimeAction('settings.load', {}, { silentError: true });
       if (cancelled || !r.ok || !r.data?.settings?.sections) return;
       const llm = r.data.settings.sections.llm;
@@ -70,8 +386,13 @@ export function ChatScreen() {
       if (priv && typeof priv === 'object') {
         setAllowServerMemoryAssembly(priv.allowChatServerMemoryAssembly !== false);
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void load();
+    window.addEventListener('shogun-settings-refresh', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('shogun-settings-refresh', load);
+    };
   }, []);
 
   useEffect(() => {
@@ -91,6 +412,73 @@ export function ChatScreen() {
     if ((window as any).SHOGUN_RUNTIME && (window as any).SHOGUN_RUNTIME.pushToast) {
       (window as any).SHOGUN_RUNTIME.pushToast(msg, kind || 'info');
     }
+  };
+
+  const openScreen = (screen: string) => {
+    (window as any).SHOGUN_RUNTIME?.setActiveScreen?.(screen);
+  };
+
+  const openContextHit = (hit: any) => {
+    const provenance = String(hit?.provenance || '').trim();
+    if (provenance === 'ai_field' && hit?.fieldId) {
+      const ownerEntityId = String(hit?.ownerEntityId || '').trim();
+      if (ownerEntityId) focusEntity(ownerEntityId);
+      focusAiField(String(hit.fieldId));
+      openScreen('ai_fields');
+      return;
+    }
+    if (provenance === 'action' && hit?.actionId) {
+      const ownerEntityId = String(hit?.ownerEntityId || '').trim();
+      if (ownerEntityId) focusEntity(ownerEntityId);
+      const aiFieldId = String(hit?.fieldId || '').trim() || inferSourceAiFieldIdFromChatContext(memoryContextHits, ownerEntityId);
+      focusActionTrace({
+        actionId: String(hit.actionId),
+        aiFieldId: aiFieldId || null,
+        openAudit: false,
+      });
+      openScreen('actions');
+      return;
+    }
+    if (provenance === 'queue_artifact') {
+      const ownerEntityId = String(hit?.ownerEntityId || '').trim();
+      const actionId = String(hit?.actionId || '').trim();
+      if (ownerEntityId) focusEntity(ownerEntityId);
+      if (actionId) {
+        const aiFieldId = String(hit?.fieldId || '').trim() || inferSourceAiFieldIdFromChatContext(memoryContextHits, ownerEntityId);
+        focusActionTrace({
+          actionId,
+          aiFieldId: aiFieldId || null,
+          openAudit: false,
+        });
+        openScreen('actions');
+        return;
+      }
+      if (ownerEntityId) {
+        openContextTarget({ targetId: ownerEntityId });
+        return;
+      }
+    }
+    if (provenance === 'meeting' && hit?.meetingId) {
+      openMeetingDetail(String(hit.meetingId));
+      return;
+    }
+    if (provenance === 'timeline') {
+      openContextTarget({
+        targetId: hit?.targetId,
+        targetKind: hit?.targetKind,
+        title: hit?.title,
+      });
+    }
+  };
+
+  const openEntityContextHit = (hit: any) => {
+    const entityId = contextHitEntityId(hit);
+    if (!entityId) return;
+    openContextTarget({ targetId: entityId });
+  };
+
+  const openNativeDetailHit = (hit: any) => {
+    openNativeDetailForContextHit(hit);
   };
 
   useEffect(() => {
@@ -178,6 +566,82 @@ export function ChatScreen() {
     );
   };
 
+  const attachAiFields = async () => {
+    const query = composerText.trim();
+    const r = await runRuntimeAction(
+      'ai_field.list',
+      { query, limit: 10 },
+      { silentError: true },
+    );
+    if (!r.ok) {
+      const msg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
+      toast(msg ? 'AI Field search failed — ' + msg : 'AI Field search failed', 'warn');
+      return;
+    }
+    const hits = (r.data && Array.isArray(r.data.items)) ? r.data.items : [];
+    if (!hits.length) {
+      toast(query ? 'No AI Fields matched "' + query.slice(0, 40) + '"' : 'No AI Fields to attach', 'warn');
+      return;
+    }
+    const block = hits
+      .map((h: any) => {
+        const owner = String(h.ownerEntityId || '').trim();
+        const field = String(h.fieldName || '').trim();
+        const value = String(h.currentValue || '').trim();
+        const instruction = String(h.instruction || '').trim();
+        const evidence = Array.isArray(h.evidenceEventIds) ? h.evidenceEventIds.join(', ') : '';
+        return [
+          `[ai_field] ${owner} / ${field}: ${value || '(empty)'}`,
+          instruction ? `Instruction: ${instruction}` : '',
+          evidence ? `Evidence: ${evidence}` : '',
+        ].filter(Boolean).join('\n');
+      })
+      .join('\n\n');
+    setMemoryContext(block.slice(0, 12000));
+    setMemoryContextHits(
+      hits.map((h: any) => ({
+        id: h.id,
+        provenance: 'ai_field',
+        source: 'ai_field',
+        created_at: h.lastUpdatedAt || h.createdAt || null,
+        title: `${h.ownerEntityId || ''} / ${h.fieldName || ''}`,
+        snippet: h.currentValue || h.instruction || '',
+      })),
+    );
+    toast(
+      query
+        ? 'AI Fields matching "' + query.slice(0, 40) + '" attached (' + hits.length + ')'
+        : 'Attached ' + hits.length + ' AI Fields',
+      'success'
+    );
+  };
+
+  const attachSharedContext = async () => {
+    const query = composerText.trim();
+    const actionKey = query ? 'context.search' : 'context.recent.get';
+    const payload = query ? { query, limit: 4 } : { limit: 6 };
+    const r = await runRuntimeAction(actionKey, payload, { silentError: true });
+    if (!r.ok || !r.data) {
+      const msg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
+      toast(msg ? 'Shared context fetch failed — ' + msg : 'Shared context fetch failed', 'warn');
+      return;
+    }
+    const block = buildSharedContextBlock(query, r.data as ChatContextSearchPayload | ChatRecentContextPayload);
+    const hits = buildSharedContextHits(r.data as ChatContextSearchPayload | ChatRecentContextPayload);
+    if (!block || hits.length === 0) {
+      toast(query ? 'No shared context matched "' + query.slice(0, 40) + '"' : 'No recent shared context to attach', 'warn');
+      return;
+    }
+    setMemoryContext(block);
+    setMemoryContextHits(hits);
+    toast(
+      query
+        ? 'Shared context matching "' + query.slice(0, 40) + '" attached (' + hits.length + ')'
+        : 'Attached ' + hits.length + ' recent shared context items',
+      'success',
+    );
+  };
+
   const formatAttachmentSize = (bytes: any) => {
     if (!Number.isFinite(bytes) || bytes < 1024) return `${Math.max(0, Math.round(bytes || 0))} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -204,6 +668,29 @@ export function ChatScreen() {
 
   const openFilePicker = () => {
     if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  const seedActionFromComposer = () => {
+    const text = composerText.trim();
+    if (!text) {
+      toast('Compose some text before creating an action draft', 'warn');
+      return;
+    }
+    const ownerEntityId = inferActionOwnerEntityIdFromChatContext(memoryContextHits, memoryContext);
+    const sourceAiFieldId = inferSourceAiFieldIdFromChatContext(memoryContextHits, ownerEntityId);
+    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+    const title = (lines[0] || text).slice(0, 120);
+    seedActionDraft({
+      ownerEntityId,
+      actionType: chatActionType,
+      title,
+      detail: text,
+      riskLevel: chatActionRiskLevel,
+      sourceAiFieldId,
+      evidenceEventIds: inferActionEvidenceIdsFromChatContext(memoryContextHits),
+    });
+    (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('actions');
+    toast(`Seeded ${chatActionType} as an action draft`, 'success');
   };
 
   const sendChat = async () => {
@@ -358,7 +845,7 @@ export function ChatScreen() {
           >
             {messages.length === 0 && (
               <div style={{textAlign:'center', color:'var(--text-mute)', fontSize:14, marginBottom:8}}>
-                Ask anything. Use <strong>Memory</strong> for pasted snippets, <strong>Assemble</strong> for server-side index pull, or open from <strong>Memory / Agents</strong> with a one-shot preset. API key: Settings → Model & API.
+                Ask anything. Use <strong>Context</strong>, <strong>Memory</strong>, or <strong>AI Fields</strong> to attach shared context, <strong>Assemble</strong> for server-side index pull, or open from <strong>Memory / Agents</strong> with a one-shot preset. API key: Settings → Model & API.
               </div>
             )}
             {messages.map((m, i) => (
@@ -433,7 +920,9 @@ export function ChatScreen() {
               )}
               <div className="row composer-actions" style={{gap:6, marginTop:8}}>
                 <button className="composer-pill" type="button" onClick={openFilePicker} title="Attach files or images"><Icon name="paperclip" size={13}/>Attach</button>
+                <button className="composer-pill" type="button" onClick={attachSharedContext}><Icon name="work" size={13}/>Context</button>
                 <button className="composer-pill" type="button" onClick={attachMemory}><Icon name="memory" size={13}/>Memory</button>
+                <button className="composer-pill" type="button" onClick={attachAiFields}><Icon name="sparkles" size={13}/>AI Fields</button>
                 <button
                   className={'composer-pill' + (webSearchOn ? ' is-on' : '')}
                   type="button"
@@ -451,6 +940,38 @@ export function ChatScreen() {
                   <Icon name="memory" size={13} /> Assemble
                 </button>
                 <button className="composer-pill" type="button" onClick={() => (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('agents')}><Icon name="agents" size={13}/>Agents</button>
+                <button
+                  className="composer-pill"
+                  type="button"
+                  onClick={seedActionFromComposer}
+                  disabled={!composerText.trim()}
+                  title="Convert the current composer text into a shared Action draft"
+                >
+                  <Icon name="bolt" size={13}/>To Action
+                </button>
+                <select
+                  className="composer-pill"
+                  aria-label="Action type"
+                  value={chatActionType}
+                  onChange={(e) => setChatActionType(e.target.value as SupportedContextActionType)}
+                  title="Action type for To Action"
+                >
+                  {SUPPORTED_CONTEXT_ACTION_TYPE_META.map((item) => (
+                    <option key={item.value} value={item.value}>{item.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="composer-pill"
+                  aria-label="Action risk"
+                  value={chatActionRiskLevel}
+                  onChange={(e) => setChatActionRiskLevel(e.target.value as typeof chatActionRiskLevel)}
+                  title="Risk level for To Action"
+                >
+                  <option value="low">Risk: low</option>
+                  <option value="medium">Risk: medium</option>
+                  <option value="high">Risk: high</option>
+                  <option value="critical">Risk: critical</option>
+                </select>
                 <button className="composer-pill" type="button" onClick={() => (window as any).SHOGUN_RUNTIME?.openSettingsPane?.('integrations')}><Icon name="plug" size={13}/>Integrations</button>
                 <span className="spacer"/>
                 <button
@@ -481,12 +1002,12 @@ export function ChatScreen() {
             </div>
             <div>
               <div className="memory-context-title">
-                <span className="en-only">Memory context</span>
-                <span className="jp">記憶コンテキスト</span>
+                <span className="en-only">Attached context</span>
+                <span className="jp">添付コンテキスト</span>
               </div>
               <div className="memory-context-sub dim">
-                <span className="en-only">Snippets attached to this thread</span>
-                <span className="jp">このスレッドに載せる記憶スニペット</span>
+                <span className="en-only">Shared context attached to this thread</span>
+                <span className="jp">このスレッドに載せる共有コンテキスト</span>
               </div>
             </div>
           </div>
@@ -505,8 +1026,31 @@ export function ChatScreen() {
               const prov = (h && h.provenance) || 'user';
               const titleSrc = (h && (h.title_highlight || h.title)) || '';
               const snippetSrc = (h && (h.snippet_highlight || h.snippet)) || '';
+              const openable = canOpenContextHit(h);
+              const entityId = contextHitEntityId(h);
+              const nativeDetailKind = contextHitNativeDetailKind(h);
+              const nativeDetailLabel = entityId
+                ? nativeDetailDescriptorForEntityId(entityId)?.label || null
+                : null;
               return (
-                <div key={(h && h.id) || ('mch-' + i)} className="memory-context-hit">
+                <div
+                  key={(h && h.id) || (`mch-${i}`)}
+                  className={'memory-context-hit' + (openable ? ' memory-context-hit--openable' : '')}
+                  role={openable ? 'button' : undefined}
+                  tabIndex={openable ? 0 : undefined}
+                  onClick={() => {
+                    if (!openable) return;
+                    openContextHit(h);
+                  }}
+                  onKeyDown={(event) => {
+                    if (!openable) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openContextHit(h);
+                    }
+                  }}
+                  title={openable ? 'Open in related context surface' : undefined}
+                >
                   <div className="memory-context-hit-head">
                     <span className="memory-context-hit-tag">{prov}</span>
                     {h && h.source && (
@@ -525,12 +1069,67 @@ export function ChatScreen() {
                     <span className="memory-context-hit-title">
                       {ShogunHighlight ? ShogunHighlight.renderHighlighted(titleSrc) : titleSrc}
                     </span>
+                    {openable ? (
+                      <span className="memory-context-hit-tag" style={{ color: 'var(--gold)' }}>
+                        open
+                      </span>
+                    ) : null}
                   </div>
                   {snippetSrc && (
                     <div className="memory-context-hit-snippet">
                       {ShogunHighlight ? ShogunHighlight.renderHighlighted(snippetSrc) : snippetSrc}
                     </div>
                   )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                    {openable ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openContextHit(h);
+                        }}
+                      >
+                        Open
+                      </button>
+                    ) : null}
+                    {entityId ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEntityContextHit(h);
+                        }}
+                      >
+                        Entity Context
+                      </button>
+                    ) : null}
+                    {nativeDetailKind === 'meeting' ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                      onClick={(event) => {
+                          event.stopPropagation();
+                          openNativeDetailHit(h);
+                        }}
+                      >
+                        {nativeDetailLabel || 'Open Meeting Detail'}
+                      </button>
+                    ) : null}
+                    {nativeDetailKind === 'workspace' ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openNativeDetailHit(h);
+                        }}
+                      >
+                        {nativeDetailLabel || 'Open Workspace Detail'}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}
@@ -549,18 +1148,18 @@ export function ChatScreen() {
               <span className="jp">まだ文脈はありません</span>
             </div>
             <div className="memory-context-empty-desc">
-              <span className="en-only">
-                Use <strong>Memory</strong> in the composer below to pull snippets from your index — they appear here.
-              </span>
-              <span className="jp">
-                下のコンポーザーで <strong>Memory</strong> から取り込んだスニペットがここに表示されます。
-              </span>
-            </div>
+                <span className="en-only">
+                  Use <strong>Context</strong>, <strong>Memory</strong>, or <strong>AI Fields</strong> in the composer below to pull shared context — it appears here.
+                </span>
+                <span className="jp">
+                  下のコンポーザーで <strong>Context</strong>、<strong>Memory</strong>、<strong>AI Fields</strong> から取り込んだ文脈がここに表示されます。
+                </span>
+              </div>
           </div>
         )}
         <p className="memory-context-foot">
-          <span className="en-only">From your local Memory index on this device only.</span>
-          <span className="jp">ローカルの Memory インデックス由来 · この端末に保存された範囲のみ</span>
+          <span className="en-only">From local shared context on this device, including Memory, AI Fields, Actions, and meeting evidence.</span>
+          <span className="jp">この端末のローカル共有コンテキスト由来。Memory / AI Fields / Actions / 会議エビデンスを含みます。</span>
         </p>
       </div>
 

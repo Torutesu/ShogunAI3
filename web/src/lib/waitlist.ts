@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { waitlist } from '@/db/schema';
 import { createInvite, normalizeEmail } from '@/lib/invites';
+import { getAppBaseUrl } from '@/lib/web-config';
 
 export type WaitlistStatus = 'pending' | 'invited' | 'converted';
 
@@ -97,7 +98,10 @@ export async function inviteNextPending(limit: number, expiresInDays = 7) {
     .where(eq(waitlist.status, 'pending'))
     .limit(Math.max(1, Math.min(limit, 50)));
 
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+  const base = getAppBaseUrl();
+  if (!base) {
+    throw new Error('NEXT_PUBLIC_APP_URL is required');
+  }
   const invites = [];
 
   for (const row of pending) {

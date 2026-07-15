@@ -5,13 +5,18 @@ import { Icon, Kamon } from '@/shared/icons';
 import { ShogunDriveGlyph } from './components/ShogunDriveGlyph';
 import { MorningBriefCard } from './components/MorningBriefCard';
 import { MemoryDigestCard } from './components/MemoryDigestCard';
+import { AiFieldsCard } from './components/AiFieldsCard';
+import { RecentContextCard } from './components/RecentContextCard';
+import { SharedTasksCard } from './components/SharedTasksCard';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { openChatWithSeed } from '@/shared/context/chat-composer-seed';
 import {
   composerPlaceholderForLang,
   homeFirstNameToken,
   computeHomeGreetingState,
 } from './lib/runtime';
 import { useHomeBriefCards } from './hooks/useHomeBriefCards';
+import { ShogunMorningBrief } from '@/shared/lib/morning-brief';
 
 const HOME_QUICK_CATEGORIES = [
   { id: 'writing', en: 'Writing', jp: '文章作成', icon: 'edit' },
@@ -190,12 +195,19 @@ export function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    runRuntimeAction('stats.get', {}, { silentError: true }).then((r) => {
-      if (cancelled || !r?.ok || !r.data) return;
-      const n = Number(r.data.memoryTotal);
-      if (!Number.isNaN(n)) setMemoryTotal(n);
-    });
-    return () => { cancelled = true; };
+    const load = () => {
+      runRuntimeAction('stats.get', {}, { silentError: true }).then((r) => {
+        if (cancelled || !r?.ok || !r.data) return;
+        const n = Number(r.data.memoryTotal);
+        if (!Number.isNaN(n)) setMemoryTotal(n);
+      });
+    };
+    load();
+    window.addEventListener('shogun-memory-index-changed', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('shogun-memory-index-changed', load);
+    };
   }, []);
 
   useEffect(() => {
@@ -207,9 +219,13 @@ export function HomeScreen() {
       });
     void fetchSli();
     const id = window.setInterval(fetchSli, 60 * 1000);
+    window.addEventListener('shogun-memory-index-changed', fetchSli);
+    window.addEventListener('shogun-settings-refresh', fetchSli);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      window.removeEventListener('shogun-memory-index-changed', fetchSli);
+      window.removeEventListener('shogun-settings-refresh', fetchSli);
     };
   }, []);
 
@@ -233,33 +249,40 @@ export function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    runRuntimeAction('settings.load', {}, { silentError: true }).then((r: any) => {
-      if (cancelled || !r?.ok || !r.data?.settings?.sections) return;
-      const g = r.data.settings.sections.general;
-      if (g && typeof g === 'object') {
-        const raw = g.name != null ? String(g.name).trim() : '';
-        setProfileFullName(raw);
-      }
-      const llm = r.data.settings.sections.llm;
-      if (llm && llm.model != null) setModelHint(String(llm.model));
-      const obs = r.data.settings.sections.observability;
-      const t = obs && obs.sliThresholds;
-      if (t && typeof t === 'object') {
-        setSliThresholds({
-          bad: {
-            successLt: Number(t.bad?.successLt ?? 95),
-            p95Gt: Number(t.bad?.p95Gt ?? 3000),
-            backlogGt: Number(t.bad?.backlogGt ?? 40),
-          },
-          warn: {
-            successLt: Number(t.warn?.successLt ?? 99),
-            p95Gt: Number(t.warn?.p95Gt ?? 1500),
-            backlogGt: Number(t.warn?.backlogGt ?? 15),
-          },
-        });
-      }
-    });
-    return () => { cancelled = true; };
+    const load = () => {
+      runRuntimeAction('settings.load', {}, { silentError: true }).then((r: any) => {
+        if (cancelled || !r?.ok || !r.data?.settings?.sections) return;
+        const g = r.data.settings.sections.general;
+        if (g && typeof g === 'object') {
+          const raw = g.name != null ? String(g.name).trim() : '';
+          setProfileFullName(raw);
+        }
+        const llm = r.data.settings.sections.llm;
+        if (llm && llm.model != null) setModelHint(String(llm.model));
+        const obs = r.data.settings.sections.observability;
+        const t = obs && obs.sliThresholds;
+        if (t && typeof t === 'object') {
+          setSliThresholds({
+            bad: {
+              successLt: Number(t.bad?.successLt ?? 95),
+              p95Gt: Number(t.bad?.p95Gt ?? 3000),
+              backlogGt: Number(t.bad?.backlogGt ?? 40),
+            },
+            warn: {
+              successLt: Number(t.warn?.successLt ?? 99),
+              p95Gt: Number(t.warn?.p95Gt ?? 1500),
+              backlogGt: Number(t.warn?.backlogGt ?? 15),
+            },
+          });
+        }
+      });
+    };
+    load();
+    window.addEventListener('shogun-settings-refresh', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('shogun-settings-refresh', load);
+    };
   }, []);
 
   useEffect(() => {
@@ -309,16 +332,12 @@ export function HomeScreen() {
   const seedAndOpenChat = (text: any, options?: any) => {
     const opts = options || {};
     const t = String(text || '').trim();
-    const autoSend = !!opts.autoSend && t.length > 0;
-    const webSearch = typeof opts.webSearch === 'boolean' ? opts.webSearch : webSearchOn;
-    const assembleMemory =
-      typeof opts.assembleMemory === 'boolean' ? opts.assembleMemory : assembleMemoryOn;
-    const detail = { text: t, webSearch, assembleMemory, autoSend };
-    // ScreenChat mounts on demand — defer so its composer-seed listener is attached before dispatch.
-    (window as any).SHOGUN_RUNTIME?.setActiveScreen?.('chat');
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('shogun-chat-composer-seed', { detail }));
-    }, 0);
+    openChatWithSeed({
+      text: t,
+      autoSend: !!opts.autoSend && t.length > 0,
+      webSearch: typeof opts.webSearch === 'boolean' ? opts.webSearch : webSearchOn,
+      assembleMemory: typeof opts.assembleMemory === 'boolean' ? opts.assembleMemory : assembleMemoryOn,
+    });
   };
 
   const goAsk = () => {
@@ -471,20 +490,14 @@ export function HomeScreen() {
   );
 
   const runBriefMcp = (item: any, tool: any) => {
-    if (!tool?.tool_name) return;
-    const key = tool.tool_name;
-    const payload = {
-      ...(tool.arguments && typeof tool.arguments === "object" ? tool.arguments : {}),
-      brief_item: {
-        id: item.id,
-        what: item.what,
-        why_now: item.why_now,
-        related_context: item.related_context,
-        category: item.category,
-        priority: item.priority,
-        time_hint: item.time_hint,
-      },
-    };
+    const nextAction = ShogunMorningBrief?.resolveNextAction?.(
+      { mcp_tool: tool },
+      item,
+    );
+    if (!nextAction || nextAction.skip || !nextAction.key) return;
+    const key = String(nextAction.key || '').trim();
+    const payload = nextAction.payload || {};
+    if (!key) return;
     runRuntimeAction(key, payload, { successMessage: item.next_action?.label || "Done" });
     if (BriefTelemetry) {
       BriefTelemetry.log(BriefTelemetry.EVENTS.NEXT_ACTION_CLICK, {
@@ -938,6 +951,12 @@ export function HomeScreen() {
         submitBriefRating={submitBriefRating}
         runBriefMcp={runBriefMcp}
       />
+
+      <RecentContextCard />
+
+      <SharedTasksCard />
+
+      <AiFieldsCard />
 
       <MemoryDigestCard
         memoryDigest={memoryDigest}

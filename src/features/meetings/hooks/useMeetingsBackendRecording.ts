@@ -36,6 +36,7 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
   const [systemAudioRunning, setSystemAudioRunning] = useState(false);
   const [permissionActionBusy, setPermissionActionBusy] = useState(false);
   const [, setRecTick] = useState(0);
+  const pendingManualStopRef = useRef<string | null>(null);
 
   const permissionPollEnabled = !!(granola && granola.backendMeetingId && isNativeDesktop());
   const {
@@ -263,67 +264,87 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
     return () => clearInterval(id);
   }, [audioRecSession]);
 
+  const completeBackendRecording = useCallback(async (
+    meetingId: unknown,
+    opts?: { reason?: string; silent?: boolean },
+  ) => {
+    const mid = String(meetingId || '').trim();
+    const g = granolaRef.current;
+    if (!mid || !g || g.backendMeetingId !== mid || !isNativeDesktop()) return;
+    setBackendRecActive(false);
+    backendRecStartedAtRef.current = 0;
+    clearMeetingHud();
+    const getRes = await runRuntimeAction('meetings.get', { meeting_id: mid }, { silentError: true });
+    const data = getRes?.data as { transcript?: unknown[] } | undefined;
+    const segs = getRes?.ok && Array.isArray(data?.transcript) ? data!.transcript : [];
+    if (segs.length) {
+      setGranolaDraft((d) => ({
+        ...d,
+        transcript: formatLiveTranscript(segs as Array<{ speaker?: string; text?: string }>),
+      }));
+    }
+    if (!opts?.silent) {
+      const reason = String(opts?.reason || '').trim();
+      if (reason === 'video_ended') {
+        toastM('会議を自動終了しました（ビデオ通話終了）', 'info');
+      } else if (reason === 'inactivity') {
+        toastM('会議を自動終了しました（無活動）', 'info');
+      } else {
+        toastM('会議を保存して終了しました', 'success');
+      }
+    }
+    try {
+      window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
+    } catch {
+      /* ignore */
+    }
+  }, [granolaRef, setGranolaDraft]);
+
   const finalizeBackendMeeting = useCallback(async (opts?: { silent?: boolean }) => {
     const g = granolaRef.current;
     if (!g?.backendMeetingId || !isNativeDesktop()) return null;
     const mid = g.backendMeetingId;
+    pendingManualStopRef.current = String(mid);
     const res = await runRuntimeAction('meetings.stop', { meeting_id: mid }, { silentError: true });
-    setBackendRecActive(false);
-    backendRecStartedAtRef.current = 0;
-    clearMeetingHud();
-    if (res?.ok && res.data) {
-      const getRes = await runRuntimeAction('meetings.get', { meeting_id: mid }, { silentError: true });
-      const data = getRes?.data as { transcript?: unknown[] } | undefined;
-      const segs = getRes?.ok && Array.isArray(data?.transcript) ? data!.transcript : [];
-      if (segs.length) {
-        setGranolaDraft((d) => ({
-          ...d,
-          transcript: formatLiveTranscript(segs as Array<{ speaker?: string; text?: string }>),
-        }));
-      }
+    if (!res?.ok) {
+      pendingManualStopRef.current = null;
+      const err = res && typeof res === 'object' && 'error' in res ? (res as { error?: { message?: unknown } }).error : null;
+      toastM(String(err?.message || '会議の終了に失敗しました'), 'error');
+      return res;
     }
-    if (!opts?.silent) {
-      toastM('会議を保存して終了しました', 'success');
-    }
-    try {
-      window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
-      window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
-    } catch {
-      /* ignore */
-    }
+    await completeBackendRecording(mid, {
+      reason: 'manual_stop',
+      ...(opts?.silent !== undefined ? { silent: opts.silent } : {}),
+    });
+    pendingManualStopRef.current = null;
     return res;
-  }, [granolaRef, setGranolaDraft]);
+  }, [granolaRef, completeBackendRecording]);
+
+  useEffect(() => {
+    const onMeetingStopped = (e: Event) => {
+      const p = ((e as CustomEvent).detail) || {};
+      const mid = String(p.meeting_id || '').trim();
+      if (!mid) return;
+      if (pendingManualStopRef.current && pendingManualStopRef.current === mid) {
+        pendingManualStopRef.current = null;
+        return;
+      }
+      void completeBackendRecording(mid, { reason: String(p.reason || 'manual_stop') });
+    };
+    window.addEventListener('shogun-meeting-stopped', onMeetingStopped);
+    return () => window.removeEventListener('shogun-meeting-stopped', onMeetingStopped);
+  }, [completeBackendRecording]);
 
   useEffect(() => {
     const onAutoStopped = (e: Event) => {
       const p = ((e as CustomEvent).detail) || {};
-      const mid = p.meeting_id;
-      const g = granolaRef.current;
-      if (!mid || !g || g.backendMeetingId !== mid) return;
-      setBackendRecActive(false);
-      backendRecStartedAtRef.current = 0;
-      clearMeetingHud();
-      void runRuntimeAction('meetings.get', { meeting_id: mid }, { silentError: true }).then((getRes) => {
-        const data = getRes?.data as { transcript?: unknown[] } | undefined;
-        const segs = getRes?.ok && Array.isArray(data?.transcript) ? data!.transcript : [];
-        if (segs.length) {
-          setGranolaDraft((d) => ({
-            ...d,
-            transcript: formatLiveTranscript(segs as Array<{ speaker?: string; text?: string }>),
-          }));
-        }
-      });
-      const reasonLabel = p.reason === 'video_ended' ? 'ビデオ通話終了' : '無活動';
-      toastM(`会議を自動終了しました（${reasonLabel}）`, 'info');
-      try {
-        window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
-      } catch {
-        /* ignore */
-      }
+      const mid = String(p.meeting_id || '').trim();
+      if (!mid) return;
+      void completeBackendRecording(mid, { reason: String(p.reason || 'inactivity') });
     };
     window.addEventListener('shogun-meeting-auto-stopped', onAutoStopped);
     return () => window.removeEventListener('shogun-meeting-auto-stopped', onAutoStopped);
-  }, [granolaRef, setGranolaDraft]);
+  }, [completeBackendRecording]);
 
   const startBackendRecording = useCallback(async (captureSystem: boolean) => {
     const g = granolaRef.current;

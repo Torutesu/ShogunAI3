@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { assertAdmin } from '@/lib/admin-auth';
 import { createInvite } from '@/lib/invites';
+import { getAppBaseUrl } from '@/lib/web-config';
 
 export async function POST(req: NextRequest) {
   const denied = assertAdmin(req);
@@ -13,7 +14,10 @@ export async function POST(req: NextRequest) {
   }
 
   const invite = await createInvite(email);
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
+  const base = getAppBaseUrl();
+  if (!base) {
+    return Response.json({ ok: false, error: 'misconfigured', detail: 'NEXT_PUBLIC_APP_URL' }, { status: 500 });
+  }
   return Response.json({
     ok: true,
     inviteUrl: `${base}/invite?token=${invite.token}`,
