@@ -32,7 +32,10 @@ impl ServerHandler for ShogunService {
                 website_url: None,
             },
             instructions: Some(
-                "ShogunAI3 tools: meetings, memory items, and the kioku knowledge graph. All tools are read-only against the local SQLite DB."
+                "ShogunAI3 tools: meetings, memory items, and the kioku knowledge graph. \
+                 Tools read the local SQLite DB and do not modify it. \
+                 Exception: `shogun.meeting_recipe_run` additionally calls the user's \
+                 configured LLM provider (BYOK) and incurs cost."
                     .to_string(),
             ),
         }
