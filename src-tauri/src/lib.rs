@@ -71,7 +71,8 @@ pub use connectors::{
     linear, notion, outlook, slack, zoom,
 };
 pub use kioku::{
-    backup as kioku_backup, capture as kioku_capture, debug_stats as kioku_debug_stats,
+    backup as kioku_backup, capture as kioku_capture, centrality as kioku_centrality,
+    debug_stats as kioku_debug_stats,
     decision_graph as kioku_decision_graph, edge_types as kioku_edge_types, eval as kioku_eval,
     extraction as kioku_extraction, graph_schema as kioku_graph_schema,
     graph_traversal as kioku_graph_traversal, mcp as kioku_mcp, rules as kioku_rules,
