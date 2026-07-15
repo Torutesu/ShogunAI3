@@ -10,12 +10,14 @@ const MOCK_SETTINGS_LS = "shogun.hifi.mock.settings.sections.v1";
 /**
  * Pre-accept consent so the gate stays closed. Use in non-consent specs.
  * Also seeds `onboarding.mcpComplete` unless `skipMcpComplete: true` (for
- * MCP wizard specs).
+ * MCP wizard specs), and `onboarding.firstRunComplete` unless
+ * `skipFirstRun: true` (for first-run flow specs).
  */
 async function preacceptConsent(page, options = {}) {
   const skipMcpComplete = options.skipMcpComplete === true;
+  const skipFirstRun = options.skipFirstRun === true;
   await page.addInitScript(
-    ({ lsKey, skipMcpComplete }) => {
+    ({ lsKey, skipMcpComplete, skipFirstRun }) => {
       let _v;
       Object.defineProperty(window, "SHOGUN_LEGAL_VERSIONS", {
         configurable: true,
@@ -48,6 +50,13 @@ async function preacceptConsent(page, options = {}) {
                   : {};
               sections.onboarding = { ...prev, mcpComplete: true };
             }
+            if (!skipFirstRun) {
+              const prev =
+                sections.onboarding && typeof sections.onboarding === "object"
+                  ? sections.onboarding
+                  : {};
+              sections.onboarding = { ...prev, firstRunComplete: true };
+            }
             localStorage.setItem(lsKey, JSON.stringify(sections));
           } catch (_) {
             /* ignore */
@@ -55,7 +64,7 @@ async function preacceptConsent(page, options = {}) {
         },
       });
     },
-    { lsKey: MOCK_SETTINGS_LS, skipMcpComplete },
+    { lsKey: MOCK_SETTINGS_LS, skipMcpComplete, skipFirstRun },
   );
 }
 

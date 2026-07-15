@@ -10,20 +10,29 @@ lp/
   index.html      # EN（既定・hreflang x-default）
   ja/index.html   # 日本語（翻訳ではなくネイティブコピー）
   favicon.svg     # Kamon（gold on #080808）
-  vercel.json     # clean URLs + security headers
+  _headers        # Cloudflare Pages: security headers + favicon cache
 ```
 
 - Hero の「記憶→行動」デモは**インライン SVG + SMIL**。画像リクエストゼロ、`prefers-reduced-motion` で静止。
 - コピー・色・構造は `shogun-brand` スキルに準拠（gold 面積 5% 以下、Hero=ワンライナー+サブ1行+CTA1つ、絵文字ゼロ）。
 
-## デプロイ（Vercel）
+## ローカルプレビュー
 
 ```bash
-cd lp && npx vercel deploy --prod
-# Root Directory を lp/ にしてプロジェクト作成（Framework: Other）
+cd lp && python3 -m http.server 8931
+# → http://localhost:8931/ (EN) / http://localhost:8931/ja/ (JA)
 ```
 
-ドメイン syogun.com を割当て → `docs/lp-download.md` の DL 導線はそのまま有効。
+## デプロイ（Cloudflare Pages）※まだしない
+
+```bash
+npx wrangler pages project create shogun-lp   # 初回のみ
+npx wrangler pages deploy lp --project-name shogun-lp
+```
+
+- `_headers` が security headers を配信（Pages が自動で読む）
+- カスタムドメイン syogun.com は Pages ダッシュボードから割当て
+- → `docs/lp-download.md` の DL 導線はそのまま有効
 
 ## 実行時設定（HTML は触らない）
 

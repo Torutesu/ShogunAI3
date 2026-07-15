@@ -460,19 +460,33 @@ switch (command) {
       stub: false,
       echo: echo,
     };
-  case "shogun_capture_live_events":
+  case "shogun_capture_live_events": {
+    // e2e hook: window.__SHOGUN_MOCK_CAPTURE__ = { events: N } fakes N
+    // captured fragments so the first-run flow can be walked in mock mode.
+    const ovr = (g as any).__SHOGUN_MOCK_CAPTURE__ || {};
+    const n = Math.max(0, Number(ovr.events) || 0);
+    const events = Array.from({ length: n }, (_unused, i) => ({
+      at: Date.now() - i * 1500,
+      app: "Mock App",
+      kind: "focus",
+      detail: "mock event " + (i + 1),
+    }));
     return {
-      events: [],
-      eventsPerMinute: 0,
+      events,
+      eventsPerMinute: n,
       stub: false,
       echo: echo,
     };
+  }
   case "shogun_capture_status": {
     const focus = mockFrontmostFocus();
+    // e2e hook: window.__SHOGUN_MOCK_CAPTURE__ = { trusted: true } simulates
+    // the user granting Accessibility in System Settings.
+    const ovr = (g as any).__SHOGUN_MOCK_CAPTURE__ || {};
     return {
       paused: false,
       permissions: {
-        accessibilityTrusted: false,
+        accessibilityTrusted: ovr.trusted === true,
         screenCaptureGranted: false,
         inputMonitoringGranted: false,
       },

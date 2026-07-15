@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ConsentModal } from '@/shared/modals';
 import { MainApp } from './MainApp';
 import { EntitlementGate } from './EntitlementGate';
+import { FirstRunGate } from './FirstRunFlow';
 import { McpSetupGate } from './McpSetupGate';
 import { shogunMarkdownMini } from '@/shared/lib/markdown-mini';
 import { ShogunIpcClient } from '@/shared/ipc/ipc-client';
@@ -160,12 +161,17 @@ export function AppCore(): React.ReactElement {
       />
     );
   }
-  // ───────── End consent gate; entitlement gate then main app. ─────────
+  // ───────── End consent gate. Order: entitlement → first-run aha → MCP setup
+  // → main app. FirstRun sits BEFORE McpSetup deliberately: the user sees the
+  // product's value (their own memory, searched) before being asked to
+  // configure anything (spec: 2026-07-16-first-run-aha-flow-design.md).
   return (
     <EntitlementGate>
-      <McpSetupGate>
-        <MainApp />
-      </McpSetupGate>
+      <FirstRunGate>
+        <McpSetupGate>
+          <MainApp />
+        </McpSetupGate>
+      </FirstRunGate>
     </EntitlementGate>
   );
 }

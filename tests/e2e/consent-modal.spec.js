@@ -85,7 +85,8 @@ test.describe("Consent modal", () => {
     });
     expect(legal.termsAcceptedVersion).toBe("2026-04-19");
     expect(legal.privacyAcceptedVersion).toBe("2026-04-19");
-    expect(legal.telemetryOptIn).toBe(false);
+    // Telemetry toggle defaults ON (opt-in, uncheckable) — see PRIVACY.md.
+    expect(legal.telemetryOptIn).toBe(true);
     expect(typeof legal.acceptedAt).toBe("string");
   });
 
@@ -100,10 +101,13 @@ test.describe("Consent modal", () => {
     await expect(page.locator(".swm-modal--consent")).toHaveCount(0);
 
     // Reload — settings now have accepted versions, gate should stay closed.
+    // (After consent, the first-run flow shows; the point of this test is only
+    // that the consent modal itself does not reappear.)
     await page.reload({ waitUntil: "load" });
     await page.waitForFunction(
       () =>
         document.querySelector(".app") !== null ||
+        document.querySelector('[data-testid="firstrun"]') !== null ||
         document.querySelector(".swm-modal--consent") !== null ||
         document.body.textContent.includes("Connect Claude Desktop"),
       null,
@@ -217,7 +221,8 @@ test.describe("Consent modal", () => {
     await openHiFi(page);
 
     await page.getByLabel(/I agree/i).check();
-    await page.getByLabel(/Send anonymous usage telemetry/i).check();
+    // Telemetry defaults ON; uncheck it here to prove the toggle persists off.
+    await page.getByLabel(/usage statistics/i).uncheck();
     await expect(
       page.getByRole("button", { name: /Accept & Continue/i }),
     ).not.toBeDisabled({ timeout: 10000 });
@@ -228,6 +233,6 @@ test.describe("Consent modal", () => {
       const res = await client.invoke("app_settings_load", {});
       return res.data.settings.sections.legal;
     });
-    expect(legal.telemetryOptIn).toBe(true);
+    expect(legal.telemetryOptIn).toBe(false);
   });
 });
