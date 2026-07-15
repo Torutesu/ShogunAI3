@@ -151,6 +151,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-local-authentication",
+ "once_cell",
  "open",
  "regex",
  "reqwest 0.12.28",

@@ -10,6 +10,19 @@ mod calendar_sync;
 mod capture_events;
 mod capture_sampler;
 mod capture_tray;
+// New-arch capture pipeline modules (OCR / PII redaction / clustering /
+// strategies / AX events). Revived from an unmerged worktree snapshot; present
+// but not yet wired into the live sampler, so allow dead_code until integrated.
+#[allow(dead_code)]
+mod ax_events;
+#[allow(dead_code)]
+mod capture_clustering;
+#[allow(dead_code)]
+mod capture_strategies;
+#[allow(dead_code)]
+pub mod macos_ocr;
+#[allow(dead_code)]
+mod pii_redactor;
 mod commands;
 mod connectors;
 mod context_assembly;
