@@ -120,6 +120,19 @@ import { ShogunIpcClient } from './ipc-client';
       linearSync: (input: any) => call("shogun_linear_sync", input, WRITE, { timeoutMs: 900000 }),
       driveSync: (input: any) => call("shogun_drive_sync", input, WRITE, { timeoutMs: 900000 }),
       zoomSync: (input: any) => call("shogun_zoom_sync", input, WRITE, { timeoutMs: 900000 }),
+      // Audit F-6: these action-registry keys previously referenced api methods
+      // that did not exist here, so invoking them threw at runtime. Each maps to
+      // an already-registered Rust command (preview connectors surface their own
+      // OAUTH_V1_NOT_WIRED toast rather than crashing).
+      outlookSync: (input: any) => call("shogun_outlook_sync", input, WRITE, { timeoutMs: 900000 }),
+      figmaSync: (input: any) => call("shogun_figma_sync", input, WRITE, { timeoutMs: 900000 }),
+      claudeSync: (input: any) => call("shogun_claude_sync", input, WRITE, { timeoutMs: 900000 }),
+      appleCalendarSync: (input: any) => call("shogun_apple_calendar_sync", input, WRITE),
+      appleRemindersSync: (input: any) => call("shogun_apple_reminders_sync", input, WRITE),
+      oauthGoogleAppStatus: (input: any) => call("shogun_oauth_google_app_status", input || {}, READ),
+      oauthGoogleAppSet: (input: any) => call("shogun_oauth_google_app_set", input, WRITE),
+      agentRunNow: (input: any) => call("shogun_agent_run_now", input, WRITE),
+      onboardingComplete: (input: any) => call("app_onboarding_complete", input || {}, WRITE),
       capturePause: (input: any) => call("app_capture_pause", input, WRITE),
       captureResume: (input: any) => call("app_capture_resume", input, WRITE),
       captureLiveEvents: (input: any) => call("shogun_capture_live_events", input || { limit: 50 }, READ),

@@ -18,6 +18,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 REGISTRY_FILE = ROOT / "src" / "shared" / "ipc" / "action-registry.ts"
+SHOGUN_API_FILE = ROOT / "src" / "shared" / "ipc" / "shogun-api.ts"
 ACTION_MAP_FILE = ROOT / "docs" / "action-map.md"
 # Phase 1: screens are still in src/features/_legacy/. Phase 2 will move them to features/<name>/.
 JSX_FILES = sorted(
@@ -44,6 +45,16 @@ def extract_runtime_keys(content: str) -> set[str]:
 
 def extract_action_map_keys(content: str) -> set[str]:
     return set(re.findall(r"- `([^`]+)`", content))
+
+
+def extract_registry_api_methods(content: str) -> set[str]:
+    """Flat `api.<method>(` calls used inside action-registry handlers."""
+    return set(re.findall(r"api\.(\w+)\(", content))
+
+
+def extract_defined_api_methods(content: str) -> set[str]:
+    """`<method>: (` definitions in shogun-api.ts (superset — safe direction)."""
+    return set(re.findall(r"(\w+):\s*\(", content))
 
 
 def detect_buttons_without_onclick(content: str) -> list[tuple[int, str]]:
@@ -99,6 +110,13 @@ def main() -> int:
     unknown_runtime = sorted(runtime_keys - registry_keys)
     unmapped_registry = sorted(k for k in registry_keys if k not in mapped_keys)
 
+    # Audit F-6: every api method a registry handler calls must be defined in
+    # shogun-api.ts, or the action throws at runtime (undefined is not a function).
+    api_content = read(SHOGUN_API_FILE)
+    used_api = extract_registry_api_methods(registry_content)
+    defined_api = extract_defined_api_methods(api_content)
+    undefined_api = sorted(used_api - defined_api)
+
     has_error = False
 
     print("== SHOGUN action wiring check ==")
@@ -116,6 +134,12 @@ def main() -> int:
         print("\n[ERROR] Registry keys missing in action-map.md:")
         for key in unmapped_registry:
             print(f"  - {key}")
+
+    if undefined_api:
+        has_error = True
+        print("\n[ERROR] Registry uses api methods not defined in shogun-api.ts:")
+        for method in undefined_api:
+            print(f"  - api.{method}")
 
     # Missing onClick is warning-only because there are intentional display-only buttons.
     if missing_onclick:
