@@ -324,7 +324,8 @@ function previewResultRoutesForTool(
 
   if (name === 'shogun.search_context') {
     const timeline = parsed.timeline && typeof parsed.timeline === 'object' ? parsed.timeline as Record<string, unknown> : null;
-    (Array.isArray(timeline?.hits) ? timeline?.hits : []).slice(0, 4).forEach((hit) => {
+    const timelineHits = timeline && Array.isArray(timeline.hits) ? timeline.hits : [];
+    timelineHits.slice(0, 4).forEach((hit) => {
       if (hit && typeof hit === 'object' && !Array.isArray(hit)) {
         pushPreviewRoute(routes, seen, timelineRoute(hit as Record<string, unknown>));
       }

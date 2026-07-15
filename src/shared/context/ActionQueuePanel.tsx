@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/shared/icons';
-import { signalMatchesAction } from '@/features/entity-context/entity-kind-signals';
+import { signalMatchesAction } from '@/shared/domain/entity-kind-signals';
 import { buildActionChatSeed, buildDraftChatSeed, openChatWithSeed } from '@/shared/context/chat-composer-seed';
 import {
   nativeDetailDescriptorForEntityId,
@@ -16,7 +16,7 @@ import {
   SUPPORTED_CONTEXT_ACTION_TYPE_META,
 } from '@/shared/context/action-types';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
-import type { AppNavigationDetail } from '@/app/lib/native-navigation';
+import type { AppNavigationDetail } from '@/shared/context/app-navigation-detail';
 import type {
   AiFieldRecord,
   ContextActionAuditEvent,

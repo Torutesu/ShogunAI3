@@ -35,7 +35,7 @@ import {
   getFieldStartersForEntityKind,
   inferEntityKind,
 } from '@/features/entity-context/entity-kind-presets';
-import { buildEntitySignals } from '@/features/entity-context/entity-kind-signals';
+import { buildEntitySignals } from '@/shared/domain/entity-kind-signals';
 import { useEventedValue } from '@/shared/context/focus-store';
 import type {
   AiFieldRecord,

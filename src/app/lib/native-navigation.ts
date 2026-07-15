@@ -1,3 +1,4 @@
+import type { AppNavigationDetail } from '@/shared/context/app-navigation-detail';
 import { focusAiField } from '@/shared/context/ai-field-focus';
 import { focusActionTrace } from '@/shared/context/action-trace-focus';
 import { openChatWithSeed } from '@/shared/context/chat-composer-seed';
@@ -11,29 +12,7 @@ import {
   openWorkspaceDetail,
 } from '@/shared/context/context-target-navigation';
 
-export type AppNavigationDetail = {
-  screen?: string | null;
-  settingsPane?: string | null;
-  entityId?: string | null;
-  meetingId?: string | null;
-  workspaceId?: string | null;
-  memoryId?: string | null;
-  query?: string | null;
-  view?: 'river' | 'search' | string | null;
-  aiFieldId?: string | null;
-  actionId?: string | null;
-  queueId?: string | null;
-  sourceActionId?: string | null;
-  openAudit?: boolean | null;
-  text?: string | null;
-  webSearch?: boolean | null;
-  assembleMemory?: boolean | null;
-  autoSend?: boolean | null;
-  newChat?: boolean | null;
-  memoryAssemblyQuery?: string | null;
-  memoryAssemblyLimit?: number | null;
-  memoryAssemblySemantic?: boolean | null;
-};
+export type { AppNavigationDetail } from '@/shared/context/app-navigation-detail';
 
 export function historicalImportResultNavigation(succeeded: boolean): AppNavigationDetail {
   return succeeded ? { screen: 'memory' } : { settingsPane: 'integrations' };

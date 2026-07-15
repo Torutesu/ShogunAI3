@@ -23,7 +23,7 @@ import {
   clearEntitySignalFocus,
   readEntitySignalFocus,
 } from '@/features/entity-context/entity-signal-focus';
-import { getEntitySignalLabel } from '@/features/entity-context/entity-kind-signals';
+import { getEntitySignalLabel } from '@/shared/domain/entity-kind-signals';
 import { useEventedValue } from '@/shared/context/focus-store';
 import { OwnerSummaryCard } from '@/shared/context/OwnerSummaryCard';
 import { openQueueArtifactInActions } from '@/shared/context/open-queue-artifact';

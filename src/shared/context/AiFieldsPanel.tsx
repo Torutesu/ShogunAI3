@@ -7,7 +7,7 @@ import {
   openEvidenceReference,
   openNativeDetailForEntityId,
 } from '@/shared/context/context-target-navigation';
-import { signalMatchesField } from '@/features/entity-context/entity-kind-signals';
+import { signalMatchesField } from '@/shared/domain/entity-kind-signals';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import type { AiFieldRecord } from '@/shared/domain/context-layer';
 

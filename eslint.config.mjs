@@ -24,6 +24,9 @@ export default [
       globals: {
         ...globals.browser,
         __TAURI__: 'readonly',
+        // JSX namespace is an ambient global from @types/react (v18); declare it
+        // so `no-undef` recognizes `JSX.Element` return-type annotations.
+        JSX: 'readonly',
       },
     },
     plugins: {
