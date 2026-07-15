@@ -3,7 +3,12 @@
   "entry": [
     "tests/e2e/**/*.spec.js",
     "tests/e2e/_helpers/**/*.js",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    "src/shared/context/*-focus.ts",
+    "src/shared/context/*-draft.ts",
+    "src/shared/context/action-types.ts",
+    "src/shared/domain/context-layer.ts",
+    "src/features/entity-context/entity-signal-focus.ts"
   ],
   "project": ["src/**/*.{ts,tsx}", "tests/**/*.js", "scripts/**/*.mjs"],
   "ignoreBinaries": ["python3"],
