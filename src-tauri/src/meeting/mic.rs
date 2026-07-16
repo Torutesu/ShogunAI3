@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 const MAX_MONO_FLOATS: usize = 48000 * 60 * 8;
 const LIVE_CHUNK_SECS: u64 = 3;
@@ -147,14 +147,30 @@ impl MeetingMicController {
             None
         };
 
+        // Whether this recording will actually produce a transcript. Without a
+        // Deepgram key the mic/system audio still records, but the live-STT
+        // worker never spawns and stop-time PCM is discarded — so we surface
+        // this instead of letting the audio vanish silently.
+        let deepgram_ready = crate::meeting_stt::deepgram_api_key().is_some();
+        let transcription_available = transcription_available(opts.live_stt, deepgram_ready);
+
         if let (Some(app_handle), Some(meeting_id)) = (app.as_ref(), opts.meeting_id.as_ref()) {
-            if opts.live_stt && crate::meeting_stt::deepgram_api_key().is_some() {
+            if transcription_available {
                 spawn_live_stt_worker(
                     app_handle.clone(),
                     meeting_id.clone(),
                     mic_track.clone(),
                     system_buf.clone(),
                     stop.clone(),
+                );
+            } else if opts.live_stt {
+                // Recording, but no transcript will be produced — tell the UI.
+                let _ = app_handle.emit(
+                    "meeting-transcription-unavailable",
+                    json!({
+                        "meeting_id": meeting_id,
+                        "reason": "deepgram_key_missing",
+                    }),
                 );
             }
             if let Some(session) =
@@ -180,6 +196,8 @@ impl MeetingMicController {
           "system_mode": system_mode,
           "meeting_id": opts.meeting_id,
           "live_stt": opts.live_stt,
+          "deepgram_configured": deepgram_ready,
+          "transcription_available": transcription_available,
         }))
     }
 
@@ -445,5 +463,28 @@ fn append_i16(track: &Arc<Mutex<SampleTrack>>, data: &[i16], channels: usize) {
             let s = frame.first().copied().unwrap_or(0) as f32 / 32768.0;
             t.floats.push(s);
         }
+    }
+}
+
+/// Whether a recording started with these options will produce a transcript.
+/// Live STT must be requested AND a Deepgram key must be configured; otherwise
+/// audio records but is never transcribed (and stop-time PCM is discarded).
+fn transcription_available(live_stt: bool, deepgram_ready: bool) -> bool {
+    live_stt && deepgram_ready
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transcription_available;
+
+    #[test]
+    fn transcription_available_requires_live_stt_and_deepgram_key() {
+        assert!(transcription_available(true, true));
+        // No Deepgram key: records, but no transcript — must report false so the
+        // UI can warn instead of silently discarding the audio.
+        assert!(!transcription_available(true, false));
+        // Live STT not requested: audio-only by design.
+        assert!(!transcription_available(false, true));
+        assert!(!transcription_available(false, false));
     }
 }

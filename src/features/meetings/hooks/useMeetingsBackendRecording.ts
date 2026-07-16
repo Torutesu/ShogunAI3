@@ -352,6 +352,12 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
       } else {
         toastM('マイクのみで録音を開始しました', 'success');
       }
+      // Honest signal: without a Deepgram key the audio records but is never
+      // transcribed (and stop-time PCM is discarded). Don't let that be silent.
+      const brData = br?.data as { transcription_available?: boolean } | undefined;
+      if (brData && brData.transcription_available === false) {
+        toastM('文字起こしはオフです（録音のみ）。設定で Deepgram キーを追加すると文字起こしされます', 'warn');
+      }
       return true;
     }
     const err = br && typeof br === 'object' && 'error' in br ? (br as { error?: unknown }).error : null;
