@@ -855,6 +855,12 @@
 .s-toggle-knob { position:absolute; top:2px; left:2px; width:16px; height:16px; background:var(--text); border-radius:50%; transition:left var(--dur-base) var(--ease-out); }
 .s-toggle[data-on="1"] .s-toggle-knob { left:16px; background:var(--bg); }
 
+/* Settings secondary button. Paired with `.s-toggle` above — same hifi→src
+   migration dropped this rule, leaving Kioku Graph recovery buttons unstyled. */
+.s-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:7px 14px; font-size:13px; font-weight:500; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:8px; cursor:pointer; transition:background var(--dur-base), border-color var(--dur-base); }
+.s-btn:hover:not(:disabled) { background:var(--surface-2, #1c1c1c); border-color:var(--text-dim, #666); }
+.s-btn:disabled { opacity:.5; cursor:not-allowed; }
+
 /* Morning Brief v2 (AMC) — no card shadow per spec */
 .morning-brief-root .morning-brief-card {
   background: var(--surface);
