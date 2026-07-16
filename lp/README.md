@@ -23,16 +23,21 @@ cd lp && python3 -m http.server 8931
 # → http://localhost:8931/ (EN) / http://localhost:8931/ja/ (JA)
 ```
 
-## デプロイ（Cloudflare Pages）※まだしない
+## デプロイ（Cloudflare Pages）
 
 ```bash
-npx wrangler pages project create shogun-lp   # 初回のみ
-npx wrangler pages deploy lp --project-name shogun-lp
+# 1) 認証（一度だけ・ブラウザ ~30秒）
+npx wrangler login
+
+# 2) デプロイ（direct upload・ビルド不要）
+./lp/deploy.sh preview      # dev 段階: 一意の *.pages.dev URL（本番ドメイン非影響）
+./lp/deploy.sh production   # 本番: production URL / syogun.com
 ```
 
 - `_headers` が security headers を配信（Pages が自動で読む）
-- カスタムドメイン syogun.com は Pages ダッシュボードから割当て
-- → `docs/lp-download.md` の DL 導線はそのまま有効
+- 404.html は Pages が自動で 404 応答に使う
+- カスタムドメイン syogun.com は Cloudflare Pages ダッシュボードから割当て
+- → `docs/lp-download.md` の DL 導線（`releases/latest`）はそのまま有効（v0.4.2 公開済み）
 
 ## 実行時設定（HTML は触らない）
 
