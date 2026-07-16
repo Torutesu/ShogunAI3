@@ -34,6 +34,7 @@ export function PaneIntegrations() {
   const [auditProviderFilter, setAuditProviderFilter] = useState('all');
   const [oauthBusy, setOauthBusy] = React.useState<string | null>(null);
   const [oauthNotConfigured, setOauthNotConfigured] = React.useState(false);
+  const [pendingOauthProvider, setPendingOauthProvider] = React.useState<string | null>(null);
 
   const refreshGoogleCalStatus = React.useCallback(async () => {
     const r = await run('integrations.credentials_status', { provider: 'google_calendar' }, { silentError: true });
@@ -203,6 +204,7 @@ export function PaneIntegrations() {
       if (!res?.ok) {
         const msg = String(res?.error || '');
         if (msg.startsWith('oauth_credentials_not_configured')) {
+          setPendingOauthProvider(provider);
           setOauthNotConfigured(true);
         } else {
           const friendly = mapOauthError(msg);
@@ -222,7 +224,7 @@ export function PaneIntegrations() {
   };
 
   return (
-    <Pane title="All Integrations" jp="連携" subtitle="In-app OAuth: Click Connect on Gmail / Google Calendar to start the consent flow. CLIENT_ID/SECRET are read from scripts/.env.google-oauth (dev). For other providers, agent-based import is still supported (see legacy notes below).">
+    <Pane title="All Integrations" jp="連携" subtitle="In-app OAuth: Click Connect on Gmail / Google Calendar to start the consent flow. First time, you'll be asked for your Google Cloud OAuth Client ID/Secret (stored in your macOS Keychain). For other providers, agent-based import is still supported (see legacy notes below).">
       <div className="s-field-hint" style={{ marginBottom: 14, padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
         Workspace Integrations screen has the same agent contract. Preferred path: Tauri invoke <code style={{ fontSize: 11 }}>app_integration_import_credentials</code> with <code style={{ fontSize: 11 }}>provider: &quot;google_calendar&quot;</code> or <code style={{ fontSize: 11 }}>&quot;gmail&quot;</code>, <code style={{ fontSize: 11 }}>accessToken</code>, optional <code style={{ fontSize: 11 }}>refreshToken</code>, <code style={{ fontSize: 11 }}>expiresAt</code>, <code style={{ fontSize: 11 }}>oauthClientId</code> (for automatic token refresh). Deep-link alternative: <code style={{ fontSize: 11 }}>shogun-ai://credentials/import?provider=...</code> — prefer invoke for secrets (URLs leak to logs / history). Gmail needs scope <code style={{ fontSize: 11 }}>gmail.readonly</code> or broader.
       </div>
@@ -401,7 +403,14 @@ export function PaneIntegrations() {
         </div>
       ))}
       {oauthNotConfigured && (
-        <OAuthNotConfiguredModal onClose={() => setOauthNotConfigured(false)} />
+        <OAuthNotConfiguredModal
+          onClose={() => { setOauthNotConfigured(false); setPendingOauthProvider(null); }}
+          onSaved={() => {
+            const p = pendingOauthProvider;
+            setPendingOauthProvider(null);
+            if (p) void handleOauthConnect(p);
+          }}
+        />
       )}
     </Pane>
   );

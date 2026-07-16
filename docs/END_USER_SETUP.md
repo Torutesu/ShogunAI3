@@ -70,9 +70,11 @@ Memory インデックスは **この Mac 上の SQLite**（`memory.db`）に保
 
 ### Google（OAuth）
 
-- **Gmail** / **Google Calendar** / **Google Drive** — アプリ内 OAuth で接続
-- 初回接続後、過去データの取り込み（7日〜1年）を促すダイアログが出ます
-- **本番ビルド**では Settings → Integrations の **Google OAuth app credentials** から CLIENT_ID / CLIENT_SECRET を Keychain に保存できます（開発時は `scripts/.env.google-oauth` も利用可）
+- **Gmail** / **Google Calendar** — アプリ内 OAuth で接続
+- 配布版（DMG）で **初回に Connect を押すと**、あなた自身の Google Cloud OAuth クライアントの **Client ID / Client Secret** の入力を求められます。値はこの端末の **macOS Keychain にのみ保存**され、次回以降は不要です
+  - 作成場所: Google Cloud Console → API とサービス → 認証情報 → OAuth クライアント ID（種類: **デスクトップ アプリ**）。OAuth 同意画面で Gmail・Calendar の **読み取り**スコープを付与
+  - 開発時は `scripts/.env.google-oauth` に置けば入力を省略できます
+- 接続後、過去データの取り込み（7日〜1年）を促すダイアログが出ます
 
 ### Apple（macOS ローカル）
 
