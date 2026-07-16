@@ -33,6 +33,8 @@ export const RECIPE_LABEL_TO_ID: Record<string, string> = {
   'Write weekly recap': 'rec-feature-digest',
   'List open decisions': 'rec-decision-log',
   'Draft follow-ups': 'rec-follow-up-email',
+  'List action items': 'rec-action-items',
+  'Draft a PRD': 'rec-prd-draft',
 };
 
 /** Local body templates for recipes (fallback when LLM unavailable). */
@@ -41,6 +43,8 @@ export const RECIPE_LOCAL_BODIES: Record<string, string> = {
   'Coach me: Matt 1:1': '## 1:1 コーチング\n\n### 前回からのフォロー\n- \n\n### 今回の議題\n- \n\n### ネクストアクション\n- [ ] \n',
   'List open decisions': '## 未決定事項リスト\n\n| 議題 | 状態 | 期日 |\n|------|------|------|\n| | 検討中 | |\n\n### 決定済み\n- \n',
   'Draft follow-ups': '## フォローアップ\n\n- [ ] \n- [ ] \n\n### 送信済み\n- \n',
+  'List action items': '## アクションアイテム\n\n- [ ] owner — task — due\n- [ ] \n',
+  'Draft a PRD': '## PRD\n\n### Problem\n- \n\n### Goals\n- \n\n### Non-goals\n- \n\n### Metrics\n- \n',
 };
 
 export const MEETINGS_COMING_UP_STORAGE = 'shogun.hifi.meetingsComingUp.v1';
@@ -61,6 +65,8 @@ export const MEETINGS_DOCK_SLASH_CATALOG: Array<{
   { id: 'weekly', label: 'Write weekly recap', desc: 'Ship a crisp weekly narrative: wins, risks, and what changed.', jpHint: '週次レビューの骨子を作成', kind: 'recipe', recipeLabel: 'Write weekly recap', recipeJp: '週報', accent: 'violet' },
   { id: 'decisions', label: 'List open decisions', desc: 'Draft a decision log—what is open, who owns it, and by when.', jpHint: '未決定とオーナーを一覧', kind: 'recipe', recipeLabel: 'List open decisions', recipeJp: '決定', accent: 'rose' },
   { id: 'followups', label: 'Draft follow-ups', desc: 'Turn threads into a send-ready checklist your team can act on.', jpHint: 'フォロー用チェックリスト', kind: 'recipe', recipeLabel: 'Draft follow-ups', recipeJp: '追跡', accent: 'cyan' },
+  { id: 'actionitems', label: 'List action items', desc: 'Extract every commitment as an owner · task · due checklist.', jpHint: 'owner・task・due で抽出', kind: 'recipe', recipeLabel: 'List action items', recipeJp: '宿題', accent: 'mint' },
+  { id: 'prd', label: 'Draft a PRD', desc: 'Turn the discussion into a Problem / Goals / Non-goals / Metrics draft.', jpHint: 'PRD の骨子を生成', kind: 'recipe', recipeLabel: 'Draft a PRD', recipeJp: '要件', accent: 'violet' },
 ];
 
 /** Granola overlay CSS class tokens (styles live in app.css). */

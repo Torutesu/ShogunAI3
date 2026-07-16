@@ -62,7 +62,7 @@ export function PaneSupport() {
         </Row>
         <Row
           title="Check for updates / 更新を確認"
-          desc="Desktop: Tauri updater (see tauri.conf.json — endpoints + pubkey). Replace YOUR_ORG/YOUR_REPO before shipping. Browser mock: no update."
+          desc="Desktop: Tauri updater checks GitHub releases (Torutesu/ShogunAI3). Auto-update activates once a release ships updater artifacts. Browser mock: no update."
         >
           <button className="btn btn-sm btn-secondary" type="button" onClick={() => void onCheckUpdates()}>
             Check / 確認

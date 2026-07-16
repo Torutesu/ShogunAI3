@@ -50,9 +50,18 @@ export function useScreenContextProbe(options: UseScreenContextProbeOptions = {}
 
   useEffect(() => {
     if (!desktop || !enabled) return undefined;
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), intervalMs);
-    return () => window.clearInterval(timer);
+    // Skip probing while the window is hidden — this poll runs the whole
+    // session, so not hammering the backend in the background matters.
+    const tick = () => { if (!document.hidden) void refresh(); };
+    tick();
+    const timer = window.setInterval(tick, intervalMs);
+    // Refresh promptly when the user returns instead of waiting a full interval.
+    const onVisible = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [desktop, enabled, intervalMs, refresh]);
 
   return {

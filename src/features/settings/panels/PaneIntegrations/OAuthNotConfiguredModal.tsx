@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 
 interface OAuthNotConfiguredModalProps {

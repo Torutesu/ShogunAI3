@@ -32,7 +32,7 @@ export function AuditLogSection({
         <span className="spacer" />
         <button
           type="button"
-          className="btn btn-xs btn-ghost"
+          className="btn btn-sm btn-ghost"
           style={{ marginRight: 8, padding: '2px 8px' }}
           onClick={exportAuditJson}
         >
