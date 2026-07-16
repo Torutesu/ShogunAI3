@@ -70,6 +70,65 @@ pub fn record(input: &CaptureInput, conn: &Connection) -> Result<i64, String> {
     Ok(conn.last_insert_rowid())
 }
 
+/// Delete raw captures whose TTL has expired and that were never extracted
+/// (`extraction_status IN ('queued','error')`).
+///
+/// Unlike stage5's content-strip of `done` rows, these never became graph
+/// knowledge — for a user with no extraction key they pile up at a few KB every
+/// few seconds forever, because the manual, done-only stage5 purge never touches
+/// them. This bounds that growth by removing the whole row (plus its dependent
+/// `extraction_jobs`, deleted explicitly so it works regardless of the
+/// `foreign_keys` pragma) and best-effort unlinking any raw_path file.
+///
+/// The 14-day TTL is the grace window: a still-`queued` row older than that means
+/// extraction is off or not keeping up, so the raw capture is safe to drop.
+/// Returns the number of `mem_captures` rows deleted.
+pub fn sweep_expired_unextracted(conn: &Connection, now_ms: i64) -> Result<usize, String> {
+    // Collect raw_path files to unlink before the rows disappear.
+    let mut stmt = conn
+        .prepare(
+            "SELECT raw_path FROM mem_captures
+         WHERE ttl_expires_at IS NOT NULL AND ttl_expires_at < ?1
+           AND extraction_status IN ('queued', 'error')
+           AND raw_path IS NOT NULL",
+        )
+        .map_err(|e| e.to_string())?;
+    let paths: Vec<String> = stmt
+        .query_map(params![now_ms], |r| r.get::<_, Option<String>>(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok().flatten())
+        .filter(|p| !p.is_empty())
+        .collect();
+    drop(stmt);
+    for p in &paths {
+        match std::fs::remove_file(p) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("mem_captures::sweep_expired_unextracted: unlink {p}: {e}"),
+        }
+    }
+
+    conn.execute(
+        "DELETE FROM extraction_jobs
+       WHERE capture_id IN (
+         SELECT id FROM mem_captures
+         WHERE ttl_expires_at IS NOT NULL AND ttl_expires_at < ?1
+           AND extraction_status IN ('queued', 'error'))",
+        params![now_ms],
+    )
+    .map_err(|e| format!("mem_captures::sweep_expired_unextracted jobs: {e}"))?;
+
+    let deleted = conn
+        .execute(
+            "DELETE FROM mem_captures
+         WHERE ttl_expires_at IS NOT NULL AND ttl_expires_at < ?1
+           AND extraction_status IN ('queued', 'error')",
+            params![now_ms],
+        )
+        .map_err(|e| format!("mem_captures::sweep_expired_unextracted: {e}"))?;
+    Ok(deleted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +280,70 @@ mod tests {
         let a = record(&input_screen_app(1_000), &conn).expect("first");
         let b = record(&input_screen_app(2_000), &conn).expect("second");
         assert_ne!(a, b);
+    }
+
+    fn set_status(conn: &Connection, id: i64, status: &str) {
+        conn.execute(
+            "UPDATE mem_captures SET extraction_status = ?2 WHERE id = ?1",
+            params![id, status],
+        )
+        .expect("set status");
+    }
+
+    #[test]
+    fn sweep_deletes_only_expired_unextracted_rows() {
+        let conn = open_test_conn();
+        // Row A: old & queued → should be swept.
+        let a = record(&input_screen_app(1_000), &conn).expect("a");
+        // Row B: old but already extracted ('done') → stage5's job, not ours.
+        let b = record(&input_screen_app(2_000), &conn).expect("b");
+        set_status(&conn, b, "done");
+        // Row C: recent & queued (TTL not reached) → keep.
+        let recent_ts = 100 * CAPTURE_RAW_TTL_MS; // ttl far in the future
+        let c = record(&input_screen_app(recent_ts), &conn).expect("c");
+        // Row D: old & error → also swept (never became knowledge).
+        let d = record(&input_screen_app(1_500), &conn).expect("d");
+        set_status(&conn, d, "error");
+
+        // now is just past A/B/D's TTL but well before C's.
+        let now = 3_000 + CAPTURE_RAW_TTL_MS;
+        let deleted = sweep_expired_unextracted(&conn, now).expect("sweep");
+        assert_eq!(deleted, 2, "only A and D expected");
+
+        let remaining: Vec<i64> = {
+            let mut stmt = conn
+                .prepare("SELECT id FROM mem_captures ORDER BY id")
+                .unwrap();
+            let ids = stmt
+                .query_map([], |r| r.get::<_, i64>(0))
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect();
+            ids
+        };
+        assert_eq!(remaining, vec![b, c], "done + recent survive");
+        assert!(!remaining.contains(&a));
+    }
+
+    #[test]
+    fn sweep_cascades_extraction_jobs_for_deleted_captures() {
+        let conn = open_test_conn();
+        let a = record(&input_screen_app(1_000), &conn).expect("a");
+        conn.execute(
+            "INSERT INTO extraction_jobs (capture_id, job_kind, status, created_at)
+             VALUES (?1, 'extract', 'queued', 1000)",
+            params![a],
+        )
+        .expect("enqueue job");
+        let now = 3_000 + CAPTURE_RAW_TTL_MS;
+        sweep_expired_unextracted(&conn, now).expect("sweep");
+        let jobs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM extraction_jobs WHERE capture_id = ?1",
+                params![a],
+                |r| r.get(0),
+            )
+            .expect("count jobs");
+        assert_eq!(jobs, 0, "orphan job removed with its capture");
     }
 }

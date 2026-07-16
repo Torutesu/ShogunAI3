@@ -1719,6 +1719,27 @@ fn start_retention_cleanup_thread() {
             Err(e) => log::warn!("capture: retention cleanup failed: {e}"),
             _ => {}
         }
+        // Bound raw mem_captures growth honoring the 14-day TTL. Without this,
+        // a user with no extraction key accumulates queued rows forever (the
+        // manual, done-only stage5 purge never touches them).
+        let now = now_ms() as i64;
+        match memory_store::open_conn() {
+            Ok(conn) => {
+                match crate::mem_captures::sweep_expired_unextracted(&conn, now) {
+                    Ok(n) if n > 0 => {
+                        log::info!("capture: mem_captures sweep removed {n} expired raw rows")
+                    }
+                    Err(e) => log::warn!("capture: mem_captures sweep failed: {e}"),
+                    _ => {}
+                }
+                // Strip raw payload from extracted rows past TTL (stage5 logic),
+                // now on the same schedule instead of manual-only.
+                if let Err(e) = crate::kioku_stage5::cleanup_ttl_expired_captures(&conn, now) {
+                    log::warn!("capture: stage5 TTL cleanup failed: {e}");
+                }
+            }
+            Err(e) => log::warn!("capture: retention open_conn failed: {e}"),
+        }
     });
 }
 
