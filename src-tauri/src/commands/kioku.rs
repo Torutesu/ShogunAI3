@@ -26,7 +26,16 @@ pub fn shogun_kioku_debug_stats(_payload: Value) -> Result<Value, String> {
     let conn = memory_store::open_conn()?;
     let settings = settings_store::load().unwrap_or_else(|_| json!({}));
     let now_ms = ts() as i64;
-    crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)
+    let mut stats = crate::kioku_debug_stats::assemble_debug_stats(&conn, &settings, now_ms)?;
+    // Surface whether embeddings can be produced at all. An Anthropic-only user
+    // has no embedding endpoint, so graph retrieval silently degrades to recency.
+    if let Some(obj) = stats.as_object_mut() {
+        obj.insert(
+            "embeddingProviderAvailable".to_string(),
+            json!(crate::embeddings::has_embedding_provider()),
+        );
+    }
+    Ok(stats)
 }
 
 #[tauri::command]

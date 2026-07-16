@@ -107,6 +107,38 @@ fn provider_for_key_and_embedding_model(
     detected
 }
 
+/// Pure core of [`has_embedding_provider`], separated for unit testing.
+///
+/// A custom base URL implies an OpenAI-compatible embedding endpoint. Otherwise
+/// at least one configured key must resolve to a provider that has an embedding
+/// model (everything except Anthropic).
+pub(crate) fn embedding_provider_available(
+    keys: &[String],
+    base_override: &str,
+    model_override: &str,
+) -> bool {
+    if !base_override.trim().is_empty() {
+        return true;
+    }
+    keys.iter().any(|key| {
+        let provider = provider_for_key_and_embedding_model(key, model_override, false);
+        llm_providers::default_embedding_model(provider).is_some()
+    })
+}
+
+/// Whether the current BYOK configuration can produce embeddings at all.
+///
+/// Anthropic has no embedding endpoint, so a user whose only key is Anthropic
+/// gets a NULL embedding on every node — the graph read path then silently
+/// degrades to recency (ignoring the query). Callers use this to surface an
+/// honest notice instead of pretending semantic search works.
+pub fn has_embedding_provider() -> bool {
+    let (base_override, model_override) =
+        read_embedding_prefs().unwrap_or_else(|_| (String::new(), String::new()));
+    let keys = secrets::get_llm_api_keys().unwrap_or_default();
+    embedding_provider_available(&keys, &base_override, &model_override)
+}
+
 pub async fn embed_one(text: &str) -> Result<Vec<f32>, String> {
     let (base_override, model_override) = read_embedding_prefs()?;
     let clipped: String = text.trim().chars().take(8000).collect();
@@ -222,6 +254,44 @@ fn l2_normalize(v: &mut [f32]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn embedding_provider_available_across_key_sets() {
+        let s = |v: &str| v.to_string();
+        // Anthropic-only: no embedding endpoint → unavailable (the silent cliff).
+        assert!(!super::embedding_provider_available(
+            &[s("sk-ant-abc123")],
+            "",
+            ""
+        ));
+        // OpenAI key → available.
+        assert!(super::embedding_provider_available(
+            &[s("sk-openai-abc")],
+            "",
+            ""
+        ));
+        // Gemini key → available.
+        assert!(super::embedding_provider_available(
+            &[s("AIzaSyABCDEFGHIJKLMNOP")],
+            "",
+            ""
+        ));
+        // Anthropic + OpenAI mix → available (OpenAI covers embeddings).
+        assert!(super::embedding_provider_available(
+            &[s("sk-ant-abc"), s("sk-openai-xyz")],
+            "",
+            ""
+        ));
+        // No keys → unavailable.
+        assert!(!super::embedding_provider_available(&[], "", ""));
+        // Custom base override implies an OpenAI-compatible endpoint → available
+        // even with an Anthropic key present.
+        assert!(super::embedding_provider_available(
+            &[s("sk-ant-abc")],
+            "https://my-proxy.example/v1",
+            ""
+        ));
+    }
+
     #[test]
     fn provider_for_custom_key_infers_gemini_from_embedding_model_without_base_override() {
         assert_eq!(

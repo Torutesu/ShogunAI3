@@ -13,6 +13,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+  const [embeddingDegraded, setEmbeddingDegraded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [targetWorkspace, setTargetWorkspace] = useState('');
   const [busy, setBusy] = useState(false);
@@ -28,6 +29,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
         setSearching(false);
         const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];
         setHits(arr);
+        setEmbeddingDegraded(false);
       });
     return () => { cancelled = true; };
   }, []);
@@ -41,6 +43,7 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
           setSearching(false);
           const arr = r && r.ok && Array.isArray(r.data?.hits) ? r.data.hits : [];
           setHits(arr);
+          setEmbeddingDegraded(!!(r && r.ok && r.data?.embeddingDegraded));
         });
     }, 220);
     return () => clearTimeout(t);
@@ -140,6 +143,21 @@ export function MemorySearchView({ workProjects, assignments, setAssignments }: 
           )
         )}
       </div>
+
+      {embeddingDegraded && (
+        <div
+          role="status"
+          className="t-mono"
+          style={{
+            fontSize:11, lineHeight:1.5, color:'var(--gold)',
+            border:'1px solid var(--gold-dim)', borderRadius:8,
+            padding:'8px 12px', background:'rgba(200,169,110,0.06)',
+          }}
+        >
+          <span className="en-only">Semantic search needs an OpenAI or Gemini embedding key — showing recent matches for this query instead. Add one in Settings → Model &amp; API.</span>
+          <span className="jp">セマンティック検索には OpenAI か Gemini の埋め込みキーが必要です。今は最近順の結果を表示しています。設定 → モデル &amp; API で追加できます。</span>
+        </div>
+      )}
 
       <div style={{flex:1, minHeight:0, overflowY:'auto', display:'flex', flexDirection:'column', gap:8, paddingRight:4}}>
         {hits.length === 0 ? (

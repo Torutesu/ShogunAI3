@@ -36,7 +36,8 @@ pub async fn shogun_memory_search(payload: Value) -> Result<Value, String> {
         if search_uses_legacy_path(&payload) {
             return memory_store::search_with_semantics(&payload).await;
         }
-        return context_assembly::search_timeline_graph(&payload).await;
+        let resp = context_assembly::search_timeline_graph(&payload).await?;
+        return Ok(annotate_embedding_degraded(resp, &payload));
     }
 
     if search_uses_legacy_path(&payload) {
@@ -81,12 +82,37 @@ pub async fn shogun_memory_search(payload: Value) -> Result<Value, String> {
 
     let settings = settings_store::load().unwrap_or_else(|_| json!({}));
     let mode = context_assembly::read_path_mode(&settings);
-    Ok(context_assembly::hits_to_search_response(
+    let resp = context_assembly::hits_to_search_response(
         &hits,
         &payload,
         mode,
         semantic && !query.is_empty(),
-    ))
+    );
+    Ok(annotate_embedding_degraded(resp, &payload))
+}
+
+/// Flag a graph-mode search as degraded when the query wanted semantic matching
+/// but no embedding provider is configured (e.g. an Anthropic-only user). Without
+/// this the graph read path silently falls back to recency and ignores the query
+/// — the UI reads `embeddingDegraded` to say so honestly.
+fn annotate_embedding_degraded(mut resp: Value, payload: &Value) -> Value {
+    let has_query = payload
+        .get("query")
+        .and_then(|q| q.as_str())
+        .map(|q| !q.trim().is_empty())
+        .unwrap_or(false);
+    let settings = settings_store::load().unwrap_or_else(|_| json!({}));
+    let is_graph = context_assembly::read_path_mode(&settings) == "graph";
+    if has_query && is_graph && !crate::embeddings::has_embedding_provider() {
+        if let Some(obj) = resp.as_object_mut() {
+            obj.insert("embeddingDegraded".to_string(), json!(true));
+            obj.insert(
+                "embeddingDegradedReason".to_string(),
+                json!("no_embedding_provider"),
+            );
+        }
+    }
+    resp
 }
 
 #[tauri::command]
