@@ -22,6 +22,7 @@ export function ChatScreen() {
   const [memoryContextHits, setMemoryContextHits] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [memoryTotal, setMemoryTotal] = useState(0);
+  const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
   const [modelHint, setModelHint] = useState('');
   const [chatMax, setChatMax] = useState(false);
   const [webSearchOn, setWebSearchOn] = useState(true);
@@ -57,6 +58,23 @@ export function ChatScreen() {
       setMemoryTotal(Number(r.data.memoryTotal) || 0);
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // Whether an LLM key is set — a fresh user finishes onboarding without one and
+  // then chat silently fails, so surface an inline prompt instead. Re-checks when
+  // the window regains focus (e.g. after saving a key in Settings).
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const r = await runRuntimeAction('llm.api_key_status', {}, { silentError: true });
+      if (cancelled) return;
+      if (r.ok && r.data && typeof r.data.configured === 'boolean') {
+        setKeyConfigured(r.data.configured);
+      }
+    };
+    void check();
+    window.addEventListener('focus', check);
+    return () => { cancelled = true; window.removeEventListener('focus', check); };
   }, []);
 
   useEffect(() => {
@@ -356,7 +374,30 @@ export function ChatScreen() {
             className={'shogun-chat-thread' + (messages.length === 0 && !loading ? ' shogun-chat-thread--empty' : '')}
             style={{maxWidth:720, margin:'0 auto', display:'flex', flexDirection:'column', gap:20, width:'100%'}}
           >
-            {messages.length === 0 && (
+            {messages.length === 0 && keyConfigured === false && (
+              <div
+                role="status"
+                style={{
+                  textAlign:'left', maxWidth:520, margin:'0 auto 8px',
+                  border:'1px solid var(--gold-dim)', borderRadius:12,
+                  padding:'16px 18px', background:'rgba(200,169,110,0.06)',
+                }}
+              >
+                <div style={{fontSize:14, fontWeight:600, color:'var(--text)', marginBottom:6}}>
+                  <span className="en-only">Add an API key to start chatting</span>
+                  <span className="jp">チャットを始めるには API キーを追加してください</span>
+                </div>
+                <div style={{fontSize:13, color:'var(--text-mute)', lineHeight:1.6, marginBottom:12}}>
+                  <span className="en-only">SHOGUN uses your own OpenAI, Anthropic, or Gemini key. Memory search works without one — chat replies need a key.</span>
+                  <span className="jp">SHOGUN はあなた自身の OpenAI / Anthropic / Gemini キーを使います。メモリ検索はキー無しでも動きますが、チャット返信にはキーが必要です。</span>
+                </div>
+                <button className="btn btn-sm btn-primary" type="button" onClick={openLlmSettings}>
+                  <span className="en-only">Add your key — Settings → Model &amp; API</span>
+                  <span className="jp">キーを追加 — 設定 → モデル &amp; API</span>
+                </button>
+              </div>
+            )}
+            {messages.length === 0 && keyConfigured !== false && (
               <div style={{textAlign:'center', color:'var(--text-mute)', fontSize:14, marginBottom:8}}>
                 Ask anything. Use <strong>Memory</strong> for pasted snippets, <strong>Assemble</strong> for server-side index pull, or open from <strong>Memory / Agents</strong> with a one-shot preset. API key: Settings → Model & API.
               </div>
