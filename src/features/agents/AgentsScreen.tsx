@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Icon } from '@/shared/icons';
 import { runRuntimeAction, } from '@/shared/ipc/runtime-actions';
 import { AGENTS_DEMO, AGENTS_DEMO_NOW, AGENTS_LIVE } from './lib/demo-data';
+import { demoDataEnabled } from '@/shared/lib/demo-mode';
 import { AGENT_RUNTIME } from './lib/metadata';
 import { AttentionStrip } from './components/AttentionStrip';
 import { AgentsEmptyState } from './components/AgentsEmptyState';
@@ -19,7 +20,7 @@ export function AgentsScreen() {
   const [newAgentModalOpen, setNewAgentModalOpen] = useState(false);
   const [historyDrawerAgentId, setHistoryDrawerAgentId] = useState<string | null>(null);
   const [editModalAgentId, setEditModalAgentId] = useState<string | null>(null);
-  const [sourceAgents] = useState<AgentDemo[]>(() => AGENTS_DEMO);
+  const [sourceAgents] = useState<AgentDemo[]>(() => (demoDataEnabled() ? AGENTS_DEMO : []));
   const [agentOverrides, setAgentOverrides] = useState<Record<string, Partial<AgentDemo>>>({});
   // Settings cache for the paused-overlay. Re-fetched whenever
   // settingsTick increments (e.g., after Pause/Resume save).
@@ -299,28 +300,33 @@ export function AgentsScreen() {
         </div>
       )}
 
-      {/* Live activity (compressed footer per spec § 1) */}
-      <div className="t-mono" style={{color:'var(--text-dim)', marginTop:'var(--space-8)', marginBottom:'var(--space-2)'}}>
-        LIVE ACTIVITY
-      </div>
-      <div style={{display:'flex', flexDirection:'column', gap:'var(--space-1)', borderTop:'1px solid var(--border)', paddingTop:'var(--space-3)'}}>
-        {AGENTS_LIVE.slice(0, 5).map((row, i) => {
-          const levelColor = row.level === 'success' ? 'var(--success)'
-                           : row.level === 'error'   ? 'var(--danger)'
-                           : 'var(--text-mute)';
-          return (
-            <div key={i} style={{
-              display:'grid', gridTemplateColumns:'80px 120px 1fr auto', columnGap:'var(--space-3)',
-              alignItems:'baseline', fontSize:11,
-            }} className="t-mono">
-              <span style={{color:'var(--text-dim)'}}>{row.t}</span>
-              <span style={{color:'var(--text-mute)'}}>{row.agent}</span>
-              <span style={{color:'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontFamily:'inherit'}}>{row.msg}</span>
-              <span style={{color:levelColor, textTransform:'uppercase', fontSize:10}}>{row.level}</span>
-            </div>
-          );
-        })}
-      </div>
+      {/* Live activity (compressed footer per spec § 1). Demo-only — real builds
+          have no sample activity feed, so hide it rather than show fixtures. */}
+      {demoDataEnabled() && (
+        <>
+          <div className="t-mono" style={{color:'var(--text-dim)', marginTop:'var(--space-8)', marginBottom:'var(--space-2)'}}>
+            LIVE ACTIVITY
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:'var(--space-1)', borderTop:'1px solid var(--border)', paddingTop:'var(--space-3)'}}>
+            {AGENTS_LIVE.slice(0, 5).map((row, i) => {
+              const levelColor = row.level === 'success' ? 'var(--success)'
+                               : row.level === 'error'   ? 'var(--danger)'
+                               : 'var(--text-mute)';
+              return (
+                <div key={i} style={{
+                  display:'grid', gridTemplateColumns:'80px 120px 1fr auto', columnGap:'var(--space-3)',
+                  alignItems:'baseline', fontSize:11,
+                }} className="t-mono">
+                  <span style={{color:'var(--text-dim)'}}>{row.t}</span>
+                  <span style={{color:'var(--text-mute)'}}>{row.agent}</span>
+                  <span style={{color:'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontFamily:'inherit'}}>{row.msg}</span>
+                  <span style={{color:levelColor, textTransform:'uppercase', fontSize:10}}>{row.level}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       <NewAgentModal
         open={newAgentModalOpen}

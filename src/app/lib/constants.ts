@@ -1,5 +1,6 @@
 // Navigation + UI constants extracted from App.tsx (Phase 2 Step 11)
 import { SHOGUN_DEMO_SEED } from '@/shared/lib/demo-seed';
+import { demoDataEnabled } from '@/shared/lib/demo-mode';
 
 export const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "language": "en",
@@ -35,6 +36,6 @@ export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
 
 export const INITIAL_CHAT_HISTORY: any[] =
-  SHOGUN_DEMO_SEED && Array.isArray(SHOGUN_DEMO_SEED.chats)
+  demoDataEnabled() && SHOGUN_DEMO_SEED && Array.isArray(SHOGUN_DEMO_SEED.chats)
     ? SHOGUN_DEMO_SEED.chats
     : [];
