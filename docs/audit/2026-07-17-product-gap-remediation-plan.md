@@ -62,6 +62,23 @@ Ordering principle: correctness/data-safety first (P0), then unlock/observabilit
 
 ---
 
+---
+
+## Completion status (2026-07-17)
+
+**Shipped (all on main, tests green — 841 Rust / 333 vitest / lint 0 / tsc 0):**
+- P0-1..P0-6 — all complete, per-item commits + tests.
+- P1-1 — 5 of 8 token providers unlocked (slack/notion/github/linear/zoom, which have a paste-token modal). outlook/figma/claude still "Coming soon" — deferred (modal lacks their copy).
+- P1-2, P1-3, P1-5, P1-6 — complete.
+- P1-4 — queue made readable (`list`/`pending_count`), `pending` status stamped, `scheduledPending` surfaced in the Brief API response. **Deferred:** the Brief UI card that renders those pending items.
+- P2 — recipes (action-items + prd-draft) exposed; `.s-btn` + `.btn-xs` fixed; idle sidebar probe paused when hidden; stale docs/copy fixed.
+
+**Deferred (noted, not done):**
+- P2 dead-code removal: `morning_brief_v2_stub` (116-line fixture, kept `#[allow(dead_code)]`) and the `video-meeting-auto-started` emit (harmless; removal cascades to unused-var). Low value, left.
+- P2 JP-only toast/tooltip localization sweep — a broader i18n pass, not attempted.
+- P2 meeting-interval consolidation (5+ overlapping timers during recording) — riskier refactor, left.
+- The `mem_items` upsert `ON CONFLICT(source, entity_id)` vs partial-index interaction surfaced during P1-3 testing — confirmed test-harness-only (gmail/calendar sync use the same upsert in production), no product change made.
+
 ## Test/verify discipline
 - Rust: `cargo test --lib` for each backend change.
 - Front-end: `vitest` for logic/components; Playwright e2e (mock IPC) where a flow changes.
