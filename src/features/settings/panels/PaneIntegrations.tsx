@@ -9,16 +9,22 @@ import { AuditLogSection } from './PaneIntegrations/AuditLogSection';
 import { OAuthNotConfiguredModal } from './PaneIntegrations/OAuthNotConfiguredModal';
 
 const PLANNED_OAUTH_PROVIDERS = [
+  { slug: 'slack', title: 'Slack' },
+  { slug: 'notion', title: 'Notion' },
+  { slug: 'github', title: 'GitHub' },
+  { slug: 'linear', title: 'Linear' },
+  { slug: 'zoom', title: 'Zoom' },
   { slug: 'google_drive', title: 'Google Drive' },
   { slug: 'outlook', title: 'Outlook' },
-  { slug: 'notion', title: 'Notion' },
-  { slug: 'linear', title: 'Linear' },
-  { slug: 'slack', title: 'Slack' },
-  { slug: 'github', title: 'GitHub' },
   { slug: 'claude', title: 'Claude' },
   { slug: 'figma', title: 'Figma' },
   { slug: 'zapier_mcp', title: 'Zapier MCP' },
 ] as const;
+
+// Providers with a working token-import backend + paste-token UI. These get a
+// real Connect (paste an access token) instead of "Coming soon". OAuth-only or
+// modal-less providers stay disabled until their flow lands.
+const TOKEN_IMPORT_PROVIDERS = new Set<string>(['slack', 'notion', 'github', 'linear', 'zoom']);
 
 export function PaneIntegrations() {
   const { run } = useRuntimeActions();
@@ -230,7 +236,7 @@ export function PaneIntegrations() {
       </div>
       <div className="s-card" style={{ marginBottom: 10 }}>
         <Row title={<div className="row" style={{ gap: 10 }}><IntegrationLogo slug="apple_calendar" size={30} title="Apple Calendar" /><div><div style={{ fontSize: 13, fontWeight: 500 }}>Apple Calendar <span className="label label-gold" style={{ marginLeft: 4 }}>Beta</span></div><div className="s-field-hint">See your events in Apple Calendar</div></div></div>} last>
-          <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: 'apple_calendar' }, { silentError: true })}>Connect</button>
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: 'apple_calendar' }, { successMessage: 'Apple Calendar connected' })}>Connect</button>
         </Row>
       </div>
       <AuditLogSection
@@ -248,7 +254,7 @@ export function PaneIntegrations() {
       />
       <div className="s-card" style={{ marginBottom: 10 }}>
         <Row title={<div className="row" style={{ gap: 10 }}><IntegrationLogo slug="apple_reminders" size={30} title="Apple Reminders" /><div><div style={{ fontSize: 13, fontWeight: 500 }}>Apple Reminders <span className="label label-gold" style={{ marginLeft: 4 }}>Beta</span></div><div className="s-field-hint">See your reminders and tasks in Apple Reminders</div></div></div>} last>
-          <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: 'apple_reminders' }, { silentError: true })}>Connect</button>
+          <button className="btn btn-sm btn-secondary" type="button" onClick={() => run('integrations.connect', { provider: 'apple_reminders' }, { successMessage: 'Apple Reminders connected' })}>Connect</button>
         </Row>
       </div>
       <div className="s-card" style={{ marginBottom: 10 }}>
@@ -392,13 +398,34 @@ export function PaneIntegrations() {
                 <IntegrationLogo slug={s.slug} size={30} title={s.title} />
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{s.title}</div>
-                  <div className="s-field-hint">OAuth connector is coming soon; use agent import where available.</div>
+                  <div className="s-field-hint">
+                    {TOKEN_IMPORT_PROVIDERS.has(s.slug)
+                      ? 'Connect with an access token — synced to Memory.'
+                      : 'OAuth connector is coming soon; use agent import where available.'}
+                  </div>
                 </div>
               </div>
             )}
           >
-            <span className="label" style={{ borderColor: 'var(--border)', marginRight: 8 }}>Coming soon</span>
-            <button className="btn btn-sm btn-secondary" type="button" disabled>Coming soon</button>
+            {TOKEN_IMPORT_PROVIDERS.has(s.slug) ? (
+              <button
+                className="btn btn-sm btn-secondary"
+                type="button"
+                onClick={() => {
+                  const opened = (window as any).SHOGUN_RUNTIME?.openPasteToken?.(s.slug);
+                  if (!opened) {
+                    (window as any).SHOGUN_RUNTIME?.pushToast?.('Could not open the connect dialog', 'warn');
+                  }
+                }}
+              >
+                Connect
+              </button>
+            ) : (
+              <>
+                <span className="label" style={{ borderColor: 'var(--border)', marginRight: 8 }}>Coming soon</span>
+                <button className="btn btn-sm btn-secondary" type="button" disabled>Coming soon</button>
+              </>
+            )}
           </Row>
         </div>
       ))}

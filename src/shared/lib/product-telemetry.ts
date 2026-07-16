@@ -21,13 +21,19 @@ const POSTHOG_HOST: string =
   'https://us.i.posthog.com';
 
 /** The full vocabulary this app is allowed to report. Aggregate-only. */
-const ALLOWED_EVENTS = new Set(['app_opened', 'screen_viewed']);
+const ALLOWED_EVENTS = new Set(['app_opened', 'screen_viewed', 'error_reported']);
 
 /** Per-event property allowlist. Anything else is dropped. */
 const ALLOWED_PROPS: Record<string, Set<string>> = {
   app_opened: new Set(['app_version']),
   screen_viewed: new Set(['screen']),
+  // Only a coarse category — never the error message/stack (those can carry
+  // user content). This gives the team a crash-rate signal, nothing more.
+  error_reported: new Set(['scope']),
 };
+
+/** The only error scopes we will ever transmit. */
+const ERROR_SCOPES = new Set(['render', 'ipc', 'unknown']);
 
 const DEVICE_ID_STORAGE_KEY = 'shogun-telemetry-device-id';
 
@@ -114,6 +120,16 @@ export function capture(event: string, props?: Record<string, unknown>): boolean
 export function captureScreenViewed(screenId: string): void {
   if (!screenId || typeof screenId !== 'string') return;
   capture('screen_viewed', { screen: screenId });
+}
+
+/**
+ * Aggregate crash signal: reports ONLY a coarse scope ('render' | 'ipc' |
+ * 'unknown'), never the error message or stack. No-op unless telemetry is
+ * enabled (opt-in + build key), so it inherits the same consent gate.
+ */
+export function captureError(scope: string): void {
+  const safe = ERROR_SCOPES.has(scope) ? scope : 'unknown';
+  capture('error_reported', { scope: safe });
 }
 
 /** Test hook. */

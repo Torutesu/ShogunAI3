@@ -123,6 +123,22 @@ pub async fn import_recording_file(path_str: &str) -> Result<Value, String> {
 
     meeting_store::meeting_stop(&meeting_id, ended_at)?;
 
+    // Route the imported meeting through the same post-stop ingest as live
+    // recordings so it lands in Memory + KIOKU (and gets a summary) instead of
+    // being a transcript-only island.
+    let (memory_ingest, kioku_ingest, summary) =
+        match crate::meeting_lifecycle::ingest_after_stop(&meeting_id).await {
+            Ok(v) => (
+                v.get("memory_ingest").cloned().unwrap_or(Value::Null),
+                v.get("kioku_ingest").cloned().unwrap_or(Value::Null),
+                v.get("summary").cloned().unwrap_or(Value::Null),
+            ),
+            Err(e) => {
+                log::warn!("import: post-stop ingest failed for {}: {}", meeting_id, e);
+                (Value::Null, Value::Null, Value::Null)
+            }
+        };
+
     Ok(json!({
       "meetingId": meeting_id,
       "title": title,
@@ -135,6 +151,9 @@ pub async fn import_recording_file(path_str: &str) -> Result<Value, String> {
       "speakers": distinct_speakers.len(),
       "confidence": result.confidence,
       "filePath": path_str,
+      "memory_ingest": memory_ingest,
+      "kioku_ingest": kioku_ingest,
+      "summary": summary,
       "stub": false,
     }))
 }

@@ -104,10 +104,17 @@ export function FirstRunFlow({ ipc, onComplete }: { ipc: Ipc; onComplete: () => 
       const res = await ipc.invoke('shogun_capture_live_events', { limit: 50 });
       if (!alive) return;
       const events = (res.ok && res.data && Array.isArray(res.data.events)) ? res.data.events : [];
-      setCount(events.length);
+      // Prefer the count of captures actually persisted; fall back to the live
+      // event ring only if the backend didn't report it. Input events climb from
+      // clicks/scrolls even when nothing is stored, so they overstate progress.
+      const persisted = (res.ok && res.data && typeof res.data.persistedCaptures === 'number')
+        ? res.data.persistedCaptures as number
+        : null;
+      const shown = persisted ?? events.length;
+      setCount(shown);
       const last = events[0] as { app?: string } | undefined;
       if (last && typeof last.app === 'string' && last.app) setLastApp(last.app);
-      if (events.length === 0 && Date.now() - enteredCaptureAt.current > 60_000) setStalled(true);
+      if (shown === 0 && Date.now() - enteredCaptureAt.current > 60_000) setStalled(true);
     };
     void tick();
     const id = window.setInterval(tick, 2000);

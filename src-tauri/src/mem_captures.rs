@@ -70,6 +70,13 @@ pub fn record(input: &CaptureInput, conn: &Connection) -> Result<i64, String> {
     Ok(conn.last_insert_rowid())
 }
 
+/// Total number of raw capture rows currently stored. Cheap COUNT(*), used by
+/// onboarding to show real persisted captures (not just input events).
+pub fn count_all(conn: &Connection) -> Result<i64, String> {
+    conn.query_row("SELECT COUNT(*) FROM mem_captures", [], |r| r.get(0))
+        .map_err(|e| format!("mem_captures::count_all: {e}"))
+}
+
 /// Delete raw captures whose TTL has expired and that were never extracted
 /// (`extraction_status IN ('queued','error')`).
 ///

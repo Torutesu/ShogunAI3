@@ -10,6 +10,7 @@ import {
   initProductTelemetry,
   capture,
   captureScreenViewed,
+  captureError,
   readTelemetryOptIn,
   deviceId,
   telemetryEnabled,
@@ -58,6 +59,20 @@ describe('product-telemetry', () => {
     it('capture is a hard no-op while disabled', () => {
       expect(capture('app_opened', { app_version: '1.0.0' })).toBe(false);
       captureScreenViewed('memory');
+      captureError('render');
+      expect(posthog.capture).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('captureError', () => {
+    it('never transmits while disabled and only ever uses the scope prop', () => {
+      // Disabled by default (no key) → no network path, even for a bad scope.
+      captureError('render');
+      captureError('totally-made-up-scope');
+      expect(posthog.capture).not.toHaveBeenCalled();
+      // error_reported is allow-listed to `scope` only — a message/content prop
+      // is structurally impossible to send.
+      expect(capture('error_reported', { scope: 'render', message: 'SECRET STACK' })).toBe(false);
       expect(posthog.capture).not.toHaveBeenCalled();
     });
   });

@@ -82,7 +82,16 @@ pub async fn shogun_brief_get(
             .map(|a| a.is_empty())
             .unwrap_or(true);
     let ui = brief::normalize_brief_for_ui(&raw_brief);
-    Ok(brief::wrap_brief_get_response(ui, digest, skipped))
+    let mut resp = brief::wrap_brief_get_response(ui, digest, skipped);
+    // Surface queued-but-not-executed actions so the write-only schedule queue
+    // is visible instead of a silent sink (there is no auto-executor in v1).
+    if let Some(obj) = resp.as_object_mut() {
+        obj.insert(
+            "scheduledPending".to_string(),
+            json!(schedule_queue::pending_count()),
+        );
+    }
+    Ok(resp)
 }
 
 #[tauri::command]

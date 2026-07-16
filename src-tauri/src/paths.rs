@@ -8,7 +8,32 @@ const QUALIFIER: &str = "ai";
 const ORG: &str = "Shogun";
 const APP: &str = "ShogunAI3";
 
+#[cfg(test)]
+thread_local! {
+    static TEST_APP_DATA_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Point `app_data_dir()` at a throwaway directory for the current test thread.
+#[cfg(test)]
+pub fn set_test_app_data_dir(p: PathBuf) {
+    TEST_APP_DATA_DIR.with(|c| *c.borrow_mut() = Some(p));
+}
+
+/// Clear the per-thread `app_data_dir()` override.
+#[cfg(test)]
+pub fn clear_test_app_data_dir() {
+    TEST_APP_DATA_DIR.with(|c| *c.borrow_mut() = None);
+}
+
 pub fn app_data_dir() -> Result<PathBuf, String> {
+    #[cfg(test)]
+    {
+        if let Some(p) = TEST_APP_DATA_DIR.with(|c| c.borrow().clone()) {
+            fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+            return Ok(p);
+        }
+    }
     let dirs = ProjectDirs::from(QUALIFIER, ORG, APP)
         .ok_or_else(|| "could not resolve app data directory".to_string())?;
     let dir = dirs.data_dir().to_path_buf();

@@ -702,9 +702,16 @@ pub fn app_capture_resume(payload: Value) -> Result<Value, String> {
 #[tauri::command]
 pub fn shogun_capture_live_events(payload: Value) -> Result<Value, String> {
     let limit = payload.get("limit").and_then(|v| v.as_u64()).unwrap_or(40) as usize;
+    // Real count of captures actually persisted (not just input events, which
+    // climb from clicks/scrolls even when nothing is stored). Onboarding uses
+    // this so its "captured N fragments" counter reflects stored rows.
+    let persisted_captures = crate::memory_store::open_conn()
+        .and_then(|conn| crate::mem_captures::count_all(&conn))
+        .unwrap_or(0);
     Ok(json!({
       "events": crate::capture_events::list_recent(limit),
       "eventsPerMinute": crate::capture_events::events_last_minute(),
+      "persistedCaptures": persisted_captures,
       "stub": false,
       "echo": payload,
     }))

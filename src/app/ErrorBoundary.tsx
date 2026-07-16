@@ -1,5 +1,6 @@
 // ShogunErrorBoundary extracted from App.tsx (Phase 2 Step 11)
 import React from 'react';
+import { captureError } from '@/shared/lib/product-telemetry';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -25,6 +26,13 @@ export class ShogunErrorBoundary extends React.Component<
       ) {
         (window as any).ShogunErrorReporting.reportReactError(error, info);
       }
+    } catch (_) {
+      /* ignore */
+    }
+    // Aggregate crash signal (scope only, no message) — no-op unless the user
+    // opted into telemetry. Gives the team a crash-rate number without content.
+    try {
+      captureError('render');
     } catch (_) {
       /* ignore */
     }

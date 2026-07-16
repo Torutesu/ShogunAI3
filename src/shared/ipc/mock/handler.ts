@@ -471,9 +471,15 @@ switch (command) {
       kind: "focus",
       detail: "mock event " + (i + 1),
     }));
+    // Onboarding reads persistedCaptures (real stored rows). Mirror the fake
+    // event count unless the hook overrides it explicitly.
+    const persisted = ovr.persistedCaptures != null
+      ? Math.max(0, Number(ovr.persistedCaptures) || 0)
+      : n;
     return {
       events,
       eventsPerMinute: n,
+      persistedCaptures: persisted,
       stub: false,
       echo: echo,
     };

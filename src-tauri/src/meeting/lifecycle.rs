@@ -112,6 +112,15 @@ pub async fn persist_meeting_stop(
         }
     }
     meeting_store::meeting_stop(meeting_id, ended)?;
+    ingest_after_stop(meeting_id).await
+}
+
+/// Post-stop ingest shared by live recordings and file imports: optional
+/// summary, then Memory + KIOKU ingest. Assumes the meeting row is already
+/// stopped and its transcript segments persisted. Extracting this is what lets
+/// imported meetings reach Memory/KIOKU — previously the import path called
+/// `meeting_store::meeting_stop` directly and skipped all of this.
+pub async fn ingest_after_stop(meeting_id: &str) -> Result<Value, String> {
     let detail = meeting_store::get_meeting_detail(meeting_id)?
         .ok_or_else(|| "meeting not found".to_string())?;
 
@@ -265,9 +274,61 @@ pub fn spawn_inactivity_watcher(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::memory_store::testkit::TestDbGuard;
 
     #[test]
     fn inactivity_timeout_defaults_to_15_minutes() {
         assert_eq!(inactivity_timeout_ms(), 15 * 60_000);
+    }
+
+    #[tokio::test]
+    async fn ingest_after_stop_routes_meeting_into_memory_and_kioku() {
+        let _g = TestDbGuard::new("mtg-ingest-after-stop");
+        // Initialize the full memory_store schema first (mem_items + its unique
+        // index) so the meeting-store path doesn't create a partial mem_items
+        // table that the upsert's ON CONFLICT can't target.
+        let _ = crate::memory_store::open_conn().expect("init memory schema");
+        // Disable the LLM summary so the test never makes a real network call
+        // (a dev machine may have a real key in the keychain). Memory + KIOKU
+        // ingest — the behavior under test — don't need a key.
+        let _sg = crate::settings_store::TestSettingsGuard::new("mtg-ingest-after-stop");
+        crate::settings_store::save_patch(&serde_json::json!({
+            "section": "memory",
+            "enableMemorySummary": false,
+        }))
+        .expect("disable summary");
+        let id = "mtg-import-1";
+        meeting_store::meeting_insert(id, 1_000_000, None, None, Some("Imported call"), None)
+            .expect("insert meeting");
+        meeting_store::insert_transcript_segment(
+            id,
+            &format!("{id}_seg0"),
+            0,
+            5_000,
+            "speaker_0",
+            "We agreed to ship the beta on Friday.",
+            Some(0.98),
+            true,
+        )
+        .expect("insert segment");
+        meeting_store::meeting_stop(id, 1_005_000).expect("stop");
+
+        // This is the exact path the import flow now takes (previously import
+        // called meeting_store::meeting_stop directly and skipped all of this).
+        // Summary needs an LLM key (disabled above); Memory + KIOKU do not.
+        let out = ingest_after_stop(id).await.expect("ingest");
+
+        // KIOKU ingest is the decisive proof the import now routes through the
+        // shared post-stop path: a queued extraction job + mem_capture appear,
+        // which never happened for imports before this fix.
+        let kioku = out.get("kioku_ingest").cloned().unwrap_or(Value::Null);
+        assert!(!kioku.is_null(), "imported meeting must reach KIOKU, got: {out}");
+        assert!(
+            kioku.get("capture_id").and_then(|v| v.as_i64()).unwrap_or(0) > 0,
+            "KIOKU ingest must create a mem_capture, got: {out}"
+        );
+        // The response always carries a memory_ingest slot (its value depends on
+        // the shared upsert path, exercised by the live-recording tests).
+        assert!(out.get("memory_ingest").is_some(), "memory_ingest slot present");
     }
 }
