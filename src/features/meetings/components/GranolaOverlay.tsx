@@ -1,4 +1,5 @@
 import { Icon } from '@/shared/icons';
+import { t } from '@/shared/lib/i18n';
 import { GranolaPillMenu } from './GranolaOverlay/GranolaPillMenu';
 import { GranolaTopPanels } from './GranolaOverlay/GranolaTopPanels';
 import { MeetingPermissionBanner } from './MeetingPermissionBanner';
@@ -294,7 +295,7 @@ export function GranolaOverlay() {
                         role="menuitem"
                         onClick={function () {
                           setGranolaEnhanceMenuOpen(false);
-                          toastM((tpl.en) + ' テンプレートで生成（モック）', 'info');
+                          toastM((tpl.en) + t(' — generated from template (mock)', ' テンプレートで生成（モック）'), 'info');
                         }}
                         style={{
                           display: 'flex',
@@ -326,7 +327,7 @@ export function GranolaOverlay() {
                     role="menuitem"
                     onClick={function () {
                       setGranolaEnhanceMenuOpen(false);
-                      toastM('テンプレート一覧（モック）', 'info');
+                      toastM(t('Template list (mock)', 'テンプレート一覧（モック）'), 'info');
                     }}
                     style={{
                       display: 'flex',
@@ -353,7 +354,7 @@ export function GranolaOverlay() {
                     role="menuitem"
                     onClick={function () {
                       setGranolaEnhanceMenuOpen(false);
-                      toastM('新規テンプレートの作成（モック）', 'info');
+                      toastM(t('Create a new template (mock)', '新規テンプレートの作成（モック）'), 'info');
                     }}
                     style={{
                       display: 'flex',

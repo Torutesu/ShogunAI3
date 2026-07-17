@@ -1,5 +1,6 @@
 import { Icon, IntegrationLogo } from '@/shared/icons';
 import { toastM } from '../../lib/runtime';
+import { t } from '@/shared/lib/i18n';
 
 export interface GranolaTopPanelsProps {
   granola: any;
@@ -86,7 +87,7 @@ export function GranolaTopPanels(p: GranolaTopPanelsProps) {
               type="button"
               disabled={!/\S+@\S+\.\S+/.test(mtgShareSearch)}
               onClick={function () {
-                toastM('招待の送信はクラウド共有 API 接続後に有効になります（現在はローカル Hi-Fi）', 'info');
+                toastM(t('Sending invites becomes available once cloud sharing is connected (currently local only)', '招待の送信はクラウド共有 API 接続後に有効になります（現在はローカル Hi-Fi）'), 'info');
               }}
               style={{
                 padding: '10px 14px',

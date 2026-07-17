@@ -1,6 +1,7 @@
 import { Icon } from '@/shared/icons';
 import { MEETINGS_DOCK_SLASH_CATALOG } from '../lib/runtime';
 import { toastM } from '../lib/runtime';
+import { t } from '@/shared/lib/i18n';
 
 export interface MtgChatDockProps {
   meetingsPrompt: string;
@@ -146,8 +147,8 @@ export function MtgChatDock({
                     };
                   }
                   runRuntimeAction('draft.create', payload, { silentError: true }).then(function (r: any) {
-                    if (r && r.ok) toastM('下書きを生成しました（モック）', 'success');
-                    else toastM((r && r.error && r.error.message) || '下書きできませんでした', 'warn');
+                    if (r && r.ok) toastM(t('Draft generated (mock)', '下書きを生成しました（モック）'), 'success');
+                    else toastM((r && r.error && r.error.message) || t('Could not produce a draft', '下書きできませんでした'), 'warn');
                   });
                 }}><Icon name="paperclip" size={13}/></button>
                 <button

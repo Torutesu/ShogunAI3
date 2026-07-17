@@ -14,17 +14,26 @@ const PLANNED_OAUTH_PROVIDERS = [
   { slug: 'github', title: 'GitHub' },
   { slug: 'linear', title: 'Linear' },
   { slug: 'zoom', title: 'Zoom' },
-  { slug: 'google_drive', title: 'Google Drive' },
   { slug: 'outlook', title: 'Outlook' },
+  { slug: 'google_drive', title: 'Google Drive' },
   { slug: 'claude', title: 'Claude' },
   { slug: 'figma', title: 'Figma' },
   { slug: 'zapier_mcp', title: 'Zapier MCP' },
 ] as const;
 
 // Providers with a working token-import backend + paste-token UI. These get a
-// real Connect (paste an access token) instead of "Coming soon". OAuth-only or
-// modal-less providers stay disabled until their flow lands.
-const TOKEN_IMPORT_PROVIDERS = new Set<string>(['slack', 'notion', 'github', 'linear', 'zoom']);
+// real Connect (paste an access token) instead of "Coming soon".
+//
+// Deliberately excluded despite `supports_token_import` accepting them:
+//   figma  — sync only writes a "Figma connected" heartbeat and tells you to add
+//            file keys in Settings; that setting has no UI (sections.figma.fileKeys).
+//   claude — pulls nothing from Claude; it ingests notes pasted into
+//            sections.claude.notes, which likewise has no UI.
+// Unlocking either would ship a Connect button that promises a sync that never
+// happens. Build the config UI first, then move them here.
+const TOKEN_IMPORT_PROVIDERS = new Set<string>([
+  'slack', 'notion', 'github', 'linear', 'zoom', 'outlook',
+]);
 
 export function PaneIntegrations() {
   const { run } = useRuntimeActions();

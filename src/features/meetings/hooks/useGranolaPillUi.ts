@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type MouseEvent } from 'react';
 import { toastM } from '../lib/runtime';
+import { t } from '@/shared/lib/i18n';
 
 export function useGranolaPillUi(): {
   granolaPillMenu: { kind: string; anchor: { left: number; top: number; width: number } } | null;
@@ -54,7 +55,7 @@ export function useGranolaPillUi(): {
   }, [openGranolaPillMenu]);
 
   const addCalendarEvent = useCallback(() => {
-    toastM('カレンダーイベントのリンクは設定から有効化できます（モック）', 'info');
+    toastM(t('Linking calendar events can be enabled in Settings (mock)', 'カレンダーイベントのリンクは設定から有効化できます（モック）'), 'info');
   }, []);
 
   const showGranolaDateInfo = useCallback((ev: MouseEvent) => {
@@ -93,12 +94,12 @@ export function useGranolaPillUi(): {
   const addNewFolder = useCallback(() => {
     const base = (granolaFolderQuery || '').trim();
     if (!base) {
-      toastM('新しいフォルダ名を入力してください', 'info');
+      toastM(t('Enter a name for the new folder', '新しいフォルダ名を入力してください'), 'info');
       return;
     }
     setGranolaFolderList((list) => (list.indexOf(base) >= 0 ? list : list.concat([base])));
     setGranolaFolder(base);
-    toastM(`フォルダを作成しました: ${base}`, 'success');
+    toastM(t(`Folder created: ${base}`, `フォルダを作成しました: ${base}`), 'success');
     setGranolaFolderQuery('');
     setGranolaPillMenu(null);
   }, [granolaFolderQuery]);

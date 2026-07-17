@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRe
 import { MeetingMediaRecording } from '@/shared/lib/meeting-media-recording';
 import { emitMeetingHud, clearMeetingHud } from '@/shared/lib/meeting-hud-events';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { t } from '@/shared/lib/i18n';
 import { useMeetingScreenCapturePermission } from './useMeetingScreenCapturePermission';
 import { formatLiveTranscript, isNativeDesktop, toastM } from '../lib/runtime';
 
@@ -219,7 +220,7 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
 
   useEffect(() => {
     if (!grantedChangedToTrue) return;
-    toastM('画面収録が許可されました。録音を開始できます', 'success');
+    toastM(t('Screen Recording granted — you can start recording', '画面収録が許可されました。録音を開始できます'), 'success');
     void refreshScreenCapturePermission();
   }, [grantedChangedToTrue, refreshScreenCapturePermission]);
 
@@ -283,7 +284,7 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
       }
     }
     if (!opts?.silent) {
-      toastM('会議を保存して終了しました', 'success');
+      toastM(t('Meeting saved and ended', '会議を保存して終了しました'), 'success');
     }
     try {
       window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
@@ -314,7 +315,7 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
         }
       });
       const reasonLabel = p.reason === 'video_ended' ? 'ビデオ通話終了' : '無活動';
-      toastM(`会議を自動終了しました（${reasonLabel}）`, 'info');
+      toastM(t(`Meeting ended automatically (${reasonLabel})`, `会議を自動終了しました（${reasonLabel}）`), 'info');
       try {
         window.dispatchEvent(new CustomEvent('shogun-meeting-recording-ended'));
       } catch {
@@ -346,22 +347,22 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
       const sysOn = !!(statusRes?.ok && statusData?.system_audio_running);
       setSystemAudioRunning(sysOn);
       if (captureSystem && sysOn) {
-        toastM('録音を開始しました（マイク + 相手の声）', 'success');
+        toastM(t('Recording started (mic + other participants)', '録音を開始しました（マイク + 相手の声）'), 'success');
       } else if (captureSystem && !sysOn) {
-        toastM('マイク録音を開始しました（相手の声は画面収録の許可が必要です）', 'info');
+        toastM(t('Mic recording started — capturing other participants needs Screen Recording permission', 'マイク録音を開始しました（相手の声は画面収録の許可が必要です）'), 'info');
       } else {
-        toastM('マイクのみで録音を開始しました', 'success');
+        toastM(t('Recording started (mic only)', 'マイクのみで録音を開始しました'), 'success');
       }
       // Honest signal: without a Deepgram key the audio records but is never
       // transcribed (and stop-time PCM is discarded). Don't let that be silent.
       const brData = br?.data as { transcription_available?: boolean } | undefined;
       if (brData && brData.transcription_available === false) {
-        toastM('文字起こしはオフです（録音のみ）。設定で Deepgram キーを追加すると文字起こしされます', 'warn');
+        toastM(t('Transcription is off — recording audio only. Add a Deepgram key in Settings to get transcripts.', '文字起こしはオフです（録音のみ）。設定で Deepgram キーを追加すると文字起こしされます'), 'warn');
       }
       return true;
     }
     const err = br && typeof br === 'object' && 'error' in br ? (br as { error?: unknown }).error : null;
-    toastM(String(err || 'バックエンド録音の開始に失敗しました'), 'error');
+    toastM(String(err || t('Could not start recording', 'バックエンド録音の開始に失敗しました')), 'error');
     return false;
   }, [granolaRef, linkClientNoteToStorage, setGranolaPane]);
 
@@ -370,13 +371,13 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
     if (granola.backendMeetingId && isNativeDesktop()) {
       if (backendRecActive) return;
       if (screenCaptureGranted === false) {
-        toastM('相手の声を録音するには画面収録の許可が必要です', 'warn');
+        toastM(t('Recording other participants needs Screen Recording permission', '相手の声を録音するには画面収録の許可が必要です'), 'warn');
         return;
       }
       if (screenCaptureGranted !== true) {
         const granted = await refreshScreenCapturePermission();
         if (!granted) {
-          toastM('相手の声を録音するには画面収録の許可が必要です', 'warn');
+          toastM(t('Recording other participants needs Screen Recording permission', '相手の声を録音するには画面収録の許可が必要です'), 'warn');
           return;
         }
       }
@@ -386,7 +387,7 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
     const M = MeetingMediaRecording;
     if (M?.isBusyRecordingOrStarting?.()) return;
     if (!M?.start) {
-      toastM('録音モジュールが読み込まれていません', 'error');
+      toastM(t('The recording module is not loaded', '録音モジュールが読み込まれていません'), 'error');
       return;
     }
     const r = await M.start({
@@ -444,7 +445,7 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
     if (M?.stop) {
       M.stop();
     } else {
-      toastM('録音モジュールが読み込まれていません', 'error');
+      toastM(t('The recording module is not loaded', '録音モジュールが読み込まれていません'), 'error');
     }
   }, [granola, backendRecActive, finalizeBackendMeeting]);
 

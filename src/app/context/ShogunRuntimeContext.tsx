@@ -1,3 +1,4 @@
+import { t } from '@/shared/lib/i18n';
 import React, {
   createContext,
   useCallback,
@@ -190,7 +191,7 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
       if (!n) return null;
       const id = `w-${Date.now()}`;
       setWorkProjects((prev) => [...prev, { id, name: n }]);
-      pushToast(`Workspaceを作成: ${n}`, 'success');
+      pushToast(t(`Workspace created: ${n}`, `Workspaceを作成: ${n}`), 'success');
       return id;
     },
     renameWorkProject: (projectId: string, nextName: string) => {
@@ -201,7 +202,7 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
       setChats((prev) => prev.map((c) => (
         c.workProjectId === id ? { ...c, workProjectName: name } : c
       )));
-      pushToast(`Work名を変更: ${name}`, 'success');
+      pushToast(t(`Work renamed: ${name}`, `Work名を変更: ${name}`), 'success');
       return true;
     },
     deleteWorkProject: (projectId: string) => {
@@ -213,7 +214,7 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
           ? { ...c, workProjectId: null, workProjectName: null }
           : c
       )));
-      pushToast('Workプロジェクトを削除しました', 'success');
+      pushToast(t('Work project deleted', 'Workプロジェクトを削除しました'), 'success');
       return true;
     },
     archiveWorkProject: (projectId: string, archivedOn?: boolean) => {
@@ -223,7 +224,7 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
       setWorkProjects((prev) => prev.map((p) => (
         p.id === id ? { ...p, archived: on } : p
       )));
-      pushToast(on ? 'Workプロジェクトをアーカイブしました' : 'Workプロジェクトを復元しました', 'success');
+      pushToast(on ? t('Work project archived', 'Workプロジェクトをアーカイブしました') : t('Work project restored', 'Workプロジェクトを復元しました'), 'success');
       return true;
     },
     moveWorkProject: (projectId: string, direction: number) => {
@@ -244,7 +245,7 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
         moved = true;
         return out;
       });
-      if (moved) pushToast('Workプロジェクトの順序を更新しました', 'success');
+      if (moved) pushToast(t('Work project order updated', 'Workプロジェクトの順序を更新しました'), 'success');
       return moved;
     },
     __activeChatId: activeChat,
@@ -270,7 +271,11 @@ export function useBuildShogunRuntime(deps: BuildShogunRuntimeDeps): BuildShogun
     },
     openPasteToken: (provider: string) => {
       const p = String(provider || '').trim();
-      const allowed = new Set(['slack', 'notion', 'github', 'linear', 'zoom']);
+      // Providers whose connector ingests real data AND that PasteTokenModal has
+      // copy for. Figma/Claude are deliberately absent: their sync only writes a
+      // "connected" heartbeat and points at a file-keys/notes setting that has no
+      // UI, so a Connect button would promise something that never happens.
+      const allowed = new Set(['slack', 'notion', 'github', 'linear', 'zoom', 'outlook']);
       if (!allowed.has(p)) return false;
       setPasteTokenModal({ provider: p, token: '', busy: false });
       return true;

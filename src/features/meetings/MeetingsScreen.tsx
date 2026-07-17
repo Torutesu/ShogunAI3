@@ -16,6 +16,7 @@ import { useGranolaNoteActions } from './hooks/useGranolaNoteActions';
 import { GranolaOverlayProvider } from './context/GranolaOverlayContext';
 import type { GranolaOverlayContextValue } from './context/GranolaOverlayContext';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { t } from '@/shared/lib/i18n';
 import {
   mnl,
   toastM,
@@ -242,9 +243,9 @@ export function MeetingsScreen() {
       if (isNativeDesktop()) {
         void linkClientNoteToStorage(meetingId, storageKey);
       }
-      toastM('ビデオ会議を検知—会議ノートを開きました', 'success');
+      toastM(t('Video meeting detected — opened a meeting note', 'ビデオ会議を検知—会議ノートを開きました'), 'success');
     } else {
-      toastM('\u4e88\u5b9a\u304b\u3089\u30df\u30fc\u30c6\u30a3\u30f3\u30b0\u3092\u691c\u77e5\u3057\u307e\u3057\u305f\uff08\u8b70\u4e8b\u9332\uff09', 'success');
+      toastM(t('Meeting detected from your calendar (minutes)', '予定からミーティングを検知しました（議事録）'), 'success');
     }
   }, [linkClientNoteToStorage]);
 
@@ -413,7 +414,7 @@ export function MeetingsScreen() {
       time: null,
     });
     void runRuntimeAction('brief.get', briefPayloadWithUserTz({ span:'today', recipe: recipe.label, source:'meetings_local_recipe' }), { silentError:true });
-    toastM('\u30ed\u30fc\u30ab\u30eb\u30c6\u30f3\u30d7\u3092\u958b\u304d\u307e\u3057\u305f\uff08\u30dc\u30c3\u30c8\u672a\u4f7f\u7528\uff09', 'success');
+    toastM(t('Opened a local template (no bot used)', 'ローカルテンプを開きました（ボット未使用）'), 'success');
   }, []);
 
   const closeGranola = useCallback(async function () {
@@ -581,7 +582,7 @@ export function MeetingsScreen() {
     if (raw.startsWith('/')) {
       var rest = raw.slice(1).trim();
       if (!rest) {
-        toastM('\u30b3\u30de\u30f3\u30c9\u3092\u9078\u629e\u3059\u308b\u304b\u3001/\u306e\u5f8c\u306b\u691c\u7d22\u8a9e\u3092\u5165\u529b\u3057\u3066\u9001\u4fe1\u3057\u3066\u304f\u3060\u3055\u3044', 'info');
+        toastM(t('Pick a command, or type a search term after / and send', 'コマンドを選択するか、/の後に検索語を入力して送信してください'), 'info');
         return;
       }
       raw = rest;

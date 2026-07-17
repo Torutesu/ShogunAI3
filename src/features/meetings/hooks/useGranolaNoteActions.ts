@@ -1,5 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
+import { t } from '@/shared/lib/i18n';
 import {
   mnl,
   toastM,
@@ -67,7 +68,7 @@ export function useGranolaNoteActions(params: {
       ...d,
       transcript: d.transcript ? d.transcript + '\n\n' + tx : tx,
     }));
-    toastM('テンプレの文字起こしを挿入しました', 'success');
+    toastM(t('Inserted the transcript template', 'テンプレの文字起こしを挿入しました'), 'success');
   }, [granola, granolaMeta, setGranolaDraft]);
 
   const refreshSummary = useCallback(() => {
@@ -77,7 +78,7 @@ export function useGranolaNoteActions(params: {
     const sum = L.summarizeLocal(src, granolaMeta());
     setGranolaDraft((d) => ({ ...d, summary: sum }));
     setGranolaPane('summary');
-    toastM('要約を更新しました（ルールベース）', 'success');
+    toastM(t('Summary updated (rule-based)', '要約を更新しました（ルールベース）'), 'success');
   }, [granola, granolaMeta, granolaDraft.transcript, granolaDraft.body, setGranolaDraft, setGranolaPane]);
 
   const refreshMinutes = useCallback(() => {
@@ -91,7 +92,7 @@ export function useGranolaNoteActions(params: {
     );
     setGranolaDraft((d) => ({ ...d, minutes: md }));
     setGranolaPane('minutes');
-    toastM('議事録を生成しました（テンプレート）', 'success');
+    toastM(t('Minutes generated (template)', '議事録を生成しました（テンプレート）'), 'success');
   }, [granola, granolaMeta, granolaDraft, setGranolaDraft, setGranolaPane]);
 
   const runMtgEnhance = useCallback(async () => {
@@ -117,11 +118,11 @@ export function useGranolaNoteActions(params: {
       if (md && String(md).trim()) {
         setGranolaDraft((d) => ({ ...d, minutes: String(md) }));
         setGranolaPane('minutes');
-        toastM('AI 議事録を反映しました', 'success');
+        toastM(t('AI minutes applied', 'AI 議事録を反映しました'), 'success');
         return;
       }
       refreshMinutes();
-      toastM('ルールベースの議事録を生成しました（本番 AI はデスクトップ版）', 'info');
+      toastM(t('Generated rule-based minutes (AI minutes need the desktop app)', 'ルールベースの議事録を生成しました（本番 AI はデスクトップ版）'), 'info');
     } finally {
       setMtgEnhanceBusy(false);
     }
@@ -160,7 +161,7 @@ export function useGranolaNoteActions(params: {
         const sep = (d.body || '').trim() ? '\n\n' : '';
         return { ...d, body: (d.body || '') + sep + block };
       });
-      toastM('テンプレートをメモに挿入しました', 'success');
+      toastM(t('Template inserted into your note', 'テンプレートをメモに挿入しました'), 'success');
       setPostRecWaveMenuOpen(false);
     },
     [granola, setGranolaDraft, setGranolaPane, setPostRecWaveMenuOpen],
@@ -189,7 +190,7 @@ export function useGranolaNoteActions(params: {
           return { ...d, body: (d.body || '') + sep + text };
         });
         setGranolaPane(target === 'summary' ? 'summary' : 'memo');
-        toastM('レシピを実行しました', 'success');
+        toastM(t('Recipe finished', 'レシピを実行しました'), 'success');
         return;
       }
       injectRecipeIntoMemoLocal(recipeLabel);
@@ -209,7 +210,7 @@ export function useGranolaNoteActions(params: {
     setGranolaMenuOpen(false);
     setGranola(null);
     setListTick((x) => x + 1);
-    toastM('ゴミ箱に移しました（ローカル）', 'success');
+    toastM(t('Moved to trash (local)', 'ゴミ箱に移しました（ローカル）'), 'success');
   }, [granola, setGranola, setGranolaMenuOpen, setListTick, setMtgTopShareOpen]);
 
   const mtgDraftEmail = useCallback(() => {
@@ -229,18 +230,18 @@ export function useGranolaNoteActions(params: {
       const c = r && r.ok && r.data && r.data.content;
       if (c && navigator.clipboard && navigator.clipboard.writeText) {
         void navigator.clipboard.writeText(c).then(
-          () => toastM('メール下書きをクリップボードにコピーしました', 'success'),
-          () => toastM('下書きは取得できましたがコピーに失敗しました', 'warn'),
+          () => toastM(t('Email draft copied to clipboard', 'メール下書きをクリップボードにコピーしました'), 'success'),
+          () => toastM(t('Draft ready, but copying to the clipboard failed', '下書きは取得できましたがコピーに失敗しました'), 'warn'),
         );
         return;
       }
       if (c) {
-        toastM('クリップボードが利用できません', 'warn');
+        toastM(t('Clipboard is unavailable', 'クリップボードが利用できません'), 'warn');
         return;
       }
       const errMsg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
       toastM(
-        errMsg ? 'メール下書きに失敗しました — ' + errMsg : 'メール下書きを取得できませんでした',
+        errMsg ? t('Email draft failed — ', 'メール下書きに失敗しました — ') + errMsg : t('Could not produce an email draft', 'メール下書きを取得できませんでした'),
         'warn',
       );
     });
@@ -251,13 +252,13 @@ export function useGranolaNoteActions(params: {
       .filter(Boolean)
       .join('\n\n');
     if (!blob.trim()) {
-      toastM('コピーするテキストがありません', 'info');
+      toastM(t('Nothing to copy', 'コピーするテキストがありません'), 'info');
       return;
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       void navigator.clipboard.writeText(blob).then(
-        () => toastM('テキストをコピーしました', 'success'),
-        () => toastM('コピーに失敗しました', 'warn'),
+        () => toastM(t('Copied to clipboard', 'テキストをコピーしました'), 'success'),
+        () => toastM(t('Copy failed', 'コピーに失敗しました'), 'warn'),
       );
     }
   }, [granolaDraft]);
@@ -270,7 +271,7 @@ export function useGranolaNoteActions(params: {
     let n = 0;
     if (L && L.countOccurrences) n = L.countOccurrences(text, q);
     else if (q) n = Math.max(0, text.toLowerCase().split(q.toLowerCase()).length - 1);
-    toastM(`「${q}」→ このノート内 ${n} 件一致（ローカル検索）`, n ? 'success' : 'info');
+    toastM(t(`"${q}" — ${n} match(es) in this note (local search)`, `「${q}」→ このノート内 ${n} 件一致（ローカル検索）`), n ? 'success' : 'info');
   }, [granolaAsk, granolaDraft]);
 
   const listLocalTodos = useCallback(() => {
@@ -278,7 +279,7 @@ export function useGranolaNoteActions(params: {
     const blob = [granolaDraft.body, granolaDraft.transcript, granolaDraft.summary, granolaDraft.minutes].join('\n');
     const todos = L ? L.extractTodos(blob) : [];
     setGranolaTodos(todos);
-    toastM(`ToDo ${todos.length} 件（ローカル抽出・ボット未使用）`, todos.length ? 'success' : 'info');
+    toastM(t(`${todos.length} to-do(s) found (extracted locally, no bot)`, `ToDo ${todos.length} 件（ローカル抽出・ボット未使用）`), todos.length ? 'success' : 'info');
   }, [granolaDraft, setGranolaTodos]);
 
   const injectRecipeIntoMemo = useCallback(

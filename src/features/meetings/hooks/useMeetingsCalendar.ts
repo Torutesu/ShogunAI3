@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { t } from '@/shared/lib/i18n';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { MEETINGS_COMING_UP_STORAGE, toastM } from '../lib/runtime';
 
@@ -43,7 +44,7 @@ export function useMeetingsCalendar(): any[] {
       if (!r || !r.ok) {
         const errMsg = r && r.error && typeof r.error.message === 'string' ? r.error.message : '';
         if (errMsg && errMsg.indexOf('not configured') < 0) {
-          toastM(`カレンダー同期に失敗しました — ${errMsg}`, 'warn');
+          toastM(t(`Calendar sync failed — ${errMsg}`, `カレンダー同期に失敗しました — ${errMsg}`), 'warn');
         }
         return;
       }

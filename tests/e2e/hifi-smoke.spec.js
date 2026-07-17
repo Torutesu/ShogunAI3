@@ -270,10 +270,11 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
     await expect(page.locator(".s-pane-head")).toContainText("Integrations");
 
-    // Outlook has no token-import path yet, so it stays disabled.
+    // Figma's connector only writes a "connected" heartbeat (no config UI for
+    // file keys), so it stays honestly disabled.
     await expect(page
       .locator(".s-card")
-      .filter({ hasText: "Outlook" })
+      .filter({ hasText: "Figma" })
       .getByRole("button", { name: "Coming soon" }))
       .toBeDisabled();
 

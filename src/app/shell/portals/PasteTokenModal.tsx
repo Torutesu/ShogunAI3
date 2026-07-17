@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import * as ReactDOM from 'react-dom';
 
 export interface PasteTokenModalProps {
@@ -7,6 +7,41 @@ export interface PasteTokenModalProps {
   onTokenChange: (token: string) => void;
   onSave: () => void;
 }
+
+/**
+ * Per-provider title + token help. Data-driven so adding a provider is one entry
+ * (the old nested ternary fell through to "Connect GitHub" for anything unknown,
+ * which mislabeled the dialog).
+ *
+ * Only list providers whose connector actually ingests something real — see
+ * `integrations::supports_token_import` for the backend set.
+ */
+const PROVIDER_TOKEN_HELP: Record<string, { title: string; help: ReactNode }> = {
+  slack: {
+    title: 'Connect Slack',
+    help: <>Paste a Slack Bot token (<code>xoxb-…</code>) or User token (<code>xoxp-…</code>). Required scopes: <code>channels:history</code>, <code>groups:history</code>, <code>im:history</code>, <code>channels:read</code>.</>,
+  },
+  notion: {
+    title: 'Connect Notion',
+    help: <>Paste a Notion <em>Internal Integration Token</em> (<code>ntn_…</code> / <code>secret_…</code>). Share each page/database with the integration from Notion.</>,
+  },
+  github: {
+    title: 'Connect GitHub',
+    help: <>Paste a GitHub Personal Access Token. Recommended scopes: <code>repo</code>, <code>read:user</code>. Fine-grained PATs work too with read permissions on your repos.</>,
+  },
+  linear: {
+    title: 'Connect Linear',
+    help: <>Paste a Linear <em>Personal API Key</em> (starts with <code>lin_api_…</code>) from Linear → Settings → API, or a Linear OAuth access token.</>,
+  },
+  zoom: {
+    title: 'Connect Zoom',
+    help: <>Paste a Zoom OAuth access token. Required scope: <code>cloud_recording:read</code> (User OAuth) or the Server-to-Server equivalent. Only cloud-recorded meetings are accessible.</>,
+  },
+  outlook: {
+    title: 'Connect Outlook',
+    help: <>Paste a Microsoft Graph access token. Required scope: <code>Mail.Read</code> (add <code>offline_access</code> for refresh). Create one from an Azure app registration; your recent mail is read into Memory.</>,
+  },
+};
 
 export function PasteTokenModal(props: PasteTokenModalProps) {
   const tokenInputRef = useRef<HTMLInputElement>(null);
@@ -18,6 +53,8 @@ export function PasteTokenModal(props: PasteTokenModalProps) {
 
   if (!props.pasteTokenModal) return null;
   const { pasteTokenModal } = props;
+  const meta = PROVIDER_TOKEN_HELP[pasteTokenModal.provider];
+  if (!meta) return null;
   return ReactDOM.createPortal(
     <div
       style={{
@@ -44,29 +81,9 @@ export function PasteTokenModal(props: PasteTokenModalProps) {
         }}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div style={{fontSize:16, fontWeight:500, marginBottom:6}}>
-          {pasteTokenModal.provider === 'slack'
-            ? 'Connect Slack'
-            : pasteTokenModal.provider === 'notion'
-              ? 'Connect Notion'
-              : pasteTokenModal.provider === 'linear'
-                ? 'Connect Linear'
-                : pasteTokenModal.provider === 'zoom'
-                  ? 'Connect Zoom'
-                  : 'Connect GitHub'}
-        </div>
+        <div style={{fontSize:16, fontWeight:500, marginBottom:6}}>{meta.title}</div>
         <div style={{fontSize:12, color:'var(--text-mute)', lineHeight:1.55, marginBottom:14}}>
-          {pasteTokenModal.provider === 'slack' ? (
-            <>Paste a Slack Bot token (<code>xoxb-…</code>) or User token (<code>xoxp-…</code>). Required scopes: <code>channels:history</code>, <code>groups:history</code>, <code>im:history</code>, <code>channels:read</code>.</>
-          ) : pasteTokenModal.provider === 'notion' ? (
-            <>Paste a Notion <em>Internal Integration Token</em> (<code>ntn_…</code> / <code>secret_…</code>). Share each page/database with the integration from Notion.</>
-          ) : pasteTokenModal.provider === 'linear' ? (
-            <>Paste a Linear <em>Personal API Key</em> (starts with <code>lin_api_…</code>) from Linear → Settings → API, or a Linear OAuth access token.</>
-          ) : pasteTokenModal.provider === 'zoom' ? (
-            <>Paste a Zoom OAuth access token. Required scope: <code>cloud_recording:read</code> (User OAuth) or the Server-to-Server equivalent. Only cloud-recorded meetings are accessible.</>
-          ) : (
-            <>Paste a GitHub Personal Access Token. Recommended scopes: <code>repo</code>, <code>read:user</code>. Fine-grained PATs work too with read permissions on your repos.</>
-          )}
+          {meta.help}
         </div>
 
         <label htmlFor="paste-token-input" style={{display:'block', fontSize:11, color:'var(--text-dim)', marginBottom:4}}>Token</label>

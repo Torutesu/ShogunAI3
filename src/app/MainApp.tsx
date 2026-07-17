@@ -4,6 +4,7 @@
 // Handler bundles extracted to custom hooks (Phase 7 Step 1).
 // Runtime context, event bus, and portal cluster extracted (Phase 5 Step 2).
 import './MainApp.css';
+import { t } from '@/shared/lib/i18n';
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense } from 'react';
 
 const ScreenHome = lazy(() => import('@/features/home').then(m => ({ default: m.ScreenHome })));
@@ -675,15 +676,15 @@ export function MainApp(): React.ReactElement {
         window.dispatchEvent(new CustomEvent('shogun-meetings-changed'));
       } catch { /* ignore */ }
       if (r.ok) {
-        pushToast('会議を保存して終了しました', 'success');
+        pushToast(t('Meeting saved and ended', '会議を保存して終了しました'), 'success');
       } else {
-        pushToast(String(r.error || '会議の停止に失敗しました'), 'error');
+        pushToast(String(r.error || t('Could not stop the meeting', '会議の停止に失敗しました')), 'error');
       }
       return;
     }
     const M = MeetingMediaRecording;
     if (!M || typeof M.stop !== 'function') {
-      pushToast('録音モジュールが読み込まれていません', 'warn');
+      pushToast(t('The recording module is not loaded', '録音モジュールが読み込まれていません'), 'warn');
       setMeetingHud(null);
       return;
     }
@@ -723,7 +724,7 @@ export function MainApp(): React.ReactElement {
             if (r.ok && r.data?.ok) {
               setBioGate((g) => ({ ...g, open: false }));
             } else {
-              pushToast(String(r.data?.message || '認証に失敗しました'), 'error');
+              pushToast(String(r.data?.message || t('Authentication failed', '認証に失敗しました')), 'error');
             }
           }}
         />

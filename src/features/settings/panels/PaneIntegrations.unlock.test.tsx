@@ -34,17 +34,28 @@ describe('PaneIntegrations — token-import providers unlocked', () => {
     expect(openPasteToken).toHaveBeenCalledWith('slack');
   });
 
-  it('unlocks all five token-import providers', () => {
+  it('unlocks every provider whose connector ingests real data', () => {
     mount();
-    for (const title of ['Slack', 'Notion', 'GitHub', 'Linear', 'Zoom']) {
+    for (const title of ['Slack', 'Notion', 'GitHub', 'Linear', 'Zoom', 'Outlook']) {
       const row = providerRow(title);
       expect(within(row).getByRole('button', { name: 'Connect' })).toBeEnabled();
     }
   });
 
-  it('keeps OAuth-only providers (e.g. Outlook) as Coming soon', () => {
+  it('keeps Figma and Claude locked — their sync only writes a heartbeat', () => {
+    // Both are accepted by the backend's supports_token_import, but their sync
+    // ingests nothing real and points at a setting with no UI. "Coming soon" is
+    // the honest label until that config UI exists.
     mount();
-    const row = providerRow('Outlook');
+    for (const title of ['Figma', 'Claude']) {
+      const row = providerRow(title);
+      expect(within(row).getByRole('button', { name: 'Coming soon' })).toBeDisabled();
+    }
+  });
+
+  it('keeps OAuth-only providers (e.g. Google Drive) as Coming soon', () => {
+    mount();
+    const row = providerRow('Google Drive');
     expect(within(row).getByRole('button', { name: 'Coming soon' })).toBeDisabled();
   });
 });

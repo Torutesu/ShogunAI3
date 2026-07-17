@@ -1,4 +1,5 @@
 import { useCallback, useEffect } from 'react';
+import { t } from '@/shared/lib/i18n';
 import type { Dispatch, SetStateAction } from 'react';
 
 declare const window: any;
@@ -91,7 +92,7 @@ export function useChatActions(
     if (!id || !trimmed) return;
     setChats((cs) => cs.map((c) => (c.id === id ? { ...c, title: trimmed } : c)));
     setChatRenameModal({ open: false, chatId: null, value: '' });
-    pushToast('チャット名を更新しました', 'success');
+    pushToast(t('Chat renamed', 'チャット名を更新しました'), 'success');
   }, [chatRenameModal, setChatRenameModal, setChats, pushToast]);
 
   const openDeleteModal = useCallback(
@@ -114,7 +115,7 @@ export function useChatActions(
       return next;
     });
     setChatDeleteModal({ open: false, chatId: null });
-    pushToast('チャットを削除しました', 'success');
+    pushToast(t('Chat deleted', 'チャットを削除しました'), 'success');
   }, [activeChat, chatDeleteModal.chatId, setActiveChat, setChatDeleteModal, setChats, pushToast]);
 
   const openWorkModal = useCallback(
@@ -140,7 +141,7 @@ export function useChatActions(
       }
       setChatWorkModal({ open: false, chatId: null, query: '' });
       setActive(newChat ? 'chat' : 'work');
-      pushToast(`Workに追加: ${workName}`, 'success');
+      pushToast(t(`Added to Work: ${workName}`, `Workに追加: ${workName}`), 'success');
     },
     [chatWorkModal.chatId, setActiveChat, setChatWorkModal, setChats, setActive, pushToast],
   );
@@ -165,7 +166,7 @@ export function useChatActions(
           return { ...p, archived: nextArchived };
         }),
       );
-      pushToast(nextArchived ? 'Workをアーカイブしました' : 'Workを復元しました', 'success');
+      pushToast(nextArchived ? t('Work archived', 'Workをアーカイブしました') : t('Work restored', 'Workを復元しました'), 'success');
     },
     [chats, setWorkProjects, pushToast],
   );
@@ -175,7 +176,7 @@ export function useChatActions(
       if (!id) return;
       if (action === 'pin') {
         toggleFav(id);
-        pushToast('Favoriteを更新しました', 'success');
+        pushToast(t('Favorites updated', 'Favoriteを更新しました'), 'success');
       } else if (action === 'rename') {
         openRenameModal(id);
       } else if (action === 'work') {

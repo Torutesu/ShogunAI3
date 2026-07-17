@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type MutableRefObject } from 'react';
 import { runRuntimeAction } from '@/shared/ipc/runtime-actions';
 import { toastM } from '../lib/runtime';
+import { t } from '@/shared/lib/i18n';
 
 type ShareOwner = { displayName: string; email: string };
 
@@ -102,7 +103,7 @@ export function useMeetingsShareControls(params: {
           : 'Restricted link — recipients need access';
       toastM('Link copied\n' + sub, 'success');
     } catch (_e) {
-      toastM('コピーに失敗しました', 'warn');
+      toastM(t('Copy failed', 'コピーに失敗しました'), 'warn');
     } finally {
       setMtgLinkBusy(false);
     }
