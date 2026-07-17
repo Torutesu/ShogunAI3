@@ -22,6 +22,10 @@ module.exports = defineConfig({
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 240000,
+    // A production build ships demo data OFF (real users start empty), but the
+    // UI specs below need a roster/history to drive. Opt the e2e build in.
+    // That production builds are empty is covered by constants.demo-gate.test.ts.
+    env: { ...process.env, VITE_SHOGUN_DEMO: "1" },
   },
   use: {
     baseURL: BASE_URL,

@@ -270,11 +270,20 @@ test.describe("SHOGUN Hi-Fi UI", () => {
     await page.locator(".s-sidebar").getByText("Integrations", { exact: true }).click();
     await expect(page.locator(".s-pane-head")).toContainText("Integrations");
 
+    // Outlook has no token-import path yet, so it stays disabled.
+    await expect(page
+      .locator(".s-card")
+      .filter({ hasText: "Outlook" })
+      .getByRole("button", { name: "Coming soon" }))
+      .toBeDisabled();
+
+    // Slack ships a working paste-token Connect — it must NOT be "Coming soon".
     await expect(page
       .locator(".s-card")
       .filter({ hasText: "Slack" })
-      .getByRole("button", { name: "Coming soon" }))
-      .toBeDisabled();
+      .getByRole("button", { name: "Connect" }))
+      .toBeEnabled();
+
     await page.locator(".s-close").click();
     await expect(page.locator(".s-modal")).toHaveCount(0);
   });
