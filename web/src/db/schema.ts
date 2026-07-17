@@ -6,7 +6,16 @@ export const waitlist = pgTable('waitlist', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   invitedAt: timestamp('invited_at', { withTimezone: true }),
   status: text('status').notNull().default('pending'),
-});
+  refCode: text('ref_code').unique(),
+  referredBy: text('referred_by'),
+  answerTimeSink: text('answer_time_sink'),
+  answerCompanyRole: text('answer_company_role'),
+  answerWhy: text('answer_why'),
+  formCompletedAt: timestamp('form_completed_at', { withTimezone: true }),
+}, (t) => [
+  index('waitlist_ref_code_idx').on(t.refCode),
+  index('waitlist_referred_by_idx').on(t.referredBy),
+]);
 
 export const invites = pgTable('invites', {
   id: uuid('id').primaryKey().defaultRandom(),

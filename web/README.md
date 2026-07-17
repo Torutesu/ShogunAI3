@@ -5,6 +5,9 @@ Invite-only onboarding web app for SHOGUN AI.
 ## Flow
 
 1. LP waitlist signup → `POST /api/waitlist` (from [shogunai.lovable.app](https://shogunai.lovable.app/))
+   - Accepts optional `ref` (referrer code); returns `refCode` + `statusUrl`
+   - Post-signup: `/waitlist/[code]` — 3-question form, referral link, tier ladder, leaderboard
+   - Campaign design + ops: `docs/waitlist-campaign/README.md`
 2. Admin invites from waitlist → `POST /api/admin/waitlist/invite`
 3. User opens `/invite?token=...` → Clerk signup
 4. Redirect to `/checkout` → Stripe Checkout (7-day trial)

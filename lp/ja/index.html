@@ -315,6 +315,8 @@
   const WAITLIST_ENDPOINT = (window.SHOGUN_WAITLIST_ENDPOINT || "");
   const form = document.getElementById("wl-form");
   const msg = document.getElementById("wl-msg");
+  const REF = new URLSearchParams(location.search).get("ref") || sessionStorage.getItem("shogun_ref") || "";
+  if (REF) { try { sessionStorage.setItem("shogun_ref", REF); } catch {} }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = document.getElementById("wl-email").value.trim();
@@ -322,8 +324,10 @@
     if (!WAITLIST_ENDPOINT) { msg.textContent = "Waitlist は準備中です。上のベータ版ダウンロードは今日から使えます。"; return; }
     msg.textContent = "…";
     try {
-      const r = await fetch(WAITLIST_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+      const body = REF ? { email, ref: REF } : { email };
+      const r = await fetch(WAITLIST_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
+      if (r.ok && j.statusUrl) { location.href = j.statusUrl; return; }
       msg.textContent = r.ok ? (j.duplicate ? "すでに登録済みです。" : "登録しました。招待は毎週お送りします。") : "エラーが発生しました。もう一度お試しください。";
       if (r.ok) form.reset();
     } catch { msg.textContent = "ネットワークエラー。もう一度お試しください。"; }

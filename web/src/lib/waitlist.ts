@@ -2,6 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { waitlist } from '@/db/schema';
 import { createInvite, normalizeEmail } from '@/lib/invites';
+import { ensureRefCode, findByRefCode, generateRefCode, isValidRefCode } from '@/lib/referral';
 
 export type WaitlistStatus = 'pending' | 'invited' | 'converted';
 
@@ -11,7 +12,7 @@ export function isValidWaitlistEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
 }
 
-export async function addToWaitlist(email: string) {
+export async function addToWaitlist(email: string, ref?: string) {
   const db = getDb();
   const normalized = normalizeEmail(email);
 
@@ -22,12 +23,29 @@ export async function addToWaitlist(email: string) {
     .limit(1);
 
   if (existing) {
+    // Pre-campaign rows have no ref code yet; give them one so the
+    // status page works for everyone.
+    if (!existing.refCode) {
+      existing.refCode = await ensureRefCode(normalized);
+    }
     return { row: existing, duplicate: true };
+  }
+
+  // Referrals: silently drop invalid or self-referring codes — the signup
+  // itself must never fail because of a bad ref param.
+  let referredBy: string | null = null;
+  if (ref && isValidRefCode(ref)) {
+    const referrer = await findByRefCode(ref);
+    if (referrer && referrer.email !== normalized) {
+      referredBy = ref;
+    }
   }
 
   const [row] = await db.insert(waitlist).values({
     email: normalized,
     status: 'pending',
+    refCode: generateRefCode(),
+    referredBy,
   }).returning();
 
   return { row, duplicate: false };

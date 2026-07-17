@@ -26,14 +26,19 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: 'invalid_email' }, { status: 400, headers: cors });
   }
 
+  const ref = typeof body.ref === 'string' ? body.ref.trim() : undefined;
+
   try {
-    const { row, duplicate } = await addToWaitlist(email);
+    const { row, duplicate } = await addToWaitlist(email, ref);
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
     return Response.json({
       ok: true,
       duplicate,
       email: row.email,
       status: row.status,
       createdAt: row.createdAt,
+      refCode: row.refCode,
+      statusUrl: row.refCode ? `${base}/waitlist/${row.refCode}` : null,
     }, { headers: cors });
   } catch (err) {
     console.error('[waitlist]', err);

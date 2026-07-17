@@ -335,6 +335,10 @@
   const WAITLIST_ENDPOINT = (window.SHOGUN_WAITLIST_ENDPOINT || "");
   const form = document.getElementById("wl-form");
   const msg = document.getElementById("wl-msg");
+  // Referral: ?ref=CODE rides along with the signup, then persists across
+  // navigation within the session so a later submit still credits the referrer.
+  const REF = new URLSearchParams(location.search).get("ref") || sessionStorage.getItem("shogun_ref") || "";
+  if (REF) { try { sessionStorage.setItem("shogun_ref", REF); } catch {} }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = document.getElementById("wl-email").value.trim();
@@ -342,8 +346,10 @@
     if (!WAITLIST_ENDPOINT) { msg.textContent = "Waitlist opens shortly — meanwhile, the beta download above works today."; return; }
     msg.textContent = "…";
     try {
-      const r = await fetch(WAITLIST_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+      const body = REF ? { email, ref: REF } : { email };
+      const r = await fetch(WAITLIST_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
+      if (r.ok && j.statusUrl) { location.href = j.statusUrl; return; }
       msg.textContent = r.ok ? (j.duplicate ? "You're already on the list." : "You're on the list. Invites go out weekly.") : "Something broke — try again.";
       if (r.ok) form.reset();
     } catch { msg.textContent = "Network error — try again."; }
