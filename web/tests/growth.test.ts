@@ -44,6 +44,15 @@ describe('csvEscape', () => {
     expect(csvEscape('line1\nline2')).toBe('"line1\nline2"');
     expect(csvEscape(null)).toBe('');
   });
+
+  it('neutralizes spreadsheet formula injection', () => {
+    expect(csvEscape('=cmd|/c calc')).toBe("'=cmd|/c calc");
+    expect(csvEscape('+SUM(A1)')).toBe("'+SUM(A1)");
+    expect(csvEscape('-2+3')).toBe("'-2+3");
+    expect(csvEscape('@import')).toBe("'@import");
+    expect(csvEscape('=HYPERLINK("http://evil","x"),1')).toBe('"\'=HYPERLINK(""http://evil"",""x""),1"');
+    expect(csvEscape('normal =text inside')).toBe('normal =text inside');
+  });
 });
 
 describe('requestCountry', () => {

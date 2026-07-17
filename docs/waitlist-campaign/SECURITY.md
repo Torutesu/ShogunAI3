@@ -79,6 +79,31 @@ purity pre-launch), so enforcement is moved to reward fulfillment:
   before granting any tier reward and before naming the top 10. The
   official rules reserve disqualification for exactly this.
 
+## Injection & leak defenses (verified by live attack scenarios)
+
+- **SQL injection**: every query goes through Drizzle's parameterized
+  `sql` template — zero string concatenation into SQL (audited:
+  14 `db.execute` sites). Attack payloads in email/ref/token params are
+  additionally stopped earlier by strict input validation.
+- **Stored XSS**: email addresses are validated against a strict
+  charset (`<>"'\`\\` etc. rejected — stricter than RFC on purpose), and
+  `maskEmail` output is forced alphanumeric, so even a frontend that
+  forgets to escape renders inert strings. Free-text answers are stored
+  raw (they're data) but only ever surface in admin exports and React-
+  escaped UI — never interpolated into HTML server-side.
+- **CSV formula injection**: export cells starting with `= + - @` or
+  tab/CR get a `'` prefix (`csvEscape`) so Excel/Sheets treat them as
+  text, on top of RFC quoting.
+- **Body-size DoS**: public POST bodies are capped at 8 KB
+  (`readJsonBody`) — 413 on oversize, non-object JSON roots rejected.
+- **Private-URL leakage**: status pages carry `X-Robots-Tag:
+  noindex, nofollow` + robots meta, so a leaked status URL can't end up
+  searchable. Referrer-Policy keeps the token out of cross-site Referer
+  headers; unsubscribe is rate limited like every other token endpoint.
+- **Response minimization**: status API carries no email/IP/UA; public
+  endpoints only masked identities; admin errors are generic codes with
+  details confined to server logs.
+
 ## Headers
 
 All routes: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,

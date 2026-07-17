@@ -3,6 +3,8 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { waitlist } from '@/db/schema';
 import { isValidStatusToken } from '@/lib/referral';
+import { LIMITS, rateLimit, rateLimitedResponse } from '@/lib/rate-limit';
+import { clientIpHash } from '@/lib/request-meta';
 
 // One-click opt-out from campaign emails, linked from every email footer.
 // GET because it must work from a mail client. The status token is the
@@ -12,6 +14,10 @@ export async function GET(req: NextRequest) {
   if (!isValidStatusToken(token)) {
     return new Response('Invalid link.', { status: 400 });
   }
+
+  const { limit, windowSeconds } = LIMITS.status;
+  const rl = await rateLimit(`unsubscribe:${clientIpHash(req)}`, limit, windowSeconds);
+  if (!rl.allowed) return rateLimitedResponse();
 
   try {
     const db = getDb();

@@ -10,6 +10,7 @@ import { LIMITS, rateLimit, rateLimitedResponse } from '@/lib/rate-limit';
 import { clientIp, clientIpHash, requestCountry, truncatedUserAgent } from '@/lib/request-meta';
 import { verifyTurnstile } from '@/lib/turnstile';
 import { notifySignup } from '@/lib/notifications';
+import { readJsonBody } from '@/lib/json-body';
 
 function utmParam(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -38,12 +39,12 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: 'forbidden' }, { status: 403 });
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ ok: false, error: 'invalid_json' }, { status: 400, headers: cors });
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) {
+    Object.entries(cors).forEach(([k, v]) => parsed.response.headers.set(k, String(v)));
+    return parsed.response;
   }
+  const body = parsed.body;
 
   // Honeypot: real users never see the field. Report success, store nothing.
   if (typeof body.website === 'string' && body.website.trim() !== '') {

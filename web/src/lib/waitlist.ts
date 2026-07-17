@@ -15,7 +15,10 @@ export type WaitlistStatus = 'pending' | 'invited' | 'converted';
 export function isValidWaitlistEmail(email: string): boolean {
   const trimmed = email.trim();
   if (trimmed.length === 0 || trimmed.length > 320) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  // Stricter than RFC on purpose: reject quoting/markup characters
+  // (<>"'`\ etc.) so a stored address can never carry an XSS or header
+  // payload into exports, emails, or a frontend that forgets to escape.
+  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(trimmed);
 }
 
 export type SignupMeta = {

@@ -67,6 +67,12 @@ describe('maskEmail', () => {
     expect(maskEmail('jane@gmail.com')).toBe('ja***@***.com');
     expect(maskEmail('a@b.co.jp')).toBe('a***@***.jp');
   });
+
+  it('output is inert even for hostile inputs (defense in depth)', () => {
+    expect(maskEmail('<script>@x.com')).toBe('*s***@***.com');
+    expect(maskEmail('=1+1@x.com')).toBe('*1***@***.com');
+    expect(maskEmail('j"@x.com')).toBe('j****@***.com');
+  });
 });
 
 describe('sanitizeAnswer', () => {

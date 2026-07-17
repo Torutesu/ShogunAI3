@@ -73,9 +73,13 @@ export function answersCompleted(row: {
 
 export function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
-  const visible = local.slice(0, 2);
-  const tld = domain?.includes('.') ? domain.slice(domain.lastIndexOf('.')) : '';
-  return `${visible}***@***${tld}`;
+  // Alphanumeric-only visible chars: masked strings are rendered by
+  // frontends we don't control, so the output must be inert even if
+  // interpolated unescaped.
+  const visible = local.slice(0, 2).replace(/[^A-Za-z0-9]/g, '*');
+  const tldRaw = domain?.includes('.') ? domain.slice(domain.lastIndexOf('.') + 1) : '';
+  const tld = tldRaw.replace(/[^A-Za-z0-9]/g, '');
+  return `${visible}***@***${tld ? '.' + tld : ''}`;
 }
 
 export async function findByRefCode(code: string) {

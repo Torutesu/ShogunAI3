@@ -3,16 +3,14 @@ import { isValidStatusToken, submitProfile } from '@/lib/referral';
 import { LIMITS, rateLimit, rateLimitedResponse } from '@/lib/rate-limit';
 import { clientIpHash } from '@/lib/request-meta';
 import { notifyReferrerProgress } from '@/lib/notifications';
+import { readJsonBody } from '@/lib/json-body';
 
 // Called same-origin from the status page. The bearer is the PRIVATE status
 // token — never the public ref code, which anyone who saw a share link holds.
 export async function POST(req: NextRequest) {
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ ok: false, error: 'invalid_json' }, { status: 400 });
-  }
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const token = typeof body.code === 'string' ? body.code.trim() : '';
   if (!isValidStatusToken(token)) {

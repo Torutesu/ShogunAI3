@@ -26,6 +26,9 @@ const nextConfig: NextConfig = {
         // policy is scoped instead of global.
         source: '/waitlist/:path*',
         headers: [
+          // Status URLs contain the private token — they must never end up
+          // in a search index if one leaks into a crawlable place.
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
           {
             key: 'Content-Security-Policy',
             value: [
