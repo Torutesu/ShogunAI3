@@ -73,6 +73,15 @@ Ordering principle: correctness/data-safety first (P0), then unlock/observabilit
 - P1-4 — queue made readable (`list`/`pending_count`), `pending` status stamped, `scheduledPending` surfaced in the Brief API response. **Deferred:** the Brief UI card that renders those pending items.
 - P2 — recipes (action-items + prd-draft) exposed; `.s-btn` + `.btn-xs` fixed; idle sidebar probe paused when hidden; stale docs/copy fixed.
 
+**P1-4 follow-up finding (2026-07-17, later): `schedule_queue` is unreachable in production — do NOT build a UI for it.**
+Traced every writer before building the "pending actions" card:
+- The only caller of `schedule.create` is the `next_action` mapping in `src/shared/lib/morning-brief.ts` (`type: "schedule" | "execute"` → `schedule.create`).
+- `morning-brief.ts` is imported **only** by `src/shared/ipc/mock/handler.ts` and its test — it is the browser-mock brief, not the real one.
+- The live brief (`brief.rs` heuristic + the LLM prompt at `brief.rs:662`) only ever emits `next_action.type: "open"`, with `mcp_tool.tool_name` constrained to `shogun.open_pack | shogun.memory_search | shogun.start_focus_session`. The only `"type": "execute"` lives inside the dead `morning_brief_v2_stub`.
+- No MCP tool exposes scheduling (the 12 tools are meetings×6, memory×4, kioku×2).
+
+So nothing populates the queue for a real user; `scheduledPending` is honestly always 0. A pending-actions card would be a permanently empty surface — the exact "looks done but does nothing" pattern this remediation removes. **Decision: card not built.** If scheduling is wanted, build the producer first (a real brief action that queues), then the surface. Alternatively `shogun_schedule_action` + `schedule_queue.rs` could be deleted as dead code.
+
 **Deferred (noted, not done):**
 - P2 dead-code removal: `morning_brief_v2_stub` (116-line fixture, kept `#[allow(dead_code)]`) and the `video-meeting-auto-started` emit (harmless; removal cascades to unused-var). Low value, left.
 - P2 JP-only toast/tooltip localization sweep — a broader i18n pass, not attempted.

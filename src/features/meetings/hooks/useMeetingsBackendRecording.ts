@@ -124,29 +124,12 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
     return () => { cancelled = true; };
   }, [granolaBackendMeetingId, setGranolaPane]);
 
+  // NOTE: system-audio status is polled once, by the HUD effect below. It fetches
+  // `meetings.audio.status` on the same 5s cadence and sets the same state, so a
+  // second poller here just doubled the IPC traffic for every recording.
   useEffect(() => {
     if (!backendRecActive || !granolaBackendMeetingId || !isNativeDesktop()) {
       if (!backendRecActive) setSystemAudioRunning(false);
-      return undefined;
-    }
-    let cancelled = false;
-    const poll = () => {
-      runRuntimeAction('meetings.audio.status', {}, { silentError: true }).then((r) => {
-        if (cancelled || !r?.ok || !r.data) return;
-        const data = r.data as { system_audio_running?: boolean };
-        setSystemAudioRunning(!!data.system_audio_running);
-      });
-    };
-    poll();
-    const id = window.setInterval(poll, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [backendRecActive, granolaBackendMeetingId]);
-
-  useEffect(() => {
-    if (!backendRecActive || !granolaBackendMeetingId || !isNativeDesktop()) {
       if (backendRecStartedAtRef.current) {
         clearMeetingHud();
         backendRecStartedAtRef.current = 0;
@@ -211,10 +194,16 @@ export function useMeetingsBackendRecording(deps: UseMeetingsBackendRecordingDep
       });
     }
     refreshContextTimeline();
-    const id = window.setInterval(refreshContextTimeline, backendRecActiveRef.current ? 4000 : 15000);
+    // Timeline is on-screen data only — skip the fetch while the window is
+    // hidden (the HUD poll above intentionally keeps running during a meeting).
+    const tick = () => { if (!document.hidden) refreshContextTimeline(); };
+    const id = window.setInterval(tick, backendRecActiveRef.current ? 4000 : 15000);
+    const onVisible = () => { if (!document.hidden) refreshContextTimeline(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [granola, granolaBackendMeetingId, backendRecActive]);
 
