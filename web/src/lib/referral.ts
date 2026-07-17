@@ -25,12 +25,23 @@ export const TIME_SINK_OPTIONS = [
 ] as const;
 
 export function generateRefCode(): string {
-  // 10 chars base64url — unguessable enough to double as the status-page token.
+  // Public — printed in share links. Short for URL aesthetics.
   return randomBytes(8).toString('base64url').slice(0, 10);
+}
+
+export function generateStatusToken(): string {
+  // Private bearer for the status page and profile writes. The ref code is
+  // public by design (it rides on shared links), so it must never be the
+  // key that reads status or writes answers — this token is.
+  return randomBytes(24).toString('base64url');
 }
 
 export function isValidRefCode(code: string): boolean {
   return /^[A-Za-z0-9_-]{6,16}$/.test(code);
+}
+
+export function isValidStatusToken(token: string): boolean {
+  return /^[A-Za-z0-9_-]{20,64}$/.test(token);
 }
 
 export function currentTier(qualifiedReferrals: number) {
@@ -73,22 +84,31 @@ export async function findByRefCode(code: string) {
   return row ?? null;
 }
 
+export async function findByStatusToken(token: string) {
+  const db = getDb();
+  const [row] = await db.select().from(waitlist).where(eq(waitlist.statusToken, token)).limit(1);
+  return row ?? null;
+}
+
 /**
- * Assign a ref code to a waitlist row that predates the campaign.
- * Retries on the (vanishingly rare) unique collision.
+ * Assign ref code + status token to a waitlist row that predates the
+ * campaign. Retries on the (vanishingly rare) unique collision.
  */
-export async function ensureRefCode(email: string): Promise<string> {
+export async function ensureTokens(email: string): Promise<{ refCode: string; statusToken: string }> {
   const db = getDb();
   const normalized = normalizeEmail(email);
   const [row] = await db.select().from(waitlist).where(eq(waitlist.email, normalized)).limit(1);
   if (!row) throw new Error('waitlist row not found');
-  if (row.refCode) return row.refCode;
+  if (row.refCode && row.statusToken) {
+    return { refCode: row.refCode, statusToken: row.statusToken };
+  }
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const code = generateRefCode();
+    const refCode = row.refCode ?? generateRefCode();
+    const statusToken = row.statusToken ?? generateStatusToken();
     try {
-      await db.update(waitlist).set({ refCode: code }).where(eq(waitlist.id, row.id));
-      return code;
+      await db.update(waitlist).set({ refCode, statusToken }).where(eq(waitlist.id, row.id));
+      return { refCode, statusToken };
     } catch (err) {
       if (attempt === 2) throw err;
     }
@@ -198,13 +218,13 @@ export function sanitizeAnswer(value: unknown): string | null {
   return trimmed.slice(0, MAX_ANSWER_LENGTH);
 }
 
-export async function submitProfile(refCode: string, answers: {
+export async function submitProfile(statusToken: string, answers: {
   timeSink?: unknown;
   companyRole?: unknown;
   why?: unknown;
 }) {
   const db = getDb();
-  const row = await findByRefCode(refCode);
+  const row = await findByStatusToken(statusToken);
   if (!row) return null;
 
   const timeSinkRaw = sanitizeAnswer(answers.timeSink);
@@ -239,9 +259,10 @@ export async function submitProfile(refCode: string, answers: {
   return updated;
 }
 
-export async function getReferralStatus(refCode: string) {
-  const row = await findByRefCode(refCode);
-  if (!row) return null;
+export async function getReferralStatus(statusToken: string) {
+  const row = await findByStatusToken(statusToken);
+  if (!row?.refCode) return null;
+  const refCode = row.refCode;
 
   const [qualified, position, rank] = await Promise.all([
     qualifiedReferralCount(refCode),
@@ -249,9 +270,11 @@ export async function getReferralStatus(refCode: string) {
     leaderboardRank(refCode),
   ]);
 
+  // Deliberately no email in the payload: the bearer already knows their
+  // address, and keeping it out makes an accidentally forwarded status URL
+  // leak nothing personal.
   return {
     refCode,
-    email: row.email,
     createdAt: row.createdAt,
     answers: {
       timeSink: row.answerTimeSink,

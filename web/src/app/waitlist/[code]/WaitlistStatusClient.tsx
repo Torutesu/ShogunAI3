@@ -6,7 +6,6 @@ type Lang = 'en' | 'ja';
 
 type Status = {
   refCode: string;
-  email: string;
   answers: {
     timeSink: string | null;
     companyRole: string | null;
@@ -214,9 +213,11 @@ export default function WaitlistStatusClient({ code }: { code: string }) {
   const [saving, setSaving] = useState(false);
 
   const t = COPY[lang];
+  // Share link carries the PUBLIC ref code; the URL of this page is the
+  // private status token and must never be what gets shared.
   const shareUrl = useMemo(
-    () => `${LP_URL}/?ref=${encodeURIComponent(code)}`,
-    [code],
+    () => (status?.refCode ? `${LP_URL}/?ref=${encodeURIComponent(status.refCode)}` : ''),
+    [status?.refCode],
   );
 
   useEffect(() => {

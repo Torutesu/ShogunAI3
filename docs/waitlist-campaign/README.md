@@ -36,23 +36,26 @@ Reaching a higher tier supersedes the lower one. 3 + 10 does not make
 
 | Route | Auth | Purpose |
 |---|---|---|
-| `POST /api/waitlist` | webhook secret (LP) | signup, accepts `ref` |
-| `POST /api/waitlist/profile` | ref code as bearer | save answers, sets `form_completed_at` when all 3 present |
-| `GET /api/waitlist/status?code=` | ref code as bearer | position, invites, tier, rank |
+| `POST /api/waitlist` | webhook secret (server) or origin allowlist + rate limit (+ optional Turnstile) | signup, accepts `ref` |
+| `POST /api/waitlist/profile` | private status token | save answers, sets `form_completed_at` when all 3 present |
+| `GET /api/waitlist/status?code=` | private status token | position, invites, tier, rank |
 | `GET /api/waitlist/leaderboard` | public | top 10, emails masked |
+| `GET /api/admin/waitlist/fraud` | admin key | referral-farming report, run before granting rewards |
 
-The ref code doubles as the status-page token: unguessable (80 bits),
-scoped to one row, grants nothing beyond reading own status and writing
-own answers.
+Two credentials per row: the **public** `ref_code` rides on share links
+and only attributes signups; the **private** `status_token` (192 bits) is
+the bearer for the status page and answer writes. Full threat model:
+[`SECURITY.md`](./SECURITY.md).
 
 ## Migration
 
 ```bash
 psql "$DATABASE_URL" -f web/drizzle/0002_referral_campaign.sql
+psql "$DATABASE_URL" -f web/drizzle/0003_security.sql
 ```
 
-Pre-campaign rows get a ref code lazily on their next duplicate signup, or
-backfill with `ensureRefCode()`.
+Pre-campaign rows get their ref code + status token lazily on their next
+duplicate signup, or backfill with `ensureTokens()`.
 
 ## Reward fulfillment
 

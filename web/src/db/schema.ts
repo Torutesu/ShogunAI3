@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, index, integer, primaryKey } from 'drizzle-orm/pg-core';
 
 export const waitlist = pgTable('waitlist', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -7,14 +7,27 @@ export const waitlist = pgTable('waitlist', {
   invitedAt: timestamp('invited_at', { withTimezone: true }),
   status: text('status').notNull().default('pending'),
   refCode: text('ref_code').unique(),
+  statusToken: text('status_token').unique(),
   referredBy: text('referred_by'),
   answerTimeSink: text('answer_time_sink'),
   answerCompanyRole: text('answer_company_role'),
   answerWhy: text('answer_why'),
   formCompletedAt: timestamp('form_completed_at', { withTimezone: true }),
+  signupIpHash: text('signup_ip_hash'),
+  signupUserAgent: text('signup_user_agent'),
 }, (t) => [
   index('waitlist_ref_code_idx').on(t.refCode),
+  index('waitlist_status_token_idx').on(t.statusToken),
   index('waitlist_referred_by_idx').on(t.referredBy),
+  index('waitlist_signup_ip_hash_idx').on(t.signupIpHash),
+]);
+
+export const rateLimits = pgTable('rate_limits', {
+  key: text('key').notNull(),
+  windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+  count: integer('count').notNull().default(1),
+}, (t) => [
+  primaryKey({ columns: [t.key, t.windowStart] }),
 ]);
 
 export const invites = pgTable('invites', {

@@ -1,14 +1,20 @@
 import { NextRequest } from 'next/server';
-import { getReferralStatus, isValidRefCode } from '@/lib/referral';
+import { getReferralStatus, isValidStatusToken } from '@/lib/referral';
+import { LIMITS, rateLimit, rateLimitedResponse } from '@/lib/rate-limit';
+import { clientIpHash } from '@/lib/request-meta';
 
 export async function GET(req: NextRequest) {
-  const code = req.nextUrl.searchParams.get('code')?.trim() ?? '';
-  if (!isValidRefCode(code)) {
+  const token = req.nextUrl.searchParams.get('code')?.trim() ?? '';
+  if (!isValidStatusToken(token)) {
     return Response.json({ ok: false, error: 'invalid_code' }, { status: 400 });
   }
 
+  const { limit, windowSeconds } = LIMITS.status;
+  const rl = await rateLimit(`status:${clientIpHash(req)}`, limit, windowSeconds);
+  if (!rl.allowed) return rateLimitedResponse();
+
   try {
-    const status = await getReferralStatus(code);
+    const status = await getReferralStatus(token);
     if (!status) {
       return Response.json({ ok: false, error: 'not_found' }, { status: 404 });
     }

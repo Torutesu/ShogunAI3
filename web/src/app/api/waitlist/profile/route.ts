@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
-import { isValidRefCode, submitProfile } from '@/lib/referral';
+import { isValidStatusToken, submitProfile } from '@/lib/referral';
+import { LIMITS, rateLimit, rateLimitedResponse } from '@/lib/rate-limit';
+import { clientIpHash } from '@/lib/request-meta';
 
-// Called same-origin from the status page. The ref code is the bearer:
-// unguessable, scoped to one waitlist row, grants nothing beyond it.
+// Called same-origin from the status page. The bearer is the PRIVATE status
+// token — never the public ref code, which anyone who saw a share link holds.
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -11,13 +13,17 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: 'invalid_json' }, { status: 400 });
   }
 
-  const code = typeof body.code === 'string' ? body.code.trim() : '';
-  if (!isValidRefCode(code)) {
+  const token = typeof body.code === 'string' ? body.code.trim() : '';
+  if (!isValidStatusToken(token)) {
     return Response.json({ ok: false, error: 'invalid_code' }, { status: 400 });
   }
 
+  const { limit, windowSeconds } = LIMITS.profile;
+  const rl = await rateLimit(`profile:${clientIpHash(req)}`, limit, windowSeconds);
+  if (!rl.allowed) return rateLimitedResponse();
+
   try {
-    const row = await submitProfile(code, {
+    const row = await submitProfile(token, {
       timeSink: body.timeSink,
       companyRole: body.companyRole,
       why: body.why,

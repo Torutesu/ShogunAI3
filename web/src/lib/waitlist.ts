@@ -2,7 +2,13 @@ import { eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { waitlist } from '@/db/schema';
 import { createInvite, normalizeEmail } from '@/lib/invites';
-import { ensureRefCode, findByRefCode, generateRefCode, isValidRefCode } from '@/lib/referral';
+import {
+  ensureTokens,
+  findByRefCode,
+  generateRefCode,
+  generateStatusToken,
+  isValidRefCode,
+} from '@/lib/referral';
 
 export type WaitlistStatus = 'pending' | 'invited' | 'converted';
 
@@ -12,7 +18,9 @@ export function isValidWaitlistEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
 }
 
-export async function addToWaitlist(email: string, ref?: string) {
+export type SignupMeta = { ipHash?: string | null; userAgent?: string | null };
+
+export async function addToWaitlist(email: string, ref?: string, meta?: SignupMeta) {
   const db = getDb();
   const normalized = normalizeEmail(email);
 
@@ -23,10 +31,12 @@ export async function addToWaitlist(email: string, ref?: string) {
     .limit(1);
 
   if (existing) {
-    // Pre-campaign rows have no ref code yet; give them one so the
-    // status page works for everyone.
-    if (!existing.refCode) {
-      existing.refCode = await ensureRefCode(normalized);
+    // Pre-campaign rows have no tokens yet; assign them so the status
+    // page works for everyone.
+    if (!existing.refCode || !existing.statusToken) {
+      const tokens = await ensureTokens(normalized);
+      existing.refCode = tokens.refCode;
+      existing.statusToken = tokens.statusToken;
     }
     return { row: existing, duplicate: true };
   }
@@ -45,7 +55,10 @@ export async function addToWaitlist(email: string, ref?: string) {
     email: normalized,
     status: 'pending',
     refCode: generateRefCode(),
+    statusToken: generateStatusToken(),
     referredBy,
+    signupIpHash: meta?.ipHash ?? null,
+    signupUserAgent: meta?.userAgent ?? null,
   }).returning();
 
   return { row, duplicate: false };

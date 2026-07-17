@@ -277,6 +277,7 @@
     <p class="lead" style="margin-left:auto;margin-right:auto">招待は毎週、登録順に送ります。</p>
     <form class="waitlist" id="wl-form" novalidate>
       <input type="email" name="email" id="wl-email" placeholder="you@company.com" required autocomplete="email" aria-label="メールアドレス">
+      <input type="text" name="website" id="wl-website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;height:0;width:0;border:0;padding:0">
       <button class="btn" type="submit">Early Access に登録</button>
     </form>
     <p class="wl-msg" id="wl-msg" role="status"></p>
@@ -324,7 +325,8 @@
     if (!WAITLIST_ENDPOINT) { msg.textContent = "Waitlist は準備中です。上のベータ版ダウンロードは今日から使えます。"; return; }
     msg.textContent = "…";
     try {
-      const body = REF ? { email, ref: REF } : { email };
+      const hp2 = (document.getElementById("wl-website") || {}).value || "";
+      const body = { email, ...(REF ? { ref: REF } : {}), ...(hp2 ? { website: hp2 } : {}) };
       const r = await fetch(WAITLIST_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
       if (r.ok && j.statusUrl) { location.href = j.statusUrl; return; }
