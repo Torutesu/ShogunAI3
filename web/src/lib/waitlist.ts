@@ -18,7 +18,15 @@ export function isValidWaitlistEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
 }
 
-export type SignupMeta = { ipHash?: string | null; userAgent?: string | null };
+export type SignupMeta = {
+  ipHash?: string | null;
+  userAgent?: string | null;
+  locale?: string | null;
+  country?: string | null;
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+};
 
 export async function addToWaitlist(email: string, ref?: string, meta?: SignupMeta) {
   const db = getDb();
@@ -59,6 +67,11 @@ export async function addToWaitlist(email: string, ref?: string, meta?: SignupMe
     referredBy,
     signupIpHash: meta?.ipHash ?? null,
     signupUserAgent: meta?.userAgent ?? null,
+    locale: meta?.locale ?? null,
+    signupCountry: meta?.country ?? null,
+    utmSource: meta?.utmSource ?? null,
+    utmMedium: meta?.utmMedium ?? null,
+    utmCampaign: meta?.utmCampaign ?? null,
   }).returning();
 
   return { row, duplicate: false };

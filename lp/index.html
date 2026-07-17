@@ -336,10 +336,18 @@
   const WAITLIST_ENDPOINT = (window.SHOGUN_WAITLIST_ENDPOINT || "");
   const form = document.getElementById("wl-form");
   const msg = document.getElementById("wl-msg");
-  // Referral: ?ref=CODE rides along with the signup, then persists across
-  // navigation within the session so a later submit still credits the referrer.
-  const REF = new URLSearchParams(location.search).get("ref") || sessionStorage.getItem("shogun_ref") || "";
-  if (REF) { try { sessionStorage.setItem("shogun_ref", REF); } catch {} }
+  // Referral + attribution: ?ref=CODE and utm_* ride along with the signup,
+  // persisted across navigation within the session so a later submit still
+  // credits the referrer / source.
+  const params = new URLSearchParams(location.search);
+  const keep = (k) => {
+    const v = params.get(k) || sessionStorage.getItem("shogun_" + k) || "";
+    if (v) { try { sessionStorage.setItem("shogun_" + k, v); } catch {} }
+    return v;
+  };
+  const REF = keep("ref");
+  const UTM = { utm_source: keep("utm_source"), utm_medium: keep("utm_medium"), utm_campaign: keep("utm_campaign") };
+  const ph = (event, props) => { try { if (window.posthog && typeof window.posthog.capture === "function") window.posthog.capture(event, props); } catch {} };
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = document.getElementById("wl-email").value.trim();
@@ -348,9 +356,11 @@
     msg.textContent = "…";
     try {
       const hp = (document.getElementById("wl-website") || {}).value || "";
-      const body = { email, ...(REF ? { ref: REF } : {}), ...(hp ? { website: hp } : {}) };
+      const body = { email, lang: "en", ...(REF ? { ref: REF } : {}), ...(hp ? { website: hp } : {}) };
+      for (const k in UTM) if (UTM[k]) body[k] = UTM[k];
       const r = await fetch(WAITLIST_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json().catch(() => ({}));
+      if (r.ok) ph("waitlist_signup", { duplicate: !!j.duplicate, referred: !!REF, ...UTM });
       if (r.ok && j.statusUrl) { location.href = j.statusUrl; return; }
       msg.textContent = r.ok ? (j.duplicate ? "You're already on the list." : "You're on the list. Invites go out weekly.") : "Something broke — try again.";
       if (r.ok) form.reset();

@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, after } from 'next/server';
 import { addToWaitlist, isValidWaitlistEmail } from '@/lib/waitlist';
 import {
   assertWaitlistWebhook,
@@ -7,8 +7,15 @@ import {
   lpCorsHeaders,
 } from '@/lib/waitlist-auth';
 import { LIMITS, rateLimit, rateLimitedResponse } from '@/lib/rate-limit';
-import { clientIp, clientIpHash, truncatedUserAgent } from '@/lib/request-meta';
+import { clientIp, clientIpHash, requestCountry, truncatedUserAgent } from '@/lib/request-meta';
 import { verifyTurnstile } from '@/lib/turnstile';
+import { notifySignup } from '@/lib/notifications';
+
+function utmParam(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.trim().slice(0, 64);
+  return cleaned || null;
+}
 
 export async function OPTIONS(req: NextRequest) {
   return new Response(null, { status: 204, headers: lpCorsHeaders(req) });
@@ -61,11 +68,23 @@ export async function POST(req: NextRequest) {
     if (!rl.allowed) return rateLimitedResponse(cors);
   }
 
+  const locale = body.lang === 'ja' ? 'ja'
+    : body.lang === 'en' ? 'en'
+    : req.headers.get('accept-language')?.startsWith('ja') ? 'ja' : 'en';
+
   try {
     const { row, duplicate } = await addToWaitlist(email, ref, {
       ipHash,
       userAgent: truncatedUserAgent(req),
+      locale,
+      country: requestCountry(req),
+      utmSource: utmParam(body.utm_source),
+      utmMedium: utmParam(body.utm_medium),
+      utmCampaign: utmParam(body.utm_campaign),
     });
+    if (!duplicate) {
+      after(() => notifySignup(row));
+    }
     const base = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
     return Response.json({
       ok: true,

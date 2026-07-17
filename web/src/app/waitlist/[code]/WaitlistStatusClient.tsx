@@ -1,6 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import posthog from 'posthog-js';
+
+// Funnel events, no-ops unless AnalyticsProvider initialized PostHog.
+function track(event: string, props?: Record<string, unknown>) {
+  try {
+    if (posthog.__loaded) posthog.capture(event, props);
+  } catch {}
+}
 
 type Lang = 'en' | 'ja';
 
@@ -254,6 +262,7 @@ export default function WaitlistStatusClient({ code }: { code: string }) {
         body: JSON.stringify({ code, ...payload }),
       });
       if (res.ok) {
+        track('waitlist_form_answered', { question: Object.keys(payload)[0] });
         setFlash(t.answered);
         await refresh();
         setTimeout(() => setFlash(''), 2500);
@@ -266,6 +275,7 @@ export default function WaitlistStatusClient({ code }: { code: string }) {
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
+      track('waitlist_link_copied');
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
@@ -413,6 +423,7 @@ export default function WaitlistStatusClient({ code }: { code: string }) {
               href={xShareUrl}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => track('waitlist_share_x')}
               style={{ ...styles.btnGhost, textDecoration: 'none', display: 'inline-block' }}
             >
               {t.shareX}

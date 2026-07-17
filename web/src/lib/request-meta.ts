@@ -2,17 +2,34 @@ import { createHmac } from 'crypto';
 import { NextRequest } from 'next/server';
 
 /**
- * Client IP behind the platform proxy (Vercel sets x-forwarded-for with the
- * client as the first hop). Never trusted for auth — only for rate limiting
- * and fraud signals, where a spoofed value costs the spoofer their own limit.
+ * Client IP behind the platform proxy. Cloudflare's cf-connecting-ip comes
+ * first: behind Cloudflare the FIRST x-forwarded-for hop is client-supplied
+ * (Cloudflare appends to an existing header rather than replacing it), so
+ * trusting XFF there would let callers spoof their way around rate limits.
+ * Vercel-only deployments fall through to XFF, which Vercel does control.
+ * Never used for auth — only rate limiting and fraud signals.
  */
 export function clientIp(req: NextRequest): string {
+  const cf = req.headers.get('cf-connecting-ip')?.trim();
+  if (cf) return cf;
   const xff = req.headers.get('x-forwarded-for');
   if (xff) {
     const first = xff.split(',')[0]!.trim();
     if (first) return first;
   }
   return req.headers.get('x-real-ip')?.trim() || 'unknown';
+}
+
+/**
+ * Country code from the edge, free: Cloudflare sets cf-ipcountry on every
+ * proxied request, Vercel sets x-vercel-ip-country. Server-side, so it works
+ * with ad blockers on and no analytics consent needed (it's an aggregate
+ * operations signal, not a tracking identifier).
+ */
+export function requestCountry(req: NextRequest): string | null {
+  const raw = (req.headers.get('cf-ipcountry') || req.headers.get('x-vercel-ip-country') || '')
+    .trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(raw) && raw !== 'XX' ? raw : null;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, index, integer, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, index, integer, primaryKey, unique } from 'drizzle-orm/pg-core';
 
 export const waitlist = pgTable('waitlist', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -15,11 +15,26 @@ export const waitlist = pgTable('waitlist', {
   formCompletedAt: timestamp('form_completed_at', { withTimezone: true }),
   signupIpHash: text('signup_ip_hash'),
   signupUserAgent: text('signup_user_agent'),
+  locale: text('locale'),
+  signupCountry: text('signup_country'),
+  utmSource: text('utm_source'),
+  utmMedium: text('utm_medium'),
+  utmCampaign: text('utm_campaign'),
+  emailOptOutAt: timestamp('email_opt_out_at', { withTimezone: true }),
 }, (t) => [
   index('waitlist_ref_code_idx').on(t.refCode),
   index('waitlist_status_token_idx').on(t.statusToken),
   index('waitlist_referred_by_idx').on(t.referredBy),
   index('waitlist_signup_ip_hash_idx').on(t.signupIpHash),
+]);
+
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  waitlistId: uuid('waitlist_id').notNull().references(() => waitlist.id),
+  kind: text('kind').notNull(),
+  sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique('notifications_waitlist_kind_uq').on(t.waitlistId, t.kind),
 ]);
 
 export const rateLimits = pgTable('rate_limits', {

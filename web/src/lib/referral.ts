@@ -245,18 +245,19 @@ export async function submitProfile(statusToken: string, answers: {
     answerWhy: why ?? row.answerWhy,
   };
   // All 3 answered → the signup is "qualified" and counts for its referrer.
-  if (answersCompleted(merged) === 3 && !row.formCompletedAt) {
+  const justCompleted = answersCompleted(merged) === 3 && !row.formCompletedAt;
+  if (justCompleted) {
     update.formCompletedAt = new Date();
   }
 
-  if (Object.keys(update).length === 0) return row;
+  if (Object.keys(update).length === 0) return { row, justCompleted: false };
 
   const [updated] = await db
     .update(waitlist)
     .set(update)
     .where(eq(waitlist.id, row.id))
     .returning();
-  return updated;
+  return { row: updated, justCompleted };
 }
 
 export async function getReferralStatus(statusToken: string) {

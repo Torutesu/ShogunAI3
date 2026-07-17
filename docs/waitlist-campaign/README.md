@@ -52,6 +52,7 @@ the bearer for the status page and answer writes. Full threat model:
 ```bash
 psql "$DATABASE_URL" -f web/drizzle/0002_referral_campaign.sql
 psql "$DATABASE_URL" -f web/drizzle/0003_security.sql
+psql "$DATABASE_URL" -f web/drizzle/0004_growth.sql
 ```
 
 Pre-campaign rows get their ref code + status token lazily on their next
@@ -108,5 +109,7 @@ in; report CVR against form-completed only.
 
 Full EN/JA copy pack: [`copy-en-ja.md`](./copy-en-ja.md).
 Official rules (English): [`official-rules.md`](./official-rules.md).
+Measurement plan + email automation: [`ANALYTICS.md`](./ANALYTICS.md).
+Threat model: [`SECURITY.md`](./SECURITY.md).
 Copy rules (competitor naming, banned words, tone, colors) are in the
 campaign brief and apply to every user-facing string.
