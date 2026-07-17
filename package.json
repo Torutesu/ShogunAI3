@@ -1,7 +1,7 @@
 {
   "name": "shogun-ai-hifi",
   "private": true,
-  "version": "0.4.2",
+  "version": "0.4.3",
   "license": "UNLICENSED",
   "scripts": {
     "dev": "vite",
