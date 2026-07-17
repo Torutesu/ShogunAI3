@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { milestoneFor } from '../src/lib/notifications';
 import { clientIp, requestCountry } from '../src/lib/request-meta';
+import { csvEscape } from '../src/lib/csv';
 
 function fakeReq(headers: Record<string, string>): NextRequest {
   return { headers: new Headers(headers) } as unknown as NextRequest;
@@ -32,6 +33,16 @@ describe('clientIp behind Cloudflare', () => {
       'x-forwarded-for': '6.6.6.6, 203.0.113.7',
     });
     expect(clientIp(req)).toBe('203.0.113.7');
+  });
+});
+
+describe('csvEscape', () => {
+  it('quotes separators, quotes, and newlines; passes plain values', () => {
+    expect(csvEscape('plain')).toBe('plain');
+    expect(csvEscape('a,b')).toBe('"a,b"');
+    expect(csvEscape('say "hi"')).toBe('"say ""hi"""');
+    expect(csvEscape('line1\nline2')).toBe('"line1\nline2"');
+    expect(csvEscape(null)).toBe('');
   });
 });
 
