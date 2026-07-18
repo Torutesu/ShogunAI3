@@ -1124,7 +1124,7 @@ fn build_ax_capture_text() -> AxCaptureText {
     }
     let diagnostics =
         macos_ax::focused_ax_diagnostics(snapshot_present, tree_present || window_tree_present);
-    let source = if snapshot_present {
+    let mut source = if snapshot_present {
         if window_tree_present {
             "focused_element_plus_window_tree"
         } else {
@@ -1141,6 +1141,18 @@ fn build_ax_capture_text() -> AxCaptureText {
     } else {
         "empty"
     };
+    // OCR fallback (gated, default off): when the AX tree yields no text, read
+    // the focused window's pixels. Heavier + more privacy-sensitive than AX, so
+    // opt-in via `capture_pipeline.ocr_enabled`.
+    if parts.is_empty() && capture_pipeline_flag("ocr_enabled") {
+        if let Some(ocr) = crate::macos_ocr::ocr_focused_window() {
+            let t = ocr.trim();
+            if !t.is_empty() {
+                parts.push(t.to_string());
+                source = "ocr_fallback";
+            }
+        }
+    }
     AxCaptureText {
         text: if parts.is_empty() {
             None
@@ -1266,6 +1278,36 @@ fn capture_meta_line(
     }
 }
 
+// ── New-arch capture pipeline (gated, default off) ───────────────────────────
+// Wires the revived OCR / PII-redaction / clustering modules into the sampler.
+// Each is guarded by a `sections.capture_pipeline.*` flag that defaults to
+// false, so runtime behavior is unchanged until a flag is explicitly enabled.
+
+/// Read a boolean `sections.capture_pipeline.<key>` flag (default false).
+fn capture_pipeline_flag(key: &str) -> bool {
+    settings_store::load()
+        .ok()
+        .and_then(|doc| {
+            doc.pointer(&format!("/sections/capture_pipeline/{key}"))
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(false)
+}
+
+/// Scrub PII from captured text before persistence when
+/// `capture_pipeline.pii_redaction_enabled` is on. Default off — passthrough.
+fn maybe_redact_pii(text: String, settings: &serde_json::Value) -> String {
+    let enabled = settings
+        .pointer("/sections/capture_pipeline/pii_redaction_enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !enabled {
+        return text;
+    }
+    let config = crate::pii_redactor::config_from_settings(settings);
+    crate::pii_redactor::redact_pii_with_config(&text, &config)
+}
+
 fn maybe_ingest_focus(
     app_handle: Option<&AppHandle>,
     app: &str,
@@ -1289,7 +1331,7 @@ fn maybe_ingest_focus(
     let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
     let title = focus_title(app, window_title);
     if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
-        let snippet = focus_capture_text(app, window_title);
+        let snippet = maybe_redact_pii(focus_capture_text(app, window_title), &settings);
         let meeting_meta = meeting_tags_for_mem_captures(app_handle).map(|(id, offset)| {
             json!({ "meeting_id": id, "meeting_offset_ms": offset }).to_string()
         });
@@ -1320,7 +1362,7 @@ fn maybe_ingest_focus(
         &format!("{}|{}|{}", app_bundle_id.unwrap_or(app), app, window_title),
     );
     let snippet = snippet_with_spatial(
-        &focus_capture_text(app, window_title),
+        &maybe_redact_pii(focus_capture_text(app, window_title), &settings),
         spatial_context_json.as_deref(),
     );
     upsert_capture_row(
@@ -1381,10 +1423,10 @@ fn maybe_ingest_ax(
             *last_t = Some(now_ms());
         }
     }
-    let snippet_body = text.chars().take(4000).collect::<String>();
+    let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
+    let snippet_body = maybe_redact_pii(text.chars().take(4000).collect::<String>(), &settings);
     let title = focus_title(app_label, window_title);
 
-    let settings = settings_store::load().unwrap_or_else(|_| serde_json::json!({}));
     if crate::kioku_capture::capture_to_mem_captures_flag(&settings) {
         let filter_meta_json = capture_filter_meta_json(
             meeting_tags_for_mem_captures(Some(app)),

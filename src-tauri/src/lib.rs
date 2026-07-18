@@ -10,6 +10,22 @@ mod calendar_sync;
 mod capture_events;
 mod capture_sampler;
 mod capture_tray;
+// New-arch capture pipeline modules (OCR / PII redaction / clustering /
+// strategies / AX events). Revived from an unmerged worktree snapshot. OCR,
+// pii_redactor and capture_clustering are now wired into capture_sampler behind
+// `sections.capture_pipeline.*` flags (default off); capture_strategies and
+// ax_events remain unwired. dead_code stays allowed because each module still
+// exposes helpers without callers yet.
+#[allow(dead_code)]
+mod ax_events;
+#[allow(dead_code)]
+mod capture_clustering;
+#[allow(dead_code)]
+mod capture_strategies;
+#[allow(dead_code)]
+pub mod macos_ocr;
+#[allow(dead_code)]
+mod pii_redactor;
 mod commands;
 mod connectors;
 mod context_assembly;
@@ -158,6 +174,19 @@ pub fn run() {
                 }
             }
             capture_sampler::start_background_sampler(app.handle().clone());
+            // New-arch capture pipeline: background snapshot clusterer. Gated by
+            // `sections.capture_pipeline.clustering_enabled` (default off) — only
+            // spawn the thread when explicitly enabled.
+            if settings_store::load()
+                .ok()
+                .and_then(|d| {
+                    d.pointer("/sections/capture_pipeline/clustering_enabled")
+                        .and_then(|v| v.as_bool())
+                })
+                .unwrap_or(false)
+            {
+                capture_clustering::spawn_background_clusterer();
+            }
             meeting_video_detect::start_poller(app.handle().clone());
             app_events::init(app.handle());
             memory_notify::init(app.handle().clone());
