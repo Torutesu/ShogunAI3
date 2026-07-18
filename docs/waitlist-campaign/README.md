@@ -111,5 +111,7 @@ Full EN/JA copy pack: [`copy-en-ja.md`](./copy-en-ja.md).
 Official rules (English): [`official-rules.md`](./official-rules.md).
 Measurement plan + email automation: [`ANALYTICS.md`](./ANALYTICS.md).
 Threat model: [`SECURITY.md`](./SECURITY.md).
+Frontend contract (for the LP/UI implementer): [`FRONTEND_HANDOFF.md`](./FRONTEND_HANDOFF.md).
+**Reusable referral engine (copy into other projects):** [`REFERRAL_ENGINE.md`](./REFERRAL_ENGINE.md).
 Copy rules (competitor naming, banned words, tone, colors) are in the
 campaign brief and apply to every user-facing string.
